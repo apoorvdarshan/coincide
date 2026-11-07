@@ -22,6 +22,8 @@ mod native_downloads;
 mod native_history;
 #[path = "browser_native_keys.rs"]
 mod native_keys;
+#[path = "browser_tab_shortcuts_native.rs"]
+mod native_tab_shortcuts;
 #[path = "browser_press.rs"]
 mod press;
 #[path = "browser_private_profiles.rs"]
@@ -94,6 +96,7 @@ use wry::{WebViewBuilderExtDarwin, WebViewBuilderExtMacos, WebViewExtMacOS};
 struct Tab {
     credential: Option<credential_bridge::NativeCredentialTarget>,
     keys: native_keys::Target,
+    tab_shortcuts: Option<native_tab_shortcuts::Target>,
     dialogs: dialogs::Dialogs,
     id: String,
     view: Entity<WebView>,
@@ -152,6 +155,10 @@ impl Drop for PendingUpload {
     }
 }
 enum NativeEvent {
+    TabShortcut {
+        source: crate::browser_tab_shortcuts::Source,
+        command: crate::browser_tab_shortcuts::Command,
+    },
     Press(press::Event),
     DialogChanged,
     DownloadsChanged,
@@ -219,6 +226,10 @@ pub struct BrowserController {
     uploads: HashMap<String, PendingUpload>,
     upload_slots: UploadSlots,
     user_turns: user_turn::UserTurns,
+    tab_shortcuts: VecDeque<(
+        crate::browser_tab_shortcuts::Source,
+        crate::browser_tab_shortcuts::Command,
+    )>,
     screenshots: screenshots::Owner,
     shutdown: shutdown::Shutdown,
 }
@@ -290,6 +301,7 @@ impl BrowserController {
             uploads: HashMap::new(),
             upload_slots: UploadSlots::default(),
             user_turns: user_turn::UserTurns::default(),
+            tab_shortcuts: VecDeque::new(),
             screenshots: screenshots::Owner::new(profile_dir.join("screenshots")),
             shutdown: shutdown::Shutdown::default(),
         })
@@ -301,6 +313,7 @@ impl BrowserController {
             return;
         }
         self.shutdown.close();
+        self.tab_shortcuts.clear();
         self.screenshots.close();
         for owner in &self.native_downloads {
             owner.close();
@@ -312,6 +325,7 @@ impl BrowserController {
         for tabs in self.tabs.values_mut() {
             for tab in tabs {
                 tab.keys.close();
+                tab.tab_shortcuts.take();
                 tab.navigation.fetch_add(1, Ordering::AcqRel);
                 tab.dialogs.cancel();
                 if let Some(target) = &tab.credential {
@@ -1066,6 +1080,28 @@ impl BrowserController {
             )?);
         }
         let keys = native_keys::Target::install(view.raw(), &self.shutdown.callbacks);
+        let shortcut_sender = self.sender.clone();
+        let shortcut_thread = thread.to_owned();
+        let shortcut_tab = id.clone();
+        let tab_shortcuts = native_tab_shortcuts::Target::install(
+            view.raw(),
+            &self.shutdown.callbacks,
+            navigation.clone(),
+            move |command, epoch, url| {
+                shortcut_sender
+                    .try_send(NativeEvent::TabShortcut {
+                        source: crate::browser_tab_shortcuts::Source {
+                            thread: shortcut_thread.clone(),
+                            tab: shortcut_tab.clone(),
+                            epoch,
+                            url,
+                        },
+                        command,
+                    })
+                    .is_ok()
+            },
+        )
+        .ok();
         let dialog_sender = self.sender.clone();
         let dialogs = dialogs::Dialogs::install(
             view.raw(),
@@ -1097,6 +1133,7 @@ impl BrowserController {
         self.tabs.entry(thread.into()).or_default().push(Tab {
             credential,
             keys,
+            tab_shortcuts,
             dialogs,
             id: id.clone(),
             view,
@@ -1147,6 +1184,11 @@ impl BrowserController {
         let mut changed = !events.is_empty();
         for event in events {
             match event {
+                NativeEvent::TabShortcut { source, command } => {
+                    if self.tab_shortcuts.len() < 32 && self.shortcut_source_current(&source, cx) {
+                        self.tab_shortcuts.push_back((source, command));
+                    }
+                }
                 NativeEvent::Press(event) => self.press_event(event),
                 NativeEvent::DialogChanged | NativeEvent::DownloadsChanged => {}
                 NativeEvent::UploadProbe { id, ticket, result } => {
@@ -1750,6 +1792,115 @@ impl BrowserController {
     pub fn drain_replies(&mut self) -> Vec<BrowserReply> {
         self.replies.drain(..).collect()
     }
+    pub fn shortcut_source(
+        &self,
+        thread: &str,
+        cx: &App,
+    ) -> Option<crate::browser_tab_shortcuts::Source> {
+        if self.shutdown.callbacks.closed() || self.visible.as_deref() != Some(thread) {
+            return None;
+        }
+        let active = self.active.get(thread)?;
+        let tab = self
+            .tabs
+            .get(thread)?
+            .iter()
+            .find(|tab| &tab.id == active)?;
+        Some(crate::browser_tab_shortcuts::Source {
+            thread: thread.into(),
+            tab: tab.id.clone(),
+            epoch: tab.navigation.load(Ordering::Acquire),
+            url: shortcut_native_address(tab.view.read(cx).raw()),
+        })
+    }
+    pub fn shortcut_source_current(
+        &self,
+        source: &crate::browser_tab_shortcuts::Source,
+        cx: &App,
+    ) -> bool {
+        self.shortcut_source(&source.thread, cx)
+            .is_some_and(|current| {
+                source.matches(
+                    &current.thread,
+                    &current.tab,
+                    current.epoch,
+                    current.url.as_deref(),
+                )
+            })
+    }
+    pub fn focus_active_native(&self, thread: &str, cx: &App) -> Result<()> {
+        let view = self
+            .active_view(thread)
+            .ok_or_else(|| anyhow::anyhow!("Browser tab unavailable"))?;
+        native_tab_shortcuts::focus(view.read(cx).raw())
+    }
+    pub fn native_shortcut_focused(
+        &self,
+        source: &crate::browser_tab_shortcuts::Source,
+        cx: &App,
+    ) -> bool {
+        self.shortcut_source_current(source, cx)
+            && self
+                .tabs
+                .get(&source.thread)
+                .and_then(|tabs| tabs.iter().find(|tab| tab.id == source.tab))
+                .is_some_and(|tab| {
+                    tab.tab_shortcuts
+                        .as_ref()
+                        .is_some_and(|target| target.focused(tab.view.read(cx).raw()))
+                })
+    }
+    pub fn drain_tab_shortcuts(
+        &mut self,
+    ) -> Vec<(
+        crate::browser_tab_shortcuts::Source,
+        crate::browser_tab_shortcuts::Command,
+    )> {
+        self.tab_shortcuts.drain(..).collect()
+    }
+    /// A native/chrome user key applies synchronously through the same typed
+    /// owner path as the UI/API. No queued action can outlive its source binding.
+    pub fn apply_tab_shortcut(
+        &mut self,
+        source: &crate::browser_tab_shortcuts::Source,
+        command: crate::browser_tab_shortcuts::Command,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<bool> {
+        use crate::browser_tab_shortcuts::{self as shortcuts, Command};
+        ensure!(
+            self.shortcut_source_current(source, cx),
+            "Browser shortcut source changed"
+        );
+        let ids = self.tabs[&source.thread]
+            .iter()
+            .map(|tab| tab.id.clone())
+            .collect::<Vec<_>>();
+        let last = ids.len() == 1;
+        let (action, tab) = match command {
+            Command::New => (BrowserAction::NewTab { url: None }, None),
+            Command::Close => (BrowserAction::CloseTab, Some(source.tab.clone())),
+            Command::Next | Command::Previous => {
+                let Some(next) = shortcuts::adjacent(&ids, &source.tab, command == Command::Next)
+                else {
+                    return Ok(false);
+                };
+                (BrowserAction::SelectTab, Some(next.to_owned()))
+            }
+        };
+        self.handle(
+            BrowserRequest {
+                id: Uuid::new_v4().to_string(),
+                thread_id: source.thread.clone(),
+                tab,
+                frame: None,
+                action,
+            },
+            window,
+            cx,
+        )?;
+        Ok(command == Command::Close && last)
+    }
     pub fn active_view(&self, thread: &str) -> Option<Entity<WebView>> {
         if self.shutdown.callbacks.closed() {
             return None;
@@ -1885,6 +2036,9 @@ impl BrowserController {
     }
     pub fn tab_list(&self, thread: &str) -> Value {
         let native_password_manager = credential_bridge::credential_fill_available();
+        let native_tab_shortcuts = self.tabs.get(thread).is_some_and(|tabs| {
+            !tabs.is_empty() && tabs.iter().all(|tab| tab.tab_shortcuts.is_some())
+        });
         let mut unsupported = vec![
             "download-progress",
             "download-cancel",
@@ -1923,6 +2077,8 @@ impl BrowserController {
             "visible":self.visible.as_deref()==Some(thread),"unsupported":unsupported,
             "nativeKeyPolicy":"bounded page editing/navigation; host, global, Alt and clipboard shortcuts denied; Meta uses platform primary modifier",
             "nativePasswordManagerAvailable":native_password_manager,
+            "nativeTabShortcutsAvailable":native_tab_shortcuts,
+            "nativeTabShortcutPolicy":"focused native user keys only; agent page-key host chords remain denied",
             "passwordManagerRequiresNativeApproval":true})
     }
 }
@@ -1930,6 +2086,24 @@ impl BrowserController {
 /// Wry 0.53.3's macOS url() unwraps nullable WKWebView.URL/absoluteString.
 /// A newly created or provisionally loading view may have neither. Absence is
 /// ineligible metadata, never a cached URL or a page-script location fallback.
+fn shortcut_native_address(view: &wry::WebView) -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        MainThreadMarker::new()?;
+        let native = view.webview();
+        unsafe {
+            native
+                .URL()?
+                .absoluteString()
+                .filter(|url| url.length() <= 16384)
+                .map(|url| url.to_string())
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        view.url().ok().filter(|url| url.len() <= 16384)
+    }
+}
 fn credential_native_address(view: &wry::WebView) -> Option<String> {
     #[cfg(target_os = "macos")]
     {

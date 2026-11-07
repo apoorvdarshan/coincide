@@ -36,6 +36,8 @@ mod browser_address_bar;
 mod browser_dialog_ui;
 mod browser_login_mount;
 mod browser_settings;
+mod browser_tab_shortcuts;
+mod browser_tab_shortcuts_mount;
 mod browser_user_turn_ui;
 #[cfg(any(target_os = "windows", test))]
 mod browser_viewport_geometry;
@@ -553,6 +555,7 @@ struct Coincide {
     show_archived: bool,
     browser: Option<BrowserController>,
     browser_address: Entity<InputState>,
+    browser_focus: FocusHandle,
     browser_address_page: Option<(String, String)>,
     browser_completion: browser_address_bar::Completion,
     /// The page area's bounds from the last layout, for fixed test viewports.
@@ -1637,6 +1640,7 @@ impl Coincide {
             status: browser_error.unwrap_or_else(|| "Rust preview · separate data store".into()),
             browser,
             browser_address,
+            browser_focus: cx.focus_handle(),
             browser_address_page: None,
             browser_completion: Default::default(),
             browser_page_bounds: Default::default(),
@@ -1988,6 +1992,7 @@ impl Coincide {
         // before yielding to the run loop so it never covers this conversation.
         browser.set_thread_visible(visible, cx);
         self.browser_replies.extend(browser.drain_replies());
+        let native_tab_shortcuts = browser.drain_tab_shortcuts();
         if let Ok(mut engine) = self.engine.try_lock() {
             for reply in self.browser_replies.drain(..) {
                 engine.browser_reply(reply);
@@ -2046,6 +2051,10 @@ impl Coincide {
         if let Some(choice) = browser_note {
             self.remember_inspector_choice(choice, cx);
         }
+        for (source, command) in native_tab_shortcuts {
+            self.perform_browser_tab_shortcut(source, command, true, window, cx);
+            changed = true;
+        }
         if changed {
             cx.notify();
         }
@@ -2089,6 +2098,7 @@ impl Coincide {
         let page = self.browser_page(&thread, webview, cx);
         Some(
             div()
+                .track_focus(&self.browser_focus)
                 .flex()
                 .flex_col()
                 .flex_1()

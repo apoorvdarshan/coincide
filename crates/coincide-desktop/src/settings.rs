@@ -1256,6 +1256,9 @@ impl Coincide {
             .as_ref()
             .and_then(|id| self.terminal_workspaces.get(id))
             .is_some_and(|workspace| workspace.read(cx).is_focused(window));
+        if !terminal_owns && self.browser_tab_key(event, window, cx) {
+            return;
+        }
         let browser_visible = self
             .selected
             .as_ref()
