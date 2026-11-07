@@ -2,8 +2,8 @@
 """Actual native WebView workflow against an owned loopback HTTP fixture.
 
 Imported by isolated native CI smoke only. No external URL, saved login, cookie,
-password, upload or arbitrary-script tool command is used. Screenshots capture
-only this fixture's own WebView, never the desktop.
+password or arbitrary-script tool command is used. Screenshots capture only this
+fixture's own WebView. Uploads use owned synthetic RUNNER_TEMP files.
 """
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -165,11 +165,17 @@ def exercise_browser(rpc, thread_id, capture_visible, downloads_root):
         download_report = downloads.exercise_downloads(rpc, thread_id, downloads_root)
         assert download_report["passed"]
         assert request("tabs").get("tabs") == [], "Download fixture must close every created tab"
+        spec = importlib.util.spec_from_file_location("owned_native_upload_fixture", Path(__file__).with_name("test-rust-native-browser-uploads.py"))
+        uploads = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(uploads)
+        upload_report = uploads.exercise_uploads(rpc, thread_id)
+        assert upload_report["passed"]
+        assert request("tabs").get("tabs") == [], "Upload fixture must close every created tab"
         return {"passed": True, "scope": "Actual own native WebView and loopback page only",
                 "operations": receipts, "externalNetwork": False, "tabsClosed": True,
                 "nativeScreenshots": shots,
                 "nativeDialogs": dialog_report, "nativeKeys": key_report,
-                "nativeDownloads": download_report}
+                "nativeDownloads": download_report, "nativeUploads": upload_report}
     except BaseException as error:
         # Diagnose the same failed operation without navigation, repeated input
         # or a changed deadline. These are only this fixture's private pages.

@@ -24,6 +24,9 @@ fn control_error(id: &Value, message: &str) -> Value {
     json!({"type":"control_response","response":{"subtype":"error","request_id":id,"error":message}})
 }
 
+/// Claude Code's words before the user's note on a rejected tool call.
+const REJECTION_NOTE_PREFIX: &str = "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\n";
+
 /// Never forward user-provided protocol objects or persistent permission updates.
 fn permission_reply(request: &Value, answer: &Value) -> Result<Value> {
     let decision = answer["decision"].as_str();
@@ -59,10 +62,20 @@ fn permission_reply(request: &Value, answer: &Value) -> Result<Value> {
             "Expected accept, decline or cancel"
         );
     }
+    // Claude Code's own framing of "No, and tell Claude what to do instead":
+    // a bare note as the tool result would read like output the tool produced.
+    let note = answer["text"]
+        .as_str()
+        .map(str::trim)
+        .filter(|note| !note.is_empty());
+    let message = note.map_or_else(
+        || "The user declined this request.".to_owned(),
+        |note| format!("{REJECTION_NOTE_PREFIX}{note}"),
+    );
     let mut result = if allowed {
         json!({"behavior":"allow","updatedInput":input,"decisionClassification":"user_temporary"})
     } else {
-        json!({"behavior":"deny","message":"The user declined this request.","decisionClassification":"user_reject"})
+        json!({"behavior":"deny","message":message,"decisionClassification":"user_reject"})
     };
     if decision == Some("cancel") {
         result["interrupt"] = json!(true);
@@ -483,6 +496,32 @@ mod tests {
         assert_eq!(result["decisionClassification"], "user_temporary");
         assert!(result.get("updatedPermissions").is_none());
         assert!(permission_reply(&original, &json!({"decision":"acceptForSession"})).is_err());
+    }
+    #[test]
+    fn denial_notes_use_claude_framing_and_never_reach_allowed_calls() {
+        let request =
+            json!({"tool_name":"Bash","tool_use_id":"tool-2","input":{"command":"rm -rf x"}});
+        let denied = permission_reply(
+            &request,
+            &json!({"decision":"decline","text":"  use trash instead \n"}),
+        )
+        .unwrap();
+        assert_eq!(denied["behavior"], "deny");
+        assert_eq!(
+            denied["message"],
+            format!("{REJECTION_NOTE_PREFIX}use trash instead")
+        );
+        assert!(denied.get("interrupt").is_none());
+        let stopped =
+            permission_reply(&request, &json!({"decision":"cancel","text":"stop"})).unwrap();
+        assert_eq!(stopped["message"], format!("{REJECTION_NOTE_PREFIX}stop"));
+        assert_eq!(stopped["interrupt"], true);
+        let blank = permission_reply(&request, &json!({"decision":"decline","text":" "})).unwrap();
+        assert_eq!(blank["message"], "The user declined this request.");
+        let allowed =
+            permission_reply(&request, &json!({"decision":"accept","text":"ignored"})).unwrap();
+        assert_eq!(allowed["behavior"], "allow");
+        assert!(allowed.get("message").is_none());
     }
     #[test]
     fn questions_require_actual_answers_not_generic_approval() {
