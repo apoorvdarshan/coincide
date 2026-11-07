@@ -72,22 +72,26 @@ impl Process {
             } != 0,
             "GitHub Job setup failed"
         );
-        let mut child = command
+        let child = command
             .creation_flags(CREATE_SUSPENDED | CREATE_NO_WINDOW)
             .spawn()
             .context("Unable to start configured gh")?;
-        if unsafe { AssignProcessToJobObject(job.as_raw_handle(), child.as_raw_handle()) } == 0 {
-            let _ = child.kill();
-            child.wait().context("GitHub child cleanup incomplete")?;
-            bail!("GitHub child isolation failed");
-        }
-        let mut process = Self {
+        let process = Self {
             child,
             job,
             writer: None,
             members: Default::default(),
             drained: false,
         };
+        let mut process = process_members::assign_or_retain(
+            process,
+            |process| unsafe {
+                AssignProcessToJobObject(process.job.as_raw_handle(), process.child.as_raw_handle())
+                    != 0
+            },
+            |process| process.finish().is_ok(),
+        )
+        .context("GitHub child isolation failed")?;
         if let Err(error) = process.resume() {
             process.finish()?;
             return Err(error);
@@ -126,6 +130,9 @@ impl Process {
         Ok(Some(code == 0))
     }
     fn finish(&mut self) -> Result<()> {
+        if self.drained {
+            return Ok(());
+        }
         // An error is no native release receipt. Keep this exact Process, Job,
         // member handles and unknown observations owned by the read worker.
         while self.drain().is_err() {
@@ -227,10 +234,11 @@ impl Process {
     fn drain(&mut self) -> Result<()> {
         // Held before termination, while every member is still listed.
         let held = self.hold_members();
-        ensure!(
-            unsafe { TerminateJobObject(self.job.as_raw_handle(), 1) } != 0,
-            "GitHub Job cleanup incomplete"
-        );
+        let terminated = unsafe { TerminateJobObject(self.job.as_raw_handle(), 1) } != 0;
+        // Assignment may have failed while the child was still suspended. It is
+        // directly owned even when no Job membership receipt was obtained.
+        let _ = self.child.kill();
+        ensure!(terminated, "GitHub Job cleanup incomplete");
         held?;
         self.child
             .wait()

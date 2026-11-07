@@ -74,6 +74,22 @@ impl<H> Members<H> {
     }
 }
 
+/// Assignment is attempted only after child + Job are in one owner. A failed
+/// assignment must retain that owner through every unconfirmed cleanup attempt.
+pub(super) fn assign_or_retain<O>(
+    mut owner: O,
+    assign: impl FnOnce(&mut O) -> bool,
+    mut drained: impl FnMut(&mut O) -> bool,
+) -> Option<O> {
+    if assign(&mut owner) {
+        return Some(owner);
+    }
+    while !drained(&mut owner) {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -86,6 +102,33 @@ mod tests {
         fn drop(&mut self) {
             self.0.fetch_add(1, Ordering::SeqCst);
         }
+    }
+    #[test]
+    fn failed_assignment_and_wait_error_keep_the_same_child_and_job_owned() {
+        let released = Arc::new(AtomicUsize::new(0));
+        let owner = (Handle(released.clone()), Handle(released.clone()));
+        let mut cleanup_attempts = 0;
+        let result = assign_or_retain(
+            owner,
+            |_| false,
+            |owner| {
+                assert_eq!(
+                    released.load(Ordering::SeqCst),
+                    0,
+                    "assignment failure cannot release either owner"
+                );
+                assert!(Arc::ptr_eq(&owner.0.0, &owner.1.0));
+                cleanup_attempts += 1;
+                cleanup_attempts > 1 // First owned-child wait reports an unconfirmed native error.
+            },
+        );
+        assert!(result.is_none());
+        assert_eq!(cleanup_attempts, 2);
+        assert_eq!(
+            released.load(Ordering::SeqCst),
+            2,
+            "release follows the verified retry only"
+        );
     }
     #[test]
     fn lookup_and_membership_errors_retain_owner_across_empty_snapshots() {
