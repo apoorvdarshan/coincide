@@ -42,9 +42,18 @@ impl GhRunner {
             timeout: Duration::from_secs(15),
         })
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    pub(crate) fn capture(
+        &self,
+        root: &Path,
+        args: &[String],
+        cancelled: &AtomicBool,
+    ) -> Result<Vec<u8>> {
+        windows::capture(self, root, args, cancelled)
+    }
+    #[cfg(not(any(unix, windows)))]
     pub(crate) fn capture(&self, _: &Path, _: &[String], _: &AtomicBool) -> Result<Vec<u8>> {
-        bail!("gh reads unavailable on this platform until bounded process cleanup is implemented")
+        bail!("Bounded GitHub reads unavailable on this platform")
     }
     #[cfg(unix)]
     pub(crate) fn capture(
@@ -160,11 +169,13 @@ impl Drop for ProcessGroup {
     }
 }
 
+#[cfg(windows)]
+#[path = "github_api_windows.rs"]
+mod windows;
 #[derive(Clone)]
 struct Root {
     path: PathBuf,
-    #[cfg(unix)]
-    identity: (u64, u64),
+    identity: crate::native_file::Identity,
 }
 impl Root {
     fn bind(stored: &Path, expected: &Path) -> Result<Self> {
@@ -179,29 +190,11 @@ impl Root {
             expected.canonicalize()? == path && path.is_dir(),
             "Project root changed"
         );
-        #[cfg(unix)]
-        let identity = {
-            use std::os::unix::fs::MetadataExt;
-            let m = std::fs::metadata(&path)?;
-            (m.dev(), m.ino())
-        };
-        Ok(Self {
-            path,
-            #[cfg(unix)]
-            identity,
-        })
+        let identity = crate::native_file::path_identity(&path)?;
+        Ok(Self { path, identity })
     }
     fn same(&self, other: &Self) -> bool {
-        self.path == other.path && {
-            #[cfg(unix)]
-            {
-                self.identity == other.identity
-            }
-            #[cfg(not(unix))]
-            {
-                true
-            }
-        }
+        self.path == other.path && self.identity == other.identity
     }
 }
 #[derive(Clone)]
@@ -991,5 +984,21 @@ mod tests {
             failure(&anyhow::anyhow!("private output sentinel")),
             json!({"error":"Unable to read validated GitHub PR metadata","code":"read_failed"})
         );
+    }
+}
+
+#[cfg(test)]
+mod native_root_tests {
+    use super::*;
+    #[test]
+    fn replaced_directory_at_same_path_never_reuses_github_read_context() {
+        let temporary = tempfile::tempdir().unwrap();
+        let path = temporary.path().join("project");
+        std::fs::create_dir(&path).unwrap();
+        let before = Root::bind(&path, &path).unwrap();
+        std::fs::rename(&path, temporary.path().join("old")).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        let after = Root::bind(&path, &path).unwrap();
+        assert!(!before.same(&after));
     }
 }
