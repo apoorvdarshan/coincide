@@ -42,16 +42,18 @@ body{position:relative;height:6000px}
 #top{height:200px;background:rgb(255,0,0)}
 input{display:block;box-sizing:border-box;width:300px;height:44px;margin:10px;font:20px sans-serif;color:#000;background:#fff;border:2px solid #000}
 .block{position:absolute;left:0;width:100%;height:200px}
+#opaque{position:absolute;left:10px;top:440px;width:300px;height:100px;border:0}
 #middle{top:3000px;background:rgb(0,0,255)}
 #bottom{top:5790px;background:rgb(0,160,0)}
 </style>
 <div id=top></div>
 <form><input id=user autocomplete=username value="synthetic-user"><input id=pass type=password value="SYNTHETIC-ONLY-secret"><input id=otp autocomplete=one-time-code value="135790"></form>
 <input id=search value="visible search text">
+<iframe id=opaque sandbox srcdoc="<p>OPAQUE-SYNTHETIC-ONLY</p><input autocomplete=username value=synthetic-frame-user>"></iframe>
 <div id=middle class=block></div><div id=bottom class=block></div>
 <script>window.fixtureReady=true;</script>"#;
-    const LAYOUT: &str = r#"JSON.stringify((()=>{const r=id=>{const b=document.getElementById(id).getBoundingClientRect();return {x:b.x+scrollX,y:b.y+scrollY,width:b.width,height:b.height};};return {innerWidth,innerHeight,user:r('user'),pass:r('pass'),otp:r('otp'),search:r('search')};})())"#;
-    const RESTORED: &str = r#"scrollY===2950 && [...document.querySelectorAll('input')].every(el=>el.style.opacity===''&&el.style.transition==='')"#;
+    const LAYOUT: &str = r#"JSON.stringify((()=>{const r=id=>{const b=document.getElementById(id).getBoundingClientRect();return {x:b.x+scrollX,y:b.y+scrollY,width:b.width,height:b.height};};return {innerWidth,innerHeight,user:r('user'),pass:r('pass'),otp:r('otp'),search:r('search'),opaque:r('opaque')};})())"#;
+    const RESTORED: &str = r#"scrollY===2950 && [...document.querySelectorAll('input,iframe')].every(el=>el.style.opacity===''&&el.style.transition==='')"#;
 
     pub type Outcome = Arc<Mutex<Option<Result<Vec<String>, String>>>>;
     #[derive(Clone, Copy, Deserialize)]
@@ -70,6 +72,7 @@ input{display:block;box-sizing:border-box;width:300px;height:44px;margin:10px;fo
         pass: Box2,
         otp: Box2,
         search: Box2,
+        opaque: Box2,
     }
 
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -361,7 +364,7 @@ input{display:block;box-sizing:border-box;width:300px;height:44px;margin:10px;fo
                         };
                         match &outcome {
                             Ok(checks) => println!(
-                                "synthetic native screenshot: PASS ({}; masked fields redacted, ordinary field visible; actual callback owners returned; native SDK deallocation unconfirmed)",
+                                "synthetic native screenshot: PASS ({}; masked fields and opaque frame redacted, ordinary field visible; actual callback owners returned; native SDK deallocation unconfirmed)",
                                 checks.join("; ")
                             ),
                             Err(error) => {
@@ -457,6 +460,7 @@ input{display:block;box-sizing:border-box;width:300px;height:44px;margin:10px;fo
                 return Err(format!("expected the red top block, saw {red:?}"));
             }
             for (name, field) in [
+                ("opaque frame surface", layout.opaque),
                 ("username", layout.user),
                 ("password", layout.pass),
                 ("one-time code", layout.otp),

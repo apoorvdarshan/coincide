@@ -257,7 +257,7 @@ impl Owner {
             && job.artifact.as_ref().is_some_and(Artifact::matches)
         {
             let artifact = job.artifact.take().unwrap();
-            json!({"path":artifact.path(),"mimeType":"image/png","tab":job.binding.tab,"width":artifact.width(),"height":artifact.height(),"truncated":job.truncated,"fullPage":matches!(job.request.action,coincide_core::browser_protocol::BrowserAction::Screenshot{full_page:true})})
+            json!({"path":artifact.path(),"mimeType":"image/png","tab":job.binding.tab,"width":artifact.width(),"height":artifact.height(),"truncated":job.truncated,"fullPage":matches!(job.request.action,coincide_core::browser_protocol::BrowserAction::Screenshot{full_page:true}),"redactionScope":"document-and-open-shadow-inputs-plus-opaque-frame-surfaces","uninspectedContent":["closed-shadow-roots","page-drawn-content"]})
         } else {
             let cleanup = job.artifact.take().map(Artifact::discard).transpose();
             json!({"error":job.failure.unwrap_or_else(||"Snapshot source changed or was cancelled".into()),"cleanupRetained":cleanup.is_err()})
@@ -349,6 +349,14 @@ mod tests {
         };
         assert_eq!(reply.result["truncated"], true);
         assert_eq!(reply.result["fullPage"], false);
+        assert_eq!(
+            reply.result["redactionScope"],
+            "document-and-open-shadow-inputs-plus-opaque-frame-surfaces"
+        );
+        assert_eq!(
+            reply.result["uninspectedContent"],
+            json!(["closed-shadow-roots", "page-drawn-content"])
+        );
         assert_eq!(
             (
                 reply.result["width"].as_u64(),

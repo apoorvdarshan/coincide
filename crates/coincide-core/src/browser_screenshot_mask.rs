@@ -5,8 +5,9 @@
 //! Sensitive fields are password inputs, credential, one-time-code and payment
 //! card autocomplete fields, and the username fields of login forms (the
 //! fields Coincide's credential fill can write). They are hidden in the page
-//! for the capture and redacted again in the pixels. Ordinary fields, frames,
-//! canvases and page content stay visible, as in the Swift browser. FINISH
+//! for the capture and redacted again in the pixels. Ordinary fields,
+//! canvases and page content stay visible. Opaque frame/plugin surfaces are
+//! masked as whole rectangles because their fields cannot be inspected. FINISH
 //! re-measures the same fields; a moved, added or restyled field refuses the
 //! capture. This does not promise detection of secrets drawn as page content.
 //!
@@ -28,25 +29,26 @@ if (globalThis[key]) {
 const root=document.documentElement;
 if (!root || (window.visualViewport && visualViewport.scale!==1)) return '';
 function sensitive(){
- const inputs=[], pending=[document];
+ const inputs=[], opaque=[], pending=[document];
  let visited=0;
  while(pending.length){
   const scope=pending.pop();
   for(const el of scope.querySelectorAll('*')){
    if(++visited>250000) return null;
    if(el.localName==='input') inputs.push(el);
+   if(['iframe','frame','object','embed'].includes(el.localName)) opaque.push(el);
    if(el.shadowRoot) pending.push(el.shadowRoot);
   }
  }
  const secret=['current-password','new-password','one-time-code','cc-number','cc-csc','cc-exp','cc-exp-month','cc-exp-year'];
  const tokens=el=>String(el.getAttribute('autocomplete')||'').toLowerCase().split(/\s+/);
- const found=new Set(inputs.filter(el=>el.type==='password' || tokens(el).some(t=>secret.includes(t))));
+ const found=new Set(opaque.concat(inputs.filter(el=>el.type==='password' || tokens(el).some(t=>secret.includes(t)))));
  for(const pass of inputs.filter(el=>el.type==='password')){
   const scope=pass.form||pass.getRootNode();
   for(const el of inputs) if(scope.contains(el) && ['text','email','tel'].includes(el.type) &&
     (tokens(el).some(t=>t==='username'||t==='email') || /user|email|login/i.test((el.name||'')+' '+(el.id||'')))) found.add(el);
  }
- return inputs.filter(el=>found.has(el));
+ return Array.from(found);
 }
 function rects(fields){
  const out=[];
@@ -113,14 +115,15 @@ function check(){
  while(pending.length){
   for(const el of pending.pop().querySelectorAll('*')){
    if(++visited>250000) return 'large';
-   if(el.localName==='input') now.push(el);
+   if(el.localName==='input' || ['iframe','frame','object','embed'].includes(el.localName)) now.push(el);
    if(el.shadowRoot) pending.push(el.shadowRoot);
   }
  }
  // Every field PREPARE hid is still connected, still ours and unmoved, and
- // no sensitive field appeared: the capture saw only masked secrets.
+ // no detectable sensitive field or opaque surface appeared. Closed shadow
+ // roots and secrets drawn as ordinary content remain outside this contract.
  const kept=new Set(s.fields);
- if(now.some(el=>!kept.has(el) && (el.type==='password' ||
+ if(now.some(el=>!kept.has(el) && (['iframe','frame','object','embed'].includes(el.localName) || el.type==='password' ||
    /password|one-time-code|cc-/i.test(String(el.getAttribute('autocomplete')||''))))) return 'added';
  const masks=[];
  for(const el of s.fields){
@@ -146,7 +149,7 @@ pub fn finish_failure(reason: &str) -> &'static str {
         "resized" => "The page viewport changed during its snapshot",
         "scrolled" => "The page scrolled during its snapshot; try again",
         "large" => "The page has too many elements to check its sensitive fields",
-        "added" => "A sensitive field appeared during the snapshot; try again",
+        "added" => "A sensitive field or opaque surface appeared during the snapshot; try again",
         "removed" | "moved" => "A sensitive field moved during the snapshot; try again",
         "restyled" => "The page restyled a hidden sensitive field during the snapshot",
         "missing" => "The snapshot mask transaction was lost",
