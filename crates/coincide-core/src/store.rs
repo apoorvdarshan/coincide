@@ -39,6 +39,8 @@ mod terminal_context_store;
 #[path = "thread_bulk_store.rs"]
 mod thread_bulk_store;
 pub(crate) use thread_bulk_store::FlagRow;
+#[path = "store_inspector_preferences.rs"]
+mod inspector_preferences;
 #[path = "store_native_ui_selection.rs"]
 mod native_ui_selection;
 #[path = "store_sidebar_lifecycle.rs"]

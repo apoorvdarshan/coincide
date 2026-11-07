@@ -1,14 +1,37 @@
 //! Explicit native microphone lifecycle. Construction has no OS effects.
-//! macOS native implementation is opt-in; no Apple Speech, inference or sending.
+//! Native implementations are opt-in; no Apple Speech, inference or sending.
 use coincide_core::dictation::transcription::encode_wav;
 use std::{collections::VecDeque, ops::Range};
 use uuid::Uuid;
 const SAMPLE_RATE: usize = 16_000;
 const MAX_SECONDS: usize = 600;
+#[cfg(any(
+    test,
+    all(
+        feature = "native-microphone",
+        any(target_os = "windows", target_os = "linux")
+    )
+))]
+#[path = "microphone_samples.rs"]
+mod samples;
+
+/// Build capability only; never queries devices or asks for OS permission.
+pub const fn compiled_backend_available() -> bool {
+    cfg!(all(
+        feature = "native-microphone",
+        any(
+            target_os = "macos",
+            target_os = "windows",
+            target_os = "linux"
+        )
+    ))
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Permission {
     NotDetermined,
     Authorized,
+    /// Explicitly armed; actual WASAPI/ALSA access is checked on Record.
+    Ready,
     Denied,
     Restricted,
     Unavailable,
@@ -86,9 +109,15 @@ pub struct Microphone {
 }
 impl Microphone {
     pub fn new() -> Self {
-        #[cfg(all(target_os = "macos", feature = "native-microphone"))]
+        #[cfg(all(
+            feature = "native-microphone",
+            any(target_os = "macos", target_os = "windows", target_os = "linux")
+        ))]
         let backend = platform::Native::default();
-        #[cfg(not(all(target_os = "macos", feature = "native-microphone")))]
+        #[cfg(not(all(
+            feature = "native-microphone",
+            any(target_os = "macos", target_os = "windows", target_os = "linux")
+        )))]
         let backend = platform::Native;
         Self::with_backend(Box::new(backend))
     }
@@ -145,7 +174,7 @@ impl Microphone {
             return Err(CaptureError::Unavailable);
         }
         match self.refresh_permission() {
-            Permission::Authorized => {}
+            Permission::Authorized | Permission::Ready => {}
             Permission::Unavailable => return Err(CaptureError::Unavailable),
             _ => return Err(CaptureError::PermissionRequired),
         }
@@ -251,7 +280,17 @@ impl Drop for Microphone {
     }
 }
 
-#[cfg(not(all(target_os = "macos", feature = "native-microphone")))]
+#[cfg(all(
+    feature = "native-microphone",
+    any(target_os = "windows", target_os = "linux")
+))]
+#[path = "microphone_cpal.rs"]
+mod platform;
+
+#[cfg(not(all(
+    feature = "native-microphone",
+    any(target_os = "macos", target_os = "windows", target_os = "linux")
+)))]
 mod platform {
     use super::*;
     #[derive(Default)]
@@ -594,7 +633,10 @@ mod tests {
         assert!(controller.poll().is_none());
         assert_eq!(state.borrow().starts, 0);
     }
-    #[cfg(not(all(target_os = "macos", feature = "native-microphone")))]
+    #[cfg(not(all(
+        feature = "native-microphone",
+        any(target_os = "macos", target_os = "windows", target_os = "linux")
+    )))]
     #[::core::prelude::v1::test]
     fn default_platform_cannot_request_permission_or_record() {
         let mut controller = Microphone::new();

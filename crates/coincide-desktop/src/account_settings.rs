@@ -224,7 +224,6 @@ impl Coincide {
             && self.provider_settings.open
             && self.provider_settings.codex_open
             && !self.session_import_open
-            && !self.workspace_open
             && !self.command_palette.read(cx).is_open();
         let state = &mut self.provider_settings.codex;
         if !visible {

@@ -341,16 +341,17 @@ impl Coincide {
                                     let latest = latest.clone();
                                     menu = menu.item(PopupMenuItem::new("Schedule…").on_click(
                                         move |_, window, cx| {
-                                            let _ =
-                                                parent.update(cx, |this, cx| {
-                                                    this.select(&latest, window, cx);
-                                                    if this.selected.as_ref().is_some_and(
-                                                        |thread| thread["id"] == latest,
-                                                    ) {
-                                                        this.open_conversation_schedules(cx);
-                                                        this.open_schedule_editor(None, window, cx);
-                                                    }
-                                                });
+                                            let _ = parent.update(cx, |this, cx| {
+                                                this.select(&latest, window, cx);
+                                                if this
+                                                    .selected
+                                                    .as_ref()
+                                                    .is_some_and(|thread| thread["id"] == latest)
+                                                {
+                                                    this.open_conversation_schedules(window, cx);
+                                                    this.open_schedule_editor(None, window, cx);
+                                                }
+                                            });
                                         },
                                     ));
                                 }

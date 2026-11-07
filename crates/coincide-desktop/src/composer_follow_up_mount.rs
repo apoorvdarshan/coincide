@@ -67,12 +67,7 @@ impl Coincide {
             }))
     }
     fn composer_send_visible(&self) -> bool {
-        self.selected.is_some()
-            && !self.settings_in_main_window()
-            && !self.schedules_open
-            && !self.workspace_open
-            && !self.session_import_open
-            && !self.composer_files.opened
+        self.chat_visible() && !self.composer_files.opened
     }
     pub(super) fn follow_up_button(&self, cx: &mut Context<Self>) -> AnyElement {
         let Some(thread) = self.selected.as_ref() else {

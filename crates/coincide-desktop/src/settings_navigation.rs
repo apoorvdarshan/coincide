@@ -426,12 +426,15 @@ impl Coincide {
                     .border_color(self.color(0x29303d))
                     .child(Input::new(&self.settings_search))
                     .child(
-                        div()
-                            .id("settings-destinations")
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_y_scroll()
-                            .child(navigation),
+                        self.settings_scroll.frame(
+                            "navigation",
+                            div()
+                                .id("settings-destinations")
+                                .flex_1()
+                                .min_h_0()
+                                .overflow_y_scroll()
+                                .child(navigation),
+                        ),
                     )
                     .child(resize),
             )
@@ -813,12 +816,14 @@ impl Coincide {
         }
         let mut catalogs = self.provider_configuration_panel.read(cx).catalogs();
         catalogs.push(self.selection_ui.catalog.clone());
-        pane.child(executable)
-            .child(self.models_settings_panel(&catalogs, cx))
-            .child(environment)
-            .child(setup)
-            .child(div().text_sm().child(self.settings_status.clone()))
-            .into_any_element()
+        self.settings_scroll.frame(
+            provider_key(provider),
+            pane.child(executable)
+                .child(self.models_settings_panel(&catalogs, cx))
+                .child(environment)
+                .child(setup)
+                .child(div().text_sm().child(self.settings_status.clone())),
+        )
     }
 }
 

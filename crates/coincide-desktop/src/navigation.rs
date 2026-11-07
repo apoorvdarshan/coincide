@@ -312,10 +312,7 @@ impl Coincide {
             snoozed: self.show_snoozed,
             available: self.thread_list_open
                 && self.microphone_window_active
-                && !self.settings_in_main_window()
-                && !self.schedules_open
-                && !self.session_import_open
-                && !self.workspace_open
+                && self.chat_route_available()
                 && !self.project_picker_open
                 && !self.command_palette.read(cx).is_open()
                 && !self.historical_image_is_open()
@@ -892,7 +889,7 @@ impl Coincide {
                                                         }
                                                         SidebarThreadAction::Move => { this.sidebar_move_review(id.clone(),cx); }
                                                         SidebarThreadAction::Delete => { this.sidebar_delete_review(id.clone(),cx); }
-                                                        SidebarThreadAction::Schedule => { this.open_conversation_schedules(cx); this.open_schedule_editor(None,window,cx); }
+                                                        SidebarThreadAction::Schedule => { this.open_conversation_schedules(window,cx); this.open_schedule_editor(None,window,cx); }
                                                         SidebarThreadAction::CopyID => cx.write_to_clipboard(ClipboardItem::new_string(id.clone())),
                                                         SidebarThreadAction::CopyPath => { if let Some(path)=this.open_folder() { cx.write_to_clipboard(ClipboardItem::new_string(path.to_string_lossy().into_owned())); } }
                                                         SidebarThreadAction::Open => { if let Some(target)=open_targets::preferred(&this.open_targets,&this.settings).cloned() { this.open_in_target(target,false,window,cx); } }

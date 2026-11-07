@@ -12,7 +12,7 @@ path = "src/main.rs"
 [features]
 default = []
 native-notifications = ["dep:objc2-user-notifications"]
-native-microphone = []
+native-microphone = ["dep:cpal"]
 native-computer-use = []
 preview-updater-helper = ["coincide-core/preview-updater-helper"]
 
@@ -25,6 +25,9 @@ anyhow.workspace = true
 serde_json.workspace = true
 sha2 = "0.11"
 uuid.workspace = true
+
+[target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
+cpal = { version = "=0.18.2", optional = true, default-features = false }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"

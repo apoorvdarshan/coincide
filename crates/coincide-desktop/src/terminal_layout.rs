@@ -29,6 +29,9 @@ fn width(share: f64, available: f64) -> f64 {
         .min(available - CHAT_MIN)
         .max(PANEL_MIN)
 }
+pub(super) fn inspector_width(share: f64, available: f64) -> f64 {
+    width(share, available)
+}
 fn height(requested: f64, available: f64) -> f64 {
     requested.min(available - 200.).max(HEIGHT_MIN)
 }
@@ -44,6 +47,7 @@ pub(super) struct State {
     height: f64,
     drag: Option<Drag>,
     error: Option<String>,
+    applied_placement: Option<Placement>,
 }
 impl Default for State {
     fn default() -> Self {
@@ -52,10 +56,18 @@ impl Default for State {
             height: 260.,
             drag: None,
             error: None,
+            applied_placement: None,
         }
     }
 }
 impl State {
+    pub(super) fn observe_placement(&mut self, placement: Placement) -> bool {
+        let changed = self
+            .applied_placement
+            .is_some_and(|previous| previous != placement);
+        self.applied_placement = Some(placement);
+        changed
+    }
     pub(super) fn load(engine: &SharedEngine) -> Self {
         let result = (|| -> Result<Value> {
             Ok(try_state(engine)?
@@ -204,7 +216,12 @@ impl Coincide {
             }
     }
     pub(super) fn ensure_terminal_space(&self, window: &mut Window) {
-        if self.terminal_on_right() && !window.is_fullscreen() && !window.is_maximized() {
+        if self.terminal_on_right() {
+            self.ensure_inspector_space(window);
+        }
+    }
+    pub(super) fn ensure_inspector_space(&self, window: &mut Window) {
+        if !window.is_fullscreen() && !window.is_maximized() {
             let available = self.terminal_available_width(window);
             if available < PANEL_MIN + CHAT_MIN {
                 let size = window.viewport_size();
@@ -226,6 +243,35 @@ impl Coincide {
             return None;
         }
         let workspace = self.terminal_workspaces.get(id)?.clone();
+        self.shared_panel_surface(
+            right,
+            if right {
+                "terminal-right-surface"
+            } else {
+                "terminal-workspace-surface"
+            },
+            workspace.into_any_element(),
+            window,
+            cx,
+        )
+    }
+    pub(super) fn inspector_surface(
+        &self,
+        id: &'static str,
+        body: AnyElement,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        self.shared_panel_surface(true, id, body, window, cx)
+    }
+    fn shared_panel_surface(
+        &self,
+        right: bool,
+        id: &'static str,
+        body: AnyElement,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let parent = cx.entity().downgrade();
         let available = if right {
             self.terminal_available_width(window)
@@ -240,7 +286,7 @@ impl Coincide {
             })
             .role(Role::Splitter)
             .aria_label(if right {
-                "Resize terminal panel width"
+                "Resize inspector width"
             } else {
                 "Resize terminal panel height"
             })
@@ -272,19 +318,17 @@ impl Coincide {
             });
         Some(
             div()
-                .id(if right {
-                    "terminal-right-surface"
-                } else {
-                    "terminal-workspace-surface"
-                })
+                .id(id)
                 .flex()
                 .min_w_0()
                 .min_h_0()
                 .overflow_hidden()
                 .when(right, |view| {
-                    view.w(px(width(self.terminal_layout.share, available) as f32))
-                        .h_full()
-                        .flex_shrink_0()
+                    view.w(px(
+                        inspector_width(self.terminal_layout.share, available) as f32
+                    ))
+                    .h_full()
+                    .flex_shrink_0()
                 })
                 .when(!right, |view| {
                     view.flex_col()
@@ -314,7 +358,7 @@ impl Coincide {
                     cx.listener(|this, _, _, cx| this.finish_terminal_resize(cx)),
                 )
                 .child(handle)
-                .child(div().flex_1().min_h_0().min_w_0().child(workspace))
+                .child(div().flex_1().min_h_0().min_w_0().child(body))
                 .when_some(self.terminal_layout.error.clone(), |view, error| {
                     view.child(div().text_xs().child(error))
                 })
@@ -334,13 +378,13 @@ impl Coincide {
         cx.notify();
     }
     pub(super) fn sync_terminal_resize(&mut self, window: &Window) {
-        if self
-            .terminal_layout
-            .drag
-            .as_ref()
-            .is_some_and(|drag| drag.right != self.terminal_on_right())
-            || self.terminal_visible_thread.is_none()
-            || !window.is_window_active()
+        if self.terminal_layout.drag.as_ref().is_some_and(|drag| {
+            if drag.right {
+                self.chat_inspector_panel().is_none()
+            } else {
+                self.terminal_on_right() || self.terminal_visible_thread.is_none()
+            }
+        }) || !window.is_window_active()
             || self.media.close_requested
             || self.media.shutdown_requested
         {
