@@ -138,8 +138,9 @@ pub(super) fn focus(view: &wry::WebView) -> Result<()> {
         && owned > 1
         && let Ok((connection, _)) = x11rb::connect(None)
     {
+        use x11rb::connection::Connection;
         use x11rb::protocol::xproto::{ConnectionExt, InputFocus};
-        let _ = connection.set_input_focus(InputFocus::Parent, owned, x11rb::CURRENT_TIME);
+        let _ = connection.set_input_focus(InputFocus::PARENT, owned, x11rb::CURRENT_TIME);
         let _ = connection.flush();
     }
     widget.display().sync();
