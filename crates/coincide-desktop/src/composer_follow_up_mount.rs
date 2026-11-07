@@ -156,6 +156,10 @@ impl Coincide {
         cx.notify();
     }
     pub(super) fn send_follow_up(&mut self, alternate: bool, cx: &mut Context<Self>) {
+        if self.voice.preview.is_some() {
+            self.cancel_composer_dictation(cx);
+        }
+
         if !self.flush_pending_drafts() {
             self.status = "Draft persistence is recovering; message retained.".into();
             cx.notify();
@@ -238,7 +242,7 @@ impl Coincide {
                             .selected
                             .as_ref()
                             .is_some_and(|thread| thread["id"] == delivery.thread)
-                        && self.composer.read(cx).value().as_ref() == delivery.draft
+                        && self.committed_composer_draft(cx) == delivery.draft
                         && let Ok(thread) = call(
                             &self.engine,
                             "threads.read",

@@ -9,6 +9,14 @@ pub(super) struct SendIntent {
     voice: Value,
 }
 impl SendIntent {
+    pub(super) fn producer_matches(
+        &self,
+        generation: u64,
+        binding: &transcription_settings::ComposerBinding,
+        voice: &Value,
+    ) -> bool {
+        self.generation == generation && self.target == *binding && self.voice == *voice
+    }
     pub(super) fn accepts(&self, event: &transcription_settings::TextReady, voice: &Value) -> bool {
         self.send
             && !event.text.trim().is_empty()
@@ -25,6 +33,8 @@ pub(super) struct State {
     was_active: bool,
     interceptor: Option<Subscription>,
     pub ticket: Option<SendIntent>,
+    pub(super) preview: Option<dictation_preview::Preview>,
+    pub(super) restored_preview: Option<gpui_base::input::NativeTextRevision>,
 }
 impl Default for State {
     fn default() -> Self {
@@ -36,10 +46,15 @@ impl Default for State {
             was_active: false,
             interceptor: None,
             ticket: None,
+            preview: None,
+            restored_preview: None,
         }
     }
 }
 impl State {
+    pub(super) fn recording_ended(&mut self) {
+        self.machine.recording_ended();
+    }
     pub(super) fn close(&mut self) {
         self.interceptor = None;
         self.ticket = None;
@@ -114,6 +129,17 @@ impl Coincide {
         if !self.voice_target_available(window, cx) {
             return;
         }
+        if self.voice.preview.is_some() {
+            self.cancel_composer_dictation(cx);
+        }
+        if !self.flush_pending_drafts() {
+            self.status = "Save the current draft before dictating; your text was retained.".into();
+            cx.notify();
+            return;
+        }
+        if self.composer_files.opened {
+            self.close_composer_file_picker(window, cx);
+        }
         self.microphone_window_active = true;
         self.microphone_settings_active = false;
         let focus = self.composer.read(cx).focus_handle(cx).clone();
@@ -140,14 +166,15 @@ impl Coincide {
             .microphone_panel
             .update(cx, |panel, cx| panel.begin_dictation(cx));
         self.voice.ticket = Some(SendIntent {
-            target: binding,
+            target: binding.clone(),
             generation,
             send: voice.sends_when_stopped,
             voice: self.settings.get("voice").cloned().unwrap_or(Value::Null),
         });
+        self.capture_dictation_preview(binding, generation, cx);
         self.voice.machine.recording_started();
     }
-    fn voice_target_available(&self, window: &Window, cx: &Context<Self>) -> bool {
+    pub(super) fn voice_target_available(&self, window: &Window, cx: &Context<Self>) -> bool {
         if !microphone::compiled_backend_available()
             || window.window_handle().window_id() != self.main_window.window_id()
             || !window.is_window_active()
@@ -174,8 +201,7 @@ impl Coincide {
                 .microphone_panel
                 .update(cx, |p, cx| p.stop_dictation(cx)),
             Action::Cancel => {
-                self.voice.ticket = None;
-                self.microphone_panel.update(cx, |p, cx| p.cancel(cx));
+                self.cancel_composer_dictation(cx);
             }
             Action::ScheduleHoldCheck => window.request_animation_frame(),
             Action::None => {}
@@ -291,10 +317,7 @@ impl Coincide {
             && event.keystroke.key == "escape"
             && self.microphone_panel.read(cx).dictation_active()
         {
-            self.voice.ticket = None;
-            self.voice.machine.recording_ended();
-            self.microphone_panel
-                .update(cx, |panel, cx| panel.cancel(cx));
+            self.cancel_composer_dictation(cx);
             cx.stop_propagation();
             return true;
         }

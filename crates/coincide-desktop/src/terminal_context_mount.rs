@@ -36,6 +36,9 @@ impl Coincide {
             }
 
             TerminalContextEvent::Requested(request) => {
+                if self.voice.preview.is_some() {
+                    self.cancel_composer_dictation(cx);
+                }
                 let id = workspace.read(cx).thread_id().to_owned();
                 let current = self.selected.as_ref().filter(|thread| thread["id"] == id);
                 if !window.is_window_active()
@@ -83,7 +86,7 @@ impl Coincide {
                         if *fresh
                             && current
                             && !self.pending_drafts.contains_key(&baseline.thread)
-                            && self.composer.read(cx).value().as_ref() == baseline.draft
+                            && self.committed_composer_draft(cx) == baseline.draft
                             && self.terminal_visible_thread.as_deref()
                                 == Some(baseline.thread.as_str())
                             && window.is_window_active()
