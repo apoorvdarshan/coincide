@@ -184,7 +184,7 @@ impl SessionImportPanel {
                 cx.background_executor()
                     .timer(Duration::from_millis(100))
                     .await;
-                if this.update_in(cx, |this, _, cx| this.poll(cx)).is_err() {
+                if this.update(cx, |this, cx| this.poll(cx)).is_err() {
                     break;
                 }
             }
