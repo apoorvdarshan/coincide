@@ -496,6 +496,144 @@ fn checkout_removes_its_worktree_when_submodules_fail_and_honors_cancellation() 
     assert_eq!(worktree_count(&fixture.project), 1);
 }
 
+/// The lock file a worktree's checkout holds while it writes the index.
+fn index_lock(worktree: &Path) -> PathBuf {
+    let args = [
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-path",
+        "index.lock",
+    ];
+    PathBuf::from(git(worktree, &args))
+}
+
+#[test]
+fn checkout_replaces_a_worktree_it_never_finished_once_no_other_checkout_owns_it() {
+    let fixture = fixture(false);
+    let mut gh = Gh::new([pr(7, &fixture.feature, "feature", None)]);
+    let source = source(&fixture, 7, &fixture.feature);
+    // What a checkout stopped partway leaves: its lock, the index lock of the
+    // killed checkout and a half-written folder, on the branch it created.
+    let left = source
+        .storage
+        .join("worktrees")
+        .join("project")
+        .join("feature");
+    git(
+        &fixture.project,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "--lock",
+            "--reason",
+            UNFINISHED,
+            "--track",
+            "-b",
+            "feature",
+            "--",
+            &slash(&left),
+            "origin/feature",
+        ],
+    );
+    let index = index_lock(&left);
+    fs::write(&index, "").unwrap();
+    fs::write(left.join("partial.txt"), "partial\n").unwrap();
+    // A checkout of the branch still running in this process owns it.
+    let listed = git(&fixture.project, &["worktree", "list", "--porcelain", "-z"]);
+    let main = parse_worktrees(listed.as_bytes()).unwrap().remove(0).path;
+    let claim = Claim::take(&main, "feature").unwrap();
+    assert_eq!(
+        failure(run(&source, &mut gh)),
+        Failure::new(
+            "Pull request #7 is already being checked out.",
+            Some("Wait for it to finish, then try again.".into()),
+        )
+    );
+    assert!(left.join("partial.txt").exists());
+    drop(claim);
+    let checkout = run(&source, &mut gh).unwrap();
+    assert!(!checkout.reused);
+    assert_eq!(checkout.path, left.canonicalize().unwrap());
+    assert!(!left.join("partial.txt").exists());
+    assert!(!index.exists());
+    assert_eq!(git(&checkout.path, &["rev-parse", "HEAD"]), fixture.feature);
+    assert_eq!(
+        config(&checkout.path, "branch.feature.merge"),
+        "refs/heads/feature"
+    );
+    assert_eq!(
+        config(&checkout.path, "branch.feature.coincide-merge-base"),
+        "main"
+    );
+    // A finished checkout is handed out unlocked, and reused from then on.
+    let listed = git(&fixture.project, &["worktree", "list", "--porcelain"]);
+    assert!(!listed.contains("locked"), "{listed}");
+    assert!(run(&source, &mut gh).unwrap().reused);
+    assert_eq!(worktree_count(&fixture.project), 2);
+    assert_project_untouched(&fixture);
+}
+
+#[test]
+fn checkout_refuses_a_worktree_git_is_still_making_and_discard_overrides_its_lock() {
+    let fixture = fixture(false);
+    let mut gh = Gh::new([pr(7, &fixture.feature, "feature", None)]);
+    let source = source(&fixture, 7, &fixture.feature);
+    let other = fixture.project.parent().unwrap().join("other");
+    let other_text = slash(&other);
+    git(
+        &fixture.project,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "--track",
+            "-b",
+            "feature",
+            "--",
+            &other_text,
+            "origin/feature",
+        ],
+    );
+    // The user's own lock (a removable drive, say) does not stop reuse.
+    let lock = |reason: &str| {
+        let args = [
+            "worktree",
+            "lock",
+            "--reason",
+            reason,
+            "--",
+            other_text.as_str(),
+        ];
+        git(&fixture.project, &args);
+    };
+    lock("on a removable drive");
+    let reused = run(&source, &mut gh).unwrap();
+    assert!(reused.reused);
+    assert_eq!(reused.path, other.canonicalize().unwrap());
+    git(&fixture.project, &["worktree", "unlock", "--", &other_text]);
+    // Git's own lock while `worktree add` runs, with its checkout's index lock.
+    lock("initializing");
+    fs::write(index_lock(&other), "").unwrap();
+    let refused = failure(run(&source, &mut gh));
+    assert_eq!(
+        refused.message,
+        "Pull request #7’s branch is in a worktree Git is still creating."
+    );
+    assert!(other.join("feature.txt").exists());
+    // Cleanup after a cancelled or timed-out `worktree add` overrides its lock.
+    let cancelled = AtomicBool::new(true);
+    let runner = Git::new(&cancelled, &source.gh).unwrap();
+    discard(
+        &runner,
+        &fixture.project,
+        &external_git_path(&other).unwrap(),
+    );
+    assert!(!other.exists());
+    assert_eq!(worktree_count(&fixture.project), 1);
+    assert_project_untouched(&fixture);
+}
+
 #[test]
 fn checkout_branch_names_remote_urls_and_messages_match_swift_and_gh() {
     assert_eq!(

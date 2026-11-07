@@ -1,10 +1,11 @@
 //! Native-only GitHub PR checkout (Swift PullRequestService.prepareWorktree).
 //! No dispatcher route or serialized authority. A worktree that already has the
-//! PR's branch is reused as it is; the project folder having it is an error.
-//! Otherwise the PR head is fetched the way `gh pr checkout` does (the head
-//! repository's remote, else the base repository's `refs/pull/<n>/head`) and a
-//! new linked worktree is created on the branch. Neither the project folder nor
-//! a reused worktree is ever switched, reset or cleaned, so their changes stay.
+//! PR's branch is reused as it is, unless a checkout never finished it; the
+//! project folder having it is an error. Otherwise the PR head is fetched the
+//! way `gh pr checkout` does (the head repository's remote, else the base
+//! repository's `refs/pull/<n>/head`) and a new linked worktree is created on
+//! the branch. Neither the project folder nor a reused worktree is ever
+//! switched, reset or cleaned, so their changes stay.
 use crate::{
     agent::{OwnedChild, native_instruction_git::StoreSource},
     workspace::{external_git_directory, external_git_path},
@@ -17,7 +18,10 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        Mutex, PoisonError,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -27,7 +31,7 @@ mod tests;
 
 const OUTPUT: usize = 3 * 1024 * 1024;
 const QUICK: Duration = Duration::from_secs(30);
-// Swift gives `worktree add` 300 s and `gh pr checkout` 600 s.
+// Swift gives `worktree add` and `worktree remove` 300 s, `gh pr checkout` 600 s.
 const CREATE: Duration = Duration::from_secs(300);
 const NETWORK: Duration = Duration::from_secs(600);
 const FIELDS: &str = "number,url,state,headRefOid,headRefName,baseRefName,isCrossRepository,headRepository,headRepositoryOwner,maintainerCanModify";
@@ -38,6 +42,10 @@ pub const SETUP: &str =
     "Install the GitHub CLI (gh) and run “gh auth login” to see this repository’s pull requests.";
 const INDEX_LOCKED: &str =
     "Git's index is locked. Wait for other Git operations to finish, then try again.";
+/// The lock `worktree add` keeps until the checkout is finished. A worktree
+/// still carrying it was never handed to a thread (the app quit or Git was
+/// killed partway), so the next checkout of its branch replaces it.
+const UNFINISHED: &str = "Coincide is still checking out this pull request";
 
 /// Native Engine capture: the conversation's project and repository root, the
 /// GitHub CLI captured by read-service configuration and the branch prefix.
@@ -336,6 +344,7 @@ struct Worktree {
     path: PathBuf,
     head: Option<String>,
     branch: Option<String>,
+    locked: Option<String>,
     main: bool,
 }
 fn parse_worktrees(bytes: &[u8]) -> Result<Vec<Worktree>> {
@@ -348,6 +357,7 @@ fn parse_worktrees(bytes: &[u8]) -> Result<Vec<Worktree>> {
                 path: PathBuf::from(path),
                 head: None,
                 branch: None,
+                locked: None,
                 main,
             });
         } else if let Some(current) = worktrees.last_mut() {
@@ -355,10 +365,37 @@ fn parse_worktrees(bytes: &[u8]) -> Result<Vec<Worktree>> {
                 current.head = Some(head.to_owned());
             } else if let Some(branch) = field.strip_prefix("branch ") {
                 current.branch = Some(branch.strip_prefix("refs/heads/").unwrap_or(branch).into());
+            } else if field == "locked" {
+                current.locked = Some(String::new());
+            } else if let Some(reason) = field.strip_prefix("locked ") {
+                current.locked = Some(reason.to_owned());
             }
         }
     }
     Ok(worktrees)
+}
+
+/// Checkouts running in this process, by repository and branch. A second one
+/// of the same branch is refused, so it never replaces a worktree the first is
+/// still making.
+static CLAIMS: Mutex<Vec<(PathBuf, String)>> = Mutex::new(Vec::new());
+struct Claim((PathBuf, String));
+impl Claim {
+    fn take(repository: &Path, branch: &str) -> Option<Self> {
+        let key = (repository.to_owned(), branch.to_owned());
+        let mut claims = CLAIMS.lock().unwrap_or_else(PoisonError::into_inner);
+        if claims.contains(&key) {
+            return None;
+        }
+        claims.push(key.clone());
+        Some(Self(key))
+    }
+}
+impl Drop for Claim {
+    fn drop(&mut self) {
+        let mut claims = CLAIMS.lock().unwrap_or_else(PoisonError::into_inner);
+        claims.retain(|claim| claim != &self.0);
+    }
 }
 
 /// Swift GitCLI.failed: Git's own diagnostic lines, without hints, and with
@@ -758,6 +795,12 @@ fn prepare(
         .into());
     }
     let branch = local_branch(pr.cross, number, &pr.head_branch, &source.prefix);
+    let _claim = Claim::take(&main.path, &branch).ok_or_else(|| {
+        Failure::new(
+            format!("Pull request #{number} is already being checked out."),
+            Some("Wait for it to finish, then try again.".into()),
+        )
+    })?;
     if let Some(existing) = worktrees
         .iter()
         .find(|worktree| worktree.branch.as_deref() == Some(branch.as_str()))
@@ -770,18 +813,43 @@ fn prepare(
             )
             .into());
         }
-        let path = existing.path.canonicalize().map_err(|_| {
-            Failure::new(
-                format!("Pull request #{number}’s branch is checked out in a worktree that no longer exists."),
-                Some(format!("Remove or prune the worktree at {}, then try again.", existing.path.display())),
-            )
-        })?;
-        return Ok(Checkout {
-            path,
-            branch,
-            reused: true,
-            number,
-        });
+        match existing.locked.as_deref() {
+            // A checkout that never finished: nothing in it was handed out.
+            Some(UNFINISHED) => {
+                let args = ["remove", "--force", "--force"];
+                let removed = worktree(git, &root, &args, existing.path.as_os_str(), CREATE)?;
+                if !removed.success() {
+                    return Err(Failure::checkout(number, failure_detail(&removed)).into());
+                }
+            }
+            // Git's own lock while a `worktree add` outside Coincide runs.
+            Some("initializing") => {
+                return Err(Failure::new(
+                    format!(
+                        "Pull request #{number}’s branch is in a worktree Git is still creating."
+                    ),
+                    Some(format!(
+                        "Wait for Git to finish, or remove the worktree at {}, then try again.",
+                        existing.path.display()
+                    )),
+                )
+                .into());
+            }
+            _ => {
+                let path = existing.path.canonicalize().map_err(|_| {
+                    Failure::new(
+                        format!("Pull request #{number}’s branch is checked out in a worktree that no longer exists."),
+                        Some(format!("Remove or prune the worktree at {}, then try again.", existing.path.display())),
+                    )
+                })?;
+                return Ok(Checkout {
+                    path,
+                    branch,
+                    reused: true,
+                    number,
+                });
+            }
+        }
     }
     if pr.head != source.head {
         return Err(Failure::changed(number).into());
@@ -956,7 +1024,7 @@ impl Target<'_> {
             (None, true) => (&["--track", "-b", branch][..], self.fetched_ref),
             (None, false) => (&["--no-track", "-b", branch][..], fetched.as_str()),
         };
-        let mut add = ["worktree", "add"]
+        let mut add = ["worktree", "add", "--lock", "--reason", UNFINISHED]
             .iter()
             .chain(options)
             .map(OsStr::new)
@@ -973,7 +1041,16 @@ impl Target<'_> {
         if !added.success() {
             return Err(Failure::create(failure_detail(&added)).into());
         }
-        if let Err(error) = self.finish(&path, gh, protocol) {
+        // Unlocked only once it is ready, so a checkout that stops before then
+        // leaves a worktree the next one replaces rather than reuses.
+        let finished = self.finish(&path, gh, protocol).and_then(|()| {
+            let unlocked = worktree(git, root, &["unlock"], &destination, QUICK)?;
+            if !unlocked.success() {
+                return Err(Failure::create(failure_detail(&unlocked)).into());
+            }
+            Ok(())
+        });
+        if let Err(error) = finished {
             // Nothing was made in it yet, so it goes without asking.
             discard(git, root, &destination);
             return Err(error);
@@ -1049,12 +1126,24 @@ impl Target<'_> {
         Ok(())
     }
 }
-fn discard(git: &Git<'_>, root: &Path, destination: &OsStr) {
-    let args = ["worktree", "remove", "--force", "--"].map(OsStr::new);
-    let args = args
+/// `git worktree <args> -- <path>` from the repository root.
+fn worktree(
+    git: &Git<'_>,
+    root: &Path,
+    args: &[&str],
+    path: &OsStr,
+    timeout: Duration,
+) -> Result<Output> {
+    let mut all = ["worktree"]
         .iter()
-        .copied()
-        .chain([destination])
+        .chain(args)
+        .map(OsStr::new)
         .collect::<Vec<_>>();
-    let _ = git.uncancellable().execute(root, &[], &args, QUICK);
+    all.extend([OsStr::new("--"), path]);
+    git.execute(root, &[], &all, timeout)
+}
+fn discard(git: &Git<'_>, root: &Path, destination: &OsStr) {
+    // The second --force overrides the lock a killed `worktree add` leaves.
+    let args = ["remove", "--force", "--force"];
+    let _ = worktree(&git.uncancellable(), root, &args, destination, CREATE);
 }
