@@ -13,13 +13,80 @@ pub struct NativeLoginAccount {
     pub home: PathBuf,
 }
 #[derive(Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-enum Authentication {
+pub enum NativeAccountAuthentication {
     #[default]
     Login,
     ApiKey,
 }
+type Authentication = NativeAccountAuthentication;
 fn login_mode(mode: &Authentication) -> bool {
     *mode == Authentication::Login
+}
+#[derive(Clone)]
+pub struct NativeProviderAccount {
+    pub id: String,
+    pub provider: String,
+    pub name: String,
+    pub revision: String,
+    pub authentication: NativeAccountAuthentication,
+    pub key_variable: Option<String>,
+    pub has_key: bool,
+}
+fn ordered_ids(payload: &Value) -> Result<Vec<String>> {
+    let accounts = payload["accounts"]
+        .as_object()
+        .context("Native account registry is malformed")?;
+    let mut seen = std::collections::HashSet::new();
+    let mut ids = Vec::new();
+    if let Some(order) = payload.get("order") {
+        let order = order
+            .as_array()
+            .context("Native account order is malformed")?;
+        ensure!(order.len() <= 64, "Native account order exceeds its bound");
+        for id in order {
+            let id = id
+                .as_str()
+                .context("Native account order contains an invalid identity")?;
+            ensure!(
+                seen.insert(id.to_owned()),
+                "Native account order contains a duplicate identity"
+            );
+            if accounts.contains_key(id) {
+                ids.push(id.to_owned());
+            }
+        }
+    }
+    for id in accounts.keys() {
+        if seen.insert(id.clone()) {
+            ids.push(id.clone());
+        }
+    }
+    Ok(ids)
+}
+fn append_order(payload: &mut Value, id: &str) -> Result<()> {
+    let known = ordered_ids(payload)?;
+    let mut order = payload
+        .get("order")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut seen = order
+        .iter()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect::<std::collections::HashSet<_>>();
+    for id in known {
+        if seen.insert(id.clone()) {
+            order.push(json!(id));
+        }
+    }
+    ensure!(
+        seen.insert(id.into()) && order.len() < 64,
+        "Native account order is full or duplicated"
+    );
+    order.push(json!(id));
+    payload["order"] = json!(order);
+    Ok(())
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub(super) struct Account {
@@ -457,6 +524,49 @@ impl Engine {
         );
         Ok(())
     }
+    pub fn native_provider_accounts(&self, provider: &str) -> Result<Vec<NativeProviderAccount>> {
+        provider_id(provider)?;
+        let Some(owner) = Private::open(&self.store, false)? else {
+            return Ok(Vec::new());
+        };
+        let raw = self.store.native_accounts_payload(provider)?;
+        let payload = read(&owner, provider, raw.as_deref())?;
+        ordered_ids(&payload)?
+            .iter()
+            .map(|id| {
+                let row = account(&payload, provider, id)?;
+                if row.authentication == Authentication::ApiKey {
+                    ensure!(
+                        row.key_variable
+                            .as_deref()
+                            .is_some_and(|variable| keys::key_choices(provider).is_ok_and(
+                                |choices| choices.iter().any(|(key, _)| *key == variable)
+                            )),
+                        "Native key service is invalid"
+                    );
+                }
+                if let Some(slot) = &row.key {
+                    ensure!(
+                        slot.belongs_to(
+                            provider,
+                            &row.id,
+                            account_secret_store::SecretPurpose::ApiKey
+                        ),
+                        "Account key belongs to another account"
+                    );
+                }
+                Ok(NativeProviderAccount {
+                    id: row.id,
+                    provider: row.provider,
+                    name: row.name,
+                    revision: row.revision,
+                    authentication: row.authentication,
+                    key_variable: row.key_variable,
+                    has_key: row.key.is_some(),
+                })
+            })
+            .collect()
+    }
     pub fn native_login_accounts(&self, provider: &str) -> Result<Vec<NativeLoginAccount>> {
         supported(provider)?;
         let Some(owner) = Private::open(&self.store, false)? else {
@@ -464,10 +574,8 @@ impl Engine {
         };
         let raw = self.store.native_accounts_payload(provider)?;
         let payload = read(&owner, provider, raw.as_deref())?;
-        payload["accounts"]
-            .as_object()
-            .unwrap()
-            .keys()
+        ordered_ids(&payload)?
+            .iter()
             .map(|id| account(&payload, provider, id))
             .collect::<Result<Vec<_>>>()?
             .into_iter()
@@ -496,6 +604,7 @@ impl Engine {
             "Native account limit reached"
         );
         let id = Uuid::new_v4().to_string();
+        append_order(&mut payload, &id)?;
         let root = self.store.data_directory()?;
         let (home, home_identity, guard_identity) = create_home(&root, provider, &id)?;
         let account = Account {
@@ -1061,6 +1170,36 @@ mod tests {
         );
         thread["selection"]["accountID"] = json!(Uuid::new_v4().to_string());
         assert!(!engine.routes_native_provider_account(&thread).unwrap());
+    }
+    #[test]
+    fn mixed_native_accounts_keep_creation_order_after_mode_and_name_changes() {
+        let (_root, mut engine, _binary) = fixture("grok");
+        let first = engine.create_native_login_account("grok", "First").unwrap();
+        let second = engine
+            .create_native_key_account("grok", "Second", "XAI_API_KEY")
+            .unwrap();
+        let third = engine.create_native_login_account("grok", "Third").unwrap();
+        engine
+            .set_native_provider_account_auth(
+                "grok",
+                &first.id,
+                &first.revision,
+                "apiKey",
+                Some("XAI_API_KEY"),
+            )
+            .unwrap();
+        engine
+            .rename_native_login_account("grok", &third.id, &third.revision, "Renamed")
+            .unwrap();
+        assert_eq!(
+            engine
+                .native_provider_accounts("grok")
+                .unwrap()
+                .iter()
+                .map(|row| row.id.clone())
+                .collect::<Vec<_>>(),
+            vec![first.id, second.id, third.id]
+        );
     }
     #[test]
     fn global_grok_auth_and_configuration_cannot_override_named_login_home() {

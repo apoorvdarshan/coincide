@@ -89,10 +89,8 @@ impl Engine {
         };
         let raw = self.store.native_accounts_payload(provider)?;
         let payload = read(&owner, provider, raw.as_deref())?;
-        payload["accounts"]
-            .as_object()
-            .unwrap()
-            .keys()
+        ordered_ids(&payload)?
+            .iter()
             .map(|id| account(&payload, provider, id))
             .collect::<Result<Vec<_>>>()?
             .into_iter()
@@ -127,6 +125,7 @@ impl Engine {
             "Native account limit reached"
         );
         let id = Uuid::new_v4().to_string();
+        append_order(&mut payload, &id)?;
         let (home, home_identity, guard_identity) =
             create_home(&self.store.data_directory()?, provider, &id)?;
         let account = Account {
