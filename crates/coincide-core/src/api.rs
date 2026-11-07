@@ -438,6 +438,9 @@ impl Engine {
         if git_actions_api::METHODS.contains(&method) {
             return self.git_actions_command(method, p);
         }
+        if terminal_api::METHODS.contains(&method) {
+            return self.terminal_command(method, p);
+        }
         if checkpoint_api::METHODS.contains(&method) {
             return self.checkpoint_command(method, p);
         }
