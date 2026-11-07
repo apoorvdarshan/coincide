@@ -1391,3 +1391,30 @@ starts; the window, menu bar and these surfaces rendered and responded:
 
 This is a functional smoke pass, not side-by-side acceptance. No checkbox above
 is closed by it; each group still needs its documented acceptance run.
+
+## Acceptance pass 1 (2026-11-07, after #328)
+
+Functional acceptance run against the built macOS app, driven through native
+accessibility. Passed:
+
+- **Browser:** opened the preview, navigated to `https://example.com` in the
+  native webview; the tab title and address updated and the page rendered.
+- **Terminal:** opened the drawer, got a live shell prompt, tabs and
+  history/page/live controls; a bot thread without a project correctly asks
+  for a working directory before creating a pane.
+- **Git / PR panel:** Local Git shows root, HEAD, branch, changed paths,
+  working/staged diff, staged checkpoints, worktrees and the commit/push/PR
+  action bar. Pull Requests shows Diff, Local Git, GitHub PR and inline review
+  tabs with repository entry.
+- **Schedules:** grouped by bot with recurrence, "Needs approval" and
+  "Approve in Rust".
+- **Settings:** General, Keyboard (recording mode entered), Browser, Computer
+  Use, Archive, Usage, Models panes render and navigate.
+- **Bots:** bot conversation opens with bot title, avatar, model and schedule
+  context.
+- **Usage:** pane renders under Settings.
+
+Not verifiable in this pass: keyboard rebinding key capture (the accessibility
+harness cannot deliver keystrokes to the unfocused Settings window), real
+passkey/password-manager sign-in, OS notification delivery, and any workflow
+that mutates live schedules or GitHub state. These remain open acceptance items.
