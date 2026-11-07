@@ -669,6 +669,7 @@ struct ProcessRpc<'a> {
     timeout: Duration,
     cancelled: &'a AtomicBool,
     named_account_admitted: bool,
+    _codex_home_lease: Option<crate::provider_configuration::HeldCodexHomeLease>,
 }
 #[cfg(unix)]
 impl Drop for ProcessRpc<'_> {
@@ -722,6 +723,10 @@ impl<'a> ProcessRpc<'a> {
             "Model discovery cancelled"
         );
         let started = Instant::now();
+        let home_lease = named
+            .map(|binding| binding.profile.acquire_home_lease())
+            .transpose()?
+            .flatten();
         let mut command = Command::new(&executable);
         match provider {
             "codex" => {
@@ -813,6 +818,7 @@ impl<'a> ProcessRpc<'a> {
             timeout,
             cancelled,
             named_account_admitted: false,
+            _codex_home_lease: home_lease,
         };
         for fd in [rpc.stdin.as_raw_fd(), rpc.stdout.as_raw_fd()] {
             let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };

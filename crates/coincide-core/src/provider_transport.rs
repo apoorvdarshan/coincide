@@ -82,6 +82,7 @@ pub(super) struct Transport {
     pending: VecDeque<PendingWrite>,
     queued_bytes: usize,
     sequence: u64,
+    _codex_home_lease: Option<crate::provider_configuration::HeldCodexHomeLease>,
 }
 
 struct PipeChannels {
@@ -186,6 +187,10 @@ impl Transport {
             launch.cwd.is_dir(),
             "Agent working directory does not exist"
         );
+        let home_lease = codex_profile
+            .map(|profile| profile.acquire_home_lease())
+            .transpose()?
+            .flatten();
         let mut command = Command::new(&launch.executable);
         if let Some(profile) = codex_profile {
             profile.configure(&mut command)?;
@@ -231,6 +236,7 @@ impl Transport {
             pending: VecDeque::new(),
             queued_bytes: 0,
             sequence: 0,
+            _codex_home_lease: home_lease,
         };
         if let Some(stderr) = stderr {
             let errors = tx.clone();
@@ -640,6 +646,7 @@ mod tests {
                 pending: VecDeque::new(),
                 queued_bytes: 0,
                 sequence: 0,
+                _codex_home_lease: None,
             };
             Err("synthetic pipe-worker spawn failure")
         });
@@ -667,6 +674,7 @@ mod tests {
                 pending: VecDeque::new(),
                 queued_bytes: 0,
                 sequence: 0,
+                _codex_home_lease: None,
             };
             panic!("synthetic provider startup panic");
         });
