@@ -672,9 +672,10 @@ pub(super) fn setup_configuration(
         .as_str()
         .context("Setup source missing")?
         .into();
-    let held = crate::legacy_media_service::open_regular_existing(&path)?;
+    let held = setup_source::Source::open(&path)?;
     ensure!(
-        serde_json::to_value(crate::private_fs::file_identity(&held)?)? == owner.source["identity"],
+        serde_json::to_value(crate::private_fs::file_identity(&held.file)?)?
+            == owner.source["identity"],
         "Setup source changed"
     );
     let db = rusqlite::Connection::open_with_flags(
@@ -685,7 +686,7 @@ pub(super) fn setup_configuration(
         serde_json::to_value(crate::private_fs::identity(&path)?)? == owner.source["identity"],
         "Setup source changed"
     );
-    crate::legacy_media_service::verify_database_identity(&path, &held, &db)?;
+    held.verify(&path, &db)?;
     let raw: Option<String> = db
         .query_row(
             "SELECT value FROM metadata WHERE key=?1",
@@ -693,7 +694,7 @@ pub(super) fn setup_configuration(
             |row| row.get(0),
         )
         .optional()?;
-    crate::legacy_media_service::verify_database_identity(&path, &held, &db)?;
+    held.verify(&path, &db)?;
     let payload = read(owner, &expected.provider, raw.as_deref())?;
     let current = account(&payload, &expected.provider, &expected.id)?;
     ensure!(
@@ -745,6 +746,9 @@ impl Engine {
 #[path = "native_key_accounts.rs"]
 mod keys;
 pub use keys::{NativeKeyAccount, NativeKeySave};
+
+#[path = "native_provider_setup_source.rs"]
+mod setup_source;
 
 #[cfg(test)]
 mod tests {
