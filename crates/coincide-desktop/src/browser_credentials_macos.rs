@@ -31,31 +31,15 @@ use std::{
     rc::Rc,
     sync::{
         Arc,
-        atomic::{AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{SystemTime, UNIX_EPOCH},
 };
 use wry::WebViewExtMacOS;
 
-// WebKit can retain an evaluation callback while its renderer is unresponsive.
-// Keep its secret-bearing closures bounded even if the caller times out/retries.
-static ACTIVE_FILLS: AtomicUsize = AtomicUsize::new(0);
-struct FillSlot;
-impl FillSlot {
-    fn reserve() -> Option<Self> {
-        ACTIVE_FILLS
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
-                (count < 2).then_some(count + 1)
-            })
-            .ok()
-            .map(|_| Self)
-    }
-}
-impl Drop for FillSlot {
-    fn drop(&mut self) {
-        ACTIVE_FILLS.fetch_sub(1, Ordering::AcqRel);
-    }
-}
+#[cfg(test)]
+use super::scripts::ACTIVE_FILLS;
+use super::scripts::{FILL, FillSlot, PROBE};
 type Completion = Box<dyn FnOnce(Result<(), Failure>)>;
 // Accepted against real WebKit using synthetic HTTPS-base documents; see
 // docs/rust/NATIVE_CREDENTIAL_ACCEPTANCE.md. Native approval UI remains separate.
@@ -70,6 +54,7 @@ fn runtime_supported() -> bool {
 pub struct NativeCredentialTarget {
     view: Retained<WKWebView>,
     navigation: Arc<AtomicU64>,
+    closed: Arc<AtomicBool>,
     lifetimes: Option<NativeLifetimes>,
     // Declaration order matters: view is released before this target lease.
     _view_lease: Option<NativeLease>,
@@ -79,6 +64,7 @@ impl NativeCredentialTarget {
         (runtime_supported() && MainThreadMarker::new().is_some()).then(|| Self {
             view: view.webview().into_super(),
             navigation,
+            closed: Arc::new(AtomicBool::new(false)),
             lifetimes: None,
             _view_lease: None,
         })
@@ -93,7 +79,16 @@ impl NativeCredentialTarget {
         }
         self
     }
+    pub(in super::super) fn close(&self) {
+        self.closed.store(true, Ordering::Release);
+    }
+    pub(in super::super) fn poll_ownership(&self) -> bool {
+        true
+    }
     fn matches(&self, binding: &PageBinding) -> bool {
+        if self.closed.load(Ordering::Acquire) {
+            return false;
+        }
         if self.navigation.load(Ordering::Acquire) != binding.navigation {
             return false;
         }
@@ -256,47 +251,6 @@ fn boolean_reply(value: *mut AnyObject, error: *mut NSError) -> bool {
         .and_then(|value| value.downcast_ref::<NSNumber>())
         .is_some_and(|value| value.boolValue())
 }
-const PROBE: &str = r#"
-try {
-  delete globalThis.__coincidePrivateFill;
-  if (location.origin !== expectedOrigin || window.top !== window) return false;
-  const usable = el => el instanceof HTMLInputElement && !el.disabled && !el.readOnly && el.isConnected && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
-  const inputs = [...document.querySelectorAll('input')].filter(usable);
-  const passwords = inputs.filter(el => el.type === 'password' && el.autocomplete !== 'new-password');
-  if (passwords.length > 1) return false;
-  const pass = passwords[0] || null;
-  const otps = inputs.filter(el => el.autocomplete === 'one-time-code');
-  if (hasOtp === 'yes' && otps.length > 1) return false;
-  const otp = hasOtp === 'yes' ? (otps[0] || null) : null;
-  if (pass && otp && pass.form !== otp.form) return false;
-  if (!pass && !otp) return false;
-  const scope = pass?.form || otp?.form || document;
-  let users = inputs.filter(el => scope.contains(el) && ['text','email','tel'].includes(el.type) && ['username','email'].includes(el.autocomplete));
-  if (!users.length) users = inputs.filter(el => scope.contains(el) && ['text','email'].includes(el.type) && el !== otp && /user|email|login/i.test(el.name+' '+el.id));
-  if (users.length > 1) return false;
-  const user = users[0] || null;
-  globalThis.__coincidePrivateFill = {ticket, doc:document, pass, user, otp, usable,
-    types:[pass,user,otp].map(el => el ? [el.type,el.autocomplete,el.form] : null), expires:performance.now()+9000};
-  return true;
-} catch (_) { return false; }
-"#;
-const FILL: &str = r#"
-try {
-  const binding = globalThis.__coincidePrivateFill;
-  delete globalThis.__coincidePrivateFill;
-  if (!binding || binding.ticket !== ticket || binding.doc !== document || location.origin !== expectedOrigin || window.top !== window || Date.now() >= Number(deadline) || performance.now() >= binding.expires) return false;
-  const fields = [binding.pass,binding.user,binding.otp];
-  if (fields.some((el,i) => el && (!binding.usable(el) || el.ownerDocument !== document || el.type !== binding.types[i][0] || el.autocomplete !== binding.types[i][1] || el.form !== binding.types[i][2]))) return false;
-  if (binding.pass && !password) return false;
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;
-  const values = [password,username,totp];
-  for (let i=0;i<fields.length;i++) if(fields[i]) setter.call(fields[i],values[i]);
-  const confirmed = fields.every((el,i) => !el || el.value === values[i]);
-  if (!confirmed) return false;
-  for (const el of fields) if(el) { el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true})); }
-  return binding.doc === document && location.origin === expectedOrigin && fields.every((el,i) => !el || (el.isConnected && el.ownerDocument === document && el.type === binding.types[i][0] && el.value === values[i]));
-} catch (_) { return false; }
-"#;
 
 #[cfg(test)]
 mod tests {
