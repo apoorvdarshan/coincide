@@ -7,6 +7,18 @@ use std::{
     io,
     process::{Command, Stdio},
 };
+#[cfg(test)]
+fn trace_drain(stage: &str, error: Option<&anyhow::Error>) {
+    static LINES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    if LINES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 96 {
+        eprintln!(
+            "owned-checkout-drain-v2 {stage}: {}",
+            error.map(|error| error.to_string()).unwrap_or_default()
+        );
+    }
+}
+#[cfg(not(test))]
+fn trace_drain(_: &str, _: Option<&anyhow::Error>) {}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StopReason {
     Cancelled,
@@ -263,21 +275,44 @@ impl Owner {
         if self.joined {
             return Ok(true);
         }
-        self.stop()?;
-        if self.exited()?.is_none() {
+        if let Err(error) = self.stop() {
+            trace_drain("stop-error", Some(&error));
+            return Err(error);
+        }
+        let exited = match self.exited() {
+            Ok(value) => value,
+            Err(error) => {
+                trace_drain("waitid-error", Some(&error));
+                return Err(error);
+            }
+        };
+        if exited.is_none() {
+            trace_drain("waitid-not-returned", None);
             return Ok(false);
         }
+
         #[cfg(unix)]
         {
             // Retain the unreaped leader so PGID/PID cannot be reused while
             // checking only its group. Zombies have actually exited; their
             // adoption/reap is not confused with a running descendant.
-            if !group_exited(self.child.id())? {
-                return Ok(false);
+            match group_exited(self.child.id()) {
+                Ok(true) => {}
+                Ok(false) => {
+                    trace_drain("group-still-running", None);
+                    return Ok(false);
+                }
+                Err(error) => {
+                    trace_drain("group-classification-error", Some(&error));
+                    return Err(error);
+                }
             }
-            self.child
-                .wait()
-                .context("Native checkout leader has not returned")?;
+            if let Err(error) = self.child.wait() {
+                let error =
+                    anyhow::Error::from(error).context("Native checkout leader has not returned");
+                trace_drain("leader-wait-error", Some(&error));
+                return Err(error);
+            }
         }
         #[cfg(windows)]
         {
@@ -328,6 +363,15 @@ fn group_exited(leader: u32) -> Result<bool> {
             std::mem::size_of_val(&pids) as i32,
         )
     };
+    #[cfg(test)]
+    trace_drain(
+        &format!(
+            "mac-owned-group-query bytes={bytes} native_errno={} first-is-leader={}",
+            io::Error::last_os_error().raw_os_error().unwrap_or(-1),
+            pids[0] == leader as i32
+        ),
+        None,
+    );
     ensure!(
         bytes >= 0
             && (bytes != 0 || io::Error::last_os_error().raw_os_error() == Some(0))
