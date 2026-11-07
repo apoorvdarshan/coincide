@@ -9,6 +9,8 @@ mod dictation_preview_ui_tests;
 #[cfg(test)]
 #[path = "../swift_link_options.rs"]
 mod swift_link_options_tests;
+mod usage_dashboard;
+mod usage_dashboard_ui;
 mod usage_history_mount;
 mod usage_history_view;
 mod voice_credentials;
@@ -3227,7 +3229,21 @@ impl Coincide {
             self.navigation_last_clock = Instant::now();
             cx.notify();
         }
-        self.usage_history.poll(cx);
+        // Opening Settings › Usage reads saved local history, as Swift's `appeared()`;
+        // plan limits wait for Refresh.
+        let usage_visible =
+            self.settings_open && self.settings_section == settings::SettingsSection::Usage;
+        if self
+            .usage_history
+            .dashboard
+            .appeared(usage_visible, chrono::Utc::now())
+        {
+            self.usage_history.load_dashboard();
+            cx.notify();
+        }
+        if self.usage_history.poll(cx) {
+            cx.notify();
+        }
         self.codex_limits.set_context(self.selected.as_ref(), cx);
         self.codex_limits.poll(cx);
         if let Some(thread) = &self.selected {

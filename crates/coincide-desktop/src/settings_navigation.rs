@@ -99,7 +99,7 @@ fn icon_tile(section: Section, size: f32) -> AnyElement {
         .into_any_element()
 }
 
-fn provider_enabled(settings: &Value, provider: ProviderId) -> bool {
+pub(super) fn provider_enabled(settings: &Value, provider: ProviderId) -> bool {
     if provider == ProviderId::Antigravity
         && models_settings::provider_value(settings, provider_key(provider))["isEnabled"].is_null()
     {

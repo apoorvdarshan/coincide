@@ -21,6 +21,9 @@ icon_assets!(
         ArrowLeft,
         ArrowRight,
         ArrowUp,
+        // Settings › Usage trend arrows.
+        ArrowUpRight,
+        ArrowDownRight,
         Asterisk,
         AtSign,
         Brain,
@@ -182,6 +185,8 @@ mod tests {
             "icons/corner-up-right.svg",
             "icons/skip-forward.svg",
             "icons/arrow-up.svg",
+            "icons/arrow-up-right.svg",
+            "icons/arrow-down-right.svg",
             "icons/square.svg",
             // Composer `/` and `#` suggestion rows.
             "icons/gauge.svg",
