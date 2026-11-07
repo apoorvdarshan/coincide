@@ -1434,3 +1434,21 @@ that mutates live schedules or GitHub state. These remain open acceptance items.
 
 Still open: real passkey/password-manager sign-in, OS notifications, and any
 workflow that mutates live schedules or GitHub state.
+
+## Parity batch: composer and settings (2026-11-07, after #335)
+
+- Composer: mic is an icon between attach and send (#330); the extra `@`
+  project-file button is gone (#331); placeholder is Swift's "Ask anything.
+  @ files, / commands" (#333).
+- Stale "Unable to load conversations: App is busy…" now clears on the next
+  successful load (#332).
+- General settings gained Number format, Pointing hand over clickable items,
+  GPU rendering and Translucent terminal in Swift's order (#334).
+- Voice settings use labeled switches for Dictation, Send when I stop and
+  Keyboard shortcut, with Swift's captions (#335).
+- Models, Browser and Archive panes match Swift's controls and placeholders
+  on source comparison (filter, favorites, custom models; search engine,
+  profiles, bookmarks, history; archived-thread filter and grouped rows).
+
+Remaining parity work is the sidebar grouping and the inspector panels, then
+the ten partial feature areas and the cutover.
