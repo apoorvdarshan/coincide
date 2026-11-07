@@ -157,8 +157,8 @@ pub fn redact_argb32(
     );
     let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);
     for row in bytes.chunks_exact(stride) {
-        for pixel in row[..width as usize * 4].chunks_exact(4) {
-            let argb = u32::from_ne_bytes(pixel.try_into().expect("four byte pixel"));
+        for pixel in row[..width as usize * 4].as_chunks::<4>().0 {
+            let argb = u32::from_ne_bytes(*pixel);
             let alpha = (argb >> 24) as u8;
             let channel = |shift: u32| {
                 let value = ((argb >> shift) & 255u32) as u16;
