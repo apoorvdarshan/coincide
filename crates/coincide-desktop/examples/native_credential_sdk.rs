@@ -14,7 +14,9 @@ mod shutdown;
 use browser_credentials::{BrowserCredentialSink, NativeCredentialTarget};
 use coincide_core::credentials::{Failure, Login, Manager, PageBinding, Vault, VaultCommand};
 use credentials::{FillJob, deliver_fill, private_fill_channel};
-use gpui_kit::{App, Context, Entity, IntoElement, ParentElement, Render, Styled, Window, div};
+use gpui_kit::{
+    App, AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Window, div,
+};
 use shutdown::TrackedEvaluation;
 use std::{
     path::{Path, PathBuf},
@@ -179,7 +181,7 @@ impl Fixture {
             }
             1 => {
                 if let Some(job) = self.jobs.as_ref().and_then(|jobs| jobs.try_recv().ok()) {
-                    let mut hook = BrowserCredentialSink::new(|_| Ok(binding(1)))
+                    let mut hook = BrowserCredentialSink::new(|_: &str| Ok(binding(1)))
                         .with_target(self.target.clone());
                     let callbacks = self.shutdown.callbacks.clone();
                     hook = hook.with_completion_tracker(move || {
@@ -218,7 +220,7 @@ impl Fixture {
             }
             5 => {
                 if let Some(job) = self.jobs.as_ref().and_then(|jobs| jobs.try_recv().ok()) {
-                    let mut hook = BrowserCredentialSink::new(|_| Ok(binding(2)))
+                    let mut hook = BrowserCredentialSink::new(|_: &str| Ok(binding(2)))
                         .with_target(self.target.clone());
                     deliver_fill(job, &mut hook);
                     self.stage = 6;
