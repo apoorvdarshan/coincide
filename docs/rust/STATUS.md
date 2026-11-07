@@ -983,9 +983,11 @@ Implemented foundations are deliberately narrower than full feature groups:
 - Browser has a separate persistent profile and thread-scoped tabs. Cross-origin frame actions,
   uploads, passwords, passkeys, dialogs, screenshots and native-key actions
   still need implementation. Existing Swift browser profiles are not migrated. Native downloads have bounded,
-  thread-scoped session history and private verified destinations on Mac. Linux
-  downloads fail closed because upstream shared-profile callbacks misattribute tabs.
-  Progress/cancel/resume, blob downloads and persistent history remain. Same-origin
+  thread-scoped session history and verified destinations in a fresh folder under
+  ~/Downloads/Coincide. Every host owns exact native objects (WKDownload, WebView2
+  download operations, WebKitGTK downloads) with per-object receipts, including
+  document-origin blob downloads; closing a tab cancels its transfers and waits for
+  the native outcome. Progress/explicit cancel/resume and persistent history remain. Same-origin
   nested frames have expiring handles; read/click/input/type/scroll reject stale
   ancestors. Native srcdoc navigation works while public navigation stays HTTP(S).
   Console captures bounded primitive-only diagnostics with per-tab clearing. Native
