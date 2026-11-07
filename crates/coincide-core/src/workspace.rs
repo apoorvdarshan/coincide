@@ -211,7 +211,7 @@ pub(crate) fn composer_paths(directory: &Path, query: &str, limit: usize) -> Res
     )?;
     composer_path_results(&bytes, query, limit)
 }
-fn composer_path_results(bytes: &[u8], query: &str, limit: usize) -> Result<Value> {
+pub(crate) fn composer_path_results(bytes: &[u8], query: &str, limit: usize) -> Result<Value> {
     ensure!(
         (1..=80).contains(&limit),
         "Composer result limit must be 1–80"

@@ -267,6 +267,7 @@ pub enum PaletteEvent {
     /// Run this search and hand its lists to `CommandPalette::set_results`.
     Search(SearchRequest),
     Dismissed,
+    SearchInvalidated,
 }
 
 fn bounded_string(s: &str, max: usize) -> bool {
@@ -1138,6 +1139,7 @@ impl CommandPalette {
     /// After the query or list changed: placeholder, scroll and any search the
     /// new list needs, once typing pauses (folder paths list at once).
     fn changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(PaletteEvent::SearchInvalidated);
         let Some(model) = &mut self.model else {
             return;
         };

@@ -398,20 +398,21 @@ impl Coincide {
             ink: hex(self.color(0xe4e9f2)),
         }
     }
-    /// Runs a search the palette asked for off the UI thread and hands back
-    /// its lists, which the palette ignores once the query moved on.
-    pub(super) fn run_palette_search(&mut self, request: SearchRequest, cx: &mut Context<Self>) {
-        let generation = request.generation;
-        let search = cx
-            .background_executor()
-            .spawn(async move { palette_search_lists(&request.kind, &request.query, &home()) });
-        let palette = self.command_palette.downgrade();
-        let task = cx.spawn(async move |_, cx| {
-            let lists = search.await;
-            // Lists that fail validation, or come too late, are not shown.
-            let _ = palette.update(cx, |palette, cx| palette.set_results(generation, lists, cx));
-        });
-        self.navigation_tasks.push(task);
+    /// Admission queues only the newest request; cancellation keeps the old worker owned.
+    pub(super) fn run_palette_search(&mut self, request: SearchRequest, _: &mut Context<Self>) {
+        if self.media.shutdown_requested || self.media.close_requested {
+            return;
+        }
+        self.palette_search.submit(request);
+    }
+    pub(super) fn poll_palette_search(&mut self, cx: &mut Context<Self>) {
+        if let Some((generation, lists)) = self.palette_search.poll(|request, control| {
+            palette_search_lists(&request.kind, &request.query, &home(), control)
+        }) {
+            let _ = self
+                .command_palette
+                .update(cx, |palette, cx| palette.set_results(generation, lists, cx));
+        }
     }
     /// The folder a palette file belongs to, when it is still the open
     /// thread's and the file stays inside it.
@@ -444,10 +445,15 @@ impl Coincide {
 }
 
 /// A search's lists, as Swift's `ProjectSearch` and folder browsing show them.
-fn palette_search_lists(kind: &SearchKind, query: &str, home: &Path) -> Vec<PaletteList> {
+fn palette_search_lists(
+    kind: &SearchKind,
+    query: &str,
+    home: &Path,
+    control: &project_search::SearchControl,
+) -> Vec<PaletteList> {
     match kind {
         SearchKind::Folders => {
-            let entries = project_search::folders(query, home)
+            let entries = project_search::folders_controlled(query, home, control)
                 .into_iter()
                 .filter_map(|hit| {
                     let path = hit.path.to_str()?.to_owned();
@@ -472,7 +478,8 @@ fn palette_search_lists(kind: &SearchKind, query: &str, home: &Path) -> Vec<Pale
             }
         }
         SearchKind::Files { root } => {
-            let files = project_search::files(Path::new(root), query).unwrap_or_default();
+            let files = project_search::files_controlled(Path::new(root), query, control)
+                .unwrap_or_default();
             vec![PaletteList {
                 title: "Files".into(),
                 entries: files
@@ -494,7 +501,8 @@ fn palette_search_lists(kind: &SearchKind, query: &str, home: &Path) -> Vec<Pale
             }]
         }
         SearchKind::Text { root } => {
-            let matches = project_search::text(Path::new(root), query).unwrap_or_default();
+            let matches = project_search::text_controlled(Path::new(root), query, control)
+                .unwrap_or_default();
             project_search::group_by_file(matches)
                 .into_iter()
                 .map(|(path, lines)| PaletteList {

@@ -82,6 +82,7 @@ mod notification_settings;
 mod notifications;
 mod open_targets;
 mod palette_catalog;
+mod palette_search_owner;
 mod presentation;
 mod project_defaults_ui;
 mod project_management;
@@ -391,6 +392,7 @@ struct Coincide {
     find_revealed: Option<(String, String, u64)>,
     find_last_serial: u64,
     palette_revision: u64,
+    palette_search: palette_search_owner::State,
     palette_entries: Vec<command_palette::PaletteEntry>,
     palette_menus: Vec<command_palette::PaletteMenu>,
     revision: u64,
@@ -1106,12 +1108,14 @@ impl Coincide {
             cx.subscribe_in(&command_palette, window, |this, _, event, window, cx| {
                 match event {
                     command_palette::PaletteEvent::Activated { revision, command } => {
+                        this.palette_search.cancel();
                         this.activate_palette(*revision, command.clone(), window, cx)
                     }
                     command_palette::PaletteEvent::Search(request) => {
                         this.run_palette_search(request.clone(), cx)
                     }
-                    command_palette::PaletteEvent::Dismissed => {}
+                    command_palette::PaletteEvent::Dismissed
+                    | command_palette::PaletteEvent::SearchInvalidated => this.palette_search.cancel(),
                 }
                 this.sync_transcription_binding(cx);
                 cx.notify();
@@ -1370,6 +1374,7 @@ impl Coincide {
             find_revealed: None,
             find_last_serial: 0,
             palette_revision: 0,
+            palette_search: Default::default(),
             palette_entries: Vec::new(),
             palette_menus: Vec::new(),
             revision: 0,
@@ -3036,6 +3041,7 @@ impl Coincide {
             .swap(false, std::sync::atomic::Ordering::AcqRel);
         self.image_validation_tasks.retain(|task| !task.is_ready());
         self.navigation_tasks.retain(|task| !task.is_ready());
+        self.poll_palette_search(cx);
         let native_quit = self
             .native_quit
             .as_ref()

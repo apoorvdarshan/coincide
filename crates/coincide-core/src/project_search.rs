@@ -8,6 +8,11 @@ use std::{
     io::{BufRead, BufReader, Read},
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering as AtomicOrdering},
+    },
+    time::{Duration, Instant},
 };
 
 /// Swift `ProjectSearch.goToFileMenu` asks the file index for this many.
@@ -18,6 +23,47 @@ pub const LINES_PER_FILE: usize = 6;
 const OUTPUT_LIMIT: usize = 1_000_000;
 const FOLDER_LIMIT: usize = 40;
 const LINE_CHARS: usize = 160;
+
+/// One admitted search's cancellation and deadline, shared by its owned worker.
+#[derive(Clone)]
+pub struct SearchControl {
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+    cleanup_uncertain: Arc<AtomicBool>,
+}
+impl Default for SearchControl {
+    fn default() -> Self {
+        Self::with_timeout(Duration::from_secs(10))
+    }
+}
+impl SearchControl {
+    pub fn with_timeout(timeout: Duration) -> Self {
+        Self {
+            cancelled: Arc::new(AtomicBool::new(false)),
+            deadline: Instant::now() + timeout,
+            cleanup_uncertain: Arc::new(AtomicBool::new(false)),
+        }
+    }
+    pub fn cancel(&self) {
+        self.cancelled.store(true, AtomicOrdering::Release);
+    }
+    pub fn cancelled(&self) -> bool {
+        self.cancelled.load(AtomicOrdering::Acquire)
+    }
+    pub fn allowed(&self) -> bool {
+        !self.cancelled() && Instant::now() < self.deadline
+    }
+    pub fn cleanup_confirmed(&self) -> bool {
+        !self.cleanup_uncertain.load(AtomicOrdering::Acquire)
+    }
+    fn check(&self) -> Result<()> {
+        ensure!(self.allowed(), "Project search cancelled or timed out");
+        Ok(())
+    }
+}
+const VISIT_LIMIT: usize = 20_000;
+const DEPTH_LIMIT: usize = 64;
+const SCAN_BYTES: usize = 16 * 1024 * 1024;
 
 /// A file the index found, relative to the searched folder.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -31,11 +77,16 @@ pub struct FileHit {
 /// Go to File: the project's files whose names best match `query`, folders left
 /// out, through the composer's file index (`git ls-files`).
 pub fn files(root: &Path, query: &str) -> Result<Vec<FileHit>> {
+    files_controlled(root, query, &SearchControl::default())
+}
+pub fn files_controlled(root: &Path, query: &str, control: &SearchControl) -> Result<Vec<FileHit>> {
+    control.check()?;
     ensure!(
         query.len() <= 256 && !query.chars().any(char::is_control),
         "Search must be at most 256 bytes without control characters"
     );
-    let listed = crate::workspace::composer_paths(root, query, FILE_LIMIT)?;
+    let listed = search_paths(root, query, control)?;
+    control.check()?;
     let paths = listed["files"]
         .as_array()
         .context("File listing is unavailable")?;
@@ -109,6 +160,14 @@ fn ripgrep() -> Option<PathBuf> {
 /// it is installed and a built-in search like Swift's grep fallback otherwise.
 /// Queries under two characters find nothing, as in Swift.
 pub fn text(root: &Path, query: &str) -> Result<Vec<TextMatch>> {
+    text_controlled(root, query, &SearchControl::default())
+}
+pub fn text_controlled(
+    root: &Path,
+    query: &str,
+    control: &SearchControl,
+) -> Result<Vec<TextMatch>> {
+    control.check()?;
     ensure!(
         query.len() <= 256 && !query.contains(['\0', '\n', '\r']),
         "Search must be at most 256 bytes on one line"
@@ -118,16 +177,23 @@ pub fn text(root: &Path, query: &str) -> Result<Vec<TextMatch>> {
     }
     ensure!(root.is_dir(), "The project folder is unavailable");
     let mut matches = match ripgrep() {
-        Some(rg) => run_ripgrep(&rg, root, query)?,
-        None => walk(root, query),
+        Some(rg) => run_ripgrep(&rg, root, query, control)?,
+        None => walk_controlled(root, query, control),
     };
     matches.truncate(TEXT_LIMIT);
     Ok(matches)
 }
 
-fn run_ripgrep(rg: &Path, root: &Path, query: &str) -> Result<Vec<TextMatch>> {
-    let mut child = Command::new(rg)
+fn run_ripgrep(
+    rg: &Path,
+    root: &Path,
+    query: &str,
+    control: &SearchControl,
+) -> Result<Vec<TextMatch>> {
+    let mut command = Command::new(rg);
+    command
         .args([
+            "--no-config",
             "--line-number",
             "--no-heading",
             "--fixed-strings",
@@ -142,51 +208,86 @@ fn run_ripgrep(rg: &Path, root: &Path, query: &str) -> Result<Vec<TextMatch>> {
             query,
             ".",
         ])
-        .current_dir(root)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .context("Unable to start ripgrep")?;
-    // Enough for a screen of results; the rest is left unread and the search stopped.
-    let mut output = Vec::new();
-    child
-        .stdout
-        .take()
-        .context("ripgrep has no output")?
-        .take(OUTPUT_LIMIT as u64)
-        .read_to_end(&mut output)?;
-    let _ = child.kill();
-    let _ = child.wait();
+        .current_dir(root);
+    let output = capture_search(&mut command, control, OUTPUT_LIMIT)?;
     Ok(parse(&String::from_utf8_lossy(&output)))
+}
+fn search_paths(root: &Path, query: &str, control: &SearchControl) -> Result<serde_json::Value> {
+    let mut command = Command::new("git");
+    for (name, _) in std::env::vars_os() {
+        if name.to_string_lossy().starts_with("GIT_") {
+            command.env_remove(name);
+        }
+    }
+    let hooks = crate::workspace::external_git_path(&std::env::current_exe()?)?;
+    command
+        .args(["--no-pager", "--literal-pathspecs", "-c"])
+        .arg(format!("core.hooksPath={}", hooks.display()))
+        .args([
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.untrackedCache=false",
+            "-c",
+            "protocol.allow=never",
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "-z",
+        ])
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_NO_LAZY_FETCH", "1")
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .current_dir(root);
+    let output = process::capture_checked(&mut command, control, 3 * 1024 * 1024, true)?;
+    crate::workspace::composer_path_results(&output, query, FILE_LIMIT)
 }
 
 /// grep -rnIF --exclude-dir=.git --exclude-dir=node_modules -m 6: text files
 /// only, case-sensitive, six lines a file, in name order.
+#[cfg(test)]
 fn walk(root: &Path, query: &str) -> Vec<TextMatch> {
+    walk_controlled(root, query, &SearchControl::default())
+}
+fn walk_controlled(root: &Path, query: &str, control: &SearchControl) -> Vec<TextMatch> {
     let mut matches = Vec::new();
     let mut folders = vec![PathBuf::new()];
+    let mut visited = 0;
+    let mut bytes_left = SCAN_BYTES;
     while let Some(relative) = folders.pop() {
+        if !control.allowed() || visited >= VISIT_LIMIT || bytes_left == 0 {
+            break;
+        }
         let Ok(entries) = std::fs::read_dir(root.join(&relative)) else {
             continue;
         };
         let mut entries = entries
+            .take(VISIT_LIMIT.saturating_sub(visited))
+            .take_while(|_| control.allowed())
             .filter_map(|entry| entry.ok())
             .filter_map(|entry| Some((entry.file_name().into_string().ok()?, entry)))
             .collect::<Vec<_>>();
         entries.sort_by(|left, right| left.0.cmp(&right.0));
         let mut subfolders = Vec::new();
         for (name, entry) in entries {
+            visited += 1;
+            if !control.allowed() || visited > VISIT_LIMIT || bytes_left == 0 {
+                return matches;
+            }
             let Ok(kind) = entry.file_type() else {
                 continue;
             };
             let path = relative.join(&name);
             if kind.is_dir() {
-                if name != ".git" && name != "node_modules" {
+                if name != ".git"
+                    && name != "node_modules"
+                    && path.components().count() <= DEPTH_LIMIT
+                {
                     subfolders.push(path);
                 }
             } else if kind.is_file() {
-                search_file(root, &path, query, &mut matches);
+                search_file(root, &path, query, &mut matches, control, &mut bytes_left);
                 if matches.len() >= TEXT_LIMIT {
                     return matches;
                 }
@@ -197,17 +298,39 @@ fn walk(root: &Path, query: &str) -> Vec<TextMatch> {
     matches
 }
 
-fn search_file(root: &Path, path: &Path, query: &str, matches: &mut Vec<TextMatch>) {
-    let Ok(file) = std::fs::File::open(root.join(path)) else {
-        return;
-    };
-    if file
-        .metadata()
-        .is_ok_and(|meta| meta.len() > OUTPUT_LIMIT as u64)
-    {
+fn search_file(
+    root: &Path,
+    path: &Path,
+    query: &str,
+    matches: &mut Vec<TextMatch>,
+    control: &SearchControl,
+    bytes_left: &mut usize,
+) {
+    if !control.allowed() {
         return;
     }
-    let mut reader = BufReader::new(file);
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let Ok(file) = options.open(root.join(path)) else {
+        return;
+    };
+    if file.metadata().map_or(true, |meta| {
+        !meta.is_file() || meta.file_type().is_symlink() || meta.len() > OUTPUT_LIMIT as u64
+    }) {
+        return;
+    }
+    let allowance = (*bytes_left).min(OUTPUT_LIMIT);
+    let mut reader = BufReader::new(file.take(allowance as u64));
     // Binary files (a NUL early on) are skipped, as grep -I does.
     if reader.fill_buf().is_ok_and(|head| head.contains(&0)) {
         return;
@@ -219,9 +342,13 @@ fn search_file(root: &Path, path: &Path, query: &str, matches: &mut Vec<TextMatc
         .join("/");
     let mut found = 0;
     for (index, line) in reader.split(b'\n').enumerate() {
+        if !control.allowed() || *bytes_left == 0 {
+            return;
+        }
         let Ok(line) = line else {
             return;
         };
+        *bytes_left = bytes_left.saturating_sub(line.len() + 1);
         let line = String::from_utf8_lossy(&line);
         if line.contains(query) {
             matches.push(TextMatch {
@@ -339,6 +466,12 @@ fn natural(left: &str, right: &str) -> Ordering {
 /// the project to add, then up to 40 subfolders whose names start with what
 /// follows the last "/". Hidden folders only when that starts with ".".
 pub fn folders(query: &str, home: &Path) -> Vec<FolderHit> {
+    folders_controlled(query, home, &SearchControl::default())
+}
+pub fn folders_controlled(query: &str, home: &Path, control: &SearchControl) -> Vec<FolderHit> {
+    if !control.allowed() {
+        return Vec::new();
+    }
     let expanded = expand(query, home);
     let tilde = query.starts_with('~');
     let hit = |path: PathBuf, title: String| {
@@ -380,6 +513,8 @@ pub fn folders(query: &str, home: &Path) -> Vec<FolderHit> {
     let mut names = std::fs::read_dir(&parent)
         .map(|entries| {
             entries
+                .take(VISIT_LIMIT)
+                .take_while(|_| control.allowed())
                 .filter_map(|entry| entry.ok())
                 .filter_map(|entry| entry.file_name().into_string().ok())
                 .filter(|name| {
@@ -669,6 +804,43 @@ mod tests {
     }
 
     #[test]
+    fn fallback_checks_cancellation_deadline_and_depth_without_following_symlinks() {
+        let scratch = Scratch::new();
+        scratch.file("visible.txt", "needle\n");
+        let deep = (0..DEPTH_LIMIT + 2)
+            .map(|_| "a")
+            .collect::<Vec<_>>()
+            .join("/");
+        scratch.file(&format!("{deep}/hidden.txt"), "needle\n");
+        let matches = walk_controlled(&scratch.0, "needle", &SearchControl::default());
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].path, "visible.txt");
+        let cancelled = SearchControl::default();
+        cancelled.cancel();
+        assert!(walk_controlled(&scratch.0, "needle", &cancelled).is_empty());
+        assert!(folders_controlled(&scratch.path(), &scratch.0, &cancelled).is_empty());
+        assert!(files_controlled(&scratch.0, "needle", &cancelled).is_err());
+        assert!(
+            walk_controlled(
+                &scratch.0,
+                "needle",
+                &SearchControl::with_timeout(Duration::ZERO)
+            )
+            .is_empty()
+        );
+        #[cfg(unix)]
+        {
+            let outside = Scratch::new();
+            outside.file("outside.txt", "needle\n");
+            std::os::unix::fs::symlink(&outside.0, scratch.0.join("linked-folder")).unwrap();
+            assert_eq!(
+                walk_controlled(&scratch.0, "needle", &SearchControl::default()).len(),
+                1
+            );
+        }
+    }
+
+    #[test]
     fn home_paths_abbreviate_with_a_tilde() {
         let home = Path::new("/Users/me");
         assert_eq!(abbreviated(Path::new("/Users/me"), home), "~");
@@ -679,3 +851,7 @@ mod tests {
         assert_eq!(abbreviated(Path::new("/opt/app"), home), "/opt/app");
     }
 }
+
+#[path = "project_search_process.rs"]
+mod process;
+use process::capture_search;

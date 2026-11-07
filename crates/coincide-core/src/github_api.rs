@@ -132,10 +132,22 @@ impl GhRunner {
     }
 }
 #[cfg(unix)]
-struct ProcessGroup(std::process::Child);
+pub(crate) struct ProcessGroup(std::process::Child);
 #[cfg(unix)]
 impl ProcessGroup {
-    fn exited(&self) -> Result<Option<bool>> {
+    pub(crate) fn spawn(command: &mut std::process::Command) -> Result<Self> {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+        Ok(Self(
+            command
+                .spawn()
+                .context("Unable to start owned local process")?,
+        ))
+    }
+    pub(crate) fn take_stdout(&mut self) -> Option<std::process::ChildStdout> {
+        self.0.stdout.take()
+    }
+    pub(crate) fn exited(&self) -> Result<Option<bool>> {
         let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
         let result = unsafe {
             libc::waitid(
