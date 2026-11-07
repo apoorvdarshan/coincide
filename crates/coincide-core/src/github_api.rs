@@ -170,6 +170,13 @@ impl Drop for ProcessGroup {
     }
 }
 
+// Share native error interpretation with the Windows credential process owner.
+#[cfg(any(windows, test))]
+#[path = "credentials_process_custody.rs"]
+mod process_custody;
+#[cfg(any(windows, test))]
+#[path = "github_process_members.rs"]
+mod process_members;
 #[cfg(windows)]
 #[path = "github_api_windows.rs"]
 pub(crate) mod windows;
@@ -306,7 +313,8 @@ struct Operation {
     result: Option<Value>,
 }
 /// Joined Rust read-worker ownership, independent of retained UI results.
-/// Process cleanup errors and the desktop write service are separate owners.
+/// Unknown native process cleanup keeps its read worker running; desktop writes
+/// remain independently owned.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ReadShutdownStatus {
     pub closed: bool,
