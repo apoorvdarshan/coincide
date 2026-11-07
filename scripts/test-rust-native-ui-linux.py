@@ -249,6 +249,43 @@ def main():
         click_rendered_word(settings_window, "settings-return-general", "General")
         capture(settings_window, "settings-general-returned", "General")
         report["checks"].append("native Settings search opened Codex provider page and returned to General without provider actions")
+        # Visit the remaining actual Settings routes for screenshot review. A
+        # matching sidebar label alone is insufficient: the native window title
+        # must acknowledge navigation, then real body text must be rendered.
+        # These are presentation checks; do not click permission, login,
+        # microphone/device-refresh, install, capture or credential operations.
+        pages = [
+            ("Models", "Models", "Favorite"),
+            ("Usage", "Usage", "Usage"),
+            ("Instructions", "Instructions", "Global"),
+            ("Archive", "Archive", "archived"),
+            ("Keyboard", "Keyboard", "shortcuts"),
+            ("Voice", "Voice", "Engine"),
+            ("Browser", "Browser", "Browser profiles"),
+            ("Computer Use", "Computer", "Computer Use"),
+            ("Appshots", "Appshots", "Permissions"),
+            ("Historical images", "Historical", "Historical images"),
+            ("About", "About", "Help"),
+            ("Claude Code", "Claude", "Executable"),
+            ("Cursor", "Cursor", "Executable"),
+            ("Grok Build", "Grok", "Executable"),
+            ("OpenCode", "OpenCode", "Executable"),
+            ("Antigravity", "Antigravity", "Executable"),
+        ]
+        report["settingsScreens"] = []
+        for index, (title, word, body_text) in enumerate(pages):
+            stage = f"settings-screen-{index:02}"
+            click_rendered_word(settings_window, stage + "-search", "Search")
+            command("xdotool", "type", "--clearmodifiers", title, env=env)
+            capture(settings_window, stage + "-filtered", "Results")
+            click_rendered_word(settings_window, stage + "-result", word, min_y=80)
+            wait_for(f"native Settings title {title}", lambda title=title: command("xdotool", "getwindowname", settings_window, env=env).strip() == title)
+            capture(settings_window, stage, body_text)
+            report["settingsScreens"].append({"title": title, "artifact": stage + ".png", "nativeTitleVerified": True})
+        click_rendered_word(settings_window, "settings-all-pages-return-general", "General")
+        wait_for("native General title after all pages", lambda: command("xdotool", "getwindowname", settings_window, env=env).strip() == "General")
+        capture(settings_window, "settings-all-pages-general", "Appearance")
+        report["checks"].append("native Settings title, rendered body and screenshots verified for 16 additional routes; no feature actions were invoked")
         assert rpc("threads.read", threadId=thread_id)["draft"] == draft
         command("xdotool", "windowfocus", "--sync", window, env=env)
         command("xdotool", "key", "--clearmodifiers", "ctrl+comma", env=env)
