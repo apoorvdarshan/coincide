@@ -6,19 +6,16 @@ use ::windows::{
     Win32::{
         Foundation::{CloseHandle, FILETIME, HANDLE, HWND, LPARAM, RECT, WAIT_TIMEOUT},
         Graphics::Dwm::{DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute},
-        System::{Com::*, Ole::*, Threading::*},
-        UI::{
-            Accessibility::*, HiDpi::GetDpiForWindow, Input::KeyboardAndMouse::*,
-            WindowsAndMessaging::*,
-        },
+        System::{Com::*, Ole::*, StationsAndDesktops::*, Threading::*},
+        UI::{Accessibility::*, HiDpi::*, Input::KeyboardAndMouse::*, WindowsAndMessaging::*},
     },
-    core::{Interface, PCWSTR, PWSTR},
+    core::{BSTR, Interface, PWSTR},
 };
 use base64::Engine as _;
 use serde_json::json;
 use std::{
     collections::{BTreeMap, BTreeSet},
-    os::windows::thread::JoinHandleExt,
+    os::windows::io::AsRawHandle,
     rc::Rc,
 };
 use windows_capture::{
@@ -38,6 +35,24 @@ fn checked(permit: &Permit, deadline: Instant) -> R<()> {
         Err(Failure::TimedOut)
     } else {
         Ok(())
+    }
+}
+struct ThreadDpi(DPI_AWARENESS_CONTEXT);
+impl ThreadDpi {
+    fn open() -> R<Self> {
+        // Scope physical-coordinate APIs to this owned worker only. Never
+        // change the app/process/system DPI configuration.
+        let previous =
+            unsafe { SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
+        if previous.0.is_null() {
+            return Err(Failure::Unsupported);
+        }
+        Ok(Self(previous))
+    }
+}
+impl Drop for ThreadDpi {
+    fn drop(&mut self) {
+        unsafe { SetThreadDpiAwarenessContext(self.0) };
     }
 }
 struct Com;
@@ -450,6 +465,8 @@ impl Backend for NativeBackend {
     }
     fn call(&mut self, call: NativeCall, permit: &Permit) -> R<NativeResult> {
         permit.check()?;
+        desktop_guard()?;
+        let _dpi = ThreadDpi::open()?;
         match call {
             NativeCall::ListApps => {
                 let mut seen = BTreeSet::new();
@@ -523,6 +540,8 @@ impl Backend for NativeBackend {
                     }
                 }
                 permit.check()?;
+                desktop_guard()?;
+                permit.check()?;
                 action.dispatch()?;
                 Ok(NativeResult::Done)
             }
@@ -534,10 +553,12 @@ impl Backend for NativeBackend {
                 if native(unsafe { pattern.CurrentIsReadOnly() })?.as_bool() {
                     return Err(Failure::PermissionDenied);
                 }
-                let text: Vec<u16> = text.encode_utf16().chain(Some(0)).collect();
+                let text = BSTR::from(text.as_str());
                 self.element(id, permit)?;
                 permit.check()?;
-                native(unsafe { pattern.SetValue(PCWSTR(text.as_ptr())) })?;
+                desktop_guard()?;
+                permit.check()?;
+                native(unsafe { pattern.SetValue(&text) })?;
                 Ok(NativeResult::Done)
             }
             NativeCall::Key { native: id, key } => {
@@ -553,6 +574,8 @@ impl Backend for NativeBackend {
                 }
                 self.element(id, permit)?;
                 no_modifiers()?;
+                permit.check()?;
+                desktop_guard()?;
                 permit.check()?;
                 send_key(key)?;
                 Ok(NativeResult::Done)
@@ -589,6 +612,8 @@ impl Backend for NativeBackend {
                 }
                 no_modifiers()?;
                 permit.check()?;
+                desktop_guard()?;
+                permit.check()?;
                 send_point(px, py)?;
                 Ok(NativeResult::Done)
             }
@@ -611,6 +636,7 @@ fn password_guard(
 ) -> R<()> {
     window.verify()?;
     permit.check()?;
+    desktop_guard()?;
     if activate && unsafe { GetForegroundWindow() } != window.hwnd {
         permit.check()?;
         if !unsafe { SetForegroundWindow(window.hwnd) }.as_bool() {
@@ -628,6 +654,58 @@ fn password_guard(
     }
     window.verify()?;
     permit.check()
+}
+fn desktop_guard() -> R<()> {
+    struct Owned(Option<HDESK>);
+    impl Owned {
+        fn close(&mut self) -> R<()> {
+            if let Some(handle) = self.0 {
+                native(unsafe { CloseDesktop(handle) })?;
+                self.0 = None;
+            }
+            Ok(())
+        }
+    }
+    impl Drop for Owned {
+        fn drop(&mut self) {
+            let _ = self.close();
+        }
+    }
+    fn name(desk: HDESK) -> R<Vec<u16>> {
+        let mut value = [0u16; 512];
+        let mut needed = 0;
+        native(unsafe {
+            GetUserObjectInformationW(
+                HANDLE(desk.0),
+                UOI_NAME,
+                Some(value.as_mut_ptr().cast()),
+                std::mem::size_of_val(&value) as u32,
+                Some(&mut needed),
+            )
+        })?;
+        if needed < 2 || needed as usize > std::mem::size_of_val(&value) || needed % 2 != 0 {
+            return Err(Failure::Native);
+        }
+        let length = value.iter().position(|v| *v == 0).ok_or(Failure::Native)?;
+        if length == 0 {
+            return Err(Failure::PermissionDenied);
+        }
+        Ok(value[..length].to_vec())
+    }
+    // Never change a thread/input desktop. Opening only READOBJECTS fails on
+    // the secure desktop; compare against this worker's borrowed desktop.
+    let mut input = Owned(Some(
+        unsafe { OpenInputDesktop(DESKTOP_CONTROL_FLAGS(0), false, DESKTOP_READOBJECTS) }
+            .map_err(|_| Failure::PermissionDenied)?,
+    ));
+    let current = native(unsafe { GetThreadDesktop(GetCurrentThreadId()) })?;
+    let same = name(input.0.ok_or(Failure::Native)?)? == name(current)?;
+    input.close()?;
+    if same {
+        Ok(())
+    } else {
+        Err(Failure::PermissionDenied)
+    }
 }
 fn runtime_id(element: &IUIAutomationElement) -> R<Vec<i32>> {
     struct Array(*mut SAFEARRAY);
