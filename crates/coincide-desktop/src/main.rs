@@ -2009,9 +2009,14 @@ impl Coincide {
             }
             return;
         };
+        let viewport_changed = requests
+            .iter()
+            .any(|request| matches!(request.action, BrowserAction::Viewport { .. }));
         for request in requests {
             browser.execute(request, window, cx);
         }
+        // The panel lays out a fixed viewport only on its next render.
+        changed |= viewport_changed;
         changed |= browser.set_passkey_preferences(browser::passkeys::Preferences::from_settings(
             &self.settings,
         ));
