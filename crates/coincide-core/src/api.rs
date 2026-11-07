@@ -215,6 +215,9 @@ pub struct Engine {
     github: github_engine::GithubState,
     notification_events: notification_events::Outbox,
     runs: HashMap<String, Running>,
+    /// Runs whose provider has reported anything yet. The others are still
+    /// starting, which the transcript's live line says ("Starting Claude…").
+    answered_runs: HashSet<String>,
     provider_workers: Vec<agent::WorkerCompletion>,
     background_workers: background_workers::State,
     provider_worker_outcomes: ProviderWorkersStatus,
@@ -300,6 +303,7 @@ impl Engine {
                 github_engine::GithubState::unavailable()
             },
             runs: HashMap::new(),
+            answered_runs: HashSet::new(),
             provider_workers: Vec::new(),
             background_workers,
             provider_worker_outcomes: ProviderWorkersStatus::default(),
@@ -604,7 +608,7 @@ impl Engine {
             }
             "terminal.close"=>{ensure!(self.terminals.remove(required(p,"terminalId")?).is_some(),"Terminal not found");self.revision+=1;Ok(json!({"closed":true}))}
             "app.status" => Ok(
-                json!({"version":env!("CARGO_PKG_VERSION"),"revision":self.revision,"running":self.runs.keys().collect::<Vec<_>>(),"preview":true,"activeThread":self.active_thread,"persistencePending":self.unsaved_threads.len(),"schedulerError":self.schedule_error}),
+                json!({"version":env!("CARGO_PKG_VERSION"),"revision":self.revision,"running":self.runs.keys().collect::<Vec<_>>(),"starting":self.runs.keys().filter(|id|!self.answered_runs.contains(*id)).collect::<Vec<_>>(),"preview":true,"activeThread":self.active_thread,"persistencePending":self.unsaved_threads.len(),"schedulerError":self.schedule_error}),
             ),
             "app.capabilities" => {
                 let mut methods = vec![
@@ -850,7 +854,7 @@ impl Engine {
             }
             "agent.pending" => {
                 self.store.thread(required(p,"threadId")?)?;
-                Ok(json!(self.runs.get(required(p,"threadId")?).map(|run|run.pending.iter().map(|(id,frame)|json!({"requestId":id,"method":frame["method"],"params":frame["params"]})).collect::<Vec<_>>()).unwrap_or_default()))
+                Ok(json!(self.runs.get(required(p,"threadId")?).map(|run|run.pending.iter().map(|(id,frame)|json!({"requestId":id,"method":frame["method"],"params":frame["params"],"provider":run.provider})).collect::<Vec<_>>()).unwrap_or_default()))
             }
             "agent.answer" => {
                 let run = self.runs.get_mut(required(p,"threadId")?).context("Thread is not running")?;
@@ -902,9 +906,21 @@ impl Engine {
                         "Decision is not offered by the agent"
                     );
                 }
-                running
-                    .session
-                    .reply(frame["id"].clone(), json!({"decision":decision}))?;
+                // Only Claude Code reads a note with its answer (what to do
+                // instead of a denied call); never drop one silently elsewhere.
+                let mut answer = json!({"decision":decision});
+                if let Some(note) = p.get("text").filter(|note| !note.is_null()) {
+                    let note = note.as_str().context("Reply text must be a string")?;
+                    ensure!(note.len() <= 65536, "Reply text must fit within 64 KiB");
+                    ensure!(
+                        running.provider == "claude" || note.trim().is_empty(),
+                        "This agent does not take a reply with its approvals"
+                    );
+                    if !note.trim().is_empty() {
+                        answer["text"] = json!(note);
+                    }
+                }
+                running.session.reply(frame["id"].clone(), answer)?;
                 running.pending.remove(key);
                 self.notification_events.cancel_request(required(p,"threadId")?,key);
                 self.revision += 1;
@@ -1329,6 +1345,7 @@ impl Engine {
         Ok(json!({"accepted":true}))
     }
     fn insert_running(&mut self, id: String, run: Running) {
+        self.answered_runs.remove(&id);
         self.provider_workers.push(run.session.worker_completion());
         self.runs.insert(id, run);
     }
@@ -1826,6 +1843,7 @@ impl Engine {
             if self.runs[&id].events.is_empty() {
                 continue;
             }
+            self.answered_runs.insert(id.clone());
             // A worker publishes steering ACK before Finished. Recheck after
             // receiving terminal events so accepted input precedes seen-count
             // advancement and cannot be recapped into the next turn twice.
@@ -2085,13 +2103,17 @@ impl Engine {
                                             &self.runs[&id].provider,
                                             item,
                                         );
+                                        mark_completed(existing, method);
                                     } else {
                                         append(&mut v, "tool", &item.to_string(), Some(&external));
+                                        let row =
+                                            v["items"].as_array_mut().unwrap().last_mut().unwrap();
                                         codex_tool_metadata::apply(
-                                            v["items"].as_array_mut().unwrap().last_mut().unwrap(),
+                                            row,
                                             &self.runs[&id].provider,
                                             item,
                                         );
+                                        mark_completed(row, method);
                                     }
                                 }
                             }
@@ -2205,6 +2227,7 @@ impl Engine {
                 self.schedule_completions.push((claim, outcome, failure));
             }
         }
+        self.answered_runs.retain(|id| self.runs.contains_key(id));
         self.poll_native_follow_ups();
         self.poll_message_queues();
         if self.schedule_last_poll.elapsed() >= Duration::from_secs(1) {
@@ -2265,6 +2288,17 @@ fn import_attachment(
 
 fn required<'a>(p: &'a Value, key: &str) -> Result<&'a str> {
     p[key].as_str().with_context(|| format!("Missing {key}"))
+}
+/// When the provider first reported a tool call finished, for its duration.
+/// Display metadata only, like createdAt; it never settles the call or a turn.
+fn mark_completed(row: &mut Value, method: &str) {
+    if method == "item/completed"
+        && let Some(fields) = row.as_object_mut()
+    {
+        fields
+            .entry("completedAt")
+            .or_insert_with(|| json!(swift_timestamp()));
+    }
 }
 fn append(v: &mut Value, kind: &str, text: &str, external: Option<&str>) {
     let provider = v["selection"]["provider"].clone();

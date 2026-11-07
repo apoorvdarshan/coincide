@@ -20,6 +20,7 @@ use anyhow::{Context as _, Result};
 mod about_settings;
 mod app_menu;
 mod app_menu_mount;
+mod approval_banner;
 mod archive_settings;
 mod assets;
 mod bot_settings;
@@ -28,6 +29,7 @@ mod browser_dialog_ui;
 mod browser_settings;
 mod chat_inspector;
 mod chat_layout;
+mod chat_turns;
 mod command_palette;
 mod composer_attachments;
 mod composer_commands;
@@ -105,6 +107,7 @@ mod terminal_layout;
 mod terminal_selection;
 mod terminal_workspace;
 mod thread_bulk;
+mod tool_detail;
 mod transcript;
 mod transcript_find;
 mod transcription_composer;
@@ -478,6 +481,8 @@ struct Coincide {
     transcript_list: ListState,
     transcript_count: usize,
     expanded: std::collections::HashSet<usize>,
+    chat_turns: chat_turns::State,
+    approval_replies: approval_banner::Replies,
     threads: Vec<ThreadSummary>,
     sidebar_all_threads: Vec<ThreadSummary>,
     sidebar_preferences: sidebar_preferences::Preferences,
@@ -1440,6 +1445,8 @@ impl Coincide {
             transcript_list: ListState::new(0, ListAlignment::Bottom, px(500.)),
             transcript_count: 0,
             expanded: Default::default(),
+            chat_turns: Default::default(),
+            approval_replies: Default::default(),
             sidebar_all_threads: threads.clone(),
             show_archived: sidebar_preferences.flag("showsArchivedThreads"),
             show_snoozed: sidebar_preferences.flag("showsSnoozedThreads"),
@@ -3202,6 +3209,15 @@ impl Coincide {
             let is_running = selected_thread
                 .as_ref()
                 .is_some_and(|id| self.running.contains(id));
+            let starting = status["starting"]
+                .as_array()
+                .map(|ids| {
+                    ids.iter()
+                        .filter_map(|id| id.as_str().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default();
+            self.set_starting_runs(starting, cx);
             if was_running != is_running {
                 self.transcript_list
                     .splice(0..self.transcript_count, self.transcript_count);
@@ -3236,6 +3252,7 @@ impl Coincide {
                     self.revision = revision;
                 }
             }
+            self.tick_turn_clock(cx);
         }
         self.refresh_pending(window, cx);
         self.poll_transcription(window, cx);
@@ -3287,22 +3304,13 @@ impl Coincide {
                 });
             }
         }
+        self.sync_approval_replies(&thread, &requests, window, cx);
         if self.pending_requests != requests {
             self.pending_requests = requests;
+            // A waiting approval replaces the live line below the last row.
+            self.redraw_live_row(cx);
             cx.notify();
         }
-    }
-    fn respond_pending(&mut self, request_id: &str, decision: &str, cx: &mut Context<Self>) {
-        let Some(thread) = self.selected.as_ref().map(|v| text(v, "id")) else {
-            return;
-        };
-        self.finish_pending(
-            &thread,
-            request_id,
-            "agent.respond",
-            json!({"threadId":thread,"requestId":request_id,"decision":decision}),
-            cx,
-        );
     }
     fn answer_pending(&mut self, request_id: &str, cx: &mut Context<Self>) {
         let Some(thread) = self.selected.as_ref().map(|v| text(v, "id")) else {
@@ -3369,13 +3377,18 @@ impl Coincide {
         }
         cx.notify();
     }
-    fn pending_pane(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn pending_pane(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         if self.pending_requests.is_empty() {
             return None;
         }
         let thread = self.selected.as_ref().map(|v| text(v, "id"))?;
+        // Approvals show one at a time in Swift's banner; questions keep their cards.
+        let banner = self.approval_banner(window, cx);
         let mut cards = Vec::new();
         for request in &self.pending_requests {
+            if request["method"] != "item/tool/requestUserInput" {
+                continue;
+            }
             let request_id = text(request, "requestId");
             let card = div()
                 .flex()
@@ -3394,7 +3407,7 @@ impl Coincide {
                 .min_h_0()
                 .gap_2()
                 .overflow_y_scroll();
-            let actions = if request["method"] == "item/tool/requestUserInput" {
+            let actions = {
                 body = body.child(div().font_semibold().child("The agent needs your answer"));
                 for (index, question) in request["params"]["questions"]
                     .as_array()
@@ -3467,49 +3480,12 @@ impl Coincide {
                         .label("Submit answers")
                         .on_click(cx.listener(move |this, _, _, cx| this.answer_pending(&id, cx))),
                 )
-            } else {
-                body = body.child(div().font_semibold().child("Approval required"));
-                let mut details = request["params"].clone();
-                if let Some(object) = details.as_object_mut() {
-                    object.remove("providerFrame");
-                }
-                body = body
-                    .child(div().text_sm().child(text(request, "method")))
-                    .child(TextView::markdown(
-                        SharedString::from(format!("approval-details-{request_id}")),
-                        format!(
-                            "```json\n{}\n```",
-                            serde_json::to_string_pretty(&details).unwrap_or_default()
-                        ),
-                    ));
-                let offered = request["params"]["availableDecisions"].as_array();
-                let mut buttons = div().flex().flex_wrap().flex_shrink_0().gap_2();
-                for (decision, label) in [
-                    ("accept", "Allow once"),
-                    ("decline", "Decline"),
-                    ("cancel", "Cancel request"),
-                ] {
-                    if offered.is_some_and(|options| !options.iter().any(|v| v == decision)) {
-                        continue;
-                    }
-                    let id = request_id.clone();
-                    buttons = buttons.child(
-                        Button::new(SharedString::from(format!(
-                            "decision-{request_id}-{decision}"
-                        )))
-                        .label(label)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.respond_pending(&id, decision, cx)
-                        })),
-                    );
-                }
-                div().flex_shrink_0().child(buttons)
             };
             // Only the request details scroll. Decisions stay in a separate
             // footer, reachable even when questions/options exceed the pane.
             cards.push(card.child(body).child(actions));
         }
-        Some(
+        let questions = (!cards.is_empty()).then(|| {
             div()
                 .id("pending-agent-requests")
                 .flex()
@@ -3524,6 +3500,14 @@ impl Coincide {
                     self.pending_requests.len()
                 )))
                 .children(cards)
+        });
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .flex_shrink_0()
+                .children(banner)
+                .children(questions)
                 .into_any_element(),
         )
     }
@@ -3823,6 +3807,30 @@ impl Coincide {
         }
         cx.notify();
     }
+    fn toggle_item_expanded(&mut self, source: &str, item: &str, cx: &mut Context<Self>) {
+        let Some(thread) = self.selected.as_ref().filter(|v| v["id"] == source) else {
+            return;
+        };
+        let Some(index) = thread["items"]
+            .as_array()
+            .and_then(|items| items.iter().position(|v| v["id"] == item))
+        else {
+            return;
+        };
+        if self
+            .find_revealed
+            .as_ref()
+            .is_some_and(|(thread, id, _)| thread == source && id == item)
+        {
+            self.find_revealed = None;
+            self.find_pending = None;
+            self.expanded.remove(&index);
+        } else if !self.expanded.remove(&index) {
+            self.expanded.insert(index);
+        }
+        self.transcript_list.splice(index..index + 1, 1);
+        cx.notify();
+    }
     fn message(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let Some(item) = self
             .selected
@@ -3856,17 +3864,25 @@ impl Coincide {
                 .is_some_and(|(thread, item, generation)| {
                     thread == &source_id && item == &item_id && *generation == self.find_generation
                 });
-        if kind == "reasoning"
-            && !find_revealed
-            && !self.settings["showReasoning"].as_bool().unwrap_or(true)
-        {
-            return div().into_any_element();
+        // Swift's turn layout: work folded under "Worked for…", rows that
+        // never draw, and headers below the messages that open or split turns.
+        // A find target stays drawn even inside a folded turn.
+        let plan = self.turn_plan(index);
+        if plan.hidden && !find_revealed {
+            return self.turn_decorated(index, div().into_any_element(), None, cx);
         }
         let body = text(item, "text");
         // The active find target uses the existing expanded native body so a
         // later-line match remains visible. Clearing Find remounts the compact row.
         if kind == "notice" && !find_revealed {
-            return self.notice_row(&source_id, &item_id, body, window, cx);
+            let row = self.notice_row(&source_id, &item_id, body, window, cx);
+            return self.turn_decorated(index, row, plan.header, cx);
+        }
+        if kind == "tool" && !find_revealed {
+            let item = item.clone();
+            let expanded = self.expanded.contains(&index);
+            let row = self.tool_row(&source_id, &item_id, &item, expanded, window, cx);
+            return self.turn_decorated(index, row, plan.header, cx);
         }
         let copy_empty = body.is_empty();
         let collapsible = kind != "user" && kind != "assistant";
@@ -3957,39 +3973,19 @@ impl Coincide {
         } else {
             (Some(copy_action), None)
         };
-        let disclosure = collapsible.then(|| {
-            let source = source_id.clone();
-            let item = item_id.clone();
-            Button::new(SharedString::from(format!("expand-{source_id}-{item_id}")))
-                .accessibility_id(SharedString::from(format!("expand-{source_id}-{item_id}")))
-                .label(if expanded { "Collapse" } else { "Expand" })
-                .ghost()
-                .compact()
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    let Some(thread) = this.selected.as_ref().filter(|v| v["id"] == source) else {
-                        return;
-                    };
-                    let Some(index) = thread["items"]
-                        .as_array()
-                        .and_then(|items| items.iter().position(|v| v["id"] == item))
-                    else {
-                        return;
-                    };
-                    if this
-                        .find_revealed
-                        .as_ref()
-                        .is_some_and(|(thread, id, _)| thread == &source && id == &item)
-                    {
-                        this.find_revealed = None;
-                        this.find_pending = None;
-                        this.expanded.remove(&index);
-                    } else if !this.expanded.remove(&index) {
-                        this.expanded.insert(index);
-                    }
-                    this.transcript_list.splice(index..index + 1, 1);
-                    cx.notify();
-                }))
-        });
+        let disclosure =
+            collapsible.then(|| {
+                let source = source_id.clone();
+                let item = item_id.clone();
+                Button::new(SharedString::from(format!("expand-{source_id}-{item_id}")))
+                    .accessibility_id(SharedString::from(format!("expand-{source_id}-{item_id}")))
+                    .label(if expanded { "Collapse" } else { "Expand" })
+                    .ghost()
+                    .compact()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.toggle_item_expanded(&source, &item, cx)
+                    }))
+            });
         let (work_disclosure, other_disclosure) = if work_header.is_some() {
             (disclosure, None)
         } else {
@@ -4200,7 +4196,7 @@ impl Coincide {
         } else {
             card.into_any_element()
         };
-        div()
+        let row = div()
             .flex()
             .w_full()
             .px(px(presentation::CONTENT_GUTTER))
@@ -4220,7 +4216,8 @@ impl Coincide {
                     )
                     .child(card),
             )
-            .into_any_element()
+            .into_any_element();
+        self.turn_decorated(index, row, plan.header, cx)
     }
     fn terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.clear_inspector_placeholders();
@@ -4527,7 +4524,7 @@ impl Render for Coincide {
         self.sync_inspector_browser_visibility(cx);
         let inspector_pane = self.chat_inspector_surface(window, cx);
         let pending_pane = if self.chat_visible() {
-            self.pending_pane(cx)
+            self.pending_pane(window, cx)
         } else {
             None
         };
