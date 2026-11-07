@@ -804,6 +804,7 @@ impl NativeBackend {
                             .ok_or(Failure::Unsupported)?;
                         input_guard(&connection, observed, permit, deadline)?;
                         recheck_element(&bus, target)?;
+                        keyboard_focus(&connection, observed)?;
                         input_pair(
                             &connection,
                             observed,
@@ -895,7 +896,16 @@ fn input_pair(
         return Err(Failure::StaleObservation);
     }
     policy::paired_input(
-        || input_guard(connection, observed, permit, deadline),
+        || {
+            input_guard(connection, observed, permit, deadline)?;
+            if down == KEY_PRESS_EVENT {
+                keyboard_focus(connection, observed)?;
+            }
+            if down == BUTTON_PRESS_EVENT {
+                pointer_target(connection, observed)?;
+            }
+            checked(permit, deadline)
+        },
         || {
             connection
                 .xtest_fake_input(down, detail, 0, root, 0, 0, 0)
@@ -912,6 +922,26 @@ fn input_pair(
                 .and_then(|cookie| cookie.check().map_err(|_| Failure::Native))
         },
     )
+}
+fn keyboard_focus(connection: &shared::XConnection<'_>, observed: &Observed) -> R<()> {
+    let mut current = x!(x!(connection.get_input_focus()).reply()).focus;
+    if current == 0 || current == observed.window.identity.root {
+        return Err(Failure::StaleObservation);
+    }
+    if client(connection, current)?.2 != observed.window.identity.pid {
+        return Err(Failure::StaleObservation);
+    }
+    for _ in 0..32 {
+        if current == observed.window.identity.window {
+            return Ok(());
+        }
+        let tree = x!(x!(connection.query_tree(current)).reply());
+        if tree.parent == 0 || tree.parent == tree.root {
+            return Err(Failure::StaleObservation);
+        }
+        current = tree.parent;
+    }
+    Err(Failure::TooLarge)
 }
 fn pointer_target(connection: &shared::XConnection<'_>, observed: &Observed) -> R<()> {
     let mut current = observed.window.identity.root;

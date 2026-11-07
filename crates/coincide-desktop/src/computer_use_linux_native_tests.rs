@@ -147,6 +147,13 @@ fn owned_gtk_child() {
         .unwrap()
         .check()
         .unwrap();
+    // No window manager is present on this private display. The fixture, never
+    // the product adapter, explicitly focuses its own native top-level window.
+    connection
+        .set_input_focus(InputFocus::PARENT, xid, 0u32)
+        .unwrap()
+        .check()
+        .unwrap();
     connection.flush().unwrap();
     let clicks = Rc::new(Cell::new(0));
     let count = clicks.clone();
