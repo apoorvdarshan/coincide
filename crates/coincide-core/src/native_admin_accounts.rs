@@ -250,4 +250,4 @@ mod tests {
 
 #[path = "native_admin_usage.rs"]
 mod usage;
-pub use usage::{NativeAdminTokens, NativeAdminUsage, NativeAdminUsageReport};
+pub use usage::{NativeAdminModel, NativeAdminTokens, NativeAdminUsage, NativeAdminUsageReport};

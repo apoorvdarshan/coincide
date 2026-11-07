@@ -573,6 +573,14 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.settings_section == Section::Usage {
+            for provider in [ProviderId::Claude, ProviderId::Opencode] {
+                let enabled = provider_enabled(&self.settings, provider);
+                self.provider_configuration_panel.update(cx, |panel, cx| {
+                    panel.select(provider_key(provider), enabled, window, cx)
+                });
+            }
+        }
         if let Section::Provider(provider) = self.settings_section {
             let enabled = provider_enabled(&self.settings, provider);
             self.provider_configuration_panel.update(cx, |panel, cx| {

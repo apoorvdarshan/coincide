@@ -762,12 +762,18 @@ impl Coincide {
         ) {
             count += 1;
             if self.settings_section == S::Usage {
-                content = content.child(self.codex_limits.panel.clone()).child(
-                    div()
-                        .h(px(460.))
-                        .min_h(px(260.))
-                        .child(self.usage_history.panel.clone()),
-                );
+                let admin_usage = self
+                    .provider_configuration_panel
+                    .update(cx, |panel, cx| panel.admin_usage_view(cx));
+                content = content
+                    .child(admin_usage)
+                    .child(self.codex_limits.panel.clone())
+                    .child(
+                        div()
+                            .h(px(460.))
+                            .min_h(px(260.))
+                            .child(self.usage_history.panel.clone()),
+                    );
             } else {
                 content = content.child(
                     Button::new("settings-usage-history")

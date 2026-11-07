@@ -4,6 +4,23 @@ use super::*;
 use chrono::{Datelike, Utc};
 use std::time::{Duration, Instant};
 use zeroize::Zeroizing;
+#[derive(Debug)]
+struct Refused(u16);
+impl std::fmt::Display for Refused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self.0 {
+            401 => "Anthropic did not accept the Admin key",
+            403 => "This key may not read Anthropic organization reports",
+            _ => "Anthropic reporting request was refused",
+        })
+    }
+}
+impl std::error::Error for Refused {}
+fn privilege_failure(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<Refused>()
+        .is_some_and(|error| matches!(error.0, 401 | 403))
+}
 
 #[derive(Clone, Default)]
 pub struct NativeAdminTokens {
@@ -44,6 +61,12 @@ impl NativeAdminTokens {
     }
 }
 #[derive(Clone)]
+pub struct NativeAdminModel {
+    pub name: String,
+    pub tokens: NativeAdminTokens,
+    pub organization_cost_usd: Option<f64>,
+}
+#[derive(Clone)]
 pub struct NativeAdminUsageReport {
     /// None means organization-wide tokens; costs are always organization-wide.
     pub token_key_name: Option<String>,
@@ -52,6 +75,7 @@ pub struct NativeAdminUsageReport {
     pub cost_today_usd: Option<f64>,
     pub cost_month_usd: Option<f64>,
     pub checked_at: String,
+    pub models: Vec<NativeAdminModel>,
 }
 pub struct NativeAdminUsage {
     source: Value,
@@ -155,12 +179,13 @@ impl NativeAdminUsage {
             "Invalid Admin key"
         );
         let deadline = Instant::now() + Duration::from_secs(30);
-        read_report(
+        let reporting_allowed = || allowed() && Instant::now() < deadline;
+        let result = read_report(
             self.api
                 .as_deref()
                 .and_then(|value| std::str::from_utf8(value).ok()),
             self.now,
-            &allowed,
+            &reporting_allowed,
             |path, query| {
                 ensure!(
                     allowed() && Instant::now() < deadline,
@@ -190,15 +215,9 @@ impl NativeAdminUsage {
                     anyhow::anyhow!("Anthropic reporting request failed or timed out")
                 })?;
                 let status = response.status().as_u16();
-                ensure!(status != 401, "Anthropic did not accept the Admin key");
-                ensure!(
-                    status != 403,
-                    "This key may not read Anthropic organization reports"
-                );
-                ensure!(
-                    (200..300).contains(&status),
-                    "Anthropic reporting request was refused (HTTP {status})"
-                );
+                if !(200..300).contains(&status) {
+                    return Err(Refused(status).into());
+                }
                 let mut bytes = Zeroizing::new(Vec::new());
                 let mut reader = response.body_mut().as_reader();
                 let mut chunk = [0u8; 8192];
@@ -222,7 +241,11 @@ impl NativeAdminUsage {
                 serde_json::from_slice(&bytes)
                     .map_err(|_| anyhow::anyhow!("Anthropic report has invalid JSON"))
             },
-        )
+        );
+        let report = result?;
+        ensure!(reporting_allowed(), "Report cancelled or timed out");
+        self.validate()?;
+        Ok(report)
     }
 }
 fn pages(
@@ -282,12 +305,16 @@ fn read_report(
 ) -> Result<NativeAdminUsageReport> {
     let mut key_match = None;
     if let Some(api) = api {
-        let rows = pages(
+        let rows = match pages(
             "api_keys",
             &[("limit", "1000".into()), ("status", "active".into())],
             allowed,
             &mut get,
-        )?;
+        ) {
+            Ok(rows) => rows,
+            Err(error) if !privilege_failure(&error) && allowed() => Vec::new(),
+            Err(error) => return Err(error),
+        };
         let matches = rows
             .iter()
             .filter_map(|row| {
@@ -327,7 +354,7 @@ fn read_report(
         query.push(("api_key_ids[]", id.clone()));
     }
     let usage = pages("usage_report/messages", &query, allowed, &mut get)?;
-    let costs = pages(
+    let costs = match pages(
         "cost_report",
         &[
             ("starting_at", start.to_rfc3339()),
@@ -337,15 +364,21 @@ fn read_report(
         ],
         allowed,
         &mut get,
-    )?;
+    ) {
+        Ok(rows) => Some(rows),
+        Err(error) if !privilege_failure(&error) && allowed() => None,
+        Err(error) => return Err(error),
+    };
     let mut report = NativeAdminUsageReport {
         token_key_name: key_match.map(|(id, name)| name.unwrap_or(id)),
         today: NativeAdminTokens::default(),
         month: NativeAdminTokens::default(),
-        cost_today_usd: Some(0.),
-        cost_month_usd: Some(0.),
+        cost_today_usd: costs.as_ref().map(|_| 0.),
+        cost_month_usd: costs.as_ref().map(|_| 0.),
         checked_at: now.to_rfc3339(),
+        models: Vec::new(),
     };
+    let mut models: BTreeMap<String, NativeAdminModel> = BTreeMap::new();
     for bucket in usage {
         let day = chrono::DateTime::parse_from_rfc3339(
             bucket["starting_at"]
@@ -361,12 +394,26 @@ fn read_report(
             .context("Usage bucket rows missing")?
         {
             report.month.add(row);
+            if let Some(name) = row["model"]
+                .as_str()
+                .filter(|name| !name.is_empty() && name.len() <= 256)
+            {
+                models
+                    .entry(name.into())
+                    .or_insert_with(|| NativeAdminModel {
+                        name: name.into(),
+                        tokens: NativeAdminTokens::default(),
+                        organization_cost_usd: None,
+                    })
+                    .tokens
+                    .add(row);
+            }
             if day.date_naive() == now.date_naive() {
                 report.today.add(row);
             }
         }
     }
-    for bucket in costs {
+    for bucket in costs.into_iter().flatten() {
         let day = chrono::DateTime::parse_from_rfc3339(
             bucket["starting_at"]
                 .as_str()
@@ -389,15 +436,37 @@ fn read_report(
                 .and_then(|value| value.parse::<f64>().ok())
                 .or_else(|| row["amount"].as_f64())
                 .context("Invalid reported amount")?;
-            ensure!(cents.is_finite() && cents >= 0., "Invalid reported amount");
+            ensure!(cents.is_finite(), "Invalid reported amount");
             let month = report.cost_month_usd.unwrap() + cents / 100.;
             ensure!(month.is_finite(), "Reported cost exceeds its bound");
             report.cost_month_usd = Some(month);
+            if let Some(name) = row["model"]
+                .as_str()
+                .filter(|name| !name.is_empty() && name.len() <= 256)
+            {
+                let model = models
+                    .entry(name.into())
+                    .or_insert_with(|| NativeAdminModel {
+                        name: name.into(),
+                        tokens: NativeAdminTokens::default(),
+                        organization_cost_usd: None,
+                    });
+                let sum = model.organization_cost_usd.unwrap_or(0.) + cents / 100.;
+                ensure!(sum.is_finite(), "Reported model cost exceeds its bound");
+                model.organization_cost_usd = Some(sum);
+            }
             if day.date_naive() == now.date_naive() {
                 report.cost_today_usd = Some(report.cost_today_usd.unwrap() + cents / 100.);
             }
         }
     }
+    report.models = models.into_values().collect();
+    report.models.sort_by(|a, b| {
+        b.tokens
+            .total()
+            .cmp(&a.tokens.total())
+            .then_with(|| a.name.cmp(&b.name))
+    });
     Ok(report)
 }
 
@@ -434,6 +503,28 @@ mod tests {
         assert_eq!(report.month.total(), 25);
         assert_eq!(report.cost_today_usd, Some(1.25));
         assert_eq!(report.cost_month_usd, Some(3.75));
+    }
+    #[test]
+    fn unavailable_cost_stays_unknown_but_permission_errors_never_become_totals() {
+        let report = read_report(None, now(), &|| true, |path, _| {
+            if path == "cost_report" {
+                anyhow::bail!("Synthetic unavailable report");
+            }
+            Ok(json!({"data":[], "has_more":false}))
+        })
+        .unwrap();
+        assert!(report.cost_today_usd.is_none() && report.cost_month_usd.is_none());
+        for status in [401, 403] {
+            assert!(
+                read_report(None, now(), &|| true, |path, _| {
+                    if path == "cost_report" {
+                        return Err(Refused(status).into());
+                    }
+                    Ok(json!({"data":[], "has_more":false}))
+                })
+                .is_err()
+            );
+        }
     }
     #[test]
     fn ambiguous_keys_do_not_narrow_and_repeated_pages_never_display_partial_totals() {
