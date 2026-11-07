@@ -262,7 +262,7 @@ jobs:
           cargo test --manifest-path vendor/gpui-webview/Cargo.toml --no-default-features --lib release::tests --config 'patch.crates-io.gpui-pre.path="vendor/gpui-pre"' --locked -- --nocapture | tee "$RUNNER_TEMP/webview-release-own-tests.log"
           grep -F 'test result: ok. 8 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/webview-release-own-tests.log"
       - name: Install native Linux smoke dependencies
-        run: sudo apt-get install -y --no-install-recommends xvfb xauth xdotool imagemagick python3-pil tesseract-ocr dbus-x11 mesa-vulkan-drivers vulkan-tools fonts-dejavu-core
+        run: sudo apt-get install -y --no-install-recommends xvfb xauth xdotool imagemagick python3-pil tesseract-ocr dbus-x11 at-spi2-core libatk-adaptor mesa-vulkan-drivers vulkan-tools fonts-dejavu-core
       - name: Test Linux Appshots pixels, keys and owned delivery without capture
         run: |
           set -o pipefail
@@ -276,7 +276,21 @@ jobs:
           cargo test -p coincide-desktop --bin coincide-rust microphone::samples::tests --features native-microphone --locked -- --nocapture | tee "$RUNNER_TEMP/microphone-pcm-tests.log"
           grep -F 'test result: ok. 2 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/microphone-pcm-tests.log"
       - name: Build actual Linux native application
-        run: cargo build -p coincide-desktop --features native-microphone,native-notifications --locked
+        run: cargo build -p coincide-desktop --features native-microphone,native-notifications,native-computer-use --locked
+      - name: Test actual owned X11 Computer Use on a private desktop
+        env:
+          COINCIDE_LINUX_CU_CI: private-xvfb-owned-gtk-v1
+        run: |
+          set -o pipefail
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' cargo test -p coincide-desktop --bin coincide-rust --features native-microphone,native-notifications,native-computer-use --locked computer_use::linux::native_tests::actual_owned_x11_window_actions_capture_and_drain -- --ignored --exact --nocapture --test-threads=1 | tee "$RUNNER_TEMP/linux-cu-owned-tests.log"
+          python3 -c 'import os,pathlib; text=(pathlib.Path(os.environ["RUNNER_TEMP"])/"linux-cu-owned-tests.log").read_text(); assert "1 passed; 0 failed; 0 ignored;" in text, "Expected the exact owned X11 Computer Use test"'
+      - name: Reject XWayland as authority over a Wayland desktop
+        env:
+          COINCIDE_LINUX_CU_CI: private-xvfb-owned-gtk-v1
+        run: |
+          set -o pipefail
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' env WAYLAND_DISPLAY=coincide-private-wayland cargo test -p coincide-desktop --bin coincide-rust --features native-microphone,native-notifications,native-computer-use --locked computer_use::linux::native_tests::actual_wayland_refuses_existing_x11_display -- --ignored --exact --nocapture --test-threads=1 | tee "$RUNNER_TEMP/linux-cu-wayland-tests.log"
+          python3 -c 'import os,pathlib; text=(pathlib.Path(os.environ["RUNNER_TEMP"])/"linux-cu-wayland-tests.log").read_text(); assert "1 passed; 0 failed; 0 ignored;" in text, "Expected the exact Wayland refusal test"'
       - name: Test notifications through a private synthetic desktop bus
         shell: bash
         env:
