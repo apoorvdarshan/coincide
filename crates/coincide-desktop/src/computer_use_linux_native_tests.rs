@@ -254,6 +254,41 @@ fn owned_gtk_child() {
     clock.disconnect(paint_handler);
     window.close();
 }
+// Closing uses the same atomic publication as ordinary commands: truncating
+// the live file can expose an empty/partial command to GTK's frame callback.
+fn publish_command(root: &std::path::Path, command: &str) -> std::io::Result<()> {
+    std::fs::write(root.join("command-next"), command)?;
+    std::fs::rename(root.join("command-next"), root.join("command"))
+}
+
+#[test]
+fn private_command_publication_never_exposes_partial_frames() {
+    let root = tempfile::tempdir().unwrap();
+    publish_command(root.path(), "focus-password").unwrap();
+    let reading = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let shared = reading.clone();
+    let folder = root.path().to_owned();
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let ready = barrier.clone();
+    let reader = std::thread::spawn(move || {
+        ready.wait();
+        let mut frames = 0;
+        while shared.load(std::sync::atomic::Ordering::Acquire) {
+            let command = std::fs::read_to_string(folder.join("command")).unwrap();
+            assert!(matches!(command.as_str(), "focus-password" | "close"));
+            frames += 1;
+        }
+        frames
+    });
+    barrier.wait();
+    for _ in 0..1000 {
+        publish_command(root.path(), "close").unwrap();
+        publish_command(root.path(), "focus-password").unwrap();
+    }
+    reading.store(false, std::sync::atomic::Ordering::Release);
+    assert!(reader.join().unwrap() > 0);
+}
+
 struct Fixture {
     root: PathBuf,
     child: Option<Child>,
@@ -265,8 +300,7 @@ impl Fixture {
         serde_json::from_slice(&std::fs::read(self.root.join("state.json")).ok()?).ok()
     }
     fn command(&self, command: &str) {
-        std::fs::write(self.root.join("command-next"), command).unwrap();
-        std::fs::rename(self.root.join("command-next"), self.root.join("command")).unwrap();
+        publish_command(&self.root, command).unwrap();
         wait("owned child command acknowledgement", || {
             self.state().filter(|s| s["command"] == command)
         });
@@ -303,7 +337,7 @@ impl Fixture {
         }
         self.runtime = None;
         if let Some(child) = &mut self.child {
-            std::fs::write(self.root.join("command"), "close").unwrap();
+            publish_command(&self.root, "close").unwrap();
             assert!(child.wait().unwrap().success());
         }
         self.child = None;
@@ -323,7 +357,7 @@ impl Drop for Fixture {
             }
         }
         if let Some(child) = self.child.as_mut() {
-            let _ = std::fs::write(self.root.join("command"), "close");
+            let _ = publish_command(&self.root, "close");
             // The owned child also has an unconditional 60 second exit. Never
             // force-kill it or remove its files before actual process return.
             let _ = child.wait();
