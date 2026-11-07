@@ -291,6 +291,51 @@ fn store_schedule_project_claim_binding_and_old_completion_cannot_touch_new_run(
 }
 
 #[test]
+fn store_schedule_only_project_tasks_move_to_another_existing_project() {
+    let (dir, mut store, thread) = fixture();
+    let other_path = dir.path().join("other");
+    std::fs::create_dir(&other_path).unwrap();
+    let other = store.create_project(&other_path, Some("Other")).unwrap();
+    let mut project_input = input(&thread);
+    project_input.as_object_mut().unwrap().remove("threadID");
+    let mut service = ScheduleService::new(&mut store);
+    let project_task = service.create(&project_input, start()).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let thread_task = service.create(&input(&thread), start()).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    service.approve(&project_task, start()).unwrap();
+    let moved = service
+        .patch(&project_task, &json!({"projectID":other["id"]}), start())
+        .unwrap();
+    assert_eq!(moved["projectID"], other["id"]);
+    assert!(moved.get("threadID").is_none());
+    assert_ne!(
+        service.approval_state(&project_task).unwrap(),
+        coincide_core::schedule_service::ApprovalState::Approved
+    );
+    assert!(
+        service
+            .patch(&thread_task, &json!({"projectID":other["id"]}), start())
+            .is_err()
+    );
+    assert!(
+        service
+            .patch(
+                &project_task,
+                &json!({"projectID":"7E57AB1E-0000-4000-8000-000000000000"}),
+                start()
+            )
+            .is_err()
+    );
+    let saved = service.list().unwrap();
+    assert_eq!(saved[0]["projectID"], other["id"]);
+    assert_eq!(saved[1]["projectID"], thread["projectID"]);
+}
+#[test]
 fn store_schedule_manual_once_never_rearms_on_pause_or_name_edit() {
     let (_dir, mut store, thread) = fixture();
     let mut once = input(&thread);
@@ -320,6 +365,43 @@ fn store_schedule_manual_once_never_rearms_on_pause_or_name_edit() {
             .plan_due(at("2026-11-06T00:00:00Z"))
             .unwrap()
             .is_empty()
+    );
+}
+#[test]
+fn store_schedule_spent_once_can_be_renamed_and_allowed_after_its_date() {
+    let (_dir, mut store, thread) = fixture();
+    let mut once = input(&thread);
+    once["recurrence"]["kind"] = json!("once");
+    once["recurrence"]["date"] = json!("2026-11-05T00:04:00Z");
+    let mut service = ScheduleService::new(&mut store);
+    let id = service.create(&once, start()).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    service.approve(&id, start()).unwrap();
+    let job = service.plan_due(due()).unwrap().remove(0);
+    let claim = service
+        .claim(&job, TargetState::Ready, due())
+        .unwrap()
+        .unwrap();
+    service
+        .complete(&claim.claim_id, Outcome::Completed, None, due())
+        .unwrap();
+    let later = at("2026-11-07T00:00:00Z");
+    service
+        .patch(&id, &json!({"name":"Renamed"}), later)
+        .unwrap();
+    let allowed = service.approve(&id, later).unwrap();
+    assert!(allowed.newly_approved);
+    assert!(allowed.task["nextRunAt"].is_null());
+    assert!(service.plan_due(later).unwrap().is_empty());
+    // Choosing another past date is still refused.
+    let mut past = once["recurrence"].clone();
+    past["date"] = json!("2026-11-06T00:00:00Z");
+    assert!(
+        service
+            .patch(&id, &json!({"recurrence":past}), later)
+            .is_err()
     );
 }
 #[test]

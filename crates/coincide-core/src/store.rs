@@ -94,6 +94,9 @@ pub struct ThreadNavigation {
     pub item_count: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub has_draft: Option<bool>,
+    /// The thread's selected agent, for the sidebar row's logo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize)]

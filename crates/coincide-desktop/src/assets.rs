@@ -158,6 +158,7 @@ icon_assets!(
         PanelRightOpen,
         PanelRight,
         Pause,
+        Pin,
         Play,
         Plus,
         Redo2,
@@ -169,6 +170,7 @@ icon_assets!(
         Search,
         Settings2,
         Settings,
+        ShieldAlert,
         SortAscending,
         SortDescending,
         SkipForward,
@@ -237,8 +239,9 @@ mod tests {
             "icons/circle-slash.svg",
             "icons/graduation-cap.svg",
             "icons/pencil-line.svg",
+            // Sidebar thread rows: pinned and waiting-for-approval marks.
+            "icons/pin.svg",
             // Empty states shared by sidebar chrome and Diff inspector.
-            "icons/folder-x.svg",
             "icons/diff.svg",
             "icons/folder-x.svg",
             "icons/git-pull-request.svg",

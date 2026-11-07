@@ -141,6 +141,8 @@ pub use shutdown_owner::CoreOwnerShutdownStatus;
 mod steering_api;
 #[path = "terminal_shutdown.rs"]
 pub mod terminal_shutdown;
+#[path = "thread_activity_api.rs"]
+mod thread_activity_api;
 #[path = "thread_bulk_api.rs"]
 mod thread_bulk_api;
 pub use thread_bulk_api::{PreparedThreadFlags, ThreadFlagAction, ThreadFlagUndo};
@@ -277,6 +279,7 @@ pub struct Engine {
     steering_operations: HashMap<String, steering_api::Operation>,
     enabled_queues: HashSet<String>,
     native_follow_up: follow_up_api::State,
+    turn_results: thread_activity_api::TurnResults,
     turn_checkpoints: checkpoint_api::State,
     composer_commands: crate::composer_suggestions::ReportedCommands,
 }
@@ -364,6 +367,7 @@ impl Engine {
             steering_operations: HashMap::new(),
             enabled_queues: HashSet::new(),
             native_follow_up: follow_up_api::State::default(),
+            turn_results: Default::default(),
             turn_checkpoints: checkpoint_api::State::default(),
             composer_commands: Default::default(),
         }
@@ -653,7 +657,7 @@ impl Engine {
             }
             "terminal.close"=>{ensure!(self.terminals.remove(required(p,"terminalId")?).is_some(),"Terminal not found");self.revision+=1;Ok(json!({"closed":true}))}
             "app.status" => Ok(
-                json!({"version":env!("CARGO_PKG_VERSION"),"revision":self.revision,"running":self.runs.keys().collect::<Vec<_>>(),"runClocks":self.run_clocks_status(),"starting":self.runs.keys().filter(|id|!self.answered_runs.contains(*id)).collect::<Vec<_>>(),"preview":true,"activeThread":self.active_thread,"persistencePending":self.unsaved_threads.len(),"schedulerError":self.schedule_error}),
+                json!({"version":env!("CARGO_PKG_VERSION"),"revision":self.revision,"running":self.runs.keys().collect::<Vec<_>>(),"runClocks":self.run_clocks_status(),"starting":self.runs.keys().filter(|id|!self.answered_runs.contains(*id)).collect::<Vec<_>>(),"preview":true,"activeThread":self.active_thread,"persistencePending":self.unsaved_threads.len(),"schedulerError":self.schedule_error,"pendingApprovals":self.pending_approvals(),"turnResults":self.turn_results.status()}),
             ),
             "app.capabilities" => {
                 let mut methods = vec![
@@ -2323,6 +2327,7 @@ impl Engine {
             }
             self.revision += 1;
             if finished {
+                self.record_turn_result(&id, failure.is_some());
                 self.finish_turn_checkpoint(&id);
             }
             if finished

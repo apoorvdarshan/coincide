@@ -128,6 +128,7 @@ mod sidebar_preferences;
 mod sidebar_rename;
 mod sidebar_search;
 mod sidebar_settle;
+mod sidebar_thread_status;
 mod terminal_context_mount;
 mod terminal_layout;
 mod terminal_selection;
@@ -544,6 +545,7 @@ struct Coincide {
     collapsed_projects: std::collections::HashSet<String>,
     show_snoozed: bool,
     navigation_last_clock: Instant,
+    thread_activity: sidebar_thread_status::ThreadActivity,
     sidebar_renaming: Option<sidebar_rename::Renaming>,
     sidebar_rename_candidate: Option<String>,
     sidebar_type_select: sidebar_keys::TypeSelect,
@@ -1582,6 +1584,7 @@ impl Coincide {
             expanded_sidebar_lists: std::collections::HashSet::new(),
             collapsed_projects,
             navigation_last_clock: Instant::now(),
+            thread_activity: Default::default(),
             sidebar_renaming: None,
             sidebar_rename_candidate: None,
             sidebar_type_select: Default::default(),
@@ -3428,6 +3431,7 @@ impl Coincide {
                     .splice(0..self.transcript_count, self.transcript_count);
                 cx.notify();
             }
+            self.observe_thread_activity(&status, window, cx);
             if was_running
                 && selected_thread
                     .as_ref()
