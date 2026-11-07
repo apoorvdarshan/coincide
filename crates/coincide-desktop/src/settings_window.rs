@@ -21,6 +21,7 @@ mod focus_tests;
 pub(super) struct SettingsWindow {
     owner: WeakEntity<Coincide>,
     _observation: Subscription,
+    _window_observations: Vec<Subscription>,
 }
 
 impl SettingsWindow {
@@ -34,10 +35,29 @@ impl SettingsWindow {
             true
         });
         let observation = cx.observe(&owner, |_, _, cx| cx.notify());
+        let window_observations = vec![
+            cx.observe_window_activation(window, |this, window, cx| {
+                this.sync_microphone_activity(window, cx);
+            }),
+            cx.observe_window_visibility(window, |this, _, window, cx| {
+                this.sync_microphone_activity(window, cx);
+            }),
+        ];
         Self {
             owner: weak,
             _observation: observation,
+            _window_observations: window_observations,
         }
+    }
+
+    fn sync_microphone_activity(&self, window: &Window, cx: &mut Context<Self>) {
+        let active = window.is_window_active() && window.visibility().is_visible();
+        self.owner
+            .update(cx, |owner, cx| {
+                owner.microphone_settings_active = active;
+                owner.sync_transcription_binding(cx);
+            })
+            .ok();
     }
 }
 
@@ -54,6 +74,9 @@ impl Render for SettingsWindow {
                     return div().into_any_element();
                 }
                 window.set_window_title(owner.settings_section.label());
+                owner.microphone_settings_active =
+                    window.is_window_active() && window.visibility().is_visible();
+                owner.sync_transcription_binding(cx);
                 owner.sync_keyboard_recording(window, cx);
                 div()
                     .id("settings-window")
@@ -169,6 +192,7 @@ impl Coincide {
         self.archive_settings.close_review();
         self.settings_window = None;
         self.settings_window_pending = false;
+        self.microphone_settings_active = false;
         self.settings_open = false;
         self.cancel_settings_shortcut();
         if self.appshots.recording {

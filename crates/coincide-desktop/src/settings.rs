@@ -634,7 +634,7 @@ impl Coincide {
                             .overflow_y_scroll()
                             .child(self.transcription_panel.clone())
                             .child(self.microphone_panel.clone())
-                            .child(div().p_3().text_sm().child("Recording uses the executable, model, language and CPU-thread settings above, with a 60-second limit. Native microphone acceptance is pending; recording controls remain disabled."))
+                            .child(div().p_3().text_sm().child("Recording uses the executable, model, language and CPU-thread settings above, with a 60-second limit. Enable Microphone prepares access; Record starts capture. Stop and Transcribe Recording are separate actions. Your transcript waits in the composer."))
                             .child(div().p_3().text_sm().child(self.status.clone()))
                         )
                             .into_any_element()
@@ -1159,8 +1159,7 @@ impl Coincide {
             K::Palette => self.toggle_palette(window, cx),
             K::Sidebar => self.toggle_sidebar(window, cx),
             K::Terminal => {
-                if self.settings_in_main_window() || self.schedules_open || self.selected.is_none()
-                {
+                if !self.chat_visible() {
                     return;
                 }
                 self.terminal(window, cx);

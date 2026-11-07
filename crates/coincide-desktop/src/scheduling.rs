@@ -269,6 +269,7 @@ impl Coincide {
         }
     }
     pub(super) fn open_global_schedules(&mut self, cx: &mut Context<Self>) {
+        self.clear_inspector_placeholders();
         self.schedule_editor.all_conversations = true;
         self.schedule_editor.scope_epoch = self.schedule_editor.scope_epoch.wrapping_add(1);
         self.schedule_editor.open = false;
@@ -280,6 +281,7 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.clear_inspector_placeholders();
         self.workspace_open = false;
         self.ensure_inspector_space(window);
         self.schedule_editor.all_conversations = false;
