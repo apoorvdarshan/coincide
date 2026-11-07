@@ -364,6 +364,11 @@ def main():
         report["nativeBrowser"] = browser_fixture.exercise_browser(
             rpc, thread_id,
             lambda: capture(window, "native-browser-visible", "NativeBrowserSecondReady"))
+        screenshot_spec = importlib.util.spec_from_file_location("owned_browser_screenshot_fixture", Path(__file__).with_name("test-rust-native-browser-screenshots.py"))
+        screenshot_fixture = importlib.util.module_from_spec(screenshot_spec)
+        screenshot_spec.loader.exec_module(screenshot_fixture)
+        report["nativeBrowserScreenshots"] = screenshot_fixture.exercise_screenshots(rpc, thread_id, data)
+        assert report["nativeBrowserScreenshots"]["passed"]
         assert rpc("threads.read", threadId=thread_id)["draft"] == draft
         report["checks"].append("actual native browser loopback navigation/input/click/same-origin frame/history/reload/tab selection and cleanup; native pixels reviewed separately")
         newer = rpc("threads.create", projectId=created_project["id"])
