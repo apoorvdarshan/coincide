@@ -14,7 +14,10 @@ use std::{
     ptr::null,
 };
 use windows_sys::Win32::{
-    Foundation::{ERROR_BROKEN_PIPE, GetLastError, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0},
+    Foundation::{
+        ERROR_BROKEN_PIPE, ERROR_MORE_DATA, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
+        WAIT_OBJECT_0,
+    },
     Storage::FileSystem::{
         FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
         FILE_SHARE_READ, FILE_SHARE_WRITE,
@@ -24,14 +27,17 @@ use windows_sys::Win32::{
             CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
         },
         JobObjects::{
-            AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-            JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-            JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation,
-            QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
+            AssignProcessToJobObject, CreateJobObjectW, IsProcessInJob,
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+            JOBOBJECT_BASIC_PROCESS_ID_LIST, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            JobObjectBasicAccountingInformation, JobObjectBasicProcessIdList,
+            JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject,
+            TerminateJobObject,
         },
         Pipes::PeekNamedPipe,
         Threading::{
-            CREATE_NO_WINDOW, CREATE_SUSPENDED, GetExitCodeProcess, OpenThread, ResumeThread,
+            CREATE_NO_WINDOW, CREATE_SUSPENDED, GetExitCodeProcess, OpenProcess, OpenThread,
+            PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, ResumeThread,
             THREAD_SUSPEND_RESUME, WaitForSingleObject,
         },
     },
@@ -126,16 +132,75 @@ impl Process {
         }
         Ok(())
     }
+    /// A process leaves the Job's count before its own handles (one on the
+    /// root, say) are closed, so each member the Job lists is held open and
+    /// counts as stopped only once signalled.
+    fn hold_members(&self, members: &mut Vec<(u32, OwnedHandle)>) -> Result<()> {
+        let offset = std::mem::offset_of!(JOBOBJECT_BASIC_PROCESS_ID_LIST, ProcessIdList)
+            / size_of::<usize>();
+        let mut capacity = 64;
+        let buffer = loop {
+            let mut buffer = vec![0usize; offset + capacity];
+            let queried = unsafe {
+                QueryInformationJobObject(
+                    self.job.as_raw_handle(),
+                    JobObjectBasicProcessIdList,
+                    buffer.as_mut_ptr().cast(),
+                    size_of_val(buffer.as_slice()) as u32,
+                    std::ptr::null_mut(),
+                )
+            } != 0;
+            let more = !queried && unsafe { GetLastError() } == ERROR_MORE_DATA;
+            let list = unsafe { &*buffer.as_ptr().cast::<JOBOBJECT_BASIC_PROCESS_ID_LIST>() };
+            if queried && list.NumberOfProcessIdsInList >= list.NumberOfAssignedProcesses {
+                break buffer;
+            }
+            ensure!(
+                (queried || more) && capacity < 65_536,
+                "GitHub Job cleanup unconfirmed"
+            );
+            capacity *= 4;
+        };
+        let list = unsafe { &*buffer.as_ptr().cast::<JOBOBJECT_BASIC_PROCESS_ID_LIST>() };
+        let listed = (list.NumberOfProcessIdsInList as usize).min(capacity);
+        for &id in &buffer[offset..offset + listed] {
+            let Ok(id) = u32::try_from(id) else {
+                continue;
+            };
+            if members.iter().any(|(held, _)| *held == id) {
+                continue;
+            }
+            let access = PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION;
+            // Unopenable means already gone: signalled before its ID was free.
+            let Ok(member) = owned(unsafe { OpenProcess(access, 0, id) }) else {
+                continue;
+            };
+            let mut ours = 0;
+            if unsafe {
+                IsProcessInJob(member.as_raw_handle(), self.job.as_raw_handle(), &mut ours)
+            } != 0
+                && ours != 0
+            {
+                members.push((id, member));
+            }
+        }
+        Ok(())
+    }
     fn drain(&mut self) -> Result<()> {
+        // Held before termination, while every member is still listed.
+        let mut members = Vec::new();
+        let held = self.hold_members(&mut members);
         ensure!(
             unsafe { TerminateJobObject(self.job.as_raw_handle(), 1) } != 0,
             "GitHub Job cleanup incomplete"
         );
+        held?;
         self.child
             .wait()
             .context("GitHub child cleanup incomplete")?;
         let started = Instant::now();
         loop {
+            self.hold_members(&mut members)?;
             let mut accounting: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION =
                 unsafe { std::mem::zeroed() };
             ensure!(
@@ -151,7 +216,7 @@ impl Process {
                 "GitHub Job cleanup unconfirmed"
             );
             if accounting.ActiveProcesses == 0 {
-                return Ok(());
+                break;
             }
             ensure!(
                 started.elapsed() < Duration::from_secs(5),
@@ -159,6 +224,15 @@ impl Process {
             );
             std::thread::sleep(Duration::from_millis(10));
         }
+        for (_, member) in &members {
+            let left = Duration::from_secs(5).saturating_sub(started.elapsed());
+            ensure!(
+                unsafe { WaitForSingleObject(member.as_raw_handle(), left.as_millis() as u32) }
+                    == WAIT_OBJECT_0,
+                "GitHub descendants still stopping"
+            );
+        }
+        Ok(())
     }
 }
 impl Drop for Process {
