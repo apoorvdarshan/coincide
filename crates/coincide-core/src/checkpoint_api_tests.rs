@@ -37,6 +37,8 @@ fn fixture() -> (tempfile::TempDir, Engine, String, PathBuf) {
     let root = dir.path().join("repo");
     std::fs::create_dir(&root).unwrap();
     git(&root, &["init", "-q"]);
+    // Git for Windows converts line endings on restore unless told not to.
+    git(&root, &["config", "core.autocrlf", "false"]);
     std::fs::write(root.join("file.txt"), "original\n").unwrap();
     git(&root, &["add", "."]);
     git(&root, &["commit", "-qm", "fixture"]);
