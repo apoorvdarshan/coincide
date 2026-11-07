@@ -2249,6 +2249,7 @@ impl BrowserController {
         }
         json!({"tabs":self.tabs.get(thread).map(|tabs|tabs.iter().map(|tab|json!({"id":tab.id,"title":public_tab_title(&tab.title,tab.credential_console_suppressed.load(Ordering::Acquire)),"url":tab.url,"loading":tab.loading,"active":self.active.get(thread)==Some(&tab.id)})).collect::<Vec<_>>()).unwrap_or_default(),
             "visible":self.visible.as_deref()==Some(thread),"unsupported":unsupported,
+            "fixedViewport":self.active_viewport(thread).map(|(width,height)|json!({"width":width,"height":height})),
             "nativeKeyPolicy":"bounded page editing/navigation; host, global, Alt and clipboard shortcuts denied; Meta uses platform primary modifier",
             "nativePasswordManagerAvailable":native_password_manager,
             "nativeTabShortcutsAvailable":native_tab_shortcuts,
