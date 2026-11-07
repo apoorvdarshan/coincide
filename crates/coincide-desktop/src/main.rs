@@ -9,6 +9,8 @@ mod dictation_preview_ui_tests;
 #[cfg(test)]
 #[path = "../swift_link_options.rs"]
 mod swift_link_options_tests;
+mod usage_dashboard;
+mod usage_dashboard_ui;
 mod usage_history_mount;
 mod usage_history_view;
 mod voice_credentials;
@@ -52,6 +54,8 @@ mod conversation_toolbar;
 mod credential_settings;
 mod credentials;
 mod dictation_preview;
+mod diff_mount;
+mod diff_panel;
 mod draft_close;
 mod github_actions;
 mod github_review;
@@ -101,9 +105,14 @@ mod settings_window;
 mod shutdown_runtime;
 mod sidebar_bots;
 mod sidebar_controls;
+mod sidebar_drop;
+mod sidebar_keys;
 mod sidebar_lifecycle;
+mod sidebar_menus;
 mod sidebar_preferences;
+mod sidebar_rename;
 mod sidebar_search;
+mod sidebar_settle;
 mod terminal_context_mount;
 mod terminal_layout;
 mod terminal_selection;
@@ -460,6 +469,9 @@ struct Coincide {
     inspector_follow: inspector_follow::State,
     workspace_open: bool,
     workspace_panel: Entity<workspace::WorkspacePanel>,
+    diff_panel: Entity<diff_panel::DiffPanel>,
+    /// The Local Git tab shows the Rust-only checkpoint and worktree tools, not the diff.
+    git_tools_open: bool,
     github_open: bool,
     github_panel: Entity<github_review::GitHubReviewPanel>,
     github_threads_panel: Entity<github_threads::GitHubThreadsPanel>,
@@ -494,14 +506,16 @@ struct Coincide {
     sidebar_schedules: Vec<Value>,
     sidebar_bot_baseline: String,
     sidebar_bot_pending: Option<String>,
-    sidebar_settle_undo: Option<(String, Option<Value>, Option<Value>)>,
+    sidebar_settle_undo: Option<Vec<sidebar_settle::SettleChange>>,
     projects: Vec<Value>,
     selected_project: Option<String>,
     expanded_sidebar_lists: std::collections::HashSet<String>,
     collapsed_projects: std::collections::HashSet<String>,
     show_snoozed: bool,
     navigation_last_clock: Instant,
-    rename_target: Option<String>,
+    sidebar_renaming: Option<sidebar_rename::Renaming>,
+    sidebar_rename_candidate: Option<String>,
+    sidebar_type_select: sidebar_keys::TypeSelect,
     rename_input: Entity<InputState>,
     archive_confirmation: Option<String>,
     project_management: project_management_mount::Projects,
@@ -584,6 +598,10 @@ impl Coincide {
                         .map(str::to_owned)
                 })
         });
+        self.diff_panel.update(cx, |panel, cx| {
+            panel.set_context(thread.clone(), root_hint.clone(), cx)
+        });
+        self.sync_diff_thread(false, cx);
         self.workspace_panel
             .update(cx, |panel, cx| panel.set_context(thread, root_hint, cx));
         self.sync_github_context(cx);
@@ -1029,6 +1047,7 @@ impl Coincide {
             browser_profile_requests.expect("Browser profile requests initialized");
         let workspace_panel =
             cx.new(|cx| workspace::WorkspacePanel::new(engine.clone(), window, cx));
+        let diff_panel = cx.new(|cx| diff_panel::DiffPanel::new(engine.clone(), window, cx));
         let github_writes = github_write_transport::NativeWrites::new(engine.clone());
         let github_actions =
             cx.new(|cx| github_actions::GitHubActions::new(github_writes.transport(), window, cx));
@@ -1227,9 +1246,10 @@ impl Coincide {
                     cx.notify();
                 },
             ),
-            cx.subscribe(&rename_input, |this, _, event, cx| {
-                if matches!(event, InputEvent::PressEnter { .. }) {
-                    this.save_rename(cx);
+            // Return or a click elsewhere saves a sidebar rename.
+            cx.subscribe_in(&rename_input, window, |this, _, event, window, cx| {
+                if matches!(event, InputEvent::PressEnter { .. } | InputEvent::Blur) {
+                    this.end_sidebar_rename(true, window, cx);
                 }
             }),
             cx.subscribe_in(&composer, window, |this, _, event, window, cx| {
@@ -1428,6 +1448,8 @@ impl Coincide {
             inspector_follow: Default::default(),
             workspace_open: false,
             workspace_panel,
+            diff_panel,
+            git_tools_open: false,
             github_open: false,
             github_panel,
             github_threads_panel,
@@ -1469,7 +1491,9 @@ impl Coincide {
             expanded_sidebar_lists: std::collections::HashSet::new(),
             collapsed_projects,
             navigation_last_clock: Instant::now(),
-            rename_target: None,
+            sidebar_renaming: None,
+            sidebar_rename_candidate: None,
+            sidebar_type_select: Default::default(),
             rename_input,
             archive_confirmation: None,
             project_management: project_management_mount::Projects::new(window, cx),
@@ -2093,7 +2117,6 @@ impl Coincide {
                 }
                 self.sync_workspace_context(cx);
                 self.hide_inline_settings();
-                self.rename_target = None;
                 self.archive_confirmation = None;
                 self.pending_requests.clear();
                 self.schedules.clear();
@@ -2585,6 +2608,40 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.new_thread_in_folder(project, None, window, cx);
+    }
+    /// Swift's `ThreadActions.newThread(in:basedOn:)`: a new thread in the
+    /// source thread's folder, on its branch.
+    fn new_thread_on_branch(&mut self, source: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let based = call(&self.engine, "threads.read", json!({"threadId":source})).map(|thread| {
+            let branch = text(&thread, "branch");
+            (
+                text(&thread, "projectID"),
+                open_targets::folder_of(&thread, &self.projects),
+                branch,
+            )
+        });
+        match based {
+            Ok((project, Some(folder), branch)) if !branch.is_empty() => {
+                self.new_thread_in_folder(&project, Some((folder, branch)), window, cx)
+            }
+            Ok(_) => {
+                self.status = "This conversation's folder or branch is unavailable.".into();
+                cx.notify();
+            }
+            Err(error) => {
+                self.status = format!("Conversation could not be read: {error}");
+                cx.notify();
+            }
+        }
+    }
+    fn new_thread_in_folder(
+        &mut self,
+        project: &str,
+        based_on: Option<(std::path::PathBuf, String)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.startup_selection_pending = false;
         if project.eq_ignore_ascii_case(coincide_core::bot_runtime::BOTS_PROJECT_ID) {
             // A virtual bot group has no filesystem project or generic default
@@ -2600,14 +2657,19 @@ impl Coincide {
             cx.notify();
             return;
         }
-        let cwd = self
-            .projects
-            .iter()
-            .find(|p| p["id"].as_str() == Some(project))
-            .and_then(|p| p["path"].as_str())
-            .filter(|path| !path.is_empty())
-            .map(std::path::PathBuf::from)
-            .or_else(|| std::env::current_dir().ok());
+        let (cwd, branch) = match based_on {
+            Some((folder, branch)) => (Some(folder), Some(branch)),
+            None => (
+                self.projects
+                    .iter()
+                    .find(|p| p["id"].as_str() == Some(project))
+                    .and_then(|p| p["path"].as_str())
+                    .filter(|path| !path.is_empty())
+                    .map(std::path::PathBuf::from)
+                    .or_else(|| std::env::current_dir().ok()),
+                None,
+            ),
+        };
         if !self.flush_pending_drafts() {
             self.status = "Save pending drafts before opening a new conversation.".into();
             cx.notify();
@@ -2615,8 +2677,11 @@ impl Coincide {
         }
         let result = (|| -> Result<Value> {
             let mut engine = try_state(&self.engine)?;
-            let intent =
-                engine.prepare_native_new_thread(&json!({"projectId":project,"cwd":cwd}))?;
+            let mut request = json!({"projectId":project,"cwd":cwd});
+            if let Some(branch) = &branch {
+                request["branch"] = json!(branch);
+            }
+            let intent = engine.prepare_native_new_thread(&request)?;
             engine.apply_native_new_thread(intent)
         })();
         match result {
@@ -3188,7 +3253,21 @@ impl Coincide {
             self.navigation_last_clock = Instant::now();
             cx.notify();
         }
-        self.usage_history.poll(cx);
+        // Opening Settings › Usage reads saved local history, as Swift's `appeared()`;
+        // plan limits wait for Refresh.
+        let usage_visible =
+            self.settings_open && self.settings_section == settings::SettingsSection::Usage;
+        if self
+            .usage_history
+            .dashboard
+            .appeared(usage_visible, chrono::Utc::now())
+        {
+            self.usage_history.load_dashboard();
+            cx.notify();
+        }
+        if self.usage_history.poll(cx) {
+            cx.notify();
+        }
         self.codex_limits.set_context(self.selected.as_ref(), cx);
         self.codex_limits.poll(cx);
         if let Some(thread) = &self.selected {
@@ -3264,6 +3343,9 @@ impl Coincide {
                 if self.refresh(cx) {
                     self.revision = revision;
                 }
+                self.sync_diff_thread(true, cx);
+            } else {
+                self.sync_diff_thread(false, cx);
             }
             self.tick_turn_clock(cx);
         }
@@ -4930,6 +5012,7 @@ fn main() -> Result<()> {
         .run(move |cx| {
             gpui_kit::init(cx);
             composer_file_picker::init(cx);
+            sidebar_keys::init(cx);
             composer_follow_up_mount::init(cx);
             let quit_requested = app_menu::install(cx);
             transcript::init(cx);

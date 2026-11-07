@@ -175,6 +175,7 @@ impl<'a> Git<'a> {
                 timeout: TIMEOUT,
                 max_output: max,
                 literal_pathspecs: false,
+                ..Default::default()
             },
         )
     }

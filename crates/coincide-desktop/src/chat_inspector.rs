@@ -128,6 +128,7 @@ impl Coincide {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
+        self.sync_diff_visibility(cx);
         let (id, body) = match self.chat_inspector_panel()? {
             Panel::Terminal
                 if self.inspector_follow.terminal_placeholder && !self.terminal_open =>
