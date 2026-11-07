@@ -67,7 +67,13 @@ def exercise_keys(rpc, thread_id):
         def log_message(self, *_):
             pass
 
-    class BoundedServer(http.server.HTTPServer):
+    class BoundedServer(http.server.ThreadingHTTPServer):
+        # Concurrent requests: one idle or speculative WebView connection must
+        # not stall the page until its socket timeout. Non-daemon request
+        # threads are joined by server_close(), so none outlive the fixture.
+        daemon_threads = False
+        block_on_close = True
+
         def get_request(self):
             connection, address = super().get_request()
             connection.settimeout(2)
