@@ -127,7 +127,8 @@ fn headless_voice_worker_keeps_actual_unicode_editor_and_focus(cx: &mut TestAppC
             input.set_value("before 🦀 after", window, cx);
             input.set_selected_range(7..11, cx);
         });
-        input.read(cx).focus_handle().clone().focus(window, cx);
+        let focus = input.read(cx).focus_handle(cx).clone();
+        focus.focus(window, cx);
         draw(window, cx);
         let mut target = ComposerTarget::default();
         let binding = target
@@ -176,7 +177,7 @@ fn headless_voice_worker_keeps_actual_unicode_editor_and_focus(cx: &mut TestAppC
         let panel = view.read(cx).panel.clone();
         assert!(panel.read(cx).accepts_text(&event, &binding));
         let input = view.read(cx).input.clone();
-        assert!(input.read(cx).focus_handle().is_focused(window));
+        assert!(input.read(cx).focus_handle(cx).is_focused(window));
         let (text, caret) = insert(&binding, &event, input.read(cx).value().as_ref()).unwrap();
         assert_eq!(text, "before synthetic café 👩🏽‍💻 after");
         input.update(cx, |input, cx| {
@@ -184,7 +185,7 @@ fn headless_voice_worker_keeps_actual_unicode_editor_and_focus(cx: &mut TestAppC
             input.set_selected_range(caret..caret, cx);
         });
         draw(window, cx);
-        assert!(input.read(cx).focus_handle().is_focused(window));
+        assert!(input.read(cx).focus_handle(cx).is_focused(window));
         assert_eq!(
             input.read(cx).value().as_ref(),
             "before synthetic café 👩🏽‍💻 after"

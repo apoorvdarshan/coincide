@@ -1195,9 +1195,9 @@ mod tests {
         assert!(owner.phase == Phase::Recording);
         action(&mut owner, Action::Stop);
         assert_eq!(trace.lock().unwrap().inference, 1);
-        assert_eq!(
-            events.try_recv().unwrap().binding,
-            target().binding.unwrap()
+        assert!(
+            events.try_recv().unwrap().binding == target().binding.unwrap(),
+            "dictation result keeps its exact captured composer binding"
         );
         action(&mut owner, Action::Transcribe);
         assert!(events.try_recv().is_err());
