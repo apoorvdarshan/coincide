@@ -646,6 +646,7 @@ mod tests {
                 pending: VecDeque::new(),
                 queued_bytes: 0,
                 sequence: 0,
+                _codex_home_lease: None,
             };
             Err("synthetic pipe-worker spawn failure")
         });
@@ -673,6 +674,7 @@ mod tests {
                 pending: VecDeque::new(),
                 queued_bytes: 0,
                 sequence: 0,
+                _codex_home_lease: None,
             };
             panic!("synthetic provider startup panic");
         });
