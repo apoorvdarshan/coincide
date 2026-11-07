@@ -28,11 +28,15 @@ use serde_json::{Value, json};
 use std::{
     path::PathBuf,
     process::{Child, Command, Stdio},
-    sync::OnceLock,
+    sync::{
+        OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 use uuid::Uuid;
 static ROOT: OnceLock<PathBuf> = OnceLock::new();
+static PUMP_READY: AtomicBool = AtomicBool::new(false);
 fn fresh_runner() {
     assert_eq!(std::env::var("GITHUB_ACTIONS").as_deref(), Ok("true"));
     assert_eq!(
@@ -72,7 +76,7 @@ fn receipt(hwnd: HWND) {
         return;
     }
     let clicks = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) };
-    let data = json!({"pid":std::process::id(),"hwnd":hwnd.0 as usize,"text":String::from_utf16_lossy(&text[..n]),"clicks":clicks,"focus":unsafe{GetDlgCtrlID(GetFocus())},"pointX":f64::from((target.left+target.right)/2-bounds.left)*96.0/f64::from(dpi),"pointY":f64::from((target.top+target.bottom)/2-bounds.top)*96.0/f64::from(dpi)});
+    let data = json!({"pumpReady":PUMP_READY.load(Ordering::Acquire),"pid":std::process::id(),"hwnd":hwnd.0 as usize,"text":String::from_utf16_lossy(&text[..n]),"clicks":clicks,"focus":unsafe{GetDlgCtrlID(GetFocus())},"pointX":f64::from((target.left+target.right)/2-bounds.left)*96.0/f64::from(dpi),"pointY":f64::from((target.top+target.bottom)/2-bounds.top)*96.0/f64::from(dpi)});
     let temp = root.join("state-new.json");
     if std::fs::write(&temp, serde_json::to_vec(&data).unwrap()).is_ok() {
         let _ = std::fs::rename(temp, root.join("state.json"));
@@ -90,6 +94,13 @@ unsafe extern "system" fn procedure(
                 let value = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) };
                 unsafe { SetWindowLongPtrW(hwnd, GWLP_USERDATA, value + 1) };
             }
+            receipt(hwnd);
+            LRESULT(0)
+        }
+        value if value == WM_APP + 3 => {
+            // Readiness acknowledges actual dispatch by the owned UI thread,
+            // not just CreateWindow/receipt before its message loop starts.
+            PUMP_READY.store(true, Ordering::Release);
             receipt(hwnd);
             LRESULT(0)
         }
@@ -207,7 +218,7 @@ fn owned_native_window_fixture() {
     unsafe { ShowWindow(hwnd, SW_SHOW) };
     unsafe { SetForegroundWindow(hwnd) };
     unsafe { SetFocus(Some(edit)) }.ok();
-    receipt(hwnd);
+    unsafe { PostMessageW(Some(hwnd), WM_APP + 3, WPARAM(0), LPARAM(0)) }.unwrap();
     let mut message = MSG::default();
     loop {
         let result = unsafe { GetMessageW(&mut message, None, 0, 0) };
@@ -407,7 +418,7 @@ fn actual_owned_window_actions_and_capture_drain() {
             owner.child.as_mut().unwrap().try_wait().unwrap().is_none(),
             "Owned window child exited early"
         );
-        owner.state()
+        owner.state().filter(|state| state["pumpReady"] == true)
     });
     assert_eq!(ready["pid"].as_u64(), Some(u64::from(pid)));
     owner.window = Some(HWND(ready["hwnd"].as_u64().unwrap() as usize as *mut _));
