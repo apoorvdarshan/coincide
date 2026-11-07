@@ -53,7 +53,7 @@ impl Lease {
         identity: crate::private_fs::Identity,
         file: &File,
     ) -> Result<Self> {
-        let result = (|| {
+        let result: Result<Self> = (|| {
             let generation = Self::generation(home)?;
             let lease = Self {
                 path,
