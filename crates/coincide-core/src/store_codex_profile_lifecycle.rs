@@ -148,7 +148,7 @@ mod tests {
                 &account,
                 None,
                 "synthetic native tombstone",
-                &[before.clone()],
+                std::slice::from_ref(&before),
             )
             .unwrap();
         let mut expected = before;
