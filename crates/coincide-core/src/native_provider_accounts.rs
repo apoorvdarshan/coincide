@@ -1035,6 +1035,12 @@ pub(super) fn synthetic_key_configuration(
 ) -> (LaunchConfiguration, PathBuf) {
     keys::synthetic_configuration(engine, provider)
 }
+#[path = "native_legacy_codex_accounts.rs"]
+mod legacy_codex_accounts;
+pub use legacy_codex_accounts::{
+    NativeLegacyCodexAccount, PreparedLegacyCodexRemoval, PreparedLegacyCodexRename,
+};
+
 #[path = "native_provider_account_removal.rs"]
 mod removal;
 #[path = "native_provider_setup_source.rs"]

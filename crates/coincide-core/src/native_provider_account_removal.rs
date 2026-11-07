@@ -20,7 +20,7 @@ impl PreparedNativeAccountRemoval {
         self.threads.len()
     }
 }
-fn ready(engine: &mut Engine, threads: &[Value]) -> Result<()> {
+pub(super) fn ready(engine: &mut Engine, threads: &[Value]) -> Result<()> {
     engine.require_admissions()?;
     let workers = engine.provider_workers_status();
     ensure!(
@@ -67,7 +67,7 @@ fn ready(engine: &mut Engine, threads: &[Value]) -> Result<()> {
     }
     Ok(())
 }
-fn tombstone(payload: &mut Value, account: &Account) -> Result<()> {
+pub(super) fn tombstone(payload: &mut Value, account: &Account) -> Result<()> {
     if payload.get("removed_accounts").is_none() {
         payload["removed_accounts"] = json!({});
     }
@@ -81,7 +81,7 @@ fn tombstone(payload: &mut Value, account: &Account) -> Result<()> {
     rows.insert(account.id.clone(), serde_json::to_value(account)?);
     Ok(())
 }
-fn remove_home(root: &Path, account: &Account) -> Result<()> {
+pub(super) fn remove_home(root: &Path, account: &Account) -> Result<()> {
     ensure!(
         account.home == home(root, &account.provider, &account.id)?,
         "Removed account path changed"
