@@ -13,7 +13,11 @@ A queued key cannot borrow browser chrome focus after the composer, settings or
 another native view takes focus. Windows owns GotFocus/LostFocus registrations
 and also checks the current foreground queue focus HWND against the captured
 exact native descendant, so delayed LostFocus delivery cannot authorize dispatch.
-macOS and GTK read the actual responder/widget focus at dispatch. Hidden/sibling views, inactive
+macOS reads the actual responder. GTK checks X11 input-focus ancestry against the
+exact owned native view, because each embedded Wry view has a foreign GtkWindow
+and widget-local focus alone does not establish exclusive native input focus.
+Explicit user tab actions focus only that selected native child; the disposable
+fixture uses this same operation rather than merely setting logical widget focus. Hidden/sibling views, inactive
 windows, overlays, extra modifiers and ordinary page keys do not gain a global
 command route. Recognized stale native chords are consumed. Agent page-key host
 chords remain denied; no script or arbitrary-key API invokes this route.

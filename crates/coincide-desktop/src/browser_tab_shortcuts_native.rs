@@ -1,5 +1,5 @@
 //! Own-view native key callbacks, bounded by the browser's shutdown fence.
-//! No global keyboard hook, focus mutation, page script or arbitrary key API.
+//! No global keyboard hook, page script or arbitrary key API.
 use super::shutdown::{Callbacks, NativeLease};
 use crate::browser_tab_shortcuts::{self as shortcuts, Command};
 use anyhow::Result;
@@ -48,5 +48,16 @@ impl Target {
             _adapter: adapter,
             _target: callbacks.lifetimes().target(),
         })
+    }
+}
+
+pub(super) fn focus(view: &wry::WebView) -> Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        platform::focus(view)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        view.focus().map_err(Into::into)
     }
 }

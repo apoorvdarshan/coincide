@@ -293,12 +293,12 @@ impl Fixture {
         } else if self.focused.unwrap().elapsed() > Duration::from_millis(100) {
             // Exercise the same current-focus predicate production dispatch uses,
             // independently of merely receiving an accelerator callback.
-            if !self.targets[case.view].focused(self.views[case.view].read(cx).raw())
-                || self.targets[1 - case.view].focused(self.views[1 - case.view].read(cx).raw())
-            {
-                self.fail(
-                    "current native focus did not belong exclusively to the owned selected view",
-                );
+            let selected_focused =
+                self.targets[case.view].focused(self.views[case.view].read(cx).raw());
+            let sibling_focused =
+                self.targets[1 - case.view].focused(self.views[1 - case.view].read(cx).raw());
+            if !selected_focused || sibling_focused {
+                self.fail(format!("current native focus did not belong exclusively to the owned selected view (case={}, selected={}, sibling={})", self.index, selected_focused, sibling_focused));
                 return false;
             }
             match key(self.views[case.view].read(cx).raw(), case) {
@@ -367,8 +367,7 @@ fn key(view: &wry::WebView, case: Case) -> anyhow::Result<KeyGuard> {
 }
 #[cfg(target_os = "linux")]
 fn focus(view: &wry::WebView) -> anyhow::Result<()> {
-    view.focus()?;
-    Ok(())
+    native_shortcuts::focus(view)
 }
 #[cfg(target_os = "linux")]
 fn key(view: &wry::WebView, case: Case) -> anyhow::Result<KeyGuard> {

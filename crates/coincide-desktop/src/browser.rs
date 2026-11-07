@@ -1723,6 +1723,12 @@ impl BrowserController {
                 )
             })
     }
+    pub fn focus_active_native(&self, thread: &str, cx: &App) -> Result<()> {
+        let view = self
+            .active_view(thread)
+            .ok_or_else(|| anyhow::anyhow!("Browser tab unavailable"))?;
+        native_tab_shortcuts::focus(view.read(cx).raw())
+    }
     pub fn native_shortcut_focused(
         &self,
         source: &crate::browser_tab_shortcuts::Source,

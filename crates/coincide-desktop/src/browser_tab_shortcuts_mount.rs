@@ -109,9 +109,7 @@ impl Coincide {
                         .focus_handle(cx)
                         .focus(window, cx);
                 } else if command == Command::Close || native_focus {
-                    if let Some(view) = browser.active_view(&source.thread) {
-                        let _ = view.read(cx).raw().focus();
-                    }
+                    let _ = browser.focus_active_native(&source.thread, cx);
                 }
             }
         }
