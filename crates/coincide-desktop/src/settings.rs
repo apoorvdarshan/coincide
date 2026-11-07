@@ -1,4 +1,5 @@
 use super::*;
+use gpui_kit::component::switch::Switch;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum SettingsSection {
@@ -511,6 +512,29 @@ impl Coincide {
         }
     }
 
+    fn setting_toggle(
+        &self,
+        label: &'static str,
+        caption: &'static str,
+        key: &'static str,
+        fallback: bool,
+        id: &'static str,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let checked = self.settings[key].as_bool().unwrap_or(fallback);
+        self.labeled_row(
+            label,
+            Some(caption.into()),
+            Switch::new(id)
+                .accessibility_label(label)
+                .checked(checked)
+                .on_click(cx.listener(move |this, value: &bool, window, cx| {
+                    this.change_setting(key, json!(*value), window, cx)
+                })),
+        )
+        .into_any_element()
+    }
+
     fn setting_choices(
         &self,
         label: &'static str,
@@ -838,6 +862,16 @@ impl Coincide {
             count += 1;
             content = content
                 .child(self.revealable(R::Appearance, self.appearance_picker(cx)))
+                .child(self.setting_choices(
+                    "Number format",
+                    "numberFormat",
+                    setting("numberFormat", json!("system")),
+                    vec![
+                        ("System", json!("system")),
+                        ("International", json!("international")),
+                    ],
+                    cx,
+                ))
                 .child(self.revealable(R::FontSize, self.font_size_row()));
         }
         let choice_rows = |rows: Vec<(
@@ -901,6 +935,17 @@ impl Coincide {
                 content = content.child(self.revealable(row, self.theme_grid_row(dark, cx)));
             }
         }
+        if matches(S::Appearance, "pointing hand cursor links buttons") {
+            count += 1;
+            content = content.child(self.setting_toggle(
+                "Pointing hand over clickable items",
+                "Buttons, links, tabs and list rows show the pointing hand, as on the web.",
+                "showsPointingHand",
+                false,
+                "setting-pointing-hand",
+                cx,
+            ));
+        }
         content = choice_rows(
             vec![(
                 S::Appearance,
@@ -918,6 +963,28 @@ impl Coincide {
             &mut count,
             cx,
         );
+        if matches(S::Appearance, "terminal gpu rendering metal cpu") {
+            count += 1;
+            content = content.child(self.setting_toggle(
+                "GPU rendering",
+                "The terminal draws its text with Metal on the graphics processor.",
+                "terminalGPURendering",
+                true,
+                "setting-terminal-gpu",
+                cx,
+            ));
+        }
+        if matches(S::Appearance, "terminal translucent background blur transparent") {
+            count += 1;
+            content = content.child(self.setting_toggle(
+                "Translucent terminal",
+                "The desktop shows through the terminal's background, blurred.",
+                "terminalTranslucentBackground",
+                false,
+                "setting-terminal-translucent",
+                cx,
+            ));
+        }
         if matches(
             S::Appearance,
             "open project folders editor terminal file manager application automatic",
