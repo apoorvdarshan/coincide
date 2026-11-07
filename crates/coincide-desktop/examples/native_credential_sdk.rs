@@ -32,6 +32,7 @@ use std::{
     thread::JoinHandle,
     time::{Duration, Instant},
 };
+const PASS: &str = "synthetic native fill: PASS (private channel, native isolated world, changed-source denial, actual callback owners returned; native SDK deallocation unconfirmed)";
 const URL: &str = "https://credential-fixture.invalid/login.html";
 const HTML: &str = r#"<!doctype html><meta charset=utf-8><title>Owned synthetic fill fixture</title>
 <form><input id=u autocomplete=username><input id=p type=password autocomplete=current-password></form>
@@ -44,8 +45,8 @@ document.querySelector('form').addEventListener('submit',e=>{e.preventDefault();
 window.fixtureReady=true;
 </script>"#;
 // The password carries quote, backslash, template, markup and non-BMP text
-// through the typed arguments. Not NUL: WebKit input value sanitization can't
-// store control characters, so no WebKit fill could ever confirm one.
+// through the typed arguments. It avoids NUL because WebKit's input value
+// sanitization may strip control characters, which no fill could confirm.
 const VERIFY: &str = r#"(()=>location.href==='https://credential-fixture.invalid/login.html' && document.querySelector('#u').value==='synthetic-user' && document.querySelector('#p').value==='SYNTHETIC-ONLY-"\'\\${x}</script>-\u03bb-\u{1F511}' && fixture.inputs===2 && fixture.changes===2 && fixture.submits===0 && fixture.setters===0)()"#;
 struct SyntheticVault;
 impl VaultCommand for SyntheticVault {
@@ -470,6 +471,13 @@ return JSON.stringify(facts);"#,
                 && status.native_targets_pending == 0
             {
                 *self.result.lock().unwrap() = Some(!self.failed);
+                // macOS quits through NSApplication terminate, which exits inside
+                // the run loop, so report here rather than after `run` returns.
+                if self.failed {
+                    eprintln!("synthetic native fill fixture did not pass");
+                } else {
+                    println!("{PASS}");
+                }
                 // Only Rust callback/worker owners are drained. SDK view/context
                 // deallocation remains Unknown; runner teardown owns the profile.
                 cx.quit();
@@ -605,12 +613,10 @@ fn main() -> anyhow::Result<()> {
         .expect("owned fixture window unavailable");
         cx.activate(true);
     });
+    // Reached on Linux and Windows only; the fixture already printed its result.
     anyhow::ensure!(
         *observed.lock().unwrap() == Some(true),
         "synthetic native fill fixture did not pass"
-    );
-    println!(
-        "synthetic native fill: PASS (private channel, native isolated world, changed-source denial, actual callback owners returned; native SDK deallocation unconfirmed)"
     );
     Ok(())
 }
