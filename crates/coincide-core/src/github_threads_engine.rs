@@ -38,8 +38,8 @@ impl Engine {
             "GitHub reads are shutting down"
         );
         ensure!(
-            cfg!(unix),
-            "Inline GitHub review reads are not supported on this platform yet"
+            cfg!(any(unix, windows)),
+            "Inline GitHub review reads are not supported on this platform"
         );
         ensure!(!self.shutdown, "Application is shutting down");
         let keys: &[&str] = match method {

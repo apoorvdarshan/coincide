@@ -35,7 +35,16 @@ fn fake_gh(args: &[String]) {
         .unwrap()
         .write_all(format!("{}\n", json!({"args":args,"body":body})).as_bytes())
         .unwrap();
-    let result = if args.first().map(String::as_str) == Some("pr") {
+    let result = if args.first().map(String::as_str) == Some("api")
+        && args.get(1).map(String::as_str) == Some("graphql")
+    {
+        assert!(
+            args.iter().any(|a| a == "owner=owner")
+                && args.iter().any(|a| a == "name=project")
+                && args.iter().any(|a| a == "number=7")
+        );
+        json!({"data":{"repository":{"pullRequest":{"number":7,"url":"https://github.com/owner/project/pull/7","headRefOid":"a".repeat(40),"repository":{"nameWithOwner":"owner/project"},"reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}})
+    } else if args.first().map(String::as_str) == Some("pr") {
         if args.get(1).map(String::as_str) == Some("list") {
             json!([snapshot()])
         } else {
@@ -178,6 +187,20 @@ fn engine_routes(root: &Path) {
             break;
         }
         assert!(started.elapsed() < Duration::from_secs(10));
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let mut inline = json!({"threadId":thread,"expectedRoot":project.canonicalize().unwrap(),"repository":"owner/project","number":7,"expectedHead":"a".repeat(40)});
+    let started = command(&mut engine, "github.threads.list", inline.clone());
+    inline["operationId"] = started["operationId"].clone();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let response = command(&mut engine, "github.threads.result", inline.clone());
+        if response["ready"] == true {
+            assert_eq!(response["result"]["kind"], "threads");
+            assert_eq!(response["result"]["threads"], json!([]));
+            break;
+        }
+        assert!(Instant::now() < deadline);
         std::thread::sleep(Duration::from_millis(5));
     }
     engine.freeze_admissions();
