@@ -161,7 +161,9 @@ fn fixture() {
     assert!(!root.path().join("job-path").exists());
     let pid_path = root.path().join("descendant-pid");
     assert_eq!(
-        backend.transcribe_local_cancellable(&wav, || pid_path.is_file()),
+        backend.transcribe_local_cancellable(&wav, || {
+            fs::read_to_string(&pid_path).is_ok_and(|value| value.parse::<u32>().is_ok())
+        }),
         Err(LocalError::Cancelled)
     );
     let pid = fs::read_to_string(pid_path)
