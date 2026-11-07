@@ -456,6 +456,10 @@ impl Coincide {
         if provider_preferences_changed {
             self.refresh_provider_preferences(cx);
         }
+        self.general_settings.sync(&self.settings, window, cx);
+        let prefix = general_settings::branch_prefix(&self.settings);
+        self.workspace_panel
+            .update(cx, |panel, _| panel.set_branch_prefix(prefix));
         let submit = self.settings["sendOnReturn"].as_bool().unwrap_or(true);
         self.composer
             .update(cx, |input, cx| input.set_submit_on_enter(submit, cx));
@@ -743,8 +747,8 @@ impl Coincide {
         }
         if matches(S::Models, "models favorite hidden custom providers catalog") {
             count += 1;
-            content =
-                content.child(self.models_settings_panel(&[self.selection_ui.catalog.clone()], cx));
+            let catalogs = self.model_catalogs(cx);
+            content = content.child(self.models_settings_panel(&catalogs, cx));
         }
         if matches(
             S::About,
@@ -995,7 +999,28 @@ impl Coincide {
                     choices,
                     cx,
                 ));
+                if key == "followUpBehavior" {
+                    content = content.child(self.follow_up_settings_caption());
+                }
             }
+        }
+        if matches(
+            S::Conversation,
+            "open links default browser preview web command control click",
+        ) {
+            count += 1;
+            content = content.child(self.link_settings(cx));
+        }
+        if matches(
+            S::Conversation,
+            "new threads default model reasoning effort provider",
+        ) {
+            count += 1;
+            content = content.child(self.default_model_settings(cx));
+        }
+        if matches(S::Conversation, "git worktree branch prefix name") {
+            count += 1;
+            content = content.child(self.branch_prefix_settings(cx));
         }
         if matches(S::Conversation, "send return composer keys") {
             count += 1;

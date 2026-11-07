@@ -231,6 +231,16 @@ fn run(api: &mut impl FnMut(&str, Value) -> Result<Value>, action: Action) -> Re
     Ok(outcome)
 }
 
+/// A branch left blank is named like Swift's worktree branches: the prefix
+/// from Settings › General followed by the worktree name.
+fn prefixed_branch(branch: &str, prefix: &str, name: &str) -> String {
+    if branch.is_empty() && !name.is_empty() {
+        format!("{prefix}{name}")
+    } else {
+        branch.to_owned()
+    }
+}
+
 pub struct WorkspacePanel {
     workers: WorkerOwner,
     refresh_pending: bool,
@@ -246,6 +256,8 @@ pub struct WorkspacePanel {
     label: Entity<InputState>,
     name: Entity<InputState>,
     branch: Entity<InputState>,
+    /// Settings › General › Worktree branch prefix, for a branch left blank.
+    branch_prefix: String,
     tx: mpsc::Sender<(u64, Result<Outcome>)>,
     rx: mpsc::Receiver<(u64, Result<Outcome>)>,
     _poll: Task<()>,
@@ -299,8 +311,10 @@ impl WorkspacePanel {
                 InputState::new(window, cx).placeholder("Worktree folder name, e.g. task-42")
             }),
             branch: cx.new(|cx| {
-                InputState::new(window, cx).placeholder("New branch, e.g. feature/task-42")
+                InputState::new(window, cx)
+                    .placeholder("New branch (blank names it with the worktree branch prefix)")
             }),
+            branch_prefix: "coincide/".into(),
             tx,
             rx,
             _poll: poll,
@@ -432,13 +446,20 @@ impl WorkspacePanel {
         }
         cx.notify();
     }
+    pub fn set_branch_prefix(&mut self, prefix: String) {
+        self.branch_prefix = prefix;
+    }
     fn prepare(&mut self, reserve: bool, cx: &mut Context<Self>) {
         let Some(snapshot) = &self.snapshot else {
             return;
         };
         let label = self.label.read(cx).value().trim().to_string();
         let name = self.name.read(cx).value().trim().to_string();
-        let branch = self.branch.read(cx).value().trim().to_string();
+        let branch = prefixed_branch(
+            self.branch.read(cx).value().trim(),
+            &self.branch_prefix,
+            &name,
+        );
         if (reserve && (name.is_empty() || branch.is_empty())) || (!reserve && label.is_empty()) {
             self.notice = "Enter the required fields first.".into();
             cx.notify();
@@ -685,6 +706,19 @@ impl Render for WorkspacePanel {
 
 #[cfg(test)]
 mod tests {
+    #[::core::prelude::v1::test]
+    fn blank_branch_uses_the_worktree_branch_prefix() {
+        assert_eq!(
+            prefixed_branch("", "coincide/", "task-42"),
+            "coincide/task-42"
+        );
+        assert_eq!(prefixed_branch("", "", "task-42"), "task-42");
+        assert_eq!(
+            prefixed_branch("feature/x", "coincide/", "task-42"),
+            "feature/x"
+        );
+        assert_eq!(prefixed_branch("", "coincide/", ""), "");
+    }
     use super::*;
     use std::collections::HashMap;
     struct Fixture {

@@ -269,7 +269,7 @@ impl Coincide {
                                     .gap_2()
                                     .w_full()
                                     .min_w_0()
-                                    .child(IconName::Bot)
+                                    .child(bot_avatar::avatar(&bot["avatar"], 26.))
                                     .child(
                                         div()
                                             .flex()

@@ -386,11 +386,11 @@ impl Engine {
             "notifications.status" => Ok(self.notification_events.status()),
             "host.awake.status" | "host.awake.configure" => self.awake_command(method, p),
             "cli.sessions.preview" => {
-                ensure!(cfg!(unix), "CLI-session file import is not supported on this platform yet");
-                session_import_api::preview(p)
+                ensure!(cfg!(any(unix, windows)), "CLI-session file import is not supported on this platform yet");
+                session_import_api::preview(&self.store, p)
             }
             "cli.sessions.import" => {
-                ensure!(cfg!(unix), "CLI-session file import is not supported on this platform yet");
+                ensure!(cfg!(any(unix, windows)), "CLI-session file import is not supported on this platform yet");
                 let result = session_import_api::import(&mut self.store, p)?;
                 self.revision += 1;
                 Ok(result)
@@ -636,7 +636,7 @@ impl Engine {
                 methods.extend_from_slice(github_engine::METHODS);
                 #[cfg(unix)]
                 methods.extend_from_slice(github_threads_engine::METHODS);
-                #[cfg(unix)]
+                #[cfg(any(unix, windows))]
                 methods.extend_from_slice(&["cli.sessions.preview", "cli.sessions.import"]);
                 Ok(json!(methods))
             },

@@ -22,6 +22,7 @@ mod app_menu;
 mod app_menu_mount;
 mod archive_settings;
 mod assets;
+mod bot_avatar;
 mod bot_settings;
 mod browser;
 mod browser_dialog_ui;
@@ -48,6 +49,7 @@ mod credential_settings;
 mod credentials;
 mod dictation_preview;
 mod draft_close;
+mod general_settings;
 mod github_actions;
 mod github_review;
 mod github_threads;
@@ -64,6 +66,8 @@ mod legacy_media_settings;
 mod main_window_poll;
 mod microphone;
 mod microphone_settings;
+#[rustfmt::skip]
+mod bot_artwork_data;
 mod models_settings;
 mod native_quit;
 mod navigation;
@@ -407,6 +411,7 @@ struct Coincide {
     provider_configuration_panel: Entity<provider_configuration_ui::Panel>,
     provider_enable_prompt: Option<Task<()>>,
     models_settings: models_settings::ModelsSettings,
+    general_settings: general_settings::GeneralSettings,
     archive_settings: archive_settings::ArchiveSettings,
     instruction_quit_prompt_pending: bool,
     instruction_quit_task: Option<Task<()>>,
@@ -992,6 +997,7 @@ impl Coincide {
             )
         });
         let models_settings = models_settings::ModelsSettings::new(window, cx);
+        let general_settings = general_settings::GeneralSettings::new(&settings, window, cx);
         let archive_settings = archive_settings::ArchiveSettings::new(window, cx);
         let model_picker_search =
             cx.new(|cx| InputState::new(window, cx).placeholder("Search models"));
@@ -1015,6 +1021,8 @@ impl Coincide {
             browser_profile_requests.expect("Browser profile requests initialized");
         let workspace_panel =
             cx.new(|cx| workspace::WorkspacePanel::new(engine.clone(), window, cx));
+        let prefix = general_settings::branch_prefix(&settings);
+        workspace_panel.update(cx, |panel, _| panel.set_branch_prefix(prefix));
         let github_writes = github_write_transport::NativeWrites::new(engine.clone());
         let github_actions =
             cx.new(|cx| github_actions::GitHubActions::new(github_writes.transport(), window, cx));
@@ -1179,7 +1187,16 @@ impl Coincide {
                 window,
                 |this, _, event, window, cx| {
                     if this.media.shutdown_requested { return; }
-                    let session_import::SessionImportEvent::Imported { thread_id } = event;
+                    let thread_id = match event {
+                        session_import::SessionImportEvent::Imported { thread_id } => thread_id,
+                        session_import::SessionImportEvent::Cancelled => {
+                            this.session_import_open = false;
+                            this.sync_transcription_binding(cx);
+                            this.sync_credentials(cx);
+                            cx.notify();
+                            return;
+                        }
+                    };
                     this.session_import_open = false;
                     this.workspace_open = false;
                     this.schedules_open = false;
@@ -1263,7 +1280,8 @@ impl Coincide {
                 cx.notify();
             }
         }));
-        subscriptions.extend(models_settings.subscriptions(cx));
+        subscriptions.extend(models_settings.subscriptions(window, cx));
+        subscriptions.extend(general_settings.subscriptions(window, cx));
         subscriptions.extend(archive_settings.subscriptions(cx));
         subscriptions.extend(schedule_editor.subscriptions(cx));
         subscriptions.extend(provider_settings.subscriptions(cx));
@@ -1317,7 +1335,7 @@ impl Coincide {
             .map(|project| text(project, "id"))
             .collect();
         let sidebar_resize = navigation_resize::State::load(&engine);
-        let keyboard = keyboard_settings::State::new(cx);
+        let keyboard = keyboard_settings::State::new(window, cx);
         let terminal_layout = terminal_layout::State::load(&engine);
         let mut this = Self {
             engine,
@@ -1369,6 +1387,7 @@ impl Coincide {
             provider_configuration_panel,
             provider_enable_prompt: None,
             models_settings,
+            general_settings,
             archive_settings,
             instruction_quit_prompt_pending: false,
             instruction_quit_task: None,
@@ -4443,8 +4462,11 @@ impl Render for Coincide {
         self.sync_credentials(cx);
         self.sync_notification_activity(window, cx);
         let import_project = self.selected_project.clone();
-        self.session_import_panel
-            .update(cx, |panel, cx| panel.set_project(import_project, cx));
+        let import_visible = self.session_import_open;
+        self.session_import_panel.update(cx, |panel, cx| {
+            panel.set_project(import_project, cx);
+            panel.set_visible(import_visible, cx);
+        });
         self.sync_workspace_context(cx);
         self.sync_composer_selection(window, cx);
         if let Some(thread) = self.selected.as_mut()
