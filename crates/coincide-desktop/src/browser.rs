@@ -707,11 +707,10 @@ impl BrowserController {
                 let size = request.action.viewport_size().context("Invalid viewport")?;
                 let tab = &mut self.tabs.get_mut(thread).context("No such thread")?[index];
                 tab.viewport = size;
-                if let Some((width, height)) = size
-                    && self.visible.as_deref() != Some(thread.as_str())
-                {
-                    // A hidden page still gets its testing size, as Swift's
-                    // parked web view does; the panel lays out a visible one.
+                if let Some((width, height)) = size {
+                    // Size the native page immediately; the panel lays out the
+                    // same fixed box on its next render. A hidden page keeps
+                    // its testing size, as Swift's parked web view does.
                     let _ = tab.view.read(cx).set_bounds(wry::Rect {
                         position: wry::dpi::LogicalPosition::new(0., 0.).into(),
                         size: wry::dpi::LogicalSize::new(f64::from(width), f64::from(height))
