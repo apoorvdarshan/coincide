@@ -23,6 +23,20 @@ def run_fixture(binary: Path, root: Path) -> int:
         env[key] = str(path)
     env.update(GITHUB_ACTIONS="true", COINCIDE_NATIVE_SECRET_STORE_CI="owned-synthetic-entry-v1",
                COINCIDE_NATIVE_SECRET_STORE_FIXTURE=str(root))
+    if sys.platform == "darwin":
+        # The fresh runner's User-domain Keychain belongs to its login HOME.
+        # Only Store/receipt/temp paths are relocated; no keychain defaults or
+        # search lists are changed, and no credential entries are enumerated.
+        runner_home = os.environ.get("HOME", "")
+        if not runner_home or not Path(runner_home).is_absolute():
+            raise RuntimeError("Fresh macOS runner HOME is unavailable")
+        for label, home in [("private-home", env["HOME"]), ("runner-home", runner_home)]:
+            probe_env = dict(env, HOME=home)
+            probe = subprocess.run(["/usr/bin/security", "default-keychain", "-d", "user"],
+                                   env=probe_env, stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.DEVNULL, timeout=5)
+            print(f"macOS default User keychain discovery {label}: exit {probe.returncode}")
+        env["HOME"] = runner_home
     daemon = None
     log = None
     try:

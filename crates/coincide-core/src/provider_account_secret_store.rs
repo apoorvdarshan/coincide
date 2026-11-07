@@ -39,6 +39,23 @@ impl std::fmt::Display for MissingSecret {
 }
 impl std::error::Error for MissingSecret {}
 struct OsBackend;
+fn sdk_error_category(error: &keyring_core::Error) -> &'static str {
+    use keyring_core::Error;
+    match error {
+        Error::NoEntry => "missing-entry",
+        Error::NoStorageAccess(_) => "storage-access",
+        Error::PlatformFailure(_) => "platform-failure",
+        Error::NoDefaultStore => "missing-default-store",
+        Error::Ambiguous(_) => "ambiguous-entry",
+        Error::Invalid(_, _) => "invalid-entry",
+        Error::TooLong(_, _) => "entry-limit",
+        Error::BadEncoding(_) | Error::BadDataFormat(_, _) | Error::BadStoreFormat(_) => {
+            "invalid-data"
+        }
+        Error::NotSupportedByStore(_) => "unsupported-store",
+        _ => "unknown-sdk-error",
+    }
+}
 fn entry(service: &str, id: &str) -> Result<Entry> {
     // Unit tests must never unlock a developer's OS store accidentally. The
     // separately gated hosted-runner integration binary compiles the library
@@ -84,8 +101,9 @@ impl Backend for OsBackend {
         match entry(service, id)?.get_secret() {
             Ok(value) => Ok(Zeroizing::new(value)),
             Err(keyring_core::Error::NoEntry) => Err(MissingSecret.into()),
-            Err(_) => anyhow::bail!(
-                "The saved account secret is unavailable; unlock the system secret store or replace the key"
+            Err(error) => anyhow::bail!(
+                "The saved account secret is unavailable ({}); unlock the system secret store or replace the key",
+                sdk_error_category(&error)
             ),
         }
     }
@@ -331,5 +349,27 @@ mod tests {
         assert!(store.read_optional(&slot).is_err());
         let json = serde_json::to_string(&slot).unwrap();
         assert!(!json.contains("synthetic-original"));
+    }
+    #[test]
+    fn sdk_error_categories_never_include_platform_payload_or_secret_bytes() {
+        use keyring_core::Error;
+        let errors = [
+            Error::PlatformFailure(std::io::Error::other("synthetic-private-payload").into()),
+            Error::NoStorageAccess(std::io::Error::other("synthetic-private-payload").into()),
+            Error::BadEncoding(b"synthetic-private-payload".to_vec()),
+            Error::Invalid("synthetic-private-payload".into(), "private".into()),
+            Error::NoEntry,
+        ];
+        let categories: Vec<_> = errors.iter().map(sdk_error_category).collect();
+        assert_eq!(
+            categories,
+            [
+                "platform-failure",
+                "storage-access",
+                "invalid-data",
+                "invalid-entry",
+                "missing-entry"
+            ]
+        );
     }
 }
