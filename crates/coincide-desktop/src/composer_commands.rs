@@ -61,8 +61,17 @@ pub(super) struct Submission {
     pub thread: Value,
     pub draft: String,
     pub restore_request: Option<String>,
+    /// Chosen from the suggestion list, which already removed the `/word`: the rest of the
+    /// draft, images and references stay as they are instead of being cleared.
+    pub keep_draft: bool,
 }
 impl Submission {
+    pub fn suggested(thread: &Value, draft: &str) -> Self {
+        Self {
+            keep_draft: true,
+            ..Self::new(thread, draft)
+        }
+    }
     pub fn new(thread: &Value, draft: &str) -> Self {
         Self {
             thread: Value::Object(
@@ -81,6 +90,7 @@ impl Submission {
             ),
             draft: draft.into(),
             restore_request: None,
+            keep_draft: false,
         }
     }
     pub fn same_content(&self, thread: &Value, draft: &str) -> bool {

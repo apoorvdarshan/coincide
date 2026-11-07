@@ -481,28 +481,10 @@ mod tests {
     #[test]
     #[ignore = "only owned synthetic GitHub subprocess invokes this"]
     fn synthetic_gh_descendant() {
-        use windows_sys::Win32::System::Threading::GetCurrentProcess;
-        let created = creation(unsafe { GetCurrentProcess() }).unwrap();
-        std::fs::write(
-            "descendant-pid",
-            format!("{} {created}", std::process::id()),
-        )
-        .unwrap();
+        std::fs::write("descendant-pid", std::process::id().to_string()).unwrap();
         loop {
             std::thread::sleep(Duration::from_secs(1));
         }
-    }
-    /// Windows reuses process IDs promptly, so an ID alone does not name the
-    /// fixture once it has exited; its creation time does.
-    fn creation(process: windows_sys::Win32::Foundation::HANDLE) -> Option<u64> {
-        use windows_sys::Win32::{Foundation::FILETIME, System::Threading::GetProcessTimes};
-        let mut times = [FILETIME {
-            dwLowDateTime: 0,
-            dwHighDateTime: 0,
-        }; 4];
-        let [created, exited, kernel, user] = &mut times;
-        (unsafe { GetProcessTimes(process, created, exited, kernel, user) } != 0)
-            .then(|| (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime))
     }
     fn runner(timeout: Duration) -> GhRunner {
         GhRunner {
@@ -548,25 +530,26 @@ mod tests {
         let signal = cancelled.clone();
         let path = root.path().to_owned();
         let cancel = std::thread::spawn(move || {
+            use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE};
             let started = Instant::now();
-            loop {
-                if std::fs::read_to_string(path.join("descendant-pid"))
+            let descendant = loop {
+                if let Some(pid) = std::fs::read_to_string(path.join("descendant-pid"))
                     .ok()
-                    .and_then(|s| {
-                        s.split_once(' ')
-                            .and_then(|(pid, _)| pid.parse::<u32>().ok())
-                    })
-                    .is_some()
+                    .and_then(|s| s.parse::<u32>().ok())
                 {
-                    break;
+                    // Hold the exact live process before cancellation. Looking up
+                    // its PID after cleanup can observe an unrelated process if
+                    // Windows has already reused the now-unreferenced PID.
+                    break owned(unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) }).unwrap();
                 }
                 assert!(
                     started.elapsed() < Duration::from_secs(10),
                     "descendant fixture did not start"
                 );
                 std::thread::sleep(Duration::from_millis(10));
-            }
+            };
             signal.store(true, Ordering::Release);
+            descendant
         });
         let result = capture(
             &runner(Duration::from_secs(15)),
@@ -574,32 +557,13 @@ mod tests {
             &args(FIXTURE),
             &cancelled,
         );
-        cancel.join().unwrap();
+        let descendant = cancel.join().unwrap();
         assert!(result.unwrap_err().to_string().contains("cancelled"));
-        let recorded = std::fs::read_to_string(root.path().join("descendant-pid")).unwrap();
-        let (pid, created) = recorded.split_once(' ').unwrap();
-        let (pid, created) = (pid.parse::<u32>().unwrap(), created.parse::<u64>().unwrap());
-        use windows_sys::Win32::System::Threading::{
-            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
-        };
-        let handle = unsafe {
-            OpenProcess(
-                PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
-                0,
-                pid,
-            )
-        };
-        if !handle.is_null() {
-            let handle = owned(handle).unwrap();
-            // A reused ID names another process; the fixture itself is gone.
-            if creation(handle.as_raw_handle()) == Some(created) {
-                assert_eq!(
-                    unsafe { WaitForSingleObject(handle.as_raw_handle(), 0) },
-                    WAIT_OBJECT_0,
-                    "actual owned descendant must have exited before return"
-                );
-            }
-        }
+        assert_eq!(
+            unsafe { WaitForSingleObject(descendant.as_raw_handle(), 0) },
+            WAIT_OBJECT_0,
+            "actual owned descendant must have exited before return"
+        );
         let renamed = root.path().with_extension("renamed");
         std::fs::rename(root.path(), &renamed).unwrap();
         std::fs::rename(&renamed, root.path()).unwrap();
