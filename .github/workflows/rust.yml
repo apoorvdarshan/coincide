@@ -74,6 +74,11 @@ jobs:
       - name: Test one owned synthetic Windows credential entry
         if: runner.os == 'Windows'
         run: python scripts/test-rust-native-secret-store.py
+      - name: Test one owned Windows idle-sleep request
+        if: runner.os == 'Windows'
+        env:
+          COINCIDE_WINDOWS_POWER_CI: owned-native-request
+        run: cargo test -p coincide-core --lib --locked platform_host::inhibitor::windows::tests::owned_kernel_round_trip -- --ignored --exact
   desktop:
     name: macOS GPUI build
     runs-on: macos-latest

@@ -163,7 +163,7 @@ impl IdleSleep {
         }
     }
     pub fn status(&self) -> Value {
-        let mut status = json!({"enabled":self.enabled,"supported":cfg!(any(target_os="macos",target_os="linux")),
+        let mut status = json!({"enabled":self.enabled,"supported":cfg!(any(target_os="macos",target_os="linux",target_os="windows")),
             "scope":"idle_sleep_during_work","configurationSource":"rust_owned","workerStarted":self.runtime.is_some() || self.pending_shutdown.is_some(),
             "requestedPolicy":policy_json(self.requested),"phase":"idle","lease":"released",
             "requestedRevision":0,"processedRevision":null,"acknowledgedRevision":null,"acknowledgedPolicy":null,

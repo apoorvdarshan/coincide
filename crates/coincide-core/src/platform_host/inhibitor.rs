@@ -3,6 +3,9 @@
 use super::power::SleepInhibitor;
 use anyhow::{Context, Result, bail};
 
+#[path = "inhibitor_windows.rs"]
+pub mod windows;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Platform {
     MacOs,
@@ -117,7 +120,11 @@ impl<R: CommandRunner> Drop for CommandInhibitor<R> {
 }
 #[derive(Default)]
 pub struct SystemRunner;
+#[cfg(not(windows))]
 pub type NativeSleepInhibitor = CommandInhibitor<SystemRunner>;
+#[cfg(windows)]
+pub type NativeSleepInhibitor = windows::WindowsInhibitor<windows::SystemApi>;
+#[cfg(not(windows))]
 impl NativeSleepInhibitor {
     pub fn native() -> Self {
         Self::with_runner(Platform::current(), SystemRunner)
