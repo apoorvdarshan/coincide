@@ -948,6 +948,8 @@ pub struct TerminalWorkspace {
     tabs: Vec<Tab>,
     active: Option<PaneId>,
     panes: HashMap<PaneId, Pane>,
+    /// Engine owners not yet attached because the mailbox or pane surface is full.
+    pending_adoptions: Vec<String>,
     next: PaneId,
     tx: SyncSender<Command>,
     rx: Receiver<Update>,
@@ -1014,6 +1016,7 @@ impl TerminalWorkspace {
             tabs: vec![],
             active: None,
             panes: HashMap::new(),
+            pending_adoptions: Vec::new(),
             next: 1,
             tx,
             rx,
@@ -1058,7 +1061,7 @@ impl TerminalWorkspace {
     fn activate_pending(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match self.activation.take(
             self.visible,
-            !self.panes.is_empty(),
+            !self.panes.is_empty() || !self.pending_adoptions.is_empty(),
             self.stopping.load(Ordering::Acquire),
         ) {
             Activate::None => (),
@@ -1159,32 +1162,74 @@ impl TerminalWorkspace {
             return;
         }
         self.activation.requested = false;
-        for id in terminals.iter().take(MAX_PANES) {
+        self.queue_adoptions(terminals.iter().map(String::as_str));
+        self.retry_adoptions(cx);
+        self.watch();
+        if focus {
+            if let Some(id) = terminals.last()
+                && let Some((&key, _)) = self
+                    .panes
+                    .iter()
+                    .find(|(_, pane)| pane.terminal.as_ref() == Some(id))
+            {
+                self.active = Some(key);
+            }
+            self.focus_active(window, cx);
+        }
+        cx.notify();
+    }
+
+    fn queue_adoptions<'a>(&mut self, terminals: impl Iterator<Item = &'a str>) {
+        for id in terminals {
+            if !self.pending_adoptions.iter().any(|pending| pending == id)
+                && !self
+                    .panes
+                    .values()
+                    .any(|pane| pane.terminal.as_deref() == Some(id))
+            {
+                self.pending_adoptions.push(id.to_owned());
+            }
+        }
+    }
+    fn retry_adoptions(&mut self, cx: &mut Context<Self>) {
+        if self.pending_adoptions.is_empty() || self.stopping.load(Ordering::Acquire) {
+            return;
+        }
+        let front = self.active;
+        let mut pending = std::mem::take(&mut self.pending_adoptions).into_iter();
+        while let Some(id) = pending.next() {
             if self
                 .panes
                 .values()
-                .any(|pane| pane.terminal.as_ref() == Some(id))
+                .any(|pane| pane.terminal.as_ref() == Some(&id))
             {
                 continue;
             }
             if self.panes.len() >= MAX_PANES {
-                self.notice = "At most 32 terminal panes".into();
+                self.notice =
+                    "At most 32 terminal panes; close a pane to show waiting setup terminals."
+                        .into();
+                self.pending_adoptions.push(id);
                 break;
             }
             let key = self.allocate(cx);
             if self.tx.try_send(Command::Adopt(key, id.clone())).is_ok() {
-                self.panes.get_mut(&key).unwrap().terminal = Some(id.clone());
+                self.panes.get_mut(&key).unwrap().terminal = Some(id);
                 self.tab_for(key);
+                self.watch_dirty = true;
+                cx.notify();
             } else {
                 self.panes.remove(&key);
-                self.notice = "Could not attach setup terminal; reopen the terminal panel to retry attachment.".into();
+                self.pending_adoptions.push(id);
+                self.notice = "Waiting to attach existing terminals.".into();
+                break;
             }
         }
-        self.watch();
-        if focus {
-            self.focus_active(window, cx);
+        self.pending_adoptions.extend(pending);
+        // A retry, including one for a hidden thread, never switches the active tab.
+        if front.is_some() {
+            self.active = front;
         }
-        cx.notify();
     }
 
     /// Swift ThreadTerminals.run: a project script gets a new tab that comes
@@ -1476,29 +1521,9 @@ impl TerminalWorkspace {
                     // Only a script run can open a tab before listing; it
                     // stays in front of the shells adopted after it.
                     let front = self.active;
-                    let mut adoption_ready = true;
-                    for tab in tabs.iter().take(MAX_PANES) {
-                        if let Some(id) = tab["terminalId"].as_str() {
-                            if self
-                                .panes
-                                .values()
-                                .any(|p| p.terminal.as_deref() == Some(id))
-                            {
-                                continue;
-                            }
-                            let key = self.allocate(cx);
-                            if self.tx.try_send(Command::Adopt(key, id.into())).is_ok() {
-                                self.panes.get_mut(&key).unwrap().terminal = Some(id.into());
-                                self.tab_for(key);
-                            } else {
-                                self.panes.remove(&key);
-                                self.notice = "Could not attach existing terminal".into();
-                                adoption_ready = false;
-                            }
-                        } else {
-                            adoption_ready = false;
-                        }
-                    }
+                    let adoption_ready = tabs.iter().all(|tab| tab["terminalId"].is_string());
+                    self.queue_adoptions(tabs.iter().filter_map(|tab| tab["terminalId"].as_str()));
+                    self.retry_adoptions(cx);
                     if front.is_some() {
                         self.active = front;
                     }
@@ -1631,6 +1656,7 @@ impl TerminalWorkspace {
                 }
             }
         }
+        self.retry_adoptions(cx);
         self.activate_pending(window, cx);
         if self.watch_dirty {
             self.watch();
