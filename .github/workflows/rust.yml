@@ -56,6 +56,15 @@ jobs:
       - name: Diagnose Windows PTY and control tests after core failure
         if: ${{ failure() && runner.os == 'Windows' && steps.core_tests.outcome == 'failure' }}
         run: cargo test -p coincide-core --locked --no-fail-fast --test terminal_windows --test control_windows -- --nocapture
+      - name: Test owned Windows upload reader against actual junctions, symlinks and sharing
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          COINCIDE_SYNTHETIC_UPLOAD_SDK: '1'
+        run: |
+          cargo test -p coincide-core --lib --locked browser_protocol::upload::windows::sdk_tests -- --ignored --nocapture --test-threads=1 | Tee-Object -FilePath "$env:RUNNER_TEMP/upload-sdk-tests.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/upload-sdk-tests.log" -SimpleMatch 'test result: ok. 6 passed; 0 failed; 0 ignored;')) { throw 'Expected exactly six owned Windows upload SDK tests' }
       - run: cargo clippy -p coincide-core --all-targets --locked -- -D warnings
         if: runner.os != 'Windows'
       - name: Test isolated preview updater helper fixtures

@@ -24,8 +24,8 @@ use windows_sys::{
         Foundation::{OBJ_CASE_INSENSITIVE, OBJ_DONT_REPARSE, UNICODE_STRING},
         Storage::FileSystem::{
             FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-            FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_SHARE_READ, FILE_TRAVERSE, FILE_TYPE_DISK,
-            GetDriveTypeW, GetFileType, GetFinalPathNameByHandleW, SYNCHRONIZE,
+            FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE,
+            FILE_TYPE_DISK, GetDriveTypeW, GetFileType, GetFinalPathNameByHandleW, SYNCHRONIZE,
         },
         System::{
             IO::IO_STATUS_BLOCK,
@@ -35,10 +35,14 @@ use windows_sys::{
 };
 /// Field order releases the file before ancestor pins. Neither is cloned or
 /// inherited by provider children. The path is never reopened after admission.
+/// Handles share read and write but never delete: a file another app holds open
+/// (an open document) still attaches, while no pinned name can be renamed,
+/// replaced or deleted until release. Concurrent growth is bounded by the reader.
 pub(super) struct RetainedFile {
     pub(super) file: File,
     _parents: Vec<File>,
 }
+const SHARE: u32 = FILE_SHARE_READ | FILE_SHARE_WRITE;
 fn verify(file: &File, directory: bool) -> Result<()> {
     let metadata = file.metadata()?;
     ensure!(
@@ -74,7 +78,7 @@ impl RetainedFile {
         );
         let root = OpenOptions::new()
             .access_mode(FILE_READ_ATTRIBUTES | FILE_TRAVERSE)
-            .share_mode(FILE_SHARE_READ)
+            .share_mode(SHARE)
             .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
             .open(format!(r"\\?\{root_path}"))?;
         verify(&root, true)?;
@@ -149,7 +153,7 @@ fn relative(parent: &File, component: &str, directory: bool) -> Result<File> {
             &mut status,
             null(),
             0,
-            FILE_SHARE_READ,
+            SHARE,
             FILE_OPEN,
             FILE_OPEN_REPARSE_POINT
                 | FILE_SYNCHRONOUS_IO_NONALERT

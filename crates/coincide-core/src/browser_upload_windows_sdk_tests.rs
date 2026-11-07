@@ -178,6 +178,27 @@ fn concurrent_parent_and_file_replacement_cannot_retarget_pinned_reader() {
 }
 #[test]
 #[ignore = "fresh GitHub-hosted Windows only; explicit synthetic SDK opt-in"]
+fn file_held_open_by_an_editor_style_writer_still_attaches() {
+    let temp = root();
+    let path = temp.path().join("private").join("held.txt");
+    private_file(&path, b"owned held document");
+    // An editor-style owner: read/write access that shares only reads.
+    let writer = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .share_mode(FILE_SHARE_READ)
+        .open(&path)
+        .unwrap();
+    let mut retained = RetainedFile::open(&path, &work()).unwrap();
+    let mut bytes = Vec::new();
+    retained.file.read_to_end(&mut bytes).unwrap();
+    assert_eq!(bytes, b"owned held document");
+    drop(retained);
+    drop(writer);
+    fs::rename(&path, path.with_extension("released")).unwrap();
+}
+#[test]
+#[ignore = "fresh GitHub-hosted Windows only; explicit synthetic SDK opt-in"]
 fn cancelled_and_expired_work_cannot_open_or_read_the_owned_file() {
     let temp = root();
     let path = temp.path().join("private").join("owned.txt");
