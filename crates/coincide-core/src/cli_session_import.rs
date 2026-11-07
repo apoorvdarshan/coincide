@@ -44,6 +44,37 @@ impl SessionPreview {
     }
 }
 
+/// An absolute POSIX path, or on a session written on Windows an absolute drive
+/// (`C:\work`) or UNC (`\\server\share`) path. The directory is display
+/// metadata only; imported threads never run in it.
+fn supported_directory(cwd: &str) -> bool {
+    let bytes = cwd.as_bytes();
+    let windows_drive = bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'\\' | b'/');
+    !cwd.contains('\0') && (cwd.starts_with('/') || windows_drive || cwd.starts_with("\\\\"))
+}
+
+/// Swift's detection: a Codex rollout has a `session_meta` record, a Claude Code
+/// session has records with both `sessionId` and `cwd`. Exactly one must hold.
+pub fn detect_provider(bytes: &[u8]) -> Result<ImportProvider> {
+    let (records, _) = parse_records(bytes)?;
+    let codex = records.iter().any(|r| r["type"] == "session_meta");
+    let claude = records
+        .iter()
+        .any(|r| r["sessionId"].is_string() && r["cwd"].is_string());
+    ensure!(
+        codex != claude,
+        "Choose a Claude Code session or Codex rollout JSONL file."
+    );
+    Ok(if codex {
+        ImportProvider::Codex
+    } else {
+        ImportProvider::Claude
+    })
+}
+
 fn parse_records(bytes: &[u8]) -> Result<(Vec<Value>, usize)> {
     ensure!(bytes.len() <= MAX_BYTES, "session too large");
     let mut records = Vec::new();
@@ -91,10 +122,7 @@ pub fn preview_codex(bytes: &[u8]) -> Result<SessionPreview> {
         let cwd = payload["cwd"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("missing working directory"))?;
-        ensure!(
-            cwd.starts_with('/') && !cwd.contains('\0'),
-            "unsupported working directory"
-        );
+        ensure!(supported_directory(cwd), "unsupported working directory");
         directory = Some(cwd.to_owned());
     }
     let Some(session_id) = identity else {
@@ -261,10 +289,7 @@ pub fn preview_claude(bytes: &[u8]) -> Result<SessionPreview> {
             identity = Some(id);
         }
         if let Some(cwd) = record["cwd"].as_str() {
-            ensure!(
-                cwd.starts_with('/') && !cwd.contains('\0'),
-                "unsupported working directory"
-            );
+            ensure!(supported_directory(cwd), "unsupported working directory");
             directory = Some(cwd.to_owned());
         }
         if let Some(id) = record["uuid"].as_str() {
