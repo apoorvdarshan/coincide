@@ -29,6 +29,8 @@ mod composer_steering_mount;
 mod computer_use;
 mod computer_use_mount;
 mod computer_use_settings;
+mod context_details;
+mod context_details_mount;
 mod conversation_toolbar;
 mod credential_settings;
 mod credentials;
@@ -45,6 +47,7 @@ mod keyboard_settings;
 mod legacy_media_mount;
 mod legacy_media_recovery;
 mod legacy_media_settings;
+mod main_window_poll;
 mod microphone;
 mod microphone_settings;
 mod models_settings;
@@ -60,9 +63,12 @@ mod presentation;
 mod project_defaults_ui;
 mod project_management;
 mod project_management_mount;
+mod provider_configuration_ui;
 mod provider_settings;
+mod provider_setup_terminal;
 mod queue;
 mod quit_mount;
+mod reply_selection_mount;
 mod scheduling;
 mod session_import;
 mod settings;
@@ -377,6 +383,8 @@ struct Coincide {
     settings_search: Entity<InputState>,
     settings_navigation: settings_navigation::State,
     instructions_panel: Entity<instructions::InstructionsPanel>,
+    provider_configuration_panel: Entity<provider_configuration_ui::Panel>,
+    provider_enable_prompt: Option<Task<()>>,
     models_settings: models_settings::ModelsSettings,
     archive_settings: archive_settings::ArchiveSettings,
     instruction_quit_prompt_pending: bool,
@@ -387,6 +395,7 @@ struct Coincide {
     main_window: gpui_kit::AnyWindowHandle,
     settings_focus: FocusHandle,
     appshots: appshots::State,
+    context_details: context_details_mount::State,
     keyboard: keyboard_settings::State,
     usage_history: usage_history_mount::Mount,
     codex_limits: codex_limits_mount::Mount,
@@ -749,6 +758,9 @@ impl Coincide {
         let weak = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
             weak.update(cx, |this, cx| {
+                if this.block_provider_configuration_close(window, cx) {
+                    return false;
+                }
                 if this.instructions_panel.read(cx).has_unsaved_edits(cx) {
                     this.prompt_instruction_close(false, window, cx);
                     return false;
@@ -799,6 +811,14 @@ impl Coincide {
         let codex_limits = codex_limits_mount::Mount::new(engine.clone(), cx);
         let steering = composer_steering::SteeringController::new(engine.clone());
         let settings_search = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
+        let provider_configuration_panel = cx.new(|cx| {
+            provider_configuration_ui::Panel::new(
+                engine.clone(),
+                native_editors.clone(),
+                window,
+                cx,
+            )
+        });
         let instructions_panel = cx.new(|cx| {
             instructions::InstructionsPanel::new(
                 engine.clone(),
@@ -877,6 +897,7 @@ impl Coincide {
             cx.subscribe(&usage_history.panel, |this, _, event, cx| {
                 this.usage_history.load(event, cx);
             }),
+            cx.observe(&provider_configuration_panel, |_, _, cx| cx.notify()),
             cx.observe(&github_panel, |this,_,cx| {
                 let loaded=this.github_panel.read(cx).loaded_pr_scope(cx);
                 if this.github_threads_seed.as_ref().is_some_and(|seed|Some(seed)!=loaded.as_ref()) {
@@ -1107,15 +1128,20 @@ impl Coincide {
             .try_lock()
             .ok()
             .and_then(|engine| engine.store.data_directory().ok());
+        let poll_window = window.window_handle();
         let poll = cx.spawn_in(window, async move |this, cx| {
             loop {
                 cx.background_executor()
                     .timer(Duration::from_millis(150))
                     .await;
-                if this
-                    .update_in(cx, |this, window, cx| this.tick(window, cx))
-                    .is_err()
+                if let Err(error) =
+                    main_window_poll::update(poll_window, &this, cx, |this, window, cx| {
+                        this.tick(window, cx)
+                    })
                 {
+                    // A removed main window or released owner ends this task;
+                    // never silently keep polling through an unexpected error.
+                    eprintln!("Main window polling stopped: {error}");
                     break;
                 }
             }
@@ -1173,6 +1199,8 @@ impl Coincide {
             settings_navigation: Default::default(),
             settings_section: Default::default(),
             instructions_panel,
+            provider_configuration_panel,
+            provider_enable_prompt: None,
             models_settings,
             archive_settings,
             instruction_quit_prompt_pending: false,
@@ -1182,6 +1210,7 @@ impl Coincide {
             main_window: window.window_handle(),
             settings_focus: cx.focus_handle(),
             appshots: appshots::State::new(cx),
+            context_details: Default::default(),
             keyboard,
             usage_history,
             codex_limits,
@@ -1776,6 +1805,7 @@ impl Coincide {
                     .as_ref()
                     .is_none_or(|thread| thread["id"] != id)
                 {
+                    self.context_details.invalidate();
                     self.invalidate_native_conversation_view();
                     self.composer_accessory_scroll
                         .set_offset(point(px(0.), px(0.)));
@@ -2729,7 +2759,7 @@ impl Coincide {
         if native_quit {
             self.native_quit_observed = true;
         }
-        if menu_quit || native_quit {
+        if (menu_quit || native_quit) && !self.block_provider_configuration_close(window, cx) {
             if self.instructions_panel.read(cx).has_unsaved_edits(cx) {
                 self.prompt_instruction_close(true, window, cx);
             } else {
@@ -2743,7 +2773,7 @@ impl Coincide {
         self.poll_thread_bulk(window, cx);
         self.instructions_panel
             .update(cx, |panel, cx| panel.poll_instruction_git(cx));
-        self.poll_sidebar_lifecycle(cx);
+        self.poll_sidebar_lifecycle(window, cx);
         self.poll_composer_file_picker(window, cx);
         if self.engine.try_lock().is_ok_and(|engine| engine.shutdown) {
             self.media.shutdown_requested = true;
@@ -3501,13 +3531,6 @@ impl Coincide {
                 cx.notify();
                 return;
             }
-            if self.running.contains(&text(thread, "id"))
-                && coincide_core::composer_context::has_context(context)
-            {
-                self.status = "Follow-up messages currently support text only. Keep the attached references for a direct send after the current turn.".into();
-                cx.notify();
-                return;
-            }
         }
         if self.selection_send_blocked() {
             self.retry_selected_account_readiness();
@@ -3642,7 +3665,7 @@ impl Coincide {
         // Only Rust-ingested metadata is previewable. Legacy imported media is
         // deliberately not opened through arbitrary historical paths.
         let images = item["rustImages"].as_array().cloned().unwrap_or_default();
-        let context_pane = self.transcript_context_pane(&item["context"]);
+        let context_pane = self.transcript_context_pane(&source_id, &item_id, item, cx);
         let previews = images
             .iter()
             .take(20)
@@ -4069,6 +4092,7 @@ impl Coincide {
 }
 impl Render for Coincide {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_context_details();
         // Revoke image-modal input immediately on either close path, before its
         // ordinary conversation surface is replaced by cleanup-only controls.
         if self.media.close_requested || self.media.shutdown_requested {
@@ -4309,12 +4333,15 @@ impl Render for Coincide {
             .relative()
             .capture_key_down(
                 cx.listener(|this, event, window, cx| {
-                    if !this.project_defaults_key(event, window, cx)
-                        && !this.historical_image_shortcut(event, window, cx) {
+                    if !this.context_details_shortcut(event, window, cx)
+                        && !this.project_defaults_key(event, window, cx)
+                        && !this.historical_image_shortcut(event, window, cx)
+                        && !this.reply_selection_shortcut(event, window, cx) {
                         this.app_shortcut(event, window, cx);
                     }
                 }),
             )
+            .on_action(cx.listener(|this,_:&app_menu::AddSelectionToComposer,window,cx|this.add_selection_to_composer(window,cx)))
             .flex()
             .size_full()
             .bg(self.color(0x10141c))
@@ -4566,6 +4593,7 @@ impl Render for Coincide {
             .when_some(browser_pane, |view, pane| view.child(pane))
             .when_some(historical_image, |view, image| view.child(image))
             .when_some(self.project_defaults_form(cx), |view, form| view.child(form))
+            .when_some(self.context_details_overlay(cx), |view, details| view.child(details))
             .when(self.command_palette.read(cx).is_open(), |view| {
                 view.child(
                     div()
@@ -4614,6 +4642,20 @@ fn schedule_date(value: &Value) -> String {
         .unwrap_or_else(|_| "Unavailable".into())
 }
 fn main() -> Result<()> {
+    let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
+    if arguments
+        .first()
+        .is_some_and(|argument| argument == "--native-provider-setup")
+    {
+        anyhow::ensure!(
+            arguments.len() == 2,
+            "Native setup requires one sealed handoff path"
+        );
+        let code = coincide_core::provider_configuration::run_native_provider_setup(
+            std::path::Path::new(&arguments[1]),
+        )?;
+        std::process::exit(code);
+    }
     let data = control::data_directory()?;
     let store = Store::open(&data.join("coincide.sqlite"))?;
     let media_data = store.data_directory()?;

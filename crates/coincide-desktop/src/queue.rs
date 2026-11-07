@@ -1,6 +1,50 @@
 use super::*;
 
 impl Coincide {
+    fn send_queued_now(&mut self, expected: &Value, message: &Value, cx: &mut Context<Self>) {
+        if self.media.close_requested || self.media.shutdown_requested {
+            return;
+        }
+        // The source captured by this row is authoritative; refreshing selection
+        // here would let an old click send into another conversation.
+        if self
+            .selected
+            .as_ref()
+            .is_none_or(|thread| thread["id"] != expected["id"])
+        {
+            return;
+        }
+        let result = try_state(&self.engine)
+            .and_then(|mut engine| engine.native_send_queued_now(expected, message));
+        match result {
+            Ok(ticket) => {
+                self.track_queued_delivery(ticket, text(expected, "id"));
+                self.status = "Delivering queued message; separate draft retained.".into();
+                self.refresh_queue(cx);
+            }
+            Err(error) => self.status = error.to_string(),
+        }
+        cx.notify();
+    }
+    pub(super) fn send_next_queued_now(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(thread) = self.selected.clone() else {
+            return false;
+        };
+        if !self.running.contains(&text(&thread, "id")) {
+            return false;
+        }
+        let Some(message) = self
+            .queued_messages
+            .iter()
+            .find(|message| message["state"] == "pending")
+            .cloned()
+        else {
+            return false;
+        };
+        self.send_queued_now(&thread, &message, cx);
+        true
+    }
+
     fn edit_queued_message(
         &mut self,
         message: &Value,
@@ -106,6 +150,14 @@ impl Coincide {
                 self.queued_messages = value["messages"].as_array().cloned().unwrap_or_default();
                 self.queue_enabled = value["enabled"] == true;
                 self.queue_error = value["error"].as_str().unwrap_or_default().to_owned();
+                // Keep the raw queue source (including future row metadata) for
+                // exact native Send now admission; list returns typed previews.
+                if let Ok(current) = call(&self.engine, "threads.read", json!({"threadId":id}))
+                    && let Some(selected) = self.selected.as_mut()
+                    && selected["id"] == id
+                {
+                    selected["rustMessageQueue"] = current["rustMessageQueue"].clone();
+                }
             }
             Err(error) if engine_busy(&error) => return,
             Err(error) => {
@@ -203,7 +255,11 @@ impl Coincide {
                     let id = text(message, "id");
                     let state = text(message, "state");
                     let full_text = text(message, "text");
+                    let image_count = message["rustImages"].as_array().map_or(0, Vec::len);
+                    let context_count = message["context"].as_array().map_or(0, Vec::len);
                     let edit_message = message.clone();
+                    let send_message = message.clone();
+                    let source = self.selected.clone();
                     let editable = matches!(state.as_str(), "pending" | "failed" | "interrupted");
                     let mut preview: String = full_text.chars().take(400).collect();
                     if preview.len() < full_text.len() {
@@ -222,9 +278,20 @@ impl Coincide {
                                     text(&message["selection"], "provider")
                                 )))
                                 .child(div().truncate().child(preview))
+                                .when(image_count + context_count > 0, |row| row.child(div().text_sm().child(format!("{image_count} images · {context_count} references"))))
                                 .when_some(message["error"].as_str(), |row, error| {
                                     row.child(div().text_sm().child(error.to_owned()))
                                 }),
+                        )
+                        .child(
+                            Button::new(SharedString::from(format!("send-queued-now-{id}")))
+                                .label("Send now")
+                                .accessibility_label("Send this queued message now")
+                                .tooltip("Send into the current turn when ready; otherwise stop it and send after its worker returns. Keep the separate draft.")
+                                .disabled(state != "pending")
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    if let Some(source) = &source { this.send_queued_now(source, &send_message, cx); }
+                                })),
                         )
                         .child(
                             Button::new(SharedString::from(format!("edit-queued-{id}")))

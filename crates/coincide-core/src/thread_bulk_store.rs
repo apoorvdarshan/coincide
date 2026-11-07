@@ -98,10 +98,34 @@ impl Store {
         Ok(rows)
     }
     pub(crate) fn apply_flag_rows(&mut self, rows: &[FlagRow]) -> Result<()> {
+        self.apply_flag_rows_with_archive_preference(rows, false)
+    }
+    pub(crate) fn apply_flag_rows_with_archive_preference(
+        &mut self,
+        rows: &[FlagRow],
+        unconfirmed_archive: bool,
+    ) -> Result<()> {
         ensure!(rows.len() <= MAX_ROWS, "Too many conversations");
         let tx = self
             .connection_mut()?
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        if unconfirmed_archive {
+            let raw: Option<String> = tx
+                .query_row(
+                    "SELECT document FROM documents WHERE name='settings.json'",
+                    [],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            let settings: Value = raw
+                .map(|raw| serde_json::from_str(&raw))
+                .transpose()?
+                .unwrap_or(Value::Null);
+            ensure!(
+                settings["confirmBeforeArchivingThreads"] == false,
+                "Archive confirmation preference changed; review again"
+            );
+        }
         // All comparisons precede every write, including rows already in the
         // requested state. A failure leaves the entire batch unchanged.
         for row in rows {

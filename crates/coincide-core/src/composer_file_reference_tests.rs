@@ -117,14 +117,16 @@ fn active_away_back_revision_unsaved_and_frozen_admissions_invalidate_candidates
     assert_eq!(engine.store.file_reference_source(&id).unwrap(), before);
 }
 #[test]
-fn changed_file_metadata_symlinks_parent_absolute_and_directory_entries_never_gain_a_reference() {
+fn changed_file_metadata_symlinks_parent_absolute_and_folder_attach_are_rejected() {
     let (root, mut engine, id) = fixture();
     let captured = scope(&engine, &id);
     let listing=captured.search_with("",|_,_,_|Ok(json!({"files":["src/café.rs","../outside","/absolute","src","missing","src/./café.rs"],"total":6,"truncated":false}))).unwrap();
     // Components::CurDir is normalized in the middle by Path, but a normalized
     // duplicate must not create an extra selectable path spelling.
-    assert_eq!(listing.files.len(), 1);
-    assert_eq!(listing.skipped, 5);
+    assert_eq!(listing.files.len(), 2);
+    assert_eq!(listing.skipped, 4);
+    assert!(listing.files[1].is_directory());
+    assert!(engine.attach_file_reference(&listing.files[1]).is_err());
     let before = engine.store.file_reference_source(&id).unwrap();
     std::fs::write(root.path().join("project/src/café.rs"), b"changed length").unwrap();
     assert!(engine.attach_file_reference(&listing.files[0]).is_err());
@@ -219,4 +221,63 @@ fn sqlite_failure_closed_store_and_query_bounds_do_not_attach_or_rewrite_source(
     );
     engine.store.close_for_shutdown().unwrap();
     assert!(engine.attach_file_reference(&candidate).is_err());
+}
+
+#[test]
+fn folder_completion_checks_owner_source_and_metadata_without_attaching_or_changing_rows() {
+    let (root, mut engine, id) = fixture();
+    let candidate = scope(&engine, &id)
+        .search_with("src", |_, _, _| Ok(json!({"files":["src"],"total":1})))
+        .unwrap()
+        .files
+        .remove(0);
+    let before = engine.store.file_reference_source(&id).unwrap();
+    let revision = engine.revision;
+    assert!(candidate.is_directory());
+    engine.validate_file_reference_folder(&candidate).unwrap();
+    engine
+        .validate_file_reference_folder_delivery(&candidate)
+        .unwrap();
+    assert!(engine.attach_file_reference(&candidate).is_err());
+    assert_eq!(engine.store.file_reference_source(&id).unwrap(), before);
+    assert_eq!(engine.revision, revision);
+    let mut external = Store::open(&root.path().join("state.sqlite")).unwrap();
+    external
+        .patch_thread(&id, &json!({"draft":"newer external draft"}))
+        .unwrap();
+    assert!(
+        engine
+            .validate_file_reference_folder_delivery(&candidate)
+            .is_err()
+    );
+    assert!(engine.validate_file_reference_folder(&candidate).is_err());
+    let fresh = scope(&engine, &id)
+        .search_with("src", |_, _, _| Ok(json!({"files":["src"],"total":1})))
+        .unwrap()
+        .files
+        .remove(0);
+    engine.set_active_thread(None).unwrap();
+    assert!(
+        engine
+            .validate_file_reference_folder_delivery(&fresh)
+            .is_err()
+    );
+    engine.set_active_thread(Some(id.clone())).unwrap();
+    assert!(engine.validate_file_reference_folder(&fresh).is_err());
+    let fresh = scope(&engine, &id)
+        .search_with("src", |_, _, _| Ok(json!({"files":["src"],"total":1})))
+        .unwrap()
+        .files
+        .remove(0);
+    std::fs::rename(
+        root.path().join("project/src"),
+        root.path().join("project/old-src"),
+    )
+    .unwrap();
+    std::fs::create_dir(root.path().join("project/src")).unwrap();
+    assert!(engine.validate_file_reference_folder(&fresh).is_err());
+    assert_eq!(
+        engine.store.thread(&id).unwrap()["draft"],
+        "newer external draft"
+    );
 }

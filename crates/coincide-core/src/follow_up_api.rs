@@ -27,11 +27,12 @@ struct Operation {
     dispatch: Dispatch,
     delivery: Option<Delivery>,
     status: NativeFollowUpStatus,
+    queue: Option<super::queue_dispatch::QueueClaim>,
 }
 pub(super) struct State {
     owner: Uuid,
     operations: HashMap<Uuid, Operation>,
-    blocked: HashMap<String, String>,
+    blocked: HashMap<String, Value>,
 }
 impl Default for State {
     fn default() -> Self {
@@ -43,6 +44,9 @@ impl Default for State {
     }
 }
 impl State {
+    pub(super) fn has_capacity(&self) -> bool {
+        self.operations.len() < 32
+    }
     pub(super) fn has_pending(&self) -> bool {
         self.operations
             .values()
@@ -59,6 +63,20 @@ impl Engine {
     /// Named follow-ups use the selected account's actual private catalog and
     /// policy, just like normal turn admission; never borrow a default proof.
     pub(super) fn validate_native_follow_up_policy(&self, thread: &Value) -> Result<()> {
+        let provider = text(&thread["selection"], "provider");
+        let configuration =
+            if let Some(run) = thread["id"].as_str().and_then(|id| self.runs.get(id)) {
+                ensure!(
+                    run.provider == provider,
+                    "Stored provider differs from the running turn"
+                );
+                // Steering targets this already-admitted worker. Later Settings
+                // edits apply only to future workers and cannot rebind its proofs.
+                run.configuration.clone()
+            } else {
+                self.provider_launch_configuration(&provider)?
+            };
+        let _configuration_scope = provider_configuration::enter(configuration);
         self.require_provider_enabled(&text(&thread["selection"], "provider"))?;
         if let Some(profile) = self.codex_login_context(thread)? {
             let binding = crate::model_catalog::NamedBinding::capture(
@@ -135,6 +153,14 @@ impl Engine {
         expected: &Value,
         alternate: bool,
     ) -> Result<NativeFollowUpTicket> {
+        self.begin_native_follow_up(expected, alternate, &mut None)
+    }
+    fn begin_native_follow_up(
+        &mut self,
+        expected: &Value,
+        alternate: bool,
+        queue: &mut Option<super::queue_dispatch::QueueClaim>,
+    ) -> Result<NativeFollowUpTicket> {
         self.require_admissions()?;
         ensure!(!self.shutdown, "Application is closing");
         let id = required(expected, "id")?.to_owned();
@@ -165,26 +191,77 @@ impl Engine {
             serde_json::to_vec(&scope(&current))?.len() <= 2 * 1024 * 1024,
             "Composer scope exceeds safe follow-up limit"
         );
-        let text = required(&current, "draft")?.to_owned();
+        let is_queue = queue.is_some();
+        let text = if let Some(claim) = queue.as_ref() {
+            claim.validate(self.thread_bulk_owner, &id, claim.text(), &current)?;
+            claim.text().to_owned()
+        } else {
+            required(&current, "draft")?.to_owned()
+        };
         ensure!(
-            !text.trim().is_empty() && text.len() <= 1024 * 1024,
-            "Follow-up text must be nonempty and fit within 1 MiB"
+            text.len() <= 1024 * 1024
+                && (!text.trim().is_empty()
+                    || (!is_queue
+                        && (crate::composer_context::has_context(&current["draftContext"])
+                            || current["rustDraftImages"]
+                                .as_array()
+                                .is_some_and(|images| !images.is_empty())))
+                    || queue
+                        .as_ref()
+                        .is_some_and(|claim| crate::composer_context::has_context(
+                            claim.context()
+                        ) || !claim.images().is_empty())),
+            "Add text, images or references; text must fit within 1 MiB"
         );
+        if !is_queue {
+            ensure!(
+                self.native_follow_up.blocked.get(&id) != Some(&scope(&current)),
+                "This message was already submitted; edit it before submitting again"
+            );
+            self.native_follow_up.blocked.remove(&id);
+            let store = &self.store;
+            self.native_follow_up.blocked.retain(|thread, submitted| {
+                store
+                    .thread(thread)
+                    .is_ok_and(|value| scope(&value) == *submitted)
+            });
+            ensure!(
+                self.native_follow_up.blocked.len() < 32,
+                "Edit or collect retained follow-up drafts before sending more"
+            );
+        }
+        // Validate and prepare the exact payload before any Stop, denial or
+        // transport submission. A saved path never grants arbitrary file IO.
+        let context = queue.as_ref().map_or_else(
+            || current["draftContext"].clone(),
+            |claim| claim.context().clone(),
+        );
+        crate::composer_context::validate(&context)?;
+        let images: Vec<crate::attachments::StoredImage> = if let Some(claim) = queue.as_ref() {
+            claim.images().to_vec()
+        } else if current["rustDraftImages"].is_null() {
+            Vec::new()
+        } else {
+            serde_json::from_value(current["rustDraftImages"].clone())
+                .context("Invalid follow-up images")?
+        };
         ensure!(
-            self.native_follow_up.blocked.get(&id) != Some(&text),
-            "This text was already submitted; edit it before submitting again"
+            images.len() <= 20
+                && images
+                    .iter()
+                    .try_fold(0u64, |total, image| total.checked_add(image.byte_len))
+                    .is_some_and(|bytes| bytes <= 20 * 1024 * 1024),
+            "Follow-up images exceed safe limits"
         );
-        self.native_follow_up.blocked.remove(&id);
-        let store = &self.store;
-        self.native_follow_up.blocked.retain(|thread, submitted| {
-            store
-                .thread(thread)
-                .is_ok_and(|value| value["draft"].as_str() == Some(submitted.as_str()))
-        });
-        ensure!(
-            self.native_follow_up.blocked.len() < 32,
-            "Edit or collect retained follow-up drafts before sending more"
-        );
+        let data = self.store.data_directory()?;
+        let prepared = images
+            .iter()
+            .map(|image| image.prepare_in(&data))
+            .collect::<Result<Vec<_>>>()?;
+        agent::validate_images(
+            &Provider::from_name(&crate::store::text(&current["selection"], "provider"))?,
+            &prepared,
+        )?;
         let run = self
             .runs
             .get(&id)
@@ -199,19 +276,16 @@ impl Engine {
                 .is_some_and(|context| context.matches(&current)),
             "Stored selection or project differs from the running turn"
         );
-        for field in ["draftContext", "rustDraftImages"] {
+        if !is_queue {
+            crate::composer_context::validate(&current["draftContext"])?;
             ensure!(
-                current[field].is_null() || current[field].as_array().is_some_and(Vec::is_empty),
-                "Follow-ups currently support text only; attached material remains in the draft"
+                !self.attachment_operations.iter().any(|operation| self
+                    .workspace_pending
+                    .get(operation)
+                    .is_some_and(|(owner, _)| owner == &id)),
+                "Wait for image imports to finish before sending a follow-up"
             );
         }
-        ensure!(
-            !self.attachment_operations.iter().any(|operation| self
-                .workspace_pending
-                .get(operation)
-                .is_some_and(|(owner, _)| owner == &id)),
-            "Wait for image imports to finish before sending a follow-up"
-        );
         self.validate_native_follow_up_policy(&current)?;
         let cwd = self.working_directory(&current)?;
         self.bot_instructions(&current, &cwd)?;
@@ -232,8 +306,18 @@ impl Engine {
             .pending
             .values()
             .any(|frame| frame["method"] != "item/tool/requestUserInput");
-        let (dispatch, means_steer) =
-            choice::resolve(true, can_steer, alternate, behavior, approval);
+        let (dispatch, means_steer) = if is_queue {
+            (
+                if can_steer {
+                    Dispatch::Steer
+                } else {
+                    Dispatch::Interrupt
+                },
+                true,
+            )
+        } else {
+            choice::resolve(true, can_steer, alternate, behavior, approval)
+        };
         let worker = run.session.worker_completion();
         let prefix: Vec<Value> = current["items"]
             .as_array()
@@ -283,11 +367,15 @@ impl Engine {
             dispatch,
             delivery: None,
             status: NativeFollowUpStatus::Pending,
+            queue: queue.take(),
         };
         match dispatch {
             Dispatch::Steer => {
-                let result =
-                    self.steer_command("agent.steer", &json!({"threadId":id,"text":text}))?;
+                let result = if let Some(claim) = &op.queue {
+                    self.steer_owned_queue(&id, claim)?
+                } else {
+                    self.steer_native_composer(&current)?
+                };
                 op.delivery = Some(Delivery::Steering(required(&result, "operationId")?.into()));
             }
             Dispatch::Interrupt => {
@@ -317,14 +405,16 @@ impl Engine {
             owner: self.native_follow_up.owner,
             id: Uuid::new_v4(),
         };
-        if !matches!(
-            op.status,
-            NativeFollowUpStatus::Delivered {
-                draft_cleared: true,
-                ..
-            }
-        ) {
-            self.native_follow_up.blocked.insert(id, text);
+        if !is_queue
+            && !matches!(
+                op.status,
+                NativeFollowUpStatus::Delivered {
+                    draft_cleared: true,
+                    ..
+                }
+            )
+        {
+            self.native_follow_up.blocked.insert(id, scope(&current));
         }
         self.native_follow_up.operations.insert(ticket.id, op);
         self.revision += 1;
@@ -381,7 +471,21 @@ impl Engine {
                         match result["status"].as_str() {
                             Some("pending" | "accepted_pending_persistence") => Ok(None),
                             Some("accepted") => {
-                                Ok(Some(self.store.clear_native_follow_up_draft(&op.source)?))
+                                if let Some(claim) = &op.queue {
+                                    self.complete_native_queue_steer(claim)?;
+                                    Ok(Some(false))
+                                } else {
+                                    Ok(Some(self.store.clear_native_follow_up_draft(&op.source)?))
+                                }
+                            }
+                            Some("rejected") if op.queue.is_some() => {
+                                self.fail_queue_claim(
+                                    op.queue.as_ref().unwrap(),
+                                    "Queued steering was rejected",
+                                )?;
+                                bail!(
+                                    "Queued steering was rejected; message and separate draft retained"
+                                )
                             }
                             _ => bail!(
                                 "Steering was rejected or delivery is unknown; draft retained"
@@ -400,19 +504,32 @@ impl Engine {
                             return Ok(None);
                         }
                         let current = self.store.thread(&op.thread)?;
-                        ensure!(
-                            scope(&current) == scope(&op.source),
-                            "Composer changed while stopping; draft retained"
-                        );
+                        if op.queue.is_none() {
+                            ensure!(
+                                scope(&current) == scope(&op.source),
+                                "Composer changed while stopping; draft retained"
+                            );
+                        }
                         ensure!(
                             current["items"]
                                 .as_array()
                                 .is_some_and(|items| items.starts_with(&op.prefix)),
                             "Conversation prefix changed; draft retained"
                         );
+                        if let Some(claim) = op.queue.as_ref() {
+                            let claim = claim.rebound(self.thread_bulk_owner, &current)?;
+                            let origin = SendOrigin::Queued(Box::new(claim));
+                            self.send_turn_if_unchanged(
+                                &json!({"threadId":op.thread,"text":op.text}),
+                                &origin,
+                                None,
+                                op.dispatch == Dispatch::Interrupt,
+                            )?;
+                            return Ok(Some(false));
+                        }
                         self.send_turn_if_unchanged(
                             &json!({"threadId":op.thread,"text":op.text}),
-                            false,
+                            &SendOrigin::Ordinary,
                             Some(&op.source),
                             op.dispatch == Dispatch::Interrupt,
                         )?;
@@ -434,6 +551,9 @@ impl Engine {
                 }
                 Ok(None) => {}
                 Err(error) => {
+                    if op.queue.is_some() {
+                        self.enabled_queues.remove(&op.thread);
+                    }
                     op.delivery = None;
                     op.status = NativeFollowUpStatus::Retained(error.to_string());
                     self.revision += 1;
@@ -447,3 +567,6 @@ impl Engine {
 #[cfg(test)]
 #[path = "follow_up_api_tests.rs"]
 mod tests;
+
+#[path = "queue_send_now_api.rs"]
+mod queue_send_now_api;

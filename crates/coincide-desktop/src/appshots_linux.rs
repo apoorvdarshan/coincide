@@ -19,7 +19,12 @@ use std::{
 };
 use x11rb::{
     connection::Connection,
-    protocol::{composite::ConnectionExt as _, xproto::*},
+    protocol::{
+        Event,
+        composite::ConnectionExt as _,
+        xinput::{self, ConnectionExt as _},
+        xproto::*,
+    },
     reexports::x11rb_protocol::{parse_display, xauth},
     rust_connection::{DefaultStream, PollMode, RustConnection, Stream},
     utils::RawFdContainer,
@@ -148,46 +153,89 @@ pub(super) fn configure(shortcut: Option<&str>) -> Result<()> {
         .spawn(move || {
             let allowed = || !cancel.load(Ordering::Acquire);
             let result = (|| -> Result<_> {
-                let (connection, _) = connect(&allowed)?;
+                let (connection, screen) = connect(&allowed)?;
+                let root = connection.setup().roots[screen].root;
+                connection.xinput_xi_query_version(2, 0)?.reply()?;
+                connection
+                    .xinput_xi_select_events(
+                        root,
+                        &[xinput::EventMask {
+                            deviceid: xinput::Device::ALL_MASTER.into(),
+                            mask: vec![
+                                xinput::XIEventMask::RAW_KEY_PRESS
+                                    | xinput::XIEventMask::RAW_KEY_RELEASE,
+                            ],
+                        }],
+                    )?
+                    .check()?;
                 let first = connection.setup().min_keycode;
                 let count = connection.setup().max_keycode - first + 1;
                 let mapping = connection.get_keyboard_mapping(first, count)?.reply()?;
                 let keys = KeyMap::new(first, &mapping, shortcut.as_deref())?;
-                Ok((connection, keys))
+                let initial = connection.query_keymap()?.reply()?.keys;
+                let keyboard = KeyboardState::new(initial, &keys);
+                Ok((connection, keys, keyboard))
             })();
-            let Ok((connection, keys)) = result else {
+            let Ok((connection, mut keys, mut keyboard)) = result else {
                 let _ = tx.send(Err("Could not read the X11 keyboard map".to_owned()));
                 return;
             };
             if tx.send(Ok(())).is_err() {
                 return;
             }
-            let mut detector = coincide_core::appshots::BothPrimary::default();
-            let mut chord_was_down = true;
             while allowed() {
                 connection
                     .stream()
                     .deadline
                     .set(Instant::now() + Duration::from_millis(200));
-                let Ok(cookie) = connection.query_keymap() else {
-                    break;
-                };
-                let Ok(reply) = cookie.reply() else {
-                    break;
-                };
-                let down =
-                    |key: u8| key != 0 && reply.keys[usize::from(key / 8)] & (1 << (key % 8)) != 0;
-                let fire = if let Some(chord) = &keys.chord {
-                    let now = chord.matches(&reply.keys, &keys);
-                    let fire = now && !chord_was_down;
-                    chord_was_down = now;
-                    fire
-                } else {
-                    let other = (8..=255).any(|key| down(key) && !keys.control.contains(&key));
-                    detector.update(down(keys.control[0]), down(keys.control[1]), other)
-                };
-                if fire {
-                    PENDING.store(true, Ordering::Release);
+                // Read the event sequence, not periodic pressed-key snapshots:
+                // a short intervening key must still block a modifier chord.
+                for _ in 0..512 {
+                    if !allowed() {
+                        break;
+                    }
+                    let event = match connection.poll_for_event() {
+                        Ok(Some(event)) => event,
+                        Ok(None) => break,
+                        Err(_) => return,
+                    };
+                    let transition = match event {
+                        Event::XinputRawKeyPress(event)
+                            if event.flags & xinput::KeyEventFlags::KEY_REPEAT
+                                == xinput::KeyEventFlags::default() =>
+                        {
+                            u8::try_from(event.detail).ok().map(|key| (key, true))
+                        }
+                        Event::XinputRawKeyRelease(event) => {
+                            u8::try_from(event.detail).ok().map(|key| (key, false))
+                        }
+                        Event::MappingNotify(_) => {
+                            let mapping = (|| -> Result<_> {
+                                let first = connection.setup().min_keycode;
+                                let count = connection.setup().max_keycode - first + 1;
+                                let mapping =
+                                    connection.get_keyboard_mapping(first, count)?.reply()?;
+                                let keys = KeyMap::new(first, &mapping, shortcut.as_deref())?;
+                                let state = KeyboardState::new(
+                                    connection.query_keymap()?.reply()?.keys,
+                                    &keys,
+                                );
+                                Ok((keys, state))
+                            })();
+                            match mapping {
+                                Ok((map, state)) => {
+                                    keys = map;
+                                    keyboard = state;
+                                }
+                                Err(_) => return,
+                            }
+                            None
+                        }
+                        _ => None,
+                    };
+                    if transition.is_some_and(|(key, down)| keyboard.event(key, down, &keys)) {
+                        PENDING.store(true, Ordering::Release);
+                    }
                 }
                 thread::sleep(Duration::from_millis(20));
             }
@@ -224,6 +272,51 @@ pub(super) fn triggered() -> bool {
     PENDING.swap(false, Ordering::AcqRel)
 }
 
+struct KeyboardState {
+    down: [u8; 32],
+    both: coincide_core::appshots::BothPrimary,
+    chord_down: bool,
+}
+impl KeyboardState {
+    fn new(down: [u8; 32], keys: &KeyMap) -> Self {
+        let mut both = coincide_core::appshots::BothPrimary::default();
+        let pressed = |key: u8| key != 0 && down[usize::from(key / 8)] & (1 << (key % 8)) != 0;
+        if !pressed(keys.control[0]) && !pressed(keys.control[1]) {
+            both.update(false, false, false);
+        }
+        Self {
+            chord_down: keys
+                .chord
+                .as_ref()
+                .is_some_and(|chord| chord.matches(&down, keys)),
+            down,
+            both,
+        }
+    }
+    fn event(&mut self, key: u8, pressed: bool, keys: &KeyMap) -> bool {
+        if key < 8 {
+            return false;
+        }
+        let byte = &mut self.down[usize::from(key / 8)];
+        if pressed {
+            *byte |= 1 << (key % 8);
+        } else {
+            *byte &= !(1 << (key % 8));
+        }
+        if let Some(chord) = &keys.chord {
+            let down = chord.matches(&self.down, keys);
+            let fire = pressed && key == chord.key && down && !self.chord_down;
+            self.chord_down = down;
+            fire
+        } else {
+            let down =
+                |key: u8| key != 0 && self.down[usize::from(key / 8)] & (1 << (key % 8)) != 0;
+            let other = (8..=255).any(|key| down(key) && !keys.control.contains(&key));
+            self.both
+                .update(down(keys.control[0]), down(keys.control[1]), other)
+        }
+    }
+}
 struct KeyMap {
     control: [u8; 2],
     shift: [u8; 2],
@@ -851,6 +944,25 @@ mod tests {
         assert_eq!(bounded_text("éxyz", 100), "éxyz");
     }
     #[test]
+    fn raw_key_sequence_observes_short_intervening_key_and_rearms_after_release() {
+        let keys = KeyMap {
+            control: [37, 105],
+            shift: [50, 62],
+            alt: [64, 108],
+            super_keys: [133, 134],
+            chord: None,
+        };
+        let mut keyboard = KeyboardState::new([0; 32], &keys);
+        for (key, down) in [(37, true), (38, true), (38, false), (105, true)] {
+            assert!(!keyboard.event(key, down, &keys));
+        }
+        assert!(!keyboard.event(37, false, &keys));
+        assert!(!keyboard.event(105, false, &keys));
+        assert!(!keyboard.event(37, true, &keys));
+        assert!(keyboard.event(105, true, &keys));
+        assert!(!keyboard.event(105, true, &keys));
+    }
+    #[test]
     fn custom_shortcut_requires_exact_modifier_and_key_set() {
         let keys = KeyMap {
             control: [37, 105],
@@ -871,5 +983,25 @@ mod tests {
         assert!(chord.matches(&bits, &keys));
         bits[50 / 8] |= 1 << (50 % 8);
         assert!(!chord.matches(&bits, &keys));
+        let keys = KeyMap {
+            chord: Some(chord),
+            ..keys
+        };
+        let mut keyboard = KeyboardState::new([0; 32], &keys);
+        for (key, pressed) in [
+            (37, true),
+            (64, true),
+            (50, true),
+            (38, true),
+            (50, false),
+            (38, true),
+            (38, false),
+        ] {
+            assert!(
+                !keyboard.event(key, pressed, &keys),
+                "modifier release is not a hotkey press"
+            );
+        }
+        assert!(keyboard.event(38, true, &keys));
     }
 }

@@ -20,6 +20,7 @@ fn fixture() -> (
     engine.insert_running(
         id.clone(),
         Running {
+            configuration: None,
             resume_safe: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             session,
             usage_context: Some(agent::usage_capture::TurnContext::new(&thread)),
@@ -147,4 +148,74 @@ fn accepted_but_unsaved_text_blocks_owner_drain_and_retries_without_duplicate_it
             .count(),
         1
     );
+}
+
+#[test]
+fn steering_uses_immutable_running_configuration_after_native_settings_change() {
+    let (root, mut engine, binary) = provider_configuration::tests::fixture();
+    provider_configuration::tests::save(&mut engine, "codex", &binary, "first-synthetic-value");
+    let captured = engine
+        .provider_launch_configuration("codex")
+        .unwrap()
+        .unwrap();
+    let thread = engine
+        .execute("threads.create", &json!({"cwd":root.path()}))
+        .unwrap();
+    let id = text(&thread, "id");
+    let mut thread = thread;
+    thread["selection"] =
+        json!({"provider":"codex","modelID":"fixture-configured-model","effort":"high"});
+    engine.store.save(&thread).unwrap();
+    {
+        let _scope = provider_configuration::enter(Some(captured.clone()));
+        engine
+            .model_catalog
+            .fixture_reported_configuration_effort(&binary)
+            .unwrap();
+    }
+    let mut session = Session::fixture_worker(|commands, events| {
+        let _ = commands.recv();
+        let _ = events.send(Event::Finished);
+    });
+    let mut server = session.fixture_steering();
+    server.activate("configured-native-thread", "configured-native-turn");
+    engine.insert_running(
+        id.clone(),
+        Running {
+            configuration: Some(captured.clone()),
+            resume_safe: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            usage_context: Some(agent::usage_capture::TurnContext::new(&thread)),
+            session,
+            provider: "codex".into(),
+            transcript_start: 0,
+            pending: HashMap::new(),
+            schedule_claim: None,
+            queue_claim: None,
+            cancelled: false,
+            events: VecDeque::new(),
+            persistence_error: None,
+        },
+    );
+    provider_configuration::tests::save(&mut engine, "codex", &binary, "second-synthetic-value");
+    let future = engine
+        .provider_launch_configuration("codex")
+        .unwrap()
+        .unwrap();
+    assert_ne!(future.stamp(), captured.stamp());
+    let pending = engine
+        .execute(
+            "agent.steer",
+            &json!({"threadId":id,"text":"synthetic follow-up"}),
+        )
+        .unwrap();
+    assert_eq!(pending["status"], "pending");
+    assert!(server.next_request().is_some());
+    assert_eq!(
+        engine.runs[&id].configuration.as_ref().unwrap().stamp(),
+        captured.stamp()
+    );
+    {
+        let _future = provider_configuration::enter(Some(future));
+        assert!(engine.composer_thread_effort_proof(&thread).is_err());
+    }
 }

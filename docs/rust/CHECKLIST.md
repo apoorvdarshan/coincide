@@ -25,19 +25,31 @@ cutover, updater activation, or release has been performed by this UI work.
   input, separate Settings close, normal Quit and older-selection/draft restart
   passed; both platforms' screenshots were reviewed.
 
+- [x] Shared composer/Settings, Project Defaults, lifecycle actions, text queue
+  editing, empty-chat reuse, snooze wake-up and off-by-default Appshots foundation:
+  [#274](https://github.com/apoorvdarshan/coincide/pull/274), tested at
+  `2c7f4ca97326696c0b77733b60c6d5380bb133a2` and merged as
+  `dd89c4884c43ea722e1f873c77600da63233ba67` with the identical tree. All 14
+  applicable hosted checks passed. Core 693 and every integration target passed;
+  Desktop 503 plus its four integration targets passed. Actual Windows/Linux
+  input, separate Settings close, ordinary Quit and older-selection/draft restart
+  passed; both platforms' screenshots were reviewed. This is scoped acceptance.
+
 ## Current integration and remaining work
 
-- [ ] Complete [#274](https://github.com/apoorvdarshan/coincide/pull/274): shared
-  composer layout, owned follow-ups, Settings navigation, Project Defaults,
-  thread/bot lifecycle actions, queue editing, empty-thread reuse, persisted
-  snooze wake-up and Appshots. Scoped tests pass; final combined checks are active.
-- [ ] Complete provider setup/configuration and external-terminal setup in
-  [#273](https://github.com/apoorvdarshan/coincide/pull/273), including real
-  per-provider/account/catalog gaps and all-platform validation.
-- [ ] Integrate and verify full selectable context details and native reply
-  selection to composer; preserve source/selection identity during async changes.
-- [ ] Finish queued follow-up behavior, including named-account dispatch and
-  attachment/context handling. Text-only acceptance does not cover those cases.
+- [ ] Complete [#275](https://github.com/apoorvdarshan/coincide/pull/275), including
+  [#273](https://github.com/apoorvdarshan/coincide/pull/273)'s reviewed executable,
+  environment and external-terminal provider setup controls, metadata checks and
+  captured worker configuration. Focused synthetic checks pass; full combined and
+  all-platform validation remain required.
+- [ ] Verify newly integrated selectable context details, source-bound selected
+  replies, folder/file autocomplete, named-account queue dispatch and Send Now.
+  Actual private GPUI fixtures passed the context readonly/copy case, both reply
+  selection cases and all eight composer dispatch cases before payload integration.
+- [ ] Verify image/context payloads through queued, steered and interrupted
+  follow-ups, Queue Edit and Send Now. These are implemented in the next combined
+  head; prior text-only acceptance does not cover their new content paths.
+- [ ] Complete remaining provider account modes and General thread settings.
 - [ ] Finish all remaining screens, menus, dialogs, shortcuts, focus, scrolling,
   accessibility and loading/error states against Swift on every platform.
 - [ ] Complete browser/password, terminal/Git/GitHub, scheduling/bot, voice,

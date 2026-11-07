@@ -1,3 +1,5 @@
+#[path = "reply_selection_store.rs"]
+mod reply_selection_store;
 #[path = "store_thread_idle.rs"]
 mod thread_idle;
 pub(crate) use thread_idle::NewThreadRow;
@@ -1055,6 +1057,26 @@ impl Store {
         }
         self.save_document(name, &value)?;
         Ok(value)
+    }
+    /// Native runtime authority marker; never a document/import/settings field.
+    pub(crate) fn mark_native_provider_configuration(&mut self, provider: &str) -> Result<()> {
+        self.connection()?.execute("INSERT INTO metadata(key,value) VALUES (?1,'1') ON CONFLICT(key) DO UPDATE SET value='1'",[format!("native-provider-configuration-v1/{provider}")])?;
+        Ok(())
+    }
+    pub(crate) fn requires_native_provider_configuration(&self, provider: &str) -> Result<bool> {
+        let marker: Option<String> = self
+            .connection()?
+            .query_row(
+                "SELECT value FROM metadata WHERE key=?1",
+                [format!("native-provider-configuration-v1/{provider}")],
+                |row| row.get(0),
+            )
+            .optional()?;
+        ensure!(
+            marker.as_deref().is_none_or(|value| value == "1"),
+            "Invalid native provider configuration marker"
+        );
+        Ok(marker.is_some())
     }
     pub fn projects(&self) -> Result<Value> {
         self.connection()?;

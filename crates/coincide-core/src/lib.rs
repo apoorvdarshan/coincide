@@ -9,6 +9,7 @@ pub mod control;
 pub mod provider_catalog;
 pub mod provider_preferences;
 pub use api::project_defaults;
+pub use api::provider_configuration;
 pub mod schedule_service;
 pub mod scheduling;
 pub mod terminal;
@@ -77,3 +78,5 @@ pub mod native_instruction_profiles;
 pub mod native_ui_edits;
 
 pub mod appshots;
+
+pub mod reply_selection;

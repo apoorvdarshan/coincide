@@ -33,6 +33,7 @@ impl fmt::Display for OperationTimedOut {
 impl std::error::Error for OperationTimedOut {}
 
 struct Runtime<'a> {
+    cancelled: Option<&'a dyn Fn() -> bool>,
     commands: Receiver<Control>,
     queued: VecDeque<Control>,
     events: &'a Sender<Event>,
@@ -45,6 +46,9 @@ impl Runtime<'_> {
     fn wait<T>(&mut self, receiver: Receiver<Result<T>>, limit: Duration) -> Result<T> {
         let deadline = Instant::now() + limit;
         loop {
+            if self.cancelled.is_some_and(|allowed| !allowed()) {
+                return Err(Stopped.into());
+            }
             while let Ok(command) = self.commands.try_recv() {
                 match command {
                     Control::Stop => return Err(Stopped.into()),
@@ -72,6 +76,13 @@ impl Runtime<'_> {
         let method = method.to_owned();
         self.request_with_worker(Duration::from_secs(16), move || {
             http.request(&method, &path, body, Duration::from_secs(15))
+        })
+    }
+    fn catalog(&mut self, http: &Http, path: &'static str, directory: &str) -> Result<Value> {
+        let http = http.clone();
+        let directory = directory.to_owned();
+        self.request_with_worker(Duration::from_secs(11), move || {
+            http.catalog(path, &directory, Duration::from_secs(10))
         })
     }
     /// Request result/Stop is semantic completion, not actual worker exit.
@@ -164,6 +175,15 @@ impl Drop for Runtime<'_> {
     }
 }
 
+#[path = "provider_opencode_metadata.rs"]
+mod metadata;
+pub(super) fn installation_metadata(
+    executable: &std::path::Path,
+    allowed: &impl Fn() -> bool,
+) -> Result<(Vec<Value>, Option<String>)> {
+    metadata::read(executable, allowed)
+}
+
 struct Server {
     child: OwnedChild,
     http: Http,
@@ -183,6 +203,7 @@ impl Server {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        crate::provider_configuration::apply_to_child(&mut command, false)?;
         isolate_environment(&mut command);
         command
             .env_remove("OPENCODE_SERVER_PASSWORD")
@@ -274,7 +295,11 @@ impl Drop for Server {
         }
         let deadline = Instant::now() + Duration::from_millis(150);
         while Instant::now() < deadline {
-            if self.child.0.try_wait().ok().flatten().is_some() {
+            if super::metadata_capture::exited(&self.child)
+                .ok()
+                .flatten()
+                .is_some()
+            {
                 break;
             }
             thread::sleep(Duration::from_millis(10));
@@ -517,6 +542,7 @@ fn run_inner(
     // Declaration order is ownership-critical: Server (or its local child on
     // startup error) is destroyed BEFORE Runtime joins aborted HTTP workers.
     let mut runtime = Runtime {
+        cancelled: None,
         commands,
         queued: VecDeque::new(),
         events,

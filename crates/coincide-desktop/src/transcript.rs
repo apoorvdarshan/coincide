@@ -8,16 +8,21 @@
 //! Editable inputs retain their own Copy handling.
 use gpui_kit::{
     base::{Root, RootPlugin, TextSelection, input::Copy},
-    component::text::{TextView, TextViewState},
+    component::text::{RenderedText, TextView, TextViewState},
     *,
 };
 use std::collections::HashMap;
 
 #[derive(Default)]
 struct TranscriptViews {
-    views: HashMap<(WindowId, EntityId), WeakEntity<TextViewState>>,
+    views: HashMap<(WindowId, EntityId), RegisteredView>,
 }
 impl Global for TranscriptViews {}
+struct RegisteredView {
+    thread: String,
+    item: String,
+    state: WeakEntity<TextViewState>,
+}
 
 // The native entity remains keyed by semantic message identity. This holder
 // caches only source text; selection, layout and Markdown stay in TextViewState.
@@ -55,10 +60,16 @@ pub fn markdown(
         body.state.clone()
     });
     let registry = cx.default_global::<TranscriptViews>();
-    registry.views.retain(|_, state| state.upgrade().is_some());
+    registry
+        .views
+        .retain(|_, entry| entry.state.upgrade().is_some());
     registry.views.insert(
         (window.window_handle().window_id(), state.entity_id()),
-        state.downgrade(),
+        RegisteredView {
+            thread: thread.into(),
+            item: item.into(),
+            state: state.downgrade(),
+        },
     );
     TextView::new(&state)
 }
@@ -102,7 +113,7 @@ impl RootPlugin for ExactSelectionCopy {
                             .views
                             .iter()
                             .filter(|((owner, _), _)| *owner == window_id)
-                            .filter_map(|(_, state)| state.upgrade())
+                            .filter_map(|(_, entry)| entry.state.upgrade())
                             .collect::<Vec<_>>()
                     })
                     .unwrap_or_default();
@@ -187,19 +198,111 @@ pub fn preserve_selected_copy(
 /// Use a find-owned native state without bypassing the existing exact-copy
 /// registry. The parent's typography, media and action siblings remain intact.
 pub fn managed_markdown(
-    _thread: &str,
-    _item: &str,
+    thread: &str,
+    item: &str,
     state: &Entity<TextViewState>,
     window: &mut Window,
     cx: &mut App,
 ) -> TextView {
     let registry = cx.default_global::<TranscriptViews>();
-    registry.views.retain(|_, state| state.upgrade().is_some());
+    registry
+        .views
+        .retain(|_, entry| entry.state.upgrade().is_some());
     registry.views.insert(
         (window.window_handle().window_id(), state.entity_id()),
-        state.downgrade(),
+        RegisteredView {
+            thread: thread.into(),
+            item: item.into(),
+            state: state.downgrade(),
+        },
     );
     TextView::new(state)
+}
+
+/// An opaque selection from exactly one focused, registered reply renderer.
+/// Holding the parse snapshot is not permission to apply it after focus, source
+/// or the native selection changes; current() rechecks all three.
+pub struct ReplyProjection {
+    owner: WindowId,
+    pub thread: String,
+    pub item: String,
+    state: WeakEntity<TextViewState>,
+    rendered: RenderedText,
+    source_range: std::ops::Range<usize>,
+    rendered_range: std::ops::Range<usize>,
+}
+impl ReplyProjection {
+    pub fn source(&self) -> &str {
+        self.rendered.source()
+    }
+    pub fn current(&self, window: &Window, cx: &App) -> bool {
+        if !window.is_window_active() || window.window_handle().window_id() != self.owner {
+            return false;
+        }
+        let Some(state) = self.state.upgrade() else {
+            return false;
+        };
+        let registered = cx
+            .try_global::<TranscriptViews>()
+            .and_then(|registry| registry.views.get(&(self.owner, state.entity_id())))
+            .is_some_and(|entry| entry.thread == self.thread && entry.item == self.item);
+        if !registered {
+            return false;
+        }
+        let state = state.read(cx);
+        state.focus_handle().is_focused(window)
+            && state.rendered_text() == self.rendered
+            && state.selected_source_range() == Some(self.source_range.clone())
+            && self.rendered.range_for_source(self.source_range.clone())
+                == Some(self.rendered_range.clone())
+    }
+    pub fn into_native(
+        self,
+    ) -> anyhow::Result<coincide_core::reply_selection::NativeReplySelection> {
+        coincide_core::reply_selection::NativeReplySelection::from_native_projection(
+            &self.item,
+            self.rendered.source().into(),
+            self.source_range,
+            self.rendered.as_str().into(),
+            self.rendered_range,
+        )
+    }
+}
+pub fn focused_reply_projection(window: &Window, cx: &App) -> Option<ReplyProjection> {
+    if !window.is_window_active() {
+        return None;
+    }
+    let registry = cx.try_global::<TranscriptViews>()?;
+    let mut focused = registry
+        .views
+        .iter()
+        .filter(|((owner, _), _)| *owner == window.window_handle().window_id())
+        .filter_map(|(_, entry)| {
+            let state = entry.state.upgrade()?;
+            let focused = state.read(cx).focus_handle().is_focused(window);
+            focused.then_some((entry, state))
+        });
+    let (entry, state) = focused.next()?;
+    if focused.next().is_some() {
+        return None;
+    }
+    let native = state.read(cx);
+    let rendered = native.rendered_text();
+    let source_range = native.selected_source_range()?;
+    let rendered_range = rendered.range_for_source(source_range.clone())?;
+    let selected = rendered.as_str().get(rendered_range.clone())?;
+    if selected.trim().is_empty() || selected.trim().len() > 16000 {
+        return None;
+    }
+    Some(ReplyProjection {
+        owner: window.window_handle().window_id(),
+        thread: entry.thread.clone(),
+        item: entry.item.clone(),
+        state: state.downgrade(),
+        rendered,
+        source_range,
+        rendered_range,
+    })
 }
 
 /// Apply only to the exact native document captured by the find controller.
@@ -294,3 +397,7 @@ mod tests {
         assert_ne!(selection_id("中文", "item"), selection_id("中", "文/item"));
     }
 }
+
+#[cfg(test)]
+#[path = "reply_selection_ui_tests.rs"]
+mod reply_selection_tests;

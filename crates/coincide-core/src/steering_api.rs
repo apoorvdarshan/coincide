@@ -6,6 +6,8 @@ use std::sync::mpsc::TryRecvError;
 pub(super) struct Operation {
     thread: String,
     text: String,
+    context: Value,
+    images: Vec<crate::attachments::StoredImage>,
     ticket: Ticket,
     outcome: Option<Outcome>,
     persisted: bool,
@@ -56,6 +58,30 @@ impl Engine {
             }
             return Ok(reply);
         }
+        self.begin_steering(p, None, None)
+    }
+    pub(super) fn steer_owned_queue(
+        &mut self,
+        id: &str,
+        claim: &super::queue_dispatch::QueueClaim,
+    ) -> Result<Value> {
+        self.begin_steering(
+            &json!({"threadId":id,"text":claim.text()}),
+            Some(claim),
+            None,
+        )
+    }
+    pub(super) fn steer_native_composer(&mut self, expected: &Value) -> Result<Value> {
+        self.begin_steering(&json!({"threadId":required(expected,"id")?,"text":expected["draft"].as_str().unwrap_or_default()}), None, Some(expected))
+    }
+    fn begin_steering(
+        &mut self,
+        p: &Value,
+        queued: Option<&super::queue_dispatch::QueueClaim>,
+        composer: Option<&Value>,
+    ) -> Result<Value> {
+        self.require_admissions()?;
+        let thread = required(p, "threadId")?;
         ensure!(
             self.steering_operations.len() < 32,
             "Collect earlier steering results before submitting more"
@@ -75,7 +101,8 @@ impl Engine {
         );
         let text = required(p, "text")?;
         ensure!(
-            !text.trim().is_empty() && text.len() <= 1024 * 1024,
+            text.len() <= 1024 * 1024
+                && (!text.trim().is_empty() || queued.is_some() || composer.is_some()),
             "Steering text must be nonempty and fit within 1 MiB"
         );
         let stored = self.store.thread(thread)?;
@@ -84,12 +111,61 @@ impl Engine {
             !self.store.is_imported(thread)?,
             "Imported conversations are read-only for agent execution until cutover; fork first"
         );
-        for key in ["draftContext", "rustDraftImages"] {
+        if let Some(claim) = queued {
+            claim.validate(self.thread_bulk_owner, thread, text, &stored)?;
+        }
+        if let Some(expected) = composer {
             ensure!(
-                stored[key].is_null() || stored[key].as_array().is_some_and(Vec::is_empty),
-                "Text-only steering cannot deliver attached context or images; send them separately"
+                crate::composer_follow_up::scope(&stored)
+                    == crate::composer_follow_up::scope(expected),
+                "Composer changed before steering"
             );
         }
+        if queued.is_none() && composer.is_none() {
+            for key in ["draftContext", "rustDraftImages"] {
+                ensure!(
+                    stored[key].is_null() || stored[key].as_array().is_some_and(Vec::is_empty),
+                    "Text-only steering cannot deliver attached context or images; send them separately"
+                );
+            }
+        }
+        let context = if let Some(claim) = queued {
+            claim.context().clone()
+        } else if composer.is_some() {
+            stored["draftContext"].clone()
+        } else {
+            Value::Null
+        };
+        crate::composer_context::validate(&context)?;
+        let images: Vec<crate::attachments::StoredImage> = if let Some(claim) = queued {
+            claim.images().to_vec()
+        } else if composer.is_some() && !stored["rustDraftImages"].is_null() {
+            serde_json::from_value(stored["rustDraftImages"].clone())
+                .context("Invalid draft images")?
+        } else {
+            Vec::new()
+        };
+        ensure!(
+            images.len() <= 20
+                && images
+                    .iter()
+                    .try_fold(0u64, |total, image| total.checked_add(image.byte_len))
+                    .is_some_and(|bytes| bytes <= 20 * 1024 * 1024),
+            "Steering images exceed safe limits"
+        );
+        ensure!(
+            !text.trim().is_empty()
+                || !images.is_empty()
+                || crate::composer_context::has_context(&context),
+            "Add text, images or references before steering"
+        );
+        let runtime_text = crate::composer_context::prompt(text, &context)?;
+        let data = self.store.data_directory()?;
+        let prepared = images
+            .iter()
+            .map(|image| image.prepare_in(&data))
+            .collect::<Result<Vec<_>>>()?;
+        agent::validate_images(&Provider::from_name("codex")?, &prepared)?;
         self.validate_native_follow_up_policy(&stored)?;
         ensure!(
             stored["interactionMode"]
@@ -121,7 +197,10 @@ impl Engine {
             .mark_native_uncertain(thread, account, &identity.0)?;
         let resume_safe = run.resume_safe.clone();
         resume_safe.store(false, std::sync::atomic::Ordering::Release);
-        let ticket = match run.session.steer_exact(text, &identity) {
+        let ticket = match run
+            .session
+            .steer_input_exact(&runtime_text, &prepared, &identity)
+        {
             Ok(ticket) => ticket,
             Err(error) => {
                 if self.store.clear_native_uncertainty(&uncertainty).is_ok() {
@@ -136,6 +215,8 @@ impl Engine {
             Operation {
                 thread: thread.into(),
                 text: text.into(),
+                context,
+                images,
                 ticket,
                 outcome: None,
                 persisted: false,
@@ -194,6 +275,12 @@ impl Engine {
                     item["id"] = json!(id);
                     item["steered"] = json!(true);
                     item["provider"] = json!("codex");
+                    if crate::composer_context::has_context(&op.context) {
+                        item["context"] = op.context.clone();
+                    }
+                    if !op.images.is_empty() {
+                        item["rustImages"] = serde_json::to_value(&op.images)?;
+                    }
                 }
                 if let Err(error) = self.store.save_with_usage(
                     &thread,

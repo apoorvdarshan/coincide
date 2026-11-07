@@ -23,6 +23,8 @@ impl FileStamp {
 }
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub(crate) struct NamedBinding {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    configuration: Option<crate::provider_configuration::Stamp>,
     pub(super) profile: LaunchContext,
     thread: String,
     pub(super) cwd: PathBuf,
@@ -56,6 +58,7 @@ impl NamedBinding {
             Err(error) => return Err(error),
         };
         Ok(Self {
+            configuration: crate::provider_configuration::current_stamp(),
             profile,
             thread: thread.into(),
             cwd: cwd.into(),
@@ -503,6 +506,61 @@ mod tests {
     fn ready(catalog: &mut ModelCatalog, binding: NamedBinding, id: &str) {
         catalog.jobs.insert(id.into(),Job { binding:None,named:Some(binding.clone()),response:json!({"requestId":id,"provider":"codex","accountID":binding.account(),"threadId":binding.thread(),"authenticationChecked":true,"state":"ready","models":[{"id":"synthetic-a"}]}),cancelled:Arc::new(AtomicBool::new(false)) });
         catalog.order.push_back(id.into());
+    }
+    #[test]
+    fn native_environment_change_revokes_named_model_and_readiness_binding() {
+        let (root, original, document) = fixture();
+        let path = original.profile.executable().to_owned();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+        let mut engine = crate::api::Engine::fixture(
+            crate::store::Store::open(&root.path().join("private/state.sqlite")).unwrap(),
+        );
+        let save = |engine: &mut crate::api::Engine, value: &str| {
+            let snapshot = engine.native_provider_configuration("codex").unwrap();
+            let plan = engine
+                .prepare_native_provider_configuration(
+                    "codex",
+                    &snapshot.baseline,
+                    Some(&path),
+                    std::collections::BTreeMap::from([(
+                        "SYNTHETIC_TEST_MODE".into(),
+                        value.into(),
+                    )]),
+                )
+                .unwrap();
+            engine.apply_native_provider_configuration(plan).unwrap();
+        };
+        save(&mut engine, "first");
+        let _old = crate::provider_configuration::enter(
+            engine.provider_launch_configuration("codex").unwrap(),
+        );
+        let binding =
+            NamedBinding::capture(original.profile.clone(), original.thread(), &original.cwd)
+                .unwrap();
+        let mut catalog = ModelCatalog::default();
+        ready(&mut catalog, binding.clone(), "native-configuration");
+        let proof = catalog
+            .named_model_proof(&document, &binding, Some("native-configuration"))
+            .unwrap()
+            .unwrap();
+        proof.validate_selection(&document, &binding).unwrap();
+        save(&mut engine, "second");
+        let _new = crate::provider_configuration::enter(
+            engine.provider_launch_configuration("codex").unwrap(),
+        );
+        let changed =
+            NamedBinding::capture(original.profile.clone(), original.thread(), &original.cwd)
+                .unwrap();
+        assert_ne!(
+            binding.readiness_generation().unwrap(),
+            changed.readiness_generation().unwrap()
+        );
+        assert!(proof.validate_selection(&document, &changed).is_err());
+        assert!(
+            catalog
+                .named_model_proof(&document, &changed, Some("native-configuration"))
+                .is_err()
+        );
     }
     #[test]
     fn named_model_proof_is_bound_to_account_thread_cwd_auth_generation_and_job() {

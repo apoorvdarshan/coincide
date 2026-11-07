@@ -127,6 +127,41 @@ def main():
             return image
         return wait_for(f"presented native content for {stage}", presented_frame)
 
+    def click_rendered_word(window, stage, word, *, min_y=0, max_x=200):
+        """Target one observed sidebar word; never infer coordinates from layout."""
+        # Xvfb has no desktop window manager to focus a newly mapped window
+        # when its pixels are clicked. Bind native key focus explicitly to the
+        # already-observed owned Settings window before any search typing.
+        command("xdotool", "windowfocus", "--sync", window, env=env)
+        assert int(command("xdotool", "getwindowfocus", env=env)) == int(window), "Native input focus must belong to the observed Settings window"
+        attempt = 0
+        def observed_target():
+            nonlocal attempt
+            name = f"{stage}-target-{attempt:03}"
+            attempt += 1
+            frame = capture(window, name)
+            # The native failure frame showed General correctly, while full-
+            # window OCR joined its icon and initial G into 'ceneral'. Read
+            # only the actual label strip at higher resolution; exact matching
+            # remains mandatory, and the original pixels remain in evidence.
+            left = 15 if word == "Search" else 44
+            assert left < max_x < frame.width, "Sidebar label crop must fit the observed native window"
+            crop = frame.crop((left, 0, max_x, frame.height))
+            crop_path = artifacts / f"{name}-labels.png"
+            crop.resize((crop.width * 3, crop.height * 3), Image.Resampling.LANCZOS).save(crop_path)
+            tsv = command("tesseract", str(crop_path), "stdout", "--psm", "6", "tsv", env=env)
+            (artifacts / f"{name}-locator.tsv").write_text(tsv)
+            matches = [row for row in csv.DictReader(io.StringIO(tsv), delimiter="\t")
+                       if row["text"].strip().casefold() == word.casefold()
+                       and int(row["top"]) / 3 >= min_y]
+            if len(matches) != 1:
+                return None
+            row = matches[0]
+            return (left + (int(row["left"]) + int(row["width"]) / 2) / 3,
+                    (int(row["top"]) + int(row["height"]) / 2) / 3)
+        x, y = wait_for(f"one exact rendered sidebar target {word!r}", observed_target)
+        command("xdotool", "mousemove", "--window", window, str(round(x)), str(round(y)), "click", "1", env=env)
+
     def quit_normally():
         nonlocal process, log
         assert rpc("app.status")["running"] == [], "Smoke must never start a provider"
@@ -188,6 +223,17 @@ def main():
             "--name", "^General$", env=env).splitlines()[0])
         assert settings_window != window, "Settings must leave the conversation in its own window"
         capture(settings_window, "settings", "General")
+        # Exercise the real filtered navigation and provider panel, without
+        # clicking Check/Install/Login or executing any provider.
+        click_rendered_word(settings_window, "settings-search-target", "Search")
+        assert int(command("xdotool", "getwindowfocus", env=env)) == int(settings_window), "Search typing must target the owned Settings window"
+        command("xdotool", "type", "--clearmodifiers", "Codex", env=env)
+        capture(settings_window, "settings-provider-filtered", "Results")
+        click_rendered_word(settings_window, "settings-provider-result", "Codex", min_y=80)
+        capture(settings_window, "settings-provider-codex", "Executable")
+        click_rendered_word(settings_window, "settings-return-general", "General")
+        capture(settings_window, "settings-general-returned", "General")
+        report["checks"].append("native Settings search opened Codex provider page and returned to General without provider actions")
         assert rpc("threads.read", threadId=thread_id)["draft"] == draft
         command("xdotool", "windowfocus", "--sync", window, env=env)
         command("xdotool", "key", "--clearmodifiers", "ctrl+comma", env=env)

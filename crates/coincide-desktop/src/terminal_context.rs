@@ -334,3 +334,50 @@ mod tests {
         w.finish();
     }
 }
+
+impl TerminalWorkspace {
+    pub(crate) fn focused_context_selection_available(&self, window: &Window) -> bool {
+        self.is_focused(window)
+            && !self.context_pending
+            && !self.stopping.load(Ordering::Acquire)
+            && self.ids().iter().any(|id| {
+                self.panes.get(id).is_some_and(|pane| {
+                    if pane.closing || !pane.focus.is_focused(window) {
+                        return false;
+                    }
+                    let (Some(terminal), Some(frame)) =
+                        (pane.terminal.as_ref(), pane.frame.as_ref())
+                    else {
+                        return false;
+                    };
+                    selection_bounds(&pane.selection, terminal, frame)
+                        .ok()
+                        .and_then(|(start, end)| {
+                            coincide_core::terminal::selected_text(frame, start, end).ok()
+                        })
+                        .is_some_and(|text| {
+                            text.len() <= 32 * 1024 && text.chars().any(|ch| !ch.is_whitespace())
+                        })
+                })
+            })
+    }
+    /// The shared Add Selection command uses only the pane that actually owns
+    /// focus, then follows the existing bounded request/receipt admission path.
+    pub(crate) fn request_focused_context_selection(
+        &mut self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.is_focused(window) {
+            return;
+        }
+        let focused = self.ids().into_iter().find(|id| {
+            self.panes
+                .get(id)
+                .is_some_and(|pane| !pane.closing && pane.focus.is_focused(window))
+        });
+        if let Some(pane) = focused {
+            self.request_context_selection(pane, cx);
+        }
+    }
+}

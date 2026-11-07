@@ -252,7 +252,10 @@ mod tests {
         engine.store.save(&thread).unwrap();
         assert!(
             engine
-                .send_turn(&json!({"threadId":id,"text":"refused scheduled"}), true)
+                .send_turn(
+                    &json!({"threadId":id,"text":"refused scheduled"}),
+                    SendOrigin::Scheduled
+                )
                 .is_err()
         );
         engine

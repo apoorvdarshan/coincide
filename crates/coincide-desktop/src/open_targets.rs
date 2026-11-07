@@ -1,6 +1,7 @@
 //! Native app handoff. Arguments never pass through a shell; discovery and
 //! rendering never launch an app. A user click captures the current folder.
 use super::*;
+use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use std::path::{Path, PathBuf};
 #[derive(Clone)]
 pub(super) struct Target {
@@ -256,7 +257,140 @@ pub(super) fn preferred<'a>(targets: &'a [Target], settings: &Value) -> Option<&
             })
         })
 }
+struct PreferenceChoice {
+    value: Value,
+    label: String,
+    group: Option<&'static str>,
+    available: bool,
+}
+fn preference_choices(targets: &[Target], saved: Option<&str>) -> Vec<PreferenceChoice> {
+    let mut choices = vec![PreferenceChoice {
+        value: Value::Null,
+        label: "Automatic (first installed editor)".into(),
+        group: None,
+        available: true,
+    }];
+    if let Some(saved) = saved.filter(|id| !targets.iter().any(|target| target.id == *id)) {
+        choices.push(PreferenceChoice {
+            value: json!(saved),
+            label: format!(
+                "{} (not installed)",
+                saved.chars().take(160).collect::<String>()
+            ),
+            group: None,
+            available: false,
+        });
+    }
+    for group in ["Editors", "Terminals", "File Manager"] {
+        for target in targets {
+            let category = if target.editor {
+                "Editors"
+            } else if matches!(
+                target.id,
+                "com.apple.finder" | "windows.explorer" | "linux.files"
+            ) {
+                "File Manager"
+            } else {
+                "Terminals"
+            };
+            if category == group {
+                choices.push(PreferenceChoice {
+                    value: json!(target.id),
+                    label: target.name.into(),
+                    group: Some(group),
+                    available: true,
+                });
+            }
+        }
+    }
+    choices
+}
 impl Coincide {
+    /// Picking a preference never opens an application. The rail/menu captures
+    /// the current folder only on its separate explicit Open action.
+    pub(super) fn open_target_settings(&self, cx: &mut Context<Self>) -> AnyElement {
+        let selected = self
+            .settings
+            .get("preferredOpenTarget")
+            .cloned()
+            .unwrap_or(Value::Null);
+        let choices = preference_choices(&self.open_targets, selected.as_str());
+        let caption = if selected.is_null() {
+            preferred(&self.open_targets,&json!({})).map(|target|format!("Automatic opens {}. Right-click Open In in the rail to choose another app.",target.name))
+                .unwrap_or_else(||"No compatible folder-opening application was found.".into())
+        } else {
+            "The rail's Open In button and Open in Editor command use this preference. A missing app keeps its saved choice and uses the available fallback.".into()
+        };
+        let current_label = choices
+            .iter()
+            .find(|choice| choice.value == selected)
+            .map(|choice| choice.label.clone())
+            .unwrap_or_else(|| "Automatic (first installed editor)".into());
+        let parent = cx.entity().downgrade();
+        div()
+            .id("open-target-preferences")
+            .role(Role::Group)
+            .aria_label("Open project folders in")
+            .p_3()
+            .border_b_1()
+            .border_color(self.color(0x29303d))
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .flex_wrap()
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex_1()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("Open project folders in"),
+                    )
+                    .child(
+                        Button::new("open-target-preference")
+                            .label(current_label)
+                            .compact()
+                            .accessibility_label("Preferred application for project folders")
+                            .dropdown_caret(true)
+                            .dropdown_menu(move |mut menu, _, _| {
+                                let mut previous = None;
+                                for choice in &choices {
+                                    if choice.group != previous {
+                                        if let Some(group) = choice.group {
+                                            menu = menu
+                                                .item(PopupMenuItem::separator())
+                                                .item(PopupMenuItem::new(group).disabled(true));
+                                        }
+                                        previous = choice.group;
+                                    }
+                                    let parent = parent.clone();
+                                    let value = choice.value.clone();
+                                    menu = menu.item(
+                                        PopupMenuItem::new(choice.label.clone())
+                                            .checked(selected == value)
+                                            .disabled(!choice.available)
+                                            .on_click(move |_, window, cx| {
+                                                let _ = parent.update(cx, |this, cx| {
+                                                    this.change_setting(
+                                                        "preferredOpenTarget",
+                                                        value.clone(),
+                                                        window,
+                                                        cx,
+                                                    )
+                                                });
+                                            }),
+                                    );
+                                }
+                                menu
+                            }),
+                    ),
+            )
+            .child(div().text_sm().child(caption))
+            .into_any_element()
+    }
     pub(super) fn open_folder(&self) -> Option<PathBuf> {
         let selected = self.selected.as_ref()?;
         selected["worktreePath"]
@@ -341,6 +475,28 @@ mod tests {
             program: "test-only-unused".into(),
             args: vec![],
         }
+    }
+    #[::core::prelude::v1::test]
+    fn preferences_retain_missing_saved_identity_and_group_available_targets_without_launching() {
+        let mut file = target("linux.files");
+        file.editor = false;
+        let mut terminal = target("terminal");
+        terminal.editor = false;
+        let targets = vec![file, target("editor"), terminal];
+        let saved = json!({"preferredOpenTarget":"missing-editor","future":{"keep":true}});
+        let before = saved.clone();
+        let choices = preference_choices(&targets, saved["preferredOpenTarget"].as_str());
+        assert_eq!(choices.len(), 5);
+        assert_eq!(choices[0].value, Value::Null);
+        assert_eq!(choices[1].value, "missing-editor");
+        assert!(!choices[1].available);
+        assert_eq!(choices[2].group, Some("Editors"));
+        assert_eq!(choices[3].group, Some("Terminals"));
+        assert_eq!(choices[4].group, Some("File Manager"));
+        assert_eq!(preferred(&targets, &saved).unwrap().id, "editor");
+        assert_eq!(saved, before);
+        assert_eq!(preference_choices(&[], None).len(), 1);
+        assert_eq!(preference_choices(&targets, Some("editor")).len(), 4);
     }
     #[::core::prelude::v1::test]
     fn saved_installed_choice_wins_and_missing_choice_falls_back_without_rewriting_settings() {

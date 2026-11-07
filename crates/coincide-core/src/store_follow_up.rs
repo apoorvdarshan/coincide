@@ -144,9 +144,18 @@ impl Store {
                 || existing
                     .iter()
                     .all(|message| message.state != State::Pending));
-        queue::add(&mut current, text)?;
+        let context = current["draftContext"].clone();
+        let images = if current["rustDraftImages"].is_null() {
+            Vec::new()
+        } else {
+            serde_json::from_value(current["rustDraftImages"].clone())
+                .context("Invalid draft image metadata")?
+        };
+        queue::add_payload(&mut current, text, context, images)?;
         current["rustQueueError"] = Value::Null;
         current["draft"] = json!("");
+        current["rustDraftImages"] = json!([]);
+        current.as_object_mut().unwrap().remove("draftContext");
         tx.execute(
             "UPDATE threads SET document=?2 WHERE id=?1",
             params![id, current.to_string()],
@@ -183,6 +192,8 @@ impl Store {
             return Ok(false);
         }
         current["draft"] = json!("");
+        current["rustDraftImages"] = json!([]);
+        current.as_object_mut().unwrap().remove("draftContext");
         tx.execute(
             "UPDATE threads SET document=?2 WHERE id=?1",
             params![id, current.to_string()],

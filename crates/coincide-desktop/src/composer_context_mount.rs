@@ -63,13 +63,33 @@ impl Coincide {
         }
         pane=pane.child("References are included when sending. File cards contain paths only; no file content is read or attached.");
         for (index, card) in composer_context_view::cards(raw).into_iter().enumerate() {
-            let mut row = div().flex().gap_2().items_center().child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .child(card.title)
-                    .child(div().text_xs().child(card.preview)),
-            );
+            let mut title = div().child(card.title.clone()).into_any_element();
+            if let Some(id) = card.id.clone() {
+                let source = source.clone();
+                let expected = raw.clone();
+                title = Button::new(("open-composer-context", index))
+                    .label(card.title.clone())
+                    .accessibility_label(format!("Open {}", card.title))
+                    .ghost()
+                    .compact()
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.open_context_details(
+                            source.clone(),
+                            context_details::Source::Draft,
+                            id.clone(),
+                            expected.clone(),
+                            window,
+                            cx,
+                        )
+                    }))
+                    .into_any_element();
+            }
+            let content = div()
+                .flex_1()
+                .min_w_0()
+                .child(title)
+                .child(div().text_xs().child(card.preview));
+            let mut row = div().flex().gap_2().items_center().child(content);
             if let Some(id) = card.id {
                 let source = source.clone();
                 row = row.child(
@@ -96,7 +116,14 @@ impl Coincide {
         );
         Some(pane.into_any_element())
     }
-    pub(super) fn transcript_context_pane(&self, raw: &Value) -> Option<AnyElement> {
+    pub(super) fn transcript_context_pane(
+        &self,
+        thread_id: &str,
+        item_id: &str,
+        item: &Value,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let raw = &item["context"];
         if !composer_context::has_context(raw) {
             return None;
         }
@@ -109,8 +136,31 @@ impl Coincide {
         if composer_context::validate(raw).is_err() {
             pane = pane.child("Some saved context is unsupported; its original data is retained.");
         }
-        for card in composer_context_view::cards(raw) {
-            pane = pane.child(format!("{}: {}", card.title, card.preview));
+        for (index, card) in composer_context_view::cards(raw).into_iter().enumerate() {
+            let title = format!("{}: {}", card.title, card.preview);
+            let mut pill = div().child(title.clone()).into_any_element();
+            if let Some(id) = card.id {
+                let thread = thread_id.to_owned();
+                let source = context_details::Source::Message(item_id.to_owned());
+                let expected = item.clone();
+                pill = Button::new(("transcript-context-card", index))
+                    .label(title)
+                    .accessibility_label(format!("Open {}", card.title))
+                    .ghost()
+                    .compact()
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.open_context_details(
+                            thread.clone(),
+                            source.clone(),
+                            id.clone(),
+                            expected.clone(),
+                            window,
+                            cx,
+                        )
+                    }))
+                    .into_any_element();
+            }
+            pane = pane.child(pill);
         }
         Some(pane.into_any_element())
     }

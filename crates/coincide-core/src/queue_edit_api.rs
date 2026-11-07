@@ -55,7 +55,10 @@ impl Engine {
             "Queued message changed; refresh before editing"
         );
         ensure!(
-            !message.text.trim().is_empty() && message.text.len() <= 256 * 1024,
+            message.text.len() <= 256 * 1024
+                && (!message.text.trim().is_empty()
+                    || !message.images.is_empty()
+                    || crate::composer_context::has_context(&message.context)),
             "Queued message text is invalid"
         );
         let draft = expected
@@ -81,6 +84,56 @@ impl Engine {
             .context("Saved queue is malformed")?
             .remove(index);
         next["draft"] = json!(merged);
+        if crate::composer_context::has_context(&message.context) {
+            crate::composer_context::validate(&expected["draftContext"])?;
+            crate::composer_context::validate(&message.context)?;
+            let mut context = expected["draftContext"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            for card in message.context.as_array().unwrap() {
+                if let Some(existing) = context.iter().find(|item| item["id"] == card["id"]) {
+                    ensure!(
+                        existing == card,
+                        "A context card identity changed; queue retained"
+                    );
+                } else {
+                    context.push(card.clone());
+                }
+            }
+            let context = Value::Array(context);
+            crate::composer_context::validate(&context)?;
+            next["draftContext"] = context;
+        }
+        if !message.images.is_empty() {
+            let mut images: Vec<crate::attachments::StoredImage> =
+                if expected["rustDraftImages"].is_null() {
+                    Vec::new()
+                } else {
+                    serde_json::from_value(expected["rustDraftImages"].clone())
+                        .context("Invalid current draft images")?
+                };
+            for image in &message.images {
+                if let Some(existing) = images.iter().find(|existing| existing.id == image.id) {
+                    ensure!(
+                        serde_json::to_value(existing)? == serde_json::to_value(image)?,
+                        "An image identity changed; queue retained"
+                    );
+                } else {
+                    images.push(image.clone());
+                }
+            }
+            ensure!(
+                images.len() <= 20
+                    && images
+                        .iter()
+                        .try_fold(0u64, |sum, image| sum.checked_add(image.byte_len))
+                        .is_some_and(|n| n <= 20 * 1024 * 1024),
+                "Combined images exceed safe limits"
+            );
+            next["rustDraftImages"] = serde_json::to_value(images)?;
+        }
+
         next["updatedAt"] = json!(swift_timestamp());
         // This existing Store seam checks the full effective source and import/
         // tombstone guards in the same IMMEDIATE transaction as the write.
@@ -222,5 +275,38 @@ mod tests {
             .unwrap();
         assert_eq!(result["draft"], message["text"]);
         engine.store.close_for_shutdown().unwrap();
+    }
+    #[test]
+    fn queue_edit_restores_exact_payload_alongside_existing_composer() {
+        let (directory, mut engine, mut source, _) = fixture();
+        let path = directory.path().join("synthetic-queued-image.png");
+        image::RgbImage::from_pixel(2, 2, image::Rgb([5, 6, 7]))
+            .save(&path)
+            .unwrap();
+        let image =
+            crate::attachments::ingest_image(&engine.store.data_directory().unwrap(), &path)
+                .unwrap();
+        source["draftContext"] =
+            json!([{"id":Uuid::new_v4(),"kind":"quote","text":"Existing draft reference"}]);
+        source["rustDraftImages"] = json!([]);
+        let context = json!([{"id":Uuid::new_v4(),"kind":"file","path":"/synthetic/never-open-this-reference","future":{"keep":9}}]);
+        source["rustMessageQueue"][0]["context"] = context.clone();
+        source["rustMessageQueue"][0]["rustImages"] = json!([image]);
+        engine.store.save(&source).unwrap();
+        let visible = serde_json::to_value(&message_queue::read(&source).unwrap()[0]).unwrap();
+        let next = engine
+            .edit_native_queued_message(&source, &visible)
+            .unwrap();
+        assert_eq!(next["draftContext"][0], source["draftContext"][0]);
+        assert_eq!(next["draftContext"][1], context[0]);
+        assert_eq!(
+            next["rustDraftImages"],
+            source["rustMessageQueue"][0]["rustImages"]
+        );
+        assert_eq!(
+            next["rustMessageQueue"],
+            json!([source["rustMessageQueue"][1]])
+        );
+        assert_eq!(next["future"], source["future"]);
     }
 }
