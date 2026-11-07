@@ -456,22 +456,26 @@ mod tests {
         let signal = cancelled.clone();
         let path = root.path().to_owned();
         let cancel = std::thread::spawn(move || {
+            use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE};
             let started = Instant::now();
-            loop {
-                if std::fs::read_to_string(path.join("descendant-pid"))
+            let descendant = loop {
+                if let Some(pid) = std::fs::read_to_string(path.join("descendant-pid"))
                     .ok()
                     .and_then(|s| s.parse::<u32>().ok())
-                    .is_some()
                 {
-                    break;
+                    // Hold the exact live process before cancellation. Looking up
+                    // its PID after cleanup can observe an unrelated process if
+                    // Windows has already reused the now-unreferenced PID.
+                    break owned(unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) }).unwrap();
                 }
                 assert!(
                     started.elapsed() < Duration::from_secs(10),
                     "descendant fixture did not start"
                 );
                 std::thread::sleep(Duration::from_millis(10));
-            }
+            };
             signal.store(true, Ordering::Release);
+            descendant
         });
         let result = capture(
             &runner(Duration::from_secs(15)),
@@ -479,22 +483,13 @@ mod tests {
             &args(FIXTURE),
             &cancelled,
         );
-        cancel.join().unwrap();
+        let descendant = cancel.join().unwrap();
         assert!(result.unwrap_err().to_string().contains("cancelled"));
-        let pid = std::fs::read_to_string(root.path().join("descendant-pid"))
-            .unwrap()
-            .parse::<u32>()
-            .unwrap();
-        use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE};
-        let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
-        if !handle.is_null() {
-            let handle = owned(handle).unwrap();
-            assert_eq!(
-                unsafe { WaitForSingleObject(handle.as_raw_handle(), 0) },
-                WAIT_OBJECT_0,
-                "actual owned descendant must have exited before return"
-            );
-        }
+        assert_eq!(
+            unsafe { WaitForSingleObject(descendant.as_raw_handle(), 0) },
+            WAIT_OBJECT_0,
+            "actual owned descendant must have exited before return"
+        );
         let renamed = root.path().with_extension("renamed");
         std::fs::rename(root.path(), &renamed).unwrap();
         std::fs::rename(&renamed, root.path()).unwrap();
