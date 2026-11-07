@@ -1230,6 +1230,7 @@ dependencies = [
  "gpui-pre",
  "gpui-webview",
  "gtk",
+ "javascriptcore-rs",
  "lb-wry",
  "libc",
  "objc2 0.6.5",
