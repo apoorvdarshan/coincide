@@ -145,6 +145,7 @@ fn headless_voice_worker_keeps_actual_unicode_editor_and_focus(cx: &mut TestAppC
                 Some(binding.clone()),
                 1,
                 Some(LocalRecordingConfig {
+                    model_proof: None,
                     executable: "/private/synthetic-whisper".into(),
                     model: "/private/synthetic-model".into(),
                     language: "en".into(),
