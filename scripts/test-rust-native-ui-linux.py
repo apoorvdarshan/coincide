@@ -431,6 +431,10 @@ def main():
             wait_for("persisted per-thread Agent Control on", lambda: rpc("browser.settings.read")["agentControl"].get(thread_id) is True)
             click_rendered_phrase(window, "browser-bookmark-add", "Bookmark page")
             wait_for("current page bookmark persisted", lambda: any(row["url"] == url for row in rpc("browser.bookmarks.list")["bookmarks"]))
+            # The store updates before the button label does. "Remove bookmark"
+            # is wider and wraps the row, so a library click located on the
+            # previous frame lands beside the moved control.
+            capture(window, "browser-bookmark-added", "Remove bookmark")
             click_rendered_phrase(window, "browser-library-open", "Bookmark library")
             capture(window, "browser-library-saved", "Saved bookmarks")
             click_rendered_phrase(window, "browser-bookmark-remove", "Remove bookmark")
