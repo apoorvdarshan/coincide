@@ -21,9 +21,6 @@ pub(super) struct ModelsSettings {
     selected: BTreeSet<(String, String)>,
     adding: bool,
     add_error: Option<String>,
-    /// The first visit asks every enabled provider for its models, as Swift's
-    /// settings do on open; later visits wait for Reload Models.
-    pub(super) loaded: bool,
 }
 impl ModelsSettings {
     pub(super) fn focus_provider(&mut self, provider: Option<String>) {
@@ -44,7 +41,6 @@ impl ModelsSettings {
             selected: BTreeSet::new(),
             adding: false,
             add_error: None,
-            loaded: false,
         }
     }
     pub(super) fn subscriptions(
@@ -517,6 +513,7 @@ impl Coincide {
         catalogs
     }
     /// Ask every enabled provider for its models again (Swift's Reload Models).
+    /// Opening the pane never starts a check; it shows what was last read.
     pub(super) fn reload_models(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let providers = coincide_core::provider_catalog::PROVIDERS
             .iter()
@@ -524,7 +521,6 @@ impl Coincide {
             .filter(|id| provider_value(&self.settings, id)["isEnabled"] != false)
             .map(str::to_owned)
             .collect::<Vec<_>>();
-        self.models_settings.loaded = true;
         self.provider_configuration_panel
             .update(cx, |panel, cx| panel.check_all(&providers, window, cx));
     }
@@ -993,7 +989,7 @@ impl Coincide {
             .gap_3()
             .child(div().text_lg().child("Models"))
             .child(div().text_sm().text_color(muted).child(
-                "Models your providers offer, plus custom model IDs you add. Select a model to use it for new threads, star it, or hide it from the model picker. Command- or Control-click selects several.",
+                "Models your providers offer, plus custom model IDs you add. Select a model to use it for new threads, add it to Favorites, or hide it from the model picker. Command- or Control-click selects several. Reload Models asks every provider for its models.",
             ))
             .when(!in_provider_page, |pane| pane.child(filters))
             .child(toolbar)

@@ -228,18 +228,6 @@ impl Coincide {
         if section == Section::Archive {
             self.refresh_archive_settings(cx);
         }
-        // Like Swift's settings, the first visit lists every enabled provider's
-        // models, unless the providers were already checked.
-        if section == Section::Models
-            && !self.models_settings.loaded
-            && self
-                .provider_configuration_panel
-                .read(cx)
-                .catalogs()
-                .is_empty()
-        {
-            self.reload_models(window, cx);
-        }
         self.focus_settings_route(window, cx);
         self.sync_transcription_binding(cx);
         cx.notify();
