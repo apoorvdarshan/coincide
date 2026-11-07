@@ -27,6 +27,8 @@ use effort::EffortExecutable;
 pub(crate) use effort::{CodexEffortProof, astra_default_needed, astra_model};
 pub(crate) use restore::resolve_reported_preferences;
 
+#[path = "model_catalog_claude_limits.rs"]
+pub(crate) mod claude_limits;
 #[path = "model_catalog_limits.rs"]
 pub(crate) mod limits;
 #[path = "model_catalog_profile.rs"]
@@ -92,6 +94,7 @@ struct Job {
 /// Construction does not discover executables, read credentials, or start work.
 pub struct ModelCatalog {
     limits: limits::Owner,
+    claude_limits: claude_limits::Owner,
     named_limits: profile_limits::Owner,
     jobs: HashMap<String, Job>,
     default_restore: HashMap<String, DefaultBinding>,
@@ -106,6 +109,7 @@ impl Default for ModelCatalog {
         let (tx, rx) = mpsc::sync_channel(MAX_JOBS);
         Self {
             limits: limits::Owner::default(),
+            claude_limits: claude_limits::Owner::default(),
             named_limits: profile_limits::Owner::default(),
             jobs: HashMap::new(),
             default_restore: HashMap::new(),
@@ -127,6 +131,7 @@ impl ModelCatalog {
         self.workers.len()
             + self.limits.shutdown_status().running
             + self.named_limits.shutdown_status().running
+            + self.claude_limits.running()
             < MAX_ACTIVE
     }
     fn receive_completions(&mut self) -> bool {
@@ -151,7 +156,7 @@ impl ModelCatalog {
         changed
     }
     pub fn poll(&mut self) -> bool {
-        let mut changed = self.limits.poll() | self.named_limits.poll();
+        let mut changed = self.limits.poll() | self.named_limits.poll() | self.claude_limits.poll();
         changed |= self.receive_completions();
         let mut exited = Vec::new();
         let totals = &mut self.shutdown;
@@ -186,6 +191,7 @@ impl ModelCatalog {
         self.shutdown.closed = true;
         self.limits.request_shutdown();
         self.named_limits.request_shutdown();
+        self.claude_limits.request_shutdown();
         for job in self.jobs.values() {
             job.cancelled.store(true, Ordering::Release);
         }
@@ -198,11 +204,15 @@ impl ModelCatalog {
     pub fn shutdown_status(&mut self) -> ShutdownStatus {
         self.poll();
         let mut limits = self.limits.shutdown_status();
-        let named = self.named_limits.shutdown_status();
-        limits.running += named.running;
-        limits.returned = limits.returned.saturating_add(named.returned);
-        limits.panicked = limits.panicked.saturating_add(named.panicked);
-        limits.unclassified = limits.unclassified.saturating_add(named.unclassified);
+        for other in [
+            self.named_limits.shutdown_status(),
+            self.claude_limits.shutdown_status(),
+        ] {
+            limits.running += other.running;
+            limits.returned = limits.returned.saturating_add(other.returned);
+            limits.panicked = limits.panicked.saturating_add(other.panicked);
+            limits.unclassified = limits.unclassified.saturating_add(other.unclassified);
+        }
         ShutdownStatus {
             running: self.workers.len() + limits.running,
             returned: self.shutdown.returned.saturating_add(limits.returned),
@@ -295,6 +305,7 @@ impl ModelCatalog {
                 || self.workers.len()
                     + self.limits.shutdown_status().running
                     + self.named_limits.shutdown_status().running
+                    + self.claude_limits.running()
                     < MAX_ACTIVE,
             "Too many model catalog reads; wait for the current refresh"
         );
@@ -372,6 +383,7 @@ impl ModelCatalog {
             self.workers.len()
                 + self.limits.shutdown_status().running
                 + self.named_limits.shutdown_status().running
+                + self.claude_limits.running()
                 < MAX_ACTIVE,
             "Read-only provider workers are still draining"
         );
@@ -379,6 +391,22 @@ impl ModelCatalog {
     }
     pub(crate) fn limits_status(&self, id: &str) -> Result<Value> {
         self.limits.status(id)
+    }
+    pub(crate) fn refresh_claude_limits(&mut self, executable: Option<PathBuf>) -> Result<Value> {
+        ensure!(!self.shutdown.closed, "Model catalog is shutting down");
+        self.poll();
+        ensure!(
+            self.workers.len()
+                + self.limits.shutdown_status().running
+                + self.named_limits.shutdown_status().running
+                + self.claude_limits.running()
+                < MAX_ACTIVE,
+            "Read-only provider workers are still draining"
+        );
+        self.claude_limits.refresh(executable)
+    }
+    pub(crate) fn claude_limits_status(&mut self, id: &str) -> Result<Value> {
+        self.claude_limits.status(id)
     }
     pub fn status(&self, id: &str) -> Result<Value> {
         self.jobs

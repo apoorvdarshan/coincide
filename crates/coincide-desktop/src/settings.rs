@@ -793,7 +793,7 @@ impl Coincide {
         }
         if matches(
             S::Usage,
-            "saved local usage history tokens provider reports cost counters live codex limits quota credits",
+            "saved local usage history tokens provider reports cost counters live codex claude plan limits quota credits daily chart models projects activity",
         ) {
             count += 1;
             if self.settings_section == S::Usage {
@@ -801,8 +801,16 @@ impl Coincide {
                     .provider_configuration_panel
                     .update(cx, |panel, cx| panel.admin_usage_view(cx));
                 content = content
+                    .child(self.usage_dashboard(cx))
                     .child(admin_usage)
-                    .child(self.codex_limits.panel.clone())
+                    .child(
+                        div()
+                            .mt_2()
+                            .px_1()
+                            .text_sm()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("Saved turn reports"),
+                    )
                     .child(
                         div()
                             .h(px(460.))
@@ -812,7 +820,7 @@ impl Coincide {
             } else {
                 content = content.child(
                     Button::new("settings-usage-history")
-                        .label("View usage and Codex limits")
+                        .label("View usage and plan limits")
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.settings_section = S::Usage;
                             cx.notify();
