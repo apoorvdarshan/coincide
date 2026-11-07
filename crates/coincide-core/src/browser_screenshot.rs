@@ -160,8 +160,8 @@ pub fn redact_argb32(
         for pixel in row[..width as usize * 4].chunks_exact(4) {
             let argb = u32::from_ne_bytes(pixel.try_into().expect("four byte pixel"));
             let alpha = (argb >> 24) as u8;
-            let channel = |shift| {
-                let value = ((argb >> shift) & 255) as u16;
+            let channel = |shift: u32| {
+                let value = ((argb >> shift) & 255u32) as u16;
                 if alpha == 0 {
                     0
                 } else {
