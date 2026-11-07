@@ -33,6 +33,66 @@ impl CaptureCleanup {
         self.pending.is_empty() && self.error.is_none()
     }
 }
+/// Swift's AppshotController.Outcome: what the HUD says an appshot did.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Outcome {
+    Added(String),
+    ScreenRecordingNeeded,
+    NoWindow,
+    ProtectedWindow(String),
+    PasswordField(String),
+    Failed(String),
+}
+impl Outcome {
+    fn from_error(error: &anyhow::Error) -> Self {
+        use appshots_platform::Refusal;
+        let Some(failure) = error.downcast_ref::<appshots_platform::CaptureFailure>() else {
+            return Self::Failed(error.to_string());
+        };
+        match failure.refusal {
+            Some(Refusal::ScreenRecording) => Self::ScreenRecordingNeeded,
+            Some(Refusal::NoWindow) => Self::NoWindow,
+            Some(Refusal::Protected) => Self::ProtectedWindow(failure.app.clone()),
+            Some(Refusal::Password) => Self::PasswordField(failure.app.clone()),
+            None => Self::Failed(failure.message.clone()),
+        }
+    }
+    fn message(&self) -> String {
+        match self {
+            Self::Added(app) => format!("Appshot of {app} added"),
+            Self::ScreenRecordingNeeded => "Allow Screen Recording in Settings › Appshots".into(),
+            Self::NoWindow => "No window to capture".into(),
+            Self::ProtectedWindow(app) => format!("{app} doesn’t allow capturing this window"),
+            Self::PasswordField(app) => format!("Skipped: {app} is taking a password"),
+            Self::Failed(reason) => reason.clone(),
+        }
+    }
+    /// The SF Symbol Swift's HUD shows.
+    fn symbol(&self) -> &'static str {
+        match self {
+            Self::Added(_) => "camera.viewfinder",
+            Self::ScreenRecordingNeeded | Self::ProtectedWindow(_) | Self::PasswordField(_) => {
+                "lock.fill"
+            }
+            Self::NoWindow | Self::Failed(_) => "exclamationmark.triangle.fill",
+        }
+    }
+    /// Shows the HUD; anything but an added appshot also sounds the alert.
+    fn show(&self, frame: Option<[f64; 4]>) {
+        appshots_platform::hud(
+            &self.message(),
+            self.symbol(),
+            !matches!(self, Self::Added(_)),
+            frame,
+        );
+    }
+}
+/// What the HUD needs from a capture that produced a picture.
+struct Shown {
+    app: String,
+    frame: Option<[f64; 4]>,
+}
+type Delivery = (AppshotTicket, Option<Shown>);
 fn discard_completed<T>(
     rx: &Receiver<(u64, T, Result<PreparedAppshot>)>,
     cleanup: &mut CaptureCleanup,
@@ -53,8 +113,8 @@ pub(super) struct State {
     destination: Destination,
     generation: Arc<AtomicU64>,
     workers: worker_owner::WorkerOwner,
-    tx: SyncSender<(u64, AppshotTicket, Result<PreparedAppshot>)>,
-    rx: Receiver<(u64, AppshotTicket, Result<PreparedAppshot>)>,
+    tx: SyncSender<(u64, Delivery, Result<PreparedAppshot>)>,
+    rx: Receiver<(u64, Delivery, Result<PreparedAppshot>)>,
     cleanup: CaptureCleanup,
     closed: bool,
 }
@@ -127,6 +187,25 @@ impl State {
     pub fn invalidate(&mut self) {
         self.applied = None;
     }
+    /// Swift re-reads permissions whenever Coincide becomes active, so access
+    /// granted in System Settings arms the both-⌘ monitor with no extra click.
+    /// macOS only: other platforms have no consent prompt to come back from.
+    pub fn app_activated(&mut self) {
+        if !cfg!(target_os = "macos")
+            || self.closed
+            || !self
+                .applied
+                .as_ref()
+                .is_some_and(|settings| settings.enabled)
+        {
+            return;
+        }
+        let current = appshots_platform::permissions(0);
+        if permissions_changed(&self.permissions, &current) {
+            self.invalidate();
+        }
+        self.permissions = current;
+    }
     pub fn close(&mut self) {
         if !self.closed {
             self.closed = true;
@@ -194,7 +273,7 @@ impl Coincide {
             self.appshots.close();
         }
         self.appshots.workers.poll();
-        while let Ok((generation, ticket, result)) = self.appshots.rx.try_recv() {
+        while let Ok((generation, (ticket, shown), result)) = self.appshots.rx.try_recv() {
             if generation != self.appshots.generation.load(Ordering::Acquire)
                 || self.appshots.closed
             {
@@ -233,10 +312,21 @@ impl Coincide {
                     }
                     self.appshots.outcome =
                         "Appshot added to the draft. It has not been sent.".into();
-                    window.activate_window();
+                    appshots_platform::bring_forward(window);
                     self.composer.read(cx).focus_handle(cx).focus(window, cx);
+                    let (app, frame) =
+                        shown.map_or((String::from("the app"), None), |s| (s.app, s.frame));
+                    Outcome::Added(app).show(frame);
                 }
-                Err(error) => self.appshots.outcome = error.to_string(),
+                Err(error) => {
+                    let outcome = Outcome::from_error(&error);
+                    let frame = error
+                        .downcast_ref::<appshots_platform::CaptureFailure>()
+                        .and_then(|failure| failure.frame)
+                        .or_else(|| shown.and_then(|s| s.frame));
+                    self.appshots.outcome = outcome.message();
+                    outcome.show(frame);
+                }
             }
             self.status = self.appshots.outcome.clone();
             cx.notify();
@@ -258,6 +348,11 @@ impl Coincide {
         }
         self.appshots.permissions = appshots_platform::permissions(0);
         if !self.appshots.permissions.screen {
+            // Swift says so in the HUD, opens Settings › Appshots and comes forward.
+            let outcome = Outcome::ScreenRecordingNeeded;
+            self.appshots.outcome = outcome.message();
+            outcome.show(None);
+            appshots_platform::bring_forward(window);
             self.settings_open = true;
             self.navigate_settings_section(settings::SettingsSection::Appshots, window, cx);
             self.show_settings_window(cx);
@@ -286,9 +381,14 @@ impl Coincide {
         let tx = self.appshots.tx.clone();
         let read_text = Settings::read(&self.settings).includes_text;
         self.appshots.workers.spawn(move |admission| {
+            let mut shown = None;
             let result = admitted_capture(&admission, generation, &stamp, |allowed| {
                 let capture = appshots_platform::capture(read_text, allowed)?;
                 anyhow::ensure!(allowed(), "Appshot cancelled");
+                shown = Some(Shown {
+                    app: capture.app.clone(),
+                    frame: capture.frame,
+                });
                 PreparedAppshot::prepare(
                     &root,
                     &capture.png,
@@ -301,7 +401,7 @@ impl Coincide {
                 // Even a revoked capture remains owned until the parent has an
                 // explicit discard receipt. Bounded publication retains join
                 // custody while the parent drains during ordinary shutdown.
-                if let Err(error) = tx.send((generation, ticket, result)) {
+                if let Err(error) = tx.send((generation, (ticket, shown), result)) {
                     if let Ok(mut capture) = error.0.2 {
                         let _ = capture.try_discard();
                     }
@@ -312,6 +412,12 @@ impl Coincide {
     }
 }
 
+fn permissions_changed(
+    old: &appshots_platform::Permissions,
+    new: &appshots_platform::Permissions,
+) -> bool {
+    old.screen != new.screen || old.accessibility != new.accessibility
+}
 /// The production worker and synthetic tests share cancellation/publication
 /// admission. A semantic return never releases WorkerOwner's actual join slot.
 fn admitted_capture<T>(
@@ -342,6 +448,85 @@ mod tests {
         }
     }
     thread_local! {static EXIT:std::cell::RefCell<Option<ExitGate>>=const{std::cell::RefCell::new(None)};}
+    #[::core::prelude::v1::test]
+    fn outcomes_say_what_swift_says_and_only_failures_alert() {
+        use appshots_platform::{CaptureFailure, Refusal};
+        let failure = |refusal, message: &str| {
+            anyhow::Error::new(CaptureFailure {
+                refusal,
+                app: "Safari".into(),
+                frame: Some([0., 0., 800., 600.]),
+                message: message.into(),
+            })
+        };
+        let cases = [
+            (
+                Some(Refusal::NoWindow),
+                "No window to capture",
+                "exclamationmark.triangle.fill",
+            ),
+            (
+                Some(Refusal::Protected),
+                "Safari doesn’t allow capturing this window",
+                "lock.fill",
+            ),
+            (
+                Some(Refusal::Password),
+                "Skipped: Safari is taking a password",
+                "lock.fill",
+            ),
+            (
+                Some(Refusal::ScreenRecording),
+                "Allow Screen Recording in Settings › Appshots",
+                "lock.fill",
+            ),
+            (
+                None,
+                "Window capture timed out",
+                "exclamationmark.triangle.fill",
+            ),
+        ];
+        for (refusal, message, symbol) in cases {
+            let outcome = Outcome::from_error(&failure(refusal, "Window capture timed out"));
+            assert_eq!(outcome.message(), message);
+            assert_eq!(outcome.symbol(), symbol);
+        }
+        let plain = Outcome::from_error(&anyhow::anyhow!("No other app window to capture"));
+        assert_eq!(
+            plain,
+            Outcome::Failed("No other app window to capture".into())
+        );
+        let added = Outcome::Added("Safari".into());
+        assert_eq!(added.message(), "Appshot of Safari added");
+        assert_eq!(added.symbol(), "camera.viewfinder");
+    }
+    #[::core::prelude::v1::test]
+    fn native_frames_need_four_finite_numbers_and_permission_changes_rearm() {
+        use appshots_platform::{Permissions, frame};
+        assert_eq!(frame(&json!([1, 2.5, 30, 40])), Some([1., 2.5, 30., 40.]));
+        for bad in [
+            json!([1, 2, 3]),
+            json!([1, 2, 3, 4, 5]),
+            json!([1, 2, -3, 4]),
+            json!(null),
+            json!(["1", 2, 3, 4]),
+        ] {
+            assert_eq!(frame(&bad), None, "{bad}");
+        }
+        let denied = Permissions::default();
+        let granted = Permissions {
+            accessibility: true,
+            ..Default::default()
+        };
+        assert!(permissions_changed(&denied, &granted));
+        assert!(!permissions_changed(
+            &granted,
+            &Permissions {
+                detail: "x".into(),
+                ..granted.clone()
+            }
+        ));
+    }
     #[::core::prelude::v1::test]
     fn disable_discards_late_fake_capture_and_retains_actual_thread_custody() {
         let mut owner = worker_owner::WorkerOwner::default();

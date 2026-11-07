@@ -4,6 +4,8 @@
 //! No CLI merge/review convenience command: fixed REST routes, explicit host,
 //! JSON stdin, no auto-merge/admin/queue or retries. Reviews explicitly target
 //! the confirmed commit; no review claims an atomic current-head condition.
+//! REST cannot take a draft out of draft, so Mark Ready for Review is the one
+//! fixed GraphQL mutation, on the node ID read back for the confirmed head.
 use anyhow::{Context, Result, bail, ensure};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -156,6 +158,7 @@ impl Scope {
 enum Action {
     Review { event: String, body: String },
     Merge { method: String },
+    Ready {},
 }
 impl Action {
     fn validate(&self) -> Result<()> {
@@ -176,6 +179,7 @@ impl Action {
                 ["merge", "squash", "rebase"].contains(&method.as_str()),
                 "Invalid merge method"
             ),
+            Self::Ready {} => {}
         }
         Ok(())
     }
@@ -1032,9 +1036,55 @@ impl GithubWriteService {
                 );
                 Ok(json!({"kind":"merge","merged":true,"commit":commit}))
             }
+            Action::Ready {} => {
+                let bytes =
+                    self.0
+                        .gh
+                        .run(&scope.expected_root, &api("GET", &endpoint, false), None)?;
+                let current: Value = serde_json::from_slice(&bytes)?;
+                let node = current["node_id"]
+                    .as_str()
+                    .filter(|id| !id.is_empty() && id.len() <= 256)
+                    .context("Missing pull request node ID")?;
+                ensure!(
+                    current["number"].as_u64() == Some(scope.number)
+                        && current["state"] == "open"
+                        && current["draft"] == true
+                        && current["head"]["sha"]
+                            .as_str()
+                            .is_some_and(|sha| sha.eq_ignore_ascii_case(&scope.expected_head)),
+                    "Pull request is no longer the confirmed open draft"
+                );
+                let bytes = self.0.gh.run(
+                    &scope.expected_root,
+                    &[
+                        "api".into(),
+                        "--hostname".into(),
+                        "github.com".into(),
+                        "graphql".into(),
+                        "--input".into(),
+                        "-".into(),
+                    ],
+                    Some(&json!({"query":READY_MUTATION,"variables":{"id":node}})),
+                )?;
+                let response: Value = serde_json::from_slice(&bytes)?;
+                ensure!(
+                    response.get("errors").is_none_or(Value::is_null)
+                        && response["data"]["markPullRequestReadyForReview"]["pullRequest"]["isDraft"]
+                            == false,
+                    "Ready for review not confirmed"
+                );
+                let (snapshot, _) = self.read(scope)?;
+                ensure!(
+                    snapshot["isDraft"] == false && snapshot["state"] == "OPEN",
+                    "Ready for review not verified"
+                );
+                Ok(json!({"kind":"ready","ready":true}))
+            }
         }
     }
 }
+const READY_MUTATION: &str = "mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){pullRequest{isDraft}}}";
 fn api(method: &str, endpoint: &str, input: bool) -> Vec<String> {
     let mut args = vec![
         "api".into(),
@@ -1063,6 +1113,7 @@ fn availability(snapshot: &Value) -> Result<Value> {
     } else {
         json!("PR not open or backend unavailable")
     };
+    let ready = review && pr.is_draft;
     Ok(json!({
         "review": {
             "COMMENT": {"available":review,"reason":reason},
@@ -1070,6 +1121,7 @@ fn availability(snapshot: &Value) -> Result<Value> {
             "REQUEST_CHANGES": {"available":review,"reason":reason}
         },
         "merge": {"available":merge,"reason":if merge{Value::Null}else{json!("Fresh checks/review/mergeability preflight is not eligible")},"methods":["merge","squash","rebase"]},
+        "ready": {"available":ready,"reason":if ready{Value::Null}else{json!("Only an open draft can be marked ready for review")}},
         "notice":NOTICE
     }))
 }
@@ -1079,6 +1131,7 @@ fn permitted(action: &Action, snapshot: &Value) -> Result<bool> {
     Ok(match action {
         Action::Review { event, .. } => value["review"][event]["available"] == true,
         Action::Merge { .. } => value["merge"]["available"] == true,
+        Action::Ready {} => value["ready"]["available"] == true,
     })
 }
 
@@ -1261,6 +1314,12 @@ assert '--admin' not in args and '--auto' not in args and 'merge-async' not in '
 if args[0]=='pr':
  assert args[:2]==['pr','view'] and args[2]=='7' and args[args.index('--repo')+1]=='github.com/owner/project'
  print(open('snapshot.json').read(),flush=True)
+elif 'graphql' in args:
+ assert args[:4]==['api','--hostname','github.com','graphql'] and '--method' not in args
+ assert set(body)=={'query','variables'} and body['query'].startswith('mutation($id:ID!){markPullRequestReadyForReview(') and body['variables']=={'id':'PR_node7'}
+ value=json.load(open('snapshot.json'));assert value['isDraft']
+ value['isDraft']=False;json.dump(value,open('snapshot.json','w'))
+ print(json.dumps({'data':{'markPullRequestReadyForReview':{'pullRequest':{'isDraft':False}}}}),flush=True)
 else:
  assert args[0]=='api' and args[args.index('--hostname')+1]=='github.com'
  method=args[args.index('--method')+1]
@@ -1278,6 +1337,9 @@ else:
   if os.path.exists('lost-response'):sys.exit(3)
   if os.path.exists('slow-response'):time.sleep(3)
   print(json.dumps(value),flush=True)
+ elif method=='GET' and endpoint=='repos/owner/project/pulls/7':
+  value=json.load(open('snapshot.json'))
+  print(json.dumps({'number':7,'node_id':'PR_node7','state':value['state'].lower(),'draft':value['isDraft'],'head':{'sha':value['headRefOid']}}),flush=True)
  elif method=='GET':
   assert endpoint=='repos/owner/project/pulls/7/reviews/19'
   print(open('review.json').read(),flush=True)
@@ -1402,7 +1464,7 @@ else:
                     .as_array()
                     .unwrap()
                     .iter()
-                    .any(|s| s == "POST" || s == "PUT")
+                    .any(|s| s == "POST" || s == "PUT" || s == "graphql")
             })
             .count()
     }
@@ -1512,6 +1574,41 @@ else:
         assert_eq!(
             write["body"],
             json!({"sha":"a".repeat(40),"merge_method":"squash"})
+        );
+    }
+    #[test]
+    fn ready_for_review_marks_only_the_confirmed_open_draft_and_verifies_it() {
+        let (dir, service, p) = fixture();
+        let open = request(&service, &p, json!({"kind":"ready"}));
+        assert!(
+            submit(&service, &open).is_err(),
+            "a PR that is not a draft has nothing to mark ready"
+        );
+        assert_eq!(writes(dir.path()), 0);
+        let mut draft = snapshot();
+        draft["isDraft"] = json!(true);
+        fs::write(
+            dir.path().join("snapshot.json"),
+            serde_json::to_vec(&draft).unwrap(),
+        )
+        .unwrap();
+        let baseline = prepare(&service, &p);
+        assert_eq!(baseline["availability"]["ready"]["available"], true);
+        assert_eq!(baseline["availability"]["merge"]["available"], false);
+        let request = request(&service, &p, json!({"kind":"ready"}));
+        submit(&service, &request).unwrap();
+        let verified = wait(&service, &request);
+        assert_eq!(verified["status"], "succeeded");
+        assert_eq!(verified["result"], json!({"kind":"ready","ready":true}));
+        assert_eq!(writes(dir.path()), 1);
+        let write = calls(dir.path())
+            .into_iter()
+            .find(|v| v["args"].as_array().unwrap().iter().any(|a| a == "graphql"))
+            .unwrap();
+        assert_eq!(write["body"]["variables"], json!({"id":"PR_node7"}));
+        assert_eq!(
+            prepare(&service, &p)["availability"]["ready"]["available"],
+            false
         );
     }
     #[test]

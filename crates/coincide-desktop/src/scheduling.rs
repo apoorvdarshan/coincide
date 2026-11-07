@@ -57,6 +57,8 @@ pub(super) struct ScheduleEditor {
     // Validate/preview after timing changes or a minute passes; ordinary 150ms
     // UI polls must not repeat a potentially multi-year cron search.
     preview_key: Option<Value>,
+    /// The open Delete confirmation; a second Delete waits for its answer.
+    delete_prompt: Option<Task<()>>,
 }
 impl ScheduleEditor {
     pub fn subscriptions(&self, cx: &mut Context<Coincide>) -> Vec<Subscription> {
@@ -123,6 +125,7 @@ impl ScheduleEditor {
             interval: cx.new(|cx| InputState::new(window, cx).placeholder("Minutes between runs")),
             cron: cx.new(|cx| InputState::new(window, cx).placeholder("0 9 * * 1-5")),
             preview: String::new(),
+            delete_prompt: None,
             preview_key: None,
         }
     }
@@ -363,6 +366,48 @@ impl Coincide {
             self.schedule_editor.open = false;
         }
         self.refresh_schedules(cx);
+    }
+    /// Swift's ScheduleActions.confirmDelete: nothing is deleted until the
+    /// user picks Delete, and the guard snapshot is checked again then.
+    fn confirm_schedule_delete(
+        &mut self,
+        id: String,
+        expected: Value,
+        scope_epoch: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .schedule_editor
+            .delete_prompt
+            .as_ref()
+            .is_some_and(|task| !task.is_ready())
+        {
+            return;
+        }
+        let Some(task) = self.schedules.iter().find(|task| task["id"] == id) else {
+            self.schedule_status = "Schedule no longer exists. Refresh and try again.".into();
+            cx.notify();
+            return;
+        };
+        let (message, detail) =
+            delete_confirmation(&text(task, "name"), task["threadID"].is_string());
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            &message,
+            Some(detail),
+            &["Delete", "Cancel"],
+            cx,
+        );
+        self.schedule_editor.delete_prompt = Some(cx.spawn_in(window, async move |this, cx| {
+            if answer.await.unwrap_or(1) != 0 {
+                return;
+            }
+            this.update(cx, |this, cx| {
+                this.schedule_action(&id, "schedules.delete", &expected, scope_epoch, cx)
+            })
+            .ok();
+        }));
     }
     pub(super) fn open_schedule_editor(
         &mut self,
@@ -850,7 +895,7 @@ impl Coincide {
                     },
                 ),
                 ("schedules.run-now", "Run now"),
-                ("schedules.delete", "Delete"),
+                ("schedules.delete", "Delete…"),
             ] {
                 if action == "schedules.run-now" && !approved {
                     continue;
@@ -864,8 +909,18 @@ impl Coincide {
                             action == "schedules.run-now"
                                 && (editing || schedule["isPaused"] == true),
                         )
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.schedule_action(&id, action, &expected, scope_epoch, cx)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            if action == "schedules.delete" {
+                                this.confirm_schedule_delete(
+                                    id.clone(),
+                                    expected.clone(),
+                                    scope_epoch,
+                                    window,
+                                    cx,
+                                );
+                            } else {
+                                this.schedule_action(&id, action, &expected, scope_epoch, cx)
+                            }
                         })),
                 );
             }
@@ -895,6 +950,18 @@ fn check_schedule_revision(
         "Schedule changed. Refresh and reopen it to review the latest values."
     );
     Ok(())
+}
+/// The Delete alert's title and explanation, worded as Swift's. A task bound
+/// to one conversation keeps it; a project task keeps the threads it made.
+fn delete_confirmation(name: &str, has_thread: bool) -> (String, &'static str) {
+    (
+        format!("Delete scheduled task “{name}”?"),
+        if has_thread {
+            "The thread and the messages it already sent are kept. A running turn continues until you stop it."
+        } else {
+            "Existing threads are kept. A running thread continues until you stop it."
+        },
+    )
 }
 fn schedule_timing(recurrence: &Value) -> String {
     let zone = text(recurrence, "timeZoneID");
@@ -949,6 +1016,17 @@ fn schedule_timing(recurrence: &Value) -> String {
 #[cfg(test)]
 mod global_schedule_tests {
     use super::*;
+    #[::core::prelude::v1::test]
+    fn delete_confirmation_names_the_task_and_says_what_is_kept() {
+        let (title, detail) = delete_confirmation("Morning review", true);
+        assert_eq!(title, "Delete scheduled task “Morning review”?");
+        assert!(detail.starts_with("The thread and the messages it already sent are kept."));
+        let (_, detail) = delete_confirmation("Weekly", false);
+        assert_eq!(
+            detail,
+            "Existing threads are kept. A running thread continues until you stop it."
+        );
+    }
     #[::core::prelude::v1::test]
     fn global_api_read_keeps_targets_and_native_cas_rejects_revision_or_target_changes() {
         let root = std::env::temp_dir().join(format!(

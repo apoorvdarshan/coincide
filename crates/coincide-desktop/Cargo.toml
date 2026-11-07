@@ -42,6 +42,7 @@ atspi = { version = "=0.29.0", default-features = false, features = ["proxies"] 
 libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+raw-window-handle = "0.6.2"
 objc2 = "0.6.5"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSEvent", "NSResponder", "NSWindow", "NSView", "NSGraphicsContext"] }
 block2 = "0.6.2"

@@ -607,6 +607,7 @@ pub(super) fn capture(read_text: bool, allowed: &dyn Fn() -> bool) -> Result<Cap
             app,
             title: (!title.is_empty()).then_some(title),
             text,
+            frame: None,
         })
     })();
     result

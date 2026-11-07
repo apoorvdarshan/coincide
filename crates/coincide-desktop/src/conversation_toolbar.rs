@@ -161,6 +161,18 @@ impl Coincide {
                             })),
                     )
                     .child(
+                        Button::new("pull-requests-toggle")
+                            .icon(IconName::GitPullRequest)
+                            .accessibility_label("Pull Requests")
+                            .tooltip("Toggle pull requests")
+                            .ghost()
+                            .compact()
+                            .selected(self.pull_requests_panel_open())
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.toggle_pull_requests_panel(window, cx)
+                            })),
+                    )
+                    .child(
                         Button::new("conversation-actions-toggle")
                             .icon(IconName::Ellipsis)
                             .accessibility_label(if self.thread_actions_open {

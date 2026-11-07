@@ -111,6 +111,8 @@ impl ReviewEvent {
 enum Action {
     Review(ReviewEvent, String),
     Merge(String),
+    /// Swift's Mark Ready for Review, offered in place of merge on open drafts.
+    Ready,
 }
 impl Action {
     fn value(&self) -> Result<Value> {
@@ -131,6 +133,7 @@ impl Action {
                 );
                 json!({"kind":"merge","method":method})
             }
+            Self::Ready => json!({"kind":"ready"}),
         })
     }
     fn label(&self) -> String {
@@ -142,6 +145,9 @@ impl Action {
             Self::Merge(method) => format!(
                 "Merge using {method}. No queue, automatic merge, branch deletion or admin bypass requested."
             ),
+            Self::Ready => {
+                "Mark ready for review. The pull request stops being a draft on GitHub.".into()
+            }
         }
     }
 }
@@ -218,6 +224,10 @@ impl Confirmation {
                     "Fresh snapshot is not eligible for merge"
                 );
             }
+            Action::Ready => ensure!(
+                availability["ready"]["available"] == true && parsed.is_draft,
+                "Only an open draft can be marked ready for review"
+            ),
         }
         Ok(Self {
             scope,
@@ -272,6 +282,7 @@ fn status(v: &Value, id: &str, scope: &ActionScope) -> Result<()> {
                 result["merged"] == true && result["commit"].as_str().is_some_and(oid),
                 "Merge success is not verified"
             ),
+            Some("ready") => ensure!(result["ready"] == true, "Ready for review is not verified"),
             _ => anyhow::bail!("Missing verified write result"),
         }
     }
@@ -392,7 +403,7 @@ fn execute(api: &mut impl FnMut(&str, Value) -> Result<Value>, work: Work) -> Re
             );
             let sent_body = match &c.action {
                 Action::Review(_, body) => Some(body.clone()),
-                Action::Merge(_) => None,
+                Action::Merge(_) | Action::Ready => None,
             };
             let value = api("github.write.submit", c.submit_params()?)?;
             status(&value, &c.mutation, &c.scope)?;
@@ -400,6 +411,7 @@ fn execute(api: &mut impl FnMut(&str, Value) -> Result<Value>, work: Work) -> Re
                 let expected_kind = match &c.action {
                     Action::Review(_, _) => "review",
                     Action::Merge(_) => "merge",
+                    Action::Ready => "ready",
                 };
                 ensure!(
                     value["result"]["kind"] == expected_kind,
@@ -428,6 +440,11 @@ fn execute(api: &mut impl FnMut(&str, Value) -> Result<Value>, work: Work) -> Re
     }
 }
 
+/// Tells the PR panel a write changed what its detail shows.
+pub enum ActionsEvent {
+    MarkedReady(u64),
+}
+impl EventEmitter<ActionsEvent> for GitHubActions {}
 pub struct GitHubActions {
     transport: WriteTransport,
     workers: WriteWorkers,
@@ -438,6 +455,10 @@ pub struct GitHubActions {
     locked: bool,
     records: Value,
     confirmation: Option<Box<Confirmation>>,
+    /// The loaded detail is an open draft: offer Mark Ready for Review, not merge.
+    draft: bool,
+    /// Mark Ready for Review was chosen before durable history finished loading.
+    ready_requested: bool,
     body: Entity<TextareaState>,
     content_scroll: ScrollHandle,
     confirmation_scroll: ScrollHandle,
@@ -477,6 +498,8 @@ impl GitHubActions {
             locked: true,
             records: json!({}),
             confirmation: None,
+            draft: false,
+            ready_requested: false,
             body: cx.new(|cx| {
                 TextareaState::new(window, cx)
                     .placeholder("Review body (optional for approval)")
@@ -508,6 +531,7 @@ impl GitHubActions {
         self.generation = self.generation.wrapping_add(1);
         self.scope = scope;
         self.confirmation = None;
+        self.ready_requested = false;
         self.history_known = false;
         self.locked = true;
         self.records = json!({});
@@ -524,6 +548,7 @@ impl GitHubActions {
     pub fn invalidate(&mut self, cx: &mut Context<Self>) {
         self.generation = self.generation.wrapping_add(1);
         self.confirmation = None;
+        self.ready_requested = false;
         self.locked = true;
         self.history_known = false;
         self.notice = "Baseline invalidated by reload; loading durable history.".into();
@@ -533,6 +558,28 @@ impl GitHubActions {
             self.start(Work::History(scope), cx);
         }
         cx.notify();
+    }
+    /// Parent sets this with the scope from the loaded detail's draft flag.
+    /// It only picks which button shows; Core availability still gates writes.
+    pub fn set_draft(&mut self, draft: bool, cx: &mut Context<Self>) {
+        if self.draft != draft {
+            self.draft = draft;
+            cx.notify();
+        }
+    }
+    /// The PR detail's Mark Ready for Review: prepares the confirmation now,
+    /// or once durable history has loaded for the current scope.
+    pub fn request_ready(&mut self, cx: &mut Context<Self>) {
+        if self.scope.is_none() || !self.draft {
+            return;
+        }
+        if self.busy || !self.history_known {
+            self.ready_requested = true;
+            self.notice = "Loading history before preparing Mark Ready for Review…".into();
+            cx.notify();
+            return;
+        }
+        self.prepare(Action::Ready, cx);
     }
     fn start(&mut self, work: Work, cx: &mut Context<Self>) {
         if self.busy {
@@ -613,6 +660,9 @@ impl GitHubActions {
                 self.history_known = true;
                 self.records = v;
                 self.notice=if self.locked {"Prior pending/uncertain write blocks this PR. Query its existing ID; do not post again."}else{"Durable history loaded. Prepare a fresh confirmation to write."}.into();
+                if std::mem::take(&mut self.ready_requested) && !self.locked && self.draft {
+                    self.prepare(Action::Ready, cx);
+                }
             }
             Ok(Reply::Prepared(c)) => {
                 self.confirmation = Some(c);
@@ -627,6 +677,7 @@ impl GitHubActions {
                 sent_body,
             }) => {
                 let state = value["status"].as_str().unwrap_or("uncertain").to_owned();
+                let marked_ready = state == "succeeded" && value["result"]["kind"] == "ready";
                 let mut record = value;
                 record["expectedHead"] = json!(head);
                 let rows = self.records["mutations"].as_array_mut();
@@ -650,6 +701,10 @@ impl GitHubActions {
                 {
                     self.body
                         .update(cx, |input, cx| input.set_value("", window, cx));
+                }
+                if marked_ready && let Some(scope) = &self.scope {
+                    self.draft = false;
+                    cx.emit(ActionsEvent::MarkedReady(scope.number));
                 }
             }
             Err(error) => {
@@ -772,16 +827,26 @@ impl Render for GitHubActions {
                 ),
             )
             .child(div().text_sm().child(NOTICE))
-            .child(div().flex().flex_wrap().gap_2().children(
-                ["merge", "squash", "rebase"].into_iter().map(|method| {
-                    Button::new(SharedString::from(format!("github-prepare-{method}")))
-                        .label(format!("Prepare {method}…"))
+            .child(if self.draft {
+                div().flex().flex_wrap().gap_2().child(
+                    Button::new("github-prepare-ready")
+                        .label("Mark Ready for Review…")
+                        .primary()
                         .disabled(disabled)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.prepare(Action::Merge(method.into()), cx)
-                        }))
-                }),
-            ));
+                        .on_click(cx.listener(|this, _, _, cx| this.prepare(Action::Ready, cx))),
+                )
+            } else {
+                div().flex().flex_wrap().gap_2().children(
+                    ["merge", "squash", "rebase"].into_iter().map(|method| {
+                        Button::new(SharedString::from(format!("github-prepare-{method}")))
+                            .label(format!("Prepare {method}…"))
+                            .disabled(disabled)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.prepare(Action::Merge(method.into()), cx)
+                            }))
+                    }),
+                )
+            });
         let mut records = div()
             .id("github-write-records")
             .flex_none()
@@ -947,6 +1012,30 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(reply,Reply::Mutation {value,..} if value["status"]=="pending"));
+    }
+    #[::core::prelude::v1::test]
+    fn ready_for_review_needs_an_offered_open_draft_and_a_verified_result() {
+        let s = scope();
+        let mut v = prepared(&s);
+        v["availability"]["ready"] = json!({"available":true,"reason":null});
+        assert!(
+            Confirmation::parse(s.clone(), Action::Ready, v.clone(), now()).is_err(),
+            "the fresh snapshot is not a draft"
+        );
+        v["snapshot"]["isDraft"] = json!(true);
+        let c = Confirmation::parse(s.clone(), Action::Ready, v.clone(), now()).unwrap();
+        assert_eq!(
+            c.submit_params().unwrap()["action"],
+            json!({"kind":"ready"})
+        );
+        v["availability"]["ready"]["available"] = json!(false);
+        assert!(Confirmation::parse(s.clone(), Action::Ready, v, now()).is_err());
+        let id = Uuid::new_v4().to_string();
+        let verified =
+            json!({"mutationId":id,"status":"succeeded","result":{"kind":"ready","ready":true}});
+        assert!(status(&verified, &id, &s).is_ok());
+        let unverified = json!({"mutationId":id,"status":"succeeded","result":{"kind":"ready"}});
+        assert!(status(&unverified, &id, &s).is_err());
     }
     #[::core::prelude::v1::test]
     fn prepared_context_expiry_and_merge_availability_are_mandatory() {

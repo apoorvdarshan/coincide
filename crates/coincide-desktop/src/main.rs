@@ -1062,6 +1062,11 @@ impl Coincide {
                 this.usage_history.load(event, cx);
             }),
             cx.observe(&provider_configuration_panel, |_, _, cx| cx.notify()),
+            cx.subscribe_in(&github_panel, window, |this, _, event, window, cx| match event {
+                github_review::ReviewPanelEvent::Mention(mention) => {
+                    this.mention_pull_request(mention, window, cx)
+                }
+            }),
             cx.observe(&github_panel, |this,_,cx| {
                 let loaded=this.github_panel.read(cx).loaded_pr_scope(cx);
                 if this.github_threads_seed.as_ref().is_some_and(|seed|Some(seed)!=loaded.as_ref()) {
@@ -1086,6 +1091,9 @@ impl Coincide {
                 cx.notify();
             }),
             cx.observe_window_activation(window, |this, window, cx| {
+                if window.is_window_active() {
+                    this.appshots.app_activated();
+                }
                 this.microphone_window_active = window.is_window_active() && window.visibility().is_visible();
                 this.sync_terminal_workspace(window, cx);
                 this.sync_transcription_binding(cx);
@@ -1565,6 +1573,23 @@ impl Coincide {
         } else {
             false
         }; // guard released before Mount/panel/runtime submission
+        if self.computer_use_settings_visible()
+            && let Some(mount) = &self.computer_use_mount
+        {
+            let titles = self
+                .threads
+                .iter()
+                .filter_map(|thread| {
+                    Some((
+                        uuid::Uuid::parse_str(&thread.id).ok()?,
+                        thread.title.clone(),
+                    ))
+                })
+                .collect();
+            mount
+                .panel()
+                .update(cx, |panel, cx| panel.set_titles(titles, cx));
+        }
         if ready && let Some(mount) = &mut self.computer_use_mount {
             mount.poll(&self.engine, cx);
             if let Some(error) = mount.last_error() {
@@ -2402,6 +2427,32 @@ impl Coincide {
                 None,
             ),
         ];
+        // Swift's "Show/Hide Pull Requests", for the conversation on screen.
+        if self.selected.is_some() {
+            entries.push(E {
+                keywords: [
+                    "pull request",
+                    "pr",
+                    "github",
+                    "review",
+                    "checks",
+                    "merge",
+                    "toggle",
+                ]
+                .map(String::from)
+                .to_vec(),
+                ..entry(
+                    C::TogglePullRequests,
+                    if self.pull_requests_panel_open() {
+                        "Hide Pull Requests"
+                    } else {
+                        "Show Pull Requests"
+                    }
+                    .into(),
+                    None,
+                )
+            });
+        }
         for project in &self.projects {
             let id = text(project, "id");
             if id.is_empty() {
@@ -2524,6 +2575,7 @@ impl Coincide {
                 self.session_import_open = false;
                 self.open_global_schedules(cx);
             }
+            C::TogglePullRequests => self.toggle_pull_requests_panel(window, cx),
         }
         self.sync_transcription_binding(cx);
         cx.notify();

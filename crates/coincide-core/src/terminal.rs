@@ -86,6 +86,23 @@ impl Terminal {
         }
     }
     pub fn spawn(cwd: &Path, shell: &str, rows: u16, cols: u16) -> Result<Self> {
+        Self::spawn_with_environment(cwd, shell, rows, cols, &Default::default())
+    }
+    /// A project script's terminal: Swift gives its shell the project and
+    /// worktree paths. Only those script variables may be added.
+    pub fn spawn_with_environment(
+        cwd: &Path,
+        shell: &str,
+        rows: u16,
+        cols: u16,
+        environment: &std::collections::BTreeMap<String, String>,
+    ) -> Result<Self> {
+        ensure!(
+            environment
+                .keys()
+                .all(|name| crate::project_script_runs::script_variable(name)),
+            "Only project script variables may be added to a terminal"
+        );
         ensure!(cwd.is_dir(), "Terminal working directory does not exist");
         check_size(rows, cols)?;
         let pty = native_pty_system().openpty(PtySize {
@@ -125,6 +142,9 @@ impl Terminal {
         );
         command.args(&shell_launch.arguments);
         for (name, value) in &shell_launch.environment {
+            command.env(name, value);
+        }
+        for (name, value) in environment {
             command.env(name, value);
         }
         command.cwd(cwd);

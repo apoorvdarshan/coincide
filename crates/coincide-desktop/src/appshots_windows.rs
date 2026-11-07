@@ -378,6 +378,7 @@ pub(super) fn capture(read_text: bool, allowed: &dyn Fn() -> bool) -> Result<Cap
         app,
         title,
         text,
+        frame: None,
     })
 }
 pub(super) fn sound() {

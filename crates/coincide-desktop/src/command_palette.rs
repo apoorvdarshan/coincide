@@ -31,6 +31,8 @@ pub enum PaletteCommand {
     },
     OpenSettings,
     ShowSchedules,
+    /// Show or hide the GitHub pull requests panel in the inspector.
+    TogglePullRequests,
 }
 impl PaletteCommand {
     fn id(&self) -> Option<&str> {
@@ -55,6 +57,7 @@ impl PaletteCommand {
             },
             Self::OpenSettings => "action/settings".into(),
             Self::ShowSchedules => "action/schedules".into(),
+            Self::TogglePullRequests => "action/pull-requests".into(),
         }
     }
     fn allocated_bytes(&self) -> usize {

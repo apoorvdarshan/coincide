@@ -201,7 +201,7 @@ pub fn catalog() -> Value {
     json!({"protocol":"rust-native-v1","tokenLifetimeSeconds":15,"nativeVerified":false,"automaticInputRetry":false,"inputFailuresMayHaveActed":true,"tools":[
         {"name":"list_apps","inputSchema":schema(json!({}),json!([]))},
         {"name":"list_windows","inputSchema":schema(json!({"pid":{"type":["integer","null"],"minimum":1}}),json!([]))},
-        {"name":"get_window_state","description":"Refresh invalidates earlier tokens. Screenshot is inline PNG; coordinates are window points, not image pixels.","inputSchema":schema(json!({"pid":{"type":"integer","minimum":1},"window_id":{"type":"integer","minimum":1},"max_elements":{"type":"integer","minimum":1,"maximum":128,"default":64},"include_screenshot":{"type":"boolean","default":false}}),json!(["pid","window_id"]))},
+        {"name":"get_window_state","description":"Refresh invalidates earlier tokens. A screenshot is saved as a private PNG file at screenshot.path; coordinates are window points, not image pixels.","inputSchema":schema(json!({"pid":{"type":"integer","minimum":1},"window_id":{"type":"integer","minimum":1},"max_elements":{"type":"integer","minimum":1,"maximum":128,"default":64},"include_screenshot":{"type":"boolean","default":false}}),json!(["pid","window_id"]))},
         {"name":"click","description":"AX press on a fresh element token; no coordinate fallback.","inputSchema":schema(json!({"element_token":uuid.clone()}),json!(["element_token"]))},
         {"name":"set_value","inputSchema":schema(json!({"element_token":uuid.clone(),"text":{"type":"string","maxLength":16384}}),json!(["element_token","text"]))},
         {"name":"press_key","description":"Focused element in foreground app only. No arbitrary hotkeys.","inputSchema":schema(json!({"element_token":uuid,"key":{"enum":["enter","escape","tab","backspace","left","right","up","down"]}}),json!(["element_token","key"]))},
@@ -250,6 +250,19 @@ impl Authority {
     }
     pub fn enabled(&self) -> bool {
         self.0.lock().map(|g| g.enabled).unwrap_or(false)
+    }
+    /// The threads allowed this session, for Settings' activity list.
+    pub fn granted(&self) -> Vec<Uuid> {
+        self.0
+            .lock()
+            .map(|g| {
+                if g.enabled {
+                    g.threads.keys().copied().collect()
+                } else {
+                    Vec::new()
+                }
+            })
+            .unwrap_or_default()
     }
 }
 /// Broker-internal records; raw native handles never enter agent-visible JSON.

@@ -9,7 +9,9 @@ use gpui_kit::{
     component::{
         button::*,
         input::{Input, InputEvent, InputState},
+        menu::{ContextMenuExt, PopupMenuItem},
     },
+    prelude::FluentBuilder as _,
     *,
 };
 use serde_json::{Value, json};
@@ -248,6 +250,46 @@ fn text(value: &Value, key: &str) -> String {
         .unwrap_or("Unknown / not supplied")
         .to_owned()
 }
+/// A link the browser may open: https with a host and no credentials. Core
+/// already drops other check links; PR URLs are pinned to github.com.
+fn browser_link(value: &str) -> Option<&str> {
+    let rest = value.strip_prefix("https://")?;
+    let authority = rest.split(['/', '?', '#']).next()?;
+    (!authority.is_empty()
+        && !authority.contains('@')
+        && !value.chars().any(|c| c.is_control() || c.is_whitespace()))
+    .then_some(value)
+}
+/// Swift's PullRequestMention.markdown: a durable reference kept in the
+/// user's message, with the characters Markdown would misread escaped.
+fn mention_markdown(number: u64, url: &str) -> Option<String> {
+    let mut destination = browser_link(url)?.to_owned();
+    for (character, escaped) in [
+        ("(", "%28"),
+        (")", "%29"),
+        ("<", "%3C"),
+        (">", "%3E"),
+        ("\\", "%5C"),
+    ] {
+        destination = destination.replace(character, escaped);
+    }
+    Some(format!("[#{number}]({destination})"))
+}
+/// What Mention in Message types at the caret: a space first when the caret
+/// follows a word, and one after, as Swift's composer inserts it.
+pub(crate) fn mention_insertion(text: &str, caret: usize, mention: &str) -> String {
+    let after_word = text
+        .get(..caret)
+        .and_then(|before| before.chars().next_back())
+        .is_some_and(|c| !c.is_whitespace());
+    format!("{}{mention} ", if after_word { " " } else { "" })
+}
+fn check_link(check: &Value) -> Option<String> {
+    ["detailsUrl", "targetUrl"]
+        .into_iter()
+        .find_map(|key| check[key].as_str().and_then(browser_link))
+        .map(str::to_owned)
+}
 fn excerpt(value: &str, max: usize) -> String {
     let mut s = value.chars().take(max).collect::<String>();
     if value.chars().count() > max {
@@ -256,6 +298,9 @@ fn excerpt(value: &str, max: usize) -> String {
     s
 }
 
+fn open_draft(pr: &Value) -> bool {
+    pr["isDraft"] == true && pr["state"] == "OPEN"
+}
 fn discard_completions<T>(receiver: &mpsc::Receiver<T>) -> bool {
     let mut discarded = false;
     for result in receiver.try_iter() {
@@ -264,6 +309,12 @@ fn discard_completions<T>(receiver: &mpsc::Receiver<T>) -> bool {
     }
     discarded
 }
+/// What the PR panel asks of the window around it.
+pub enum ReviewPanelEvent {
+    /// Swift's Mention in Message: insert this Markdown link at the composer caret.
+    Mention(String),
+}
+impl EventEmitter<ReviewPanelEvent> for GitHubReviewPanel {}
 pub struct ReviewShutdownStatus {
     pub read: ReadShutdownStatus,
     pub actions: Option<coincide_core::github_write::WriteShutdownStatus>,
@@ -292,6 +343,9 @@ pub struct GitHubReviewPanel {
     writes: Option<crate::github_write_transport::NativeWrites>,
     write_status: Option<crate::github_write_transport::Status>,
     actions_open: bool,
+    /// Mark Ready for Review succeeded for this PR; its reloaded detail says so.
+    marked_ready: Option<u64>,
+    _actions_events: Option<Subscription>,
     scroll: ScrollHandle,
 }
 impl GitHubReviewPanel {
@@ -349,6 +403,8 @@ impl GitHubReviewPanel {
             writes: None,
             write_status: None,
             actions_open: false,
+            marked_ready: None,
+            _actions_events: None,
             scroll: ScrollHandle::new(),
         }
     }
@@ -358,6 +414,11 @@ impl GitHubReviewPanel {
         writes: crate::github_write_transport::NativeWrites,
         cx: &mut Context<Self>,
     ) {
+        self._actions_events = Some(cx.subscribe(&actions, |this, _, event, cx| match event {
+            crate::github_actions::ActionsEvent::MarkedReady(number) => {
+                this.reload_after_ready(*number, cx)
+            }
+        }));
         self.actions = Some(actions);
         self.writes = Some(writes);
         if self.workers.closed() {
@@ -417,9 +478,39 @@ impl GitHubReviewPanel {
             return;
         }
         let scope = self.validated_loaded_scope(cx);
+        let draft = scope.is_some() && self.detail.as_ref().is_some_and(open_draft);
         if let Some(actions) = &self.actions {
-            actions.update(cx, |actions, cx| actions.set_scope(scope, cx));
+            actions.update(cx, |actions, cx| {
+                actions.set_scope(scope, cx);
+                actions.set_draft(draft, cx);
+            });
         }
+    }
+    /// Swift reloads the PR after it is marked ready and says so in its banner.
+    fn reload_after_ready(&mut self, number: u64, cx: &mut Context<Self>) {
+        let Some(head) = self
+            .detail
+            .as_ref()
+            .filter(|pr| pr["number"].as_u64() == Some(number))
+            .map(|pr| text(pr, "headRefOid"))
+        else {
+            return;
+        };
+        self.marked_ready = Some(number);
+        if self.busy {
+            self.notice = format!("Pull request #{number} is ready for review.");
+            cx.notify();
+        } else {
+            self.load_detail(number, head, cx);
+        }
+    }
+    fn open_actions(&mut self, cx: &mut Context<Self>) {
+        if self.workers.closed() {
+            return;
+        }
+        self.sync_action_scope(cx);
+        self.actions_open = true;
+        cx.notify();
     }
     /// root must be the canonical stored-thread working directory. No calls or
     /// filesystem I/O run here. Changing scope invalidates every visible PR/head.
@@ -625,13 +716,18 @@ impl GitHubReviewPanel {
                         self.list.len()
                     );
                 }
-                View::Detail { .. } => {
+                View::Detail { number, .. } => {
                     self.detail = Some(payload["pullRequest"].clone());
-                    self.notice="Read-only detail loaded for the selected head. Refresh before relying on current server state.".into();
+                    self.notice = if self.marked_ready.take() == Some(number) {
+                        format!("Pull request #{number} is ready for review.")
+                    } else {
+                        "Read-only detail loaded for the selected head. Refresh before relying on current server state.".into()
+                    };
                 }
             },
             Err(error) => {
                 self.detail = None;
+                self.marked_ready = None;
                 self.notice = format!("{error}. Refresh the list to retry.");
             }
         }
@@ -693,7 +789,7 @@ impl Render for GitHubReviewPanel {
             .p_3()
             .child("GitHub pull requests")
             .child(div().text_sm().child(
-                "Review pull requests, comment, approve or request changes for the displayed commit, and merge eligible pull requests after confirmation. Checkout is not connected.",
+                "Review pull requests, comment, approve or request changes for the displayed commit, and merge eligible pull requests or mark drafts ready for review after confirmation. Right-click a pull request to open, copy or mention it. Checkout is not connected.",
             ))
             .child(Input::new(&self.repository))
             .child(
@@ -780,7 +876,24 @@ impl Render for GitHubReviewPanel {
             let number = pr["number"].as_u64().unwrap_or(0);
             let refresh_head = text(pr, "headRefOid");
             let copied = text(pr, "url");
+            let opened = browser_link(&copied).map(str::to_owned);
+            let draft = open_draft(pr);
+            let writes_disabled = self.busy
+                || self.workers.closed()
+                || self.actions.is_none()
+                || self.write_status != Some(crate::github_write_transport::Status::Ready);
             toolbar = toolbar
+                .child(
+                    Button::new("github-open-browser")
+                        .icon(gpui_kit::assets::IconName::ExternalLink)
+                        .label("Open in Browser")
+                        .disabled(opened.is_none())
+                        .on_click(move |_, _, cx| {
+                            if let Some(url) = &opened {
+                                cx.open_url(url);
+                            }
+                        }),
+                )
                 .child(
                     Button::new("github-copy-url")
                         .label("Copy PR URL")
@@ -788,24 +901,29 @@ impl Render for GitHubReviewPanel {
                             cx.write_to_clipboard(ClipboardItem::new_string(copied.clone()))
                         }),
                 )
+                .when(draft, |toolbar| {
+                    toolbar.child(
+                        Button::new("github-mark-ready")
+                            .label("Mark Ready for Review…")
+                            .primary()
+                            .disabled(writes_disabled)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.open_actions(cx);
+                                if let Some(actions) = &this.actions {
+                                    actions.update(cx, |actions, cx| actions.request_ready(cx));
+                                }
+                            })),
+                    )
+                })
                 .child(
                     Button::new("github-open-actions")
-                        .label("Review or merge…")
-                        .disabled(
-                            self.busy
-                                || self.workers.closed()
-                                || self.actions.is_none()
-                                || self.write_status
-                                    != Some(crate::github_write_transport::Status::Ready),
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            if this.workers.closed() {
-                                return;
-                            }
-                            this.sync_action_scope(cx);
-                            this.actions_open = true;
-                            cx.notify();
-                        })),
+                        .label(if draft {
+                            "Review…"
+                        } else {
+                            "Review or merge…"
+                        })
+                        .disabled(writes_disabled)
+                        .on_click(cx.listener(|this, _, _, cx| this.open_actions(cx))),
                 )
                 .child(
                     Button::new("github-refresh-detail")
@@ -873,23 +991,30 @@ impl Render for GitHubReviewPanel {
                 body = body.child("No checks were reported; this is not proof of passing checks.");
             }
             for (index, check) in checks.into_iter().flatten().take(100).enumerate() {
-                body = body.child(
-                    div()
-                        .id(SharedString::from(format!("github-check-{number}-{index}")))
-                        .text_sm()
-                        .child(format!(
-                            "{} · status {} · conclusion {}",
-                            check["name"]
-                                .as_str()
-                                .or(check["context"].as_str())
-                                .unwrap_or("Unnamed check"),
-                            check["status"]
-                                .as_str()
-                                .or(check["state"].as_str())
-                                .unwrap_or("Unknown"),
-                            check["conclusion"].as_str().unwrap_or("Not supplied")
-                        )),
+                let name = check["name"]
+                    .as_str()
+                    .or(check["context"].as_str())
+                    .unwrap_or("Unnamed check")
+                    .to_owned();
+                let line = format!(
+                    "{name} · status {} · conclusion {}",
+                    check["status"]
+                        .as_str()
+                        .or(check["state"].as_str())
+                        .unwrap_or("Unknown"),
+                    check["conclusion"].as_str().unwrap_or("Not supplied")
                 );
+                let id = SharedString::from(format!("github-check-{number}-{index}"));
+                // Swift's check rows with a run open it in the browser.
+                body = body.child(match check_link(check) {
+                    Some(url) => Button::new(id)
+                        .label(format!("{line} ↗"))
+                        .ghost()
+                        .tooltip(format!("Open {name} in the browser"))
+                        .on_click(move |_, _, cx| cx.open_url(&url))
+                        .into_any_element(),
+                    None => div().id(id).text_sm().child(line).into_any_element(),
+                });
             }
             if checks.is_some_and(|v| v.len() > 100) {
                 body = body.child("Showing first 100 checks.");
@@ -942,27 +1067,72 @@ impl Render for GitHubReviewPanel {
             if self.list.is_empty() && !self.busy {
                 body = body.child("No pull requests loaded for this filter.");
             }
+            let panel = cx.entity().downgrade();
             for pr in &self.list {
                 let number = pr["number"].as_u64().unwrap_or(0);
                 let head = text(pr, "headRefOid");
+                let url = browser_link(&text(pr, "url")).map(str::to_owned);
+                let panel = panel.clone();
                 body = body.child(
-                    Button::new(SharedString::from(format!("github-pr-{number}")))
-                        .label(format!(
-                            "#{number} {} · {}{}\n{} → {}",
-                            excerpt(&text(pr, "title"), 180),
-                            text(pr, "state"),
-                            if pr["isDraft"] == true {
-                                " / Draft"
-                            } else {
-                                ""
-                            },
-                            text(pr, "headRefName"),
-                            text(pr, "baseRefName")
-                        ))
-                        .disabled(self.busy || self.workers.closed())
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.load_detail(number, head.clone(), cx)
-                        })),
+                    div()
+                        .id(SharedString::from(format!("github-pr-row-{number}")))
+                        .child(
+                            Button::new(SharedString::from(format!("github-pr-{number}")))
+                                .label(format!(
+                                    "#{number} {} · {}{}\n{} → {}",
+                                    excerpt(&text(pr, "title"), 180),
+                                    text(pr, "state"),
+                                    if pr["isDraft"] == true {
+                                        " / Draft"
+                                    } else {
+                                        ""
+                                    },
+                                    text(pr, "headRefName"),
+                                    text(pr, "baseRefName")
+                                ))
+                                .disabled(self.busy || self.workers.closed())
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.load_detail(number, head.clone(), cx)
+                                })),
+                        )
+                        // Swift's PR row menu. Check Out in New Thread is not connected yet.
+                        .context_menu(move |menu, _, _| {
+                            let Some(url) = url.clone() else {
+                                return menu;
+                            };
+                            let (opened, copied, panel) = (url.clone(), url.clone(), panel.clone());
+                            menu.item(
+                                PopupMenuItem::new("Open in Browser")
+                                    .icon(gpui_kit::assets::IconName::ExternalLink)
+                                    .on_click(move |_, _, cx| cx.open_url(&opened)),
+                            )
+                            .item(
+                                PopupMenuItem::new("Copy Link")
+                                    .icon(gpui_kit::assets::IconName::Link)
+                                    .on_click(move |_, _, cx| {
+                                        cx.write_to_clipboard(ClipboardItem::new_string(
+                                            copied.clone(),
+                                        ))
+                                    }),
+                            )
+                            .item(
+                                PopupMenuItem::new("Mention in Message")
+                                    .icon(gpui_kit::assets::IconName::Hash)
+                                    .on_click(move |_, _, cx| {
+                                        if let Some(mention) = mention_markdown(number, &url) {
+                                            let _ = panel.update(cx, |_, cx| {
+                                                cx.emit(ReviewPanelEvent::Mention(mention))
+                                            });
+                                        }
+                                    }),
+                            )
+                            .separator()
+                            .item(
+                                PopupMenuItem::new("Check Out in New Thread")
+                                    .icon(gpui_kit::assets::IconName::GitBranch)
+                                    .disabled(true),
+                            )
+                        }),
                 );
             }
             if self.truncated {
@@ -987,10 +1157,63 @@ impl Render for GitHubReviewPanel {
 #[cfg(test)]
 mod tests {
     use super::{
-        Binding, Involvement, LIMIT, Request, View, current, fetch, repository, validate_payload,
+        Binding, Involvement, LIMIT, Request, View, browser_link, check_link, current, fetch,
+        mention_insertion, mention_markdown, open_draft, repository, validate_payload,
     };
     use anyhow::Result;
     use serde_json::{Value, json};
+    #[::core::prelude::v1::test]
+    fn browser_links_and_mentions_match_swift_and_refuse_unsafe_urls() {
+        let url = "https://github.com/owner/repo/pull/12";
+        assert_eq!(browser_link(url), Some(url));
+        for unsafe_url in [
+            "http://github.com/owner/repo/pull/12",
+            "https://user:pass@github.com/owner/repo/pull/12",
+            "https:///pull/12",
+            "https://github.com/a b",
+            "javascript:alert(1)",
+        ] {
+            assert_eq!(browser_link(unsafe_url), None, "{unsafe_url}");
+        }
+        assert_eq!(
+            mention_markdown(12, url).as_deref(),
+            Some("[#12](https://github.com/owner/repo/pull/12)")
+        );
+        assert_eq!(
+            mention_markdown(3, "https://example.com/a(b)<c>\\d").as_deref(),
+            Some("[#3](https://example.com/a%28b%29%3Cc%3E%5Cd)")
+        );
+        assert_eq!(mention_markdown(3, "http://example.com"), None);
+    }
+    #[::core::prelude::v1::test]
+    fn mention_is_spaced_from_a_preceding_word_only() {
+        assert_eq!(mention_insertion("", 0, "[#1](u)"), "[#1](u) ");
+        assert_eq!(mention_insertion("see", 3, "[#1](u)"), " [#1](u) ");
+        assert_eq!(mention_insertion("see ", 4, "[#1](u)"), "[#1](u) ");
+        assert_eq!(
+            mention_insertion("café", "café".len(), "[#1](u)"),
+            " [#1](u) "
+        );
+        assert_eq!(mention_insertion("a\n", 2, "[#1](u)"), "[#1](u) ");
+    }
+    #[::core::prelude::v1::test]
+    fn check_runs_open_their_safe_link_and_drafts_offer_ready_for_review() {
+        let run = json!({"name":"CI","detailsUrl":"https://github.com/o/r/actions/runs/1"});
+        assert_eq!(
+            check_link(&run).as_deref(),
+            Some("https://github.com/o/r/actions/runs/1")
+        );
+        let status =
+            json!({"context":"ci/x","detailsUrl":null,"targetUrl":"https://ci.example/build/2"});
+        assert_eq!(
+            check_link(&status).as_deref(),
+            Some("https://ci.example/build/2")
+        );
+        assert_eq!(check_link(&json!({"name":"CI","detailsUrl":null})), None);
+        assert!(open_draft(&json!({"isDraft":true,"state":"OPEN"})));
+        assert!(!open_draft(&json!({"isDraft":true,"state":"CLOSED"})));
+        assert!(!open_draft(&json!({"isDraft":false,"state":"OPEN"})));
+    }
     fn request(view: View) -> Request {
         Request {
             binding: Binding {
