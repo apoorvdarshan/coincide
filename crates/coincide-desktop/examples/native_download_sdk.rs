@@ -208,6 +208,9 @@ impl Fixture {
         cx: &mut Context<Self>,
     ) -> Result<Self> {
         let server = Server::start()?;
+        // Like BrowserController: a WebKitGTK context requires GTK first.
+        #[cfg(target_os = "linux")]
+        gtk::init().context("Initialize GTK for the native views")?;
         let mut context = wry::WebContext::new(Some(root.join("runtime")));
         let downloads = root.join("Downloads").join("Coincide");
         let registry = Rc::new(RefCell::new(DownloadRegistry::new(downloads.clone())?));
