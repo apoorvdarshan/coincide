@@ -312,6 +312,24 @@ int cc_mic_progress(void *handle, size_t *samples, float *level) {
     memcpy(level, &bits, sizeof(bits));
     return 1;
 }
+int cc_mic_read_samples(void *handle, size_t offset, float *out, size_t capacity, size_t *written) {
+    if (!handle || !out || !written || !capacity || capacity > 4096) return -7;
+    CCMicrophone *capture = (__bridge CCMicrophone *)handle;
+    *written = 0;
+    __block int result = 0;
+    // The serial owner excludes converter writes, cancellation zeroing and
+    // teardown. The Rust handle remains owned until this synchronous return.
+    dispatch_sync(capture->queue, ^{
+        int state = atomic_load_explicit(&capture->state, memory_order_acquire);
+        size_t published = atomic_load_explicit(&capture->progressSamples, memory_order_acquire);
+        if (state < 1 || !capture->samples || published > capture->maximum || offset > published) { result = -6; return; }
+        size_t count = published - offset;
+        if (count > capacity) count = capacity;
+        memcpy(out, capture->samples + offset, count * sizeof(float));
+        *written = count;
+    });
+    return result;
+}
 size_t cc_mic_sample_count(void *handle) { if (!handle || cc_mic_poll(handle) < 2) return 0; return ((__bridge CCMicrophone *)handle)->sampleCount; }
 int cc_mic_copy_samples(void *handle, float *destination, size_t capacity) {
     if (!handle || !destination || cc_mic_poll(handle) < 2) return -1;
@@ -340,5 +358,29 @@ int cc_mic_fixture_convert(const float *interleaved, size_t frames, uint32_t cha
             if (result) return result;
             return CCConvert(converter, nil, YES, output, out, capacity, written);
         } @catch (NSException *exception) { (void)exception; return -5; }
+    }
+}
+
+// Private buffer/serial-queue regression only. Never creates AVAudioEngine,
+// resolves a device, queries permission, or changes global capture ownership.
+int cc_mic_fixture_read_published(void) {
+    @autoreleasepool {
+        CCMicrophone *capture = [CCMicrophone new];
+        capture->queue = dispatch_queue_create("coincide.mic.fixture.published", DISPATCH_QUEUE_SERIAL);
+        capture->maximum = 4; capture->sampleCount = 4;
+        capture->samples = calloc(4, sizeof(float));
+        if (!capture->samples) return -1;
+        const float source[4] = {0, 0.5f, -0.5f, 0.25f};
+        memcpy(capture->samples, source, sizeof(source));
+        atomic_init(&capture->state, 1); atomic_init(&capture->progressSamples, 3);
+        float out[4] = {9, 9, 9, 9}; size_t written = 0;
+        void *handle = (__bridge void *)capture;
+        if (cc_mic_read_samples(handle, 2, out, 4, &written) || written != 1 || out[0] != -0.5f || out[1] != 9) return -2;
+        if (memcmp(source, capture->samples, sizeof(source))) return -3;
+        if (cc_mic_read_samples(handle, 4, out, 4, &written) != -6 || written != 0) return -4;
+        if (cc_mic_read_samples(handle, 0, out, 4097, &written) != -7) return -5;
+        atomic_store(&capture->state, -1);
+        if (cc_mic_read_samples(handle, 0, out, 4, &written) != -6 || written != 0) return -6;
+        return 0;
     }
 }

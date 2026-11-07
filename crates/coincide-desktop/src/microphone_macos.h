@@ -21,10 +21,13 @@ void cc_mic_cancel(void *capture);
 int cc_mic_poll(void *capture);
 // Read-only atomics from already-converted audio, never a permission/device call.
 int cc_mic_progress(void *capture, size_t *samples, float *level);
+// Copies at most4096 already-published converted samples on the conversion queue.
+int cc_mic_read_samples(void *capture, size_t offset, float *out, size_t capacity, size_t *written);
 size_t cc_mic_sample_count(void *capture);
 int cc_mic_copy_samples(void *capture, float *destination, size_t capacity);
 void cc_mic_destroy(void *capture);
 // Fixture path uses AVAudioConverter only: never creates an engine or asks TCC.
+int cc_mic_fixture_read_published(void);
 int cc_mic_fixture_convert(const float *interleaved, size_t frames, uint32_t channels,
                           double rate, float *out, size_t capacity, size_t *written);
 #endif

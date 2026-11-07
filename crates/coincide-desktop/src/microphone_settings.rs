@@ -2,8 +2,8 @@
 //! construction/rendering never request permission, record, transcribe or send.
 use crate::{
     microphone::{
-        CaptureBinding, CaptureError, CaptureEvent, CaptureProgress, CapturedAudio, InputDevice,
-        Microphone, Permission,
+        CaptureBinding, CaptureChunk, CaptureError, CaptureEvent, CaptureProgress, CapturedAudio,
+        InputDevice, Microphone, Permission,
     },
     transcription_settings::{ComposerBinding, TextReady},
 };
@@ -15,11 +15,12 @@ use gpui_kit::{
     Context, IntoElement, ParentElement, Render, SharedString, Styled, Window,
     component::{Disableable, button::Button},
     div,
+    prelude::FluentBuilder,
 };
 use std::{
     path::PathBuf,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, Receiver, Sender, SyncSender},
     },
@@ -105,13 +106,27 @@ struct DeviceReply {
     generation: u64,
     result: Result<Vec<InputDevice>, CaptureError>,
 }
+struct PartialPreview {
+    generation: u64,
+    binding: ComposerBinding,
+    text: String,
+}
 struct Shared {
+    preview: Mutex<Option<PartialPreview>>,
     enabled: AtomicBool,
     generation: AtomicU64,
     alive: AtomicBool,
     controller_constructed: AtomicBool,
 }
 trait Controller {
+    fn read_chunk(
+        &mut self,
+        _: Uuid,
+        _: usize,
+        _: usize,
+    ) -> Result<Option<CaptureChunk>, CaptureError> {
+        Ok(None)
+    }
     fn input_devices(&mut self) -> Result<Vec<InputDevice>, CaptureError> {
         Err(CaptureError::Unavailable)
     }
@@ -134,6 +149,14 @@ trait Controller {
     fn accepts(&self, audio: &CapturedAudio, binding: &CaptureBinding) -> bool;
 }
 impl Controller for Microphone {
+    fn read_chunk(
+        &mut self,
+        session: Uuid,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Option<CaptureChunk>, CaptureError> {
+        Microphone::read_chunk(self, session, offset, limit)
+    }
     fn input_devices(&mut self) -> Result<Vec<InputDevice>, CaptureError> {
         Microphone::input_devices(self)
     }
@@ -178,6 +201,17 @@ enum InferenceFailure {
 }
 type ModelLease = Arc<coincide_core::dictation::model_assets::ModelReadLease>;
 trait Inference {
+    fn stream_apple(
+        &mut self,
+        _: usize,
+        _: &[f32],
+        _: &(dyn Fn() -> bool + Sync),
+    ) -> Result<(), InferenceFailure> {
+        Err(InferenceFailure::Failed)
+    }
+    fn apple_partial(&mut self) -> Option<String> {
+        None
+    }
     fn prepare_apple(
         &mut self,
         _: &crate::voice_speech::Configuration,
@@ -240,6 +274,29 @@ fn apple_failure(error: crate::voice_speech::Error) -> InferenceFailure {
 }
 
 impl Inference for LocalInference {
+    fn stream_apple(
+        &mut self,
+        offset: usize,
+        samples: &[f32],
+        cancelled: &(dyn Fn() -> bool + Sync),
+    ) -> Result<(), InferenceFailure> {
+        let result = self
+            .apple
+            .as_mut()
+            .ok_or(InferenceFailure::Failed)?
+            .stream(offset, samples, cancelled);
+        if let Err(error) = result {
+            if error == crate::voice_speech::Error::CleanupPending {
+                self.apple_uncertain = true;
+            }
+            self.cancel_apple();
+            return Err(apple_failure(error));
+        }
+        Ok(())
+    }
+    fn apple_partial(&mut self) -> Option<String> {
+        self.apple.as_mut()?.partial()
+    }
     fn prepare_apple(
         &mut self,
         config: &crate::voice_speech::Configuration,
@@ -390,6 +447,8 @@ struct Owner {
     session: Option<Uuid>,
     audio: Option<CapturedAudio>,
     model_lease: Option<ModelLease>,
+    stream_offset: usize,
+    stream_generation: Option<u64>,
     dictation: bool,
     progress_bucket: Option<usize>,
     text_pending: bool,
@@ -431,6 +490,13 @@ impl Owner {
         }
         self.audio = None;
         self.model_lease = None;
+        self.stream_offset = 0;
+        self.stream_generation = None;
+        self.shared
+            .preview
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take();
         if let Some(inference) = &mut self.inference {
             inference.cancel_apple();
         }
@@ -648,11 +714,117 @@ impl Owner {
             _ => {}
         }
     }
+    fn stream_capture(&mut self) -> bool {
+        if !self.dictation
+            || !matches!(self.phase, Phase::Recording | Phase::Stopping)
+            || !matches!(
+                self.target.as_ref().and_then(|t| t.config.as_ref()),
+                Some(RecordingConfig::Apple(_))
+            )
+        {
+            return true;
+        }
+        let Some(session) = self.session else {
+            return true;
+        };
+        for _ in 0..8 {
+            let chunk = match self.controller.as_mut().unwrap().read_chunk(
+                session,
+                self.stream_offset,
+                4096,
+            ) {
+                Ok(Some(chunk)) => chunk,
+                Ok(None) => break,
+                Err(_) => return false,
+            };
+            if chunk.session != session
+                || chunk.offset != self.stream_offset
+                || chunk.samples.is_empty()
+                || chunk.samples.len() > 4096
+                || chunk.samples.iter().any(|s| !s.is_finite())
+                || self
+                    .target
+                    .as_ref()
+                    .and_then(Target::capture_binding)
+                    .as_ref()
+                    != Some(&chunk.binding)
+                || self
+                    .stream_generation
+                    .is_some_and(|generation| generation != chunk.generation)
+            {
+                return false;
+            }
+            let maximum = self
+                .target
+                .as_ref()
+                .and_then(|t| t.config.as_ref())
+                .map(|config| config.maximum_seconds())
+                .unwrap_or(0)
+                .saturating_mul(16_000);
+            if chunk
+                .offset
+                .checked_add(chunk.samples.len())
+                .is_none_or(|end| end > maximum)
+            {
+                return false;
+            }
+            self.stream_generation = Some(chunk.generation);
+            let shared = self.shared.clone();
+            let generation = self.generation;
+            let cancelled = || {
+                !shared.alive.load(Ordering::Acquire)
+                    || !shared.enabled.load(Ordering::Acquire)
+                    || shared.generation.load(Ordering::Acquire) != generation
+            };
+            if self
+                .inference
+                .as_mut()
+                .unwrap()
+                .stream_apple(chunk.offset, &chunk.samples, &cancelled)
+                .is_err()
+            {
+                return false;
+            }
+            self.stream_offset += chunk.samples.len();
+        }
+        if !self.current() {
+            return false;
+        }
+        if let Some(text) = self.inference.as_mut().unwrap().apple_partial() {
+            if text.len() > 1_048_576 {
+                return false;
+            }
+            if let Some(binding) = self
+                .target
+                .as_ref()
+                .and_then(|target| target.binding.clone())
+            {
+                *self
+                    .shared
+                    .preview
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner()) = Some(PartialPreview {
+                    generation: self.generation,
+                    binding,
+                    text,
+                });
+            }
+        }
+        true
+    }
     fn tick(&mut self) {
         if !self.current() {
             if self.target.is_some() {
                 self.reset();
             }
+            return;
+        }
+        if !self.stream_capture() {
+            self.reset();
+            self.phase = Phase::Failed;
+            self.publish(
+                "Dictation stream changed or failed. Partial preview discarded; no text inserted.",
+            );
             return;
         }
         // Bounded drain prevents a broken backend starving cancellation commands.
@@ -697,7 +869,10 @@ impl Owner {
                     }
                 }
                 CaptureEvent::Audio(audio) => {
-                    let valid = self.session == Some(audio.session)
+                    let valid = self
+                        .stream_generation
+                        .is_none_or(|generation| generation == audio.generation)
+                        && self.session == Some(audio.session)
                         && self
                             .target
                             .as_ref()
@@ -881,6 +1056,9 @@ impl Connection {
         self.discard_snapshots();
     }
     fn discard_snapshots(&self) {
+        if let Ok(mut preview) = self.shared.preview.try_lock() {
+            preview.take();
+        }
         for _ in self.snapshots.try_iter() {}
         for _ in self.devices.try_iter() {}
     }
@@ -914,6 +1092,7 @@ fn spawn_owner(factory: Factory) -> (Connection, Receiver<TextReady>) {
         generation: AtomicU64::new(0),
         alive: AtomicBool::new(true),
         controller_constructed: AtomicBool::new(false),
+        preview: Mutex::new(None),
     });
     let (commands, receiver) = mpsc::sync_channel(8);
     let (snapshots, updates) = mpsc::channel();
@@ -941,6 +1120,8 @@ fn spawn_owner(factory: Factory) -> (Connection, Receiver<TextReady>) {
                 session: None,
                 audio: None,
                 model_lease: None,
+                stream_offset: 0,
+                stream_generation: None,
                 dictation: false,
                 progress_bucket: None,
                 text_pending: false,
@@ -984,6 +1165,7 @@ impl Drop for Connection {
 /// Neither a capability nor settings grant OS permission or start recording.
 /// Only explicit native actions can request access, capture or transcribe.
 pub struct MicrophoneSettings {
+    partial_preview: Option<String>,
     connection: Connection,
     target: Target,
     generation: u64,
@@ -1009,7 +1191,7 @@ impl MicrophoneSettings {
     }
     fn with_factory(factory: Factory) -> (Self, Receiver<TextReady>) {
         let (connection, events) = spawn_owner(factory);
-        (Self { connection, target: Target { binding: None, settings_revision: 0, input_device_uid:None, config: None }, generation: 0, backend_enabled: false, phase: Phase::Idle, permission: Permission::Unavailable, status: "This build has no native microphone backend. File transcription remains available.".into(), listening_since:None, progress:None, text_pending:false, device_catalog:None,device_refreshing:false,device_status:"Input devices have not been refreshed.".into() }, events)
+        (Self { partial_preview:None,connection, target: Target { binding: None, settings_revision: 0, input_device_uid:None, config: None }, generation: 0, backend_enabled: false, phase: Phase::Idle, permission: Permission::Unavailable, status: "This build has no native microphone backend. File transcription remains available.".into(), listening_since:None, progress:None, text_pending:false, device_catalog:None,device_refreshing:false,device_status:"Input devices have not been refreshed.".into() }, events)
     }
     #[cfg(test)]
     pub fn set_target(
@@ -1059,6 +1241,7 @@ impl MicrophoneSettings {
                 .fetch_add(1, Ordering::AcqRel)
                 .wrapping_add(1);
             self.text_pending = false;
+            self.partial_preview = None;
             self.device_refreshing = false;
             self.device_refreshing = false;
             self.target = target;
@@ -1075,6 +1258,7 @@ impl MicrophoneSettings {
     }
     pub fn request_shutdown(&mut self) {
         self.connection.request_shutdown();
+        self.partial_preview = None;
         self.text_pending = false;
         self.device_refreshing = false;
         self.generation = self.connection.shared.generation.load(Ordering::Acquire);
@@ -1088,6 +1272,7 @@ impl MicrophoneSettings {
         self.connection.shutdown_status()
     }
     pub fn cancel(&mut self, cx: &mut Context<Self>) {
+        self.partial_preview = None;
         if !self.connection.shared.alive.load(Ordering::Acquire) {
             return;
         }
@@ -1170,6 +1355,11 @@ impl MicrophoneSettings {
                 | Phase::Transcribing
         )
     }
+    pub fn partial_preview(&self) -> Option<&str> {
+        self.dictation_active()
+            .then_some(self.partial_preview.as_deref())
+            .flatten()
+    }
     pub fn level(&self) -> Option<f32> {
         if self.phase == Phase::Recording {
             self.progress.map(|p| p.level)
@@ -1233,6 +1423,25 @@ impl MicrophoneSettings {
                 cx.notify();
             }
         }
+        let preview = self
+            .connection
+            .shared
+            .preview
+            .try_lock()
+            .ok()
+            .and_then(|mut slot| slot.take());
+        if let Some(preview) = preview {
+            if preview.generation == self.generation
+                && self.target.binding.as_ref() == Some(&preview.binding)
+                && self.dictation_active()
+            {
+                self.partial_preview = Some(preview.text);
+                cx.notify();
+            }
+        }
+        if !self.dictation_active() {
+            self.partial_preview = None;
+        }
     }
     fn action(&mut self, action: Action, cx: &mut Context<Self>) {
         if !self.backend_enabled || !self.connection.shared.alive.load(Ordering::Acquire) {
@@ -1284,6 +1493,7 @@ impl Render for MicrophoneSettings {
             .child(Button::new("microphone-cancel").label("Cancel").disabled(gated && self.phase == Phase::Idle).on_click(cx.listener(|this, _, _, cx| this.cancel(cx))))
             .child(Button::new("microphone-transcribe").label("Transcribe Recording").disabled(gated || self.phase != Phase::Captured).on_click(cx.listener(|this, _, _, cx| this.action(Action::Transcribe, cx))))
             .child(SharedString::from(self.status.clone()))
+            .when_some(self.partial_preview(),|pane,text|pane.child(div().max_h(gpui_kit::px(64.0)).overflow_hidden().child("Dictation preview (final insertion after Stop)").child(text.to_owned())))
     }
 }
 
@@ -1305,6 +1515,10 @@ mod tests {
         inference: usize,
         apple_prepared: bool,
         apple_prepare_calls: usize,
+        streaming: bool,
+        wrong_chunk: bool,
+        chunk_generation: Option<u64>,
+        streamed_samples: usize,
         ready_permission: bool,
         device_queries: usize,
         selected_inputs: Vec<Option<String>>,
@@ -1322,6 +1536,28 @@ mod tests {
         events: VecDeque<CaptureEvent>,
     }
     impl Controller for FakeController {
+        fn read_chunk(
+            &mut self,
+            session: Uuid,
+            offset: usize,
+            _: usize,
+        ) -> Result<Option<CaptureChunk>, CaptureError> {
+            let trace = self.trace.lock().unwrap();
+            if !trace.streaming || offset >= 2 {
+                return Ok(None);
+            }
+            let mut binding = self.binding.clone().unwrap();
+            if trace.wrong_chunk {
+                binding.thread_id = "foreign-thread".into();
+            }
+            Ok(Some(CaptureChunk {
+                session,
+                generation: trace.chunk_generation.unwrap_or(1),
+                binding,
+                offset,
+                samples: vec![0.0, 0.5],
+            }))
+        }
         fn input_devices(&mut self) -> Result<Vec<InputDevice>, CaptureError> {
             self.trace.lock().unwrap().device_queries += 1;
             Ok(vec![InputDevice {
@@ -1433,6 +1669,23 @@ mod tests {
         revoke: Option<Arc<Shared>>,
     }
     impl Inference for FakeInference {
+        fn stream_apple(
+            &mut self,
+            offset: usize,
+            samples: &[f32],
+            cancelled: &(dyn Fn() -> bool + Sync),
+        ) -> Result<(), InferenceFailure> {
+            assert!(!cancelled());
+            let mut trace = self.trace.lock().unwrap();
+            assert!(trace.apple_prepared);
+            assert_eq!(offset, trace.streamed_samples);
+            trace.streamed_samples += samples.len();
+            Ok(())
+        }
+        fn apple_partial(&mut self) -> Option<String> {
+            let trace = self.trace.lock().unwrap();
+            (trace.streaming && trace.streamed_samples > 0).then(|| "途中の合成音声".into())
+        }
         fn prepare_apple(
             &mut self,
             config: &crate::voice_speech::Configuration,
@@ -1575,6 +1828,7 @@ mod tests {
             generation: AtomicU64::new(1),
             alive: AtomicBool::new(true),
             controller_constructed: AtomicBool::new(false),
+            preview: Mutex::new(None),
         });
         let trace = Arc::new(Mutex::new(Trace::default()));
         let (text, events) = mpsc::channel();
@@ -1599,6 +1853,8 @@ mod tests {
             session: None,
             audio: None,
             model_lease: None,
+            stream_offset: 0,
+            stream_generation: None,
             dictation: false,
             progress_bucket: None,
             text_pending: false,
@@ -1666,6 +1922,100 @@ mod tests {
         assert_eq!(trace.apple_prepare_calls, 1);
         assert_eq!(trace.requests, 1);
         assert_eq!(trace.inference, 1);
+    }
+    #[::core::prelude::v1::test]
+    fn apple_stream_preview_is_bounded_and_never_a_composer_or_send_receipt() {
+        let (mut owner, events, trace) = setup(true, false);
+        trace.lock().unwrap().streaming = true;
+        let mut target = target();
+        target.config = Some(RecordingConfig::Apple(crate::voice_speech::Configuration {
+            locale: "ja-JP".into(),
+            maximum_seconds: 1,
+        }));
+        owner.command(Command {
+            generation: 1,
+            target: target.clone(),
+            action: Action::BeginDictation,
+        });
+        owner.tick();
+        assert_eq!(trace.lock().unwrap().streamed_samples, 2);
+        assert!(
+            events.try_recv().is_err(),
+            "partial preview never mints final text/send authority"
+        );
+        let preview = owner.shared.preview.lock().unwrap().take().unwrap();
+        assert_eq!(preview.text, "途中の合成音声");
+        assert!(target.binding.as_ref() == Some(&preview.binding));
+        assert_eq!(preview.generation, 1);
+        owner.tick();
+        assert_eq!(
+            trace.lock().unwrap().streamed_samples,
+            2,
+            "published audio is not replayed"
+        );
+        owner.shared.generation.fetch_add(1, Ordering::AcqRel);
+        owner.tick();
+        assert!(owner.shared.preview.lock().unwrap().is_none());
+        assert!(events.try_recv().is_err());
+    }
+    #[::core::prelude::v1::test]
+    fn final_audio_must_have_the_actual_generation_of_its_streamed_prefix() {
+        let (mut owner, events, trace) = setup(true, false);
+        {
+            let mut trace = trace.lock().unwrap();
+            trace.streaming = true;
+            trace.chunk_generation = Some(2);
+        }
+        let mut target = target();
+        target.config = Some(RecordingConfig::Apple(crate::voice_speech::Configuration {
+            locale: "ja-JP".into(),
+            maximum_seconds: 1,
+        }));
+        owner.command(Command {
+            generation: 1,
+            target: target.clone(),
+            action: Action::BeginDictation,
+        });
+        owner.tick();
+        assert_eq!(trace.lock().unwrap().streamed_samples, 2);
+        owner.command(Command {
+            generation: 1,
+            target,
+            action: Action::Stop,
+        });
+        owner.tick();
+        assert_eq!(
+            trace.lock().unwrap().inference,
+            0,
+            "a mismatched final source must never finalize the earlier stream"
+        );
+        assert!(events.try_recv().is_err());
+        assert!(owner.shared.preview.lock().unwrap().is_none());
+    }
+    #[::core::prelude::v1::test]
+    fn foreign_chunk_is_rejected_before_speech_and_cancels_the_actual_owner() {
+        let (mut owner, events, trace) = setup(true, false);
+        {
+            let mut trace = trace.lock().unwrap();
+            trace.streaming = true;
+            trace.wrong_chunk = true;
+        }
+        let mut target = target();
+        target.config = Some(RecordingConfig::Apple(crate::voice_speech::Configuration {
+            locale: "ja-JP".into(),
+            maximum_seconds: 1,
+        }));
+        owner.command(Command {
+            generation: 1,
+            target,
+            action: Action::BeginDictation,
+        });
+        owner.tick();
+        let trace = trace.lock().unwrap();
+        assert_eq!(trace.streamed_samples, 0);
+        assert_eq!(trace.cancels, 1);
+        assert!(owner.shared.preview.lock().unwrap().is_none());
+        assert!(events.try_recv().is_err());
     }
     #[::core::prelude::v1::test]
     fn failed_apple_preparation_never_opens_microphone_or_emits_text() {
@@ -2037,6 +2387,7 @@ mod tests {
             panic!("closed owner must not construct microphone")
         }));
         let mut panel = MicrophoneSettings {
+            partial_preview: None,
             connection,
             target: target(),
             generation: 0,

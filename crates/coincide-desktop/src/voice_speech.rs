@@ -36,12 +36,17 @@ mod native {
             code: *mut i32,
             progress: *mut f64,
         );
+        fn cc_voice_speech_revision(raw: *mut c_void) -> u64;
+        fn cc_voice_speech_partial(raw: *mut c_void, output: *mut u8, capacity: usize) -> isize;
         fn cc_voice_speech_text(raw: *mut c_void, output: *mut u8, capacity: usize) -> isize;
         fn cc_voice_speech_cancel(raw: *mut c_void);
         fn cc_voice_speech_release(raw: *mut c_void);
     }
-    pub(super) struct Session {
+    pub(crate) struct Session {
         raw: NonNull<c_void>,
+        streamed: usize,
+        begun: bool,
+        revision: u64,
     }
     impl Session {
         pub fn prepare(
@@ -62,7 +67,12 @@ mod native {
                 cc_voice_speech_create(config.locale.as_ptr(), config.locale.len())
             })
             .ok_or(Error::Unavailable)?;
-            let mut session = Self { raw };
+            let mut session = Self {
+                raw,
+                streamed: 0,
+                begun: false,
+                revision: 0,
+            };
             let result = (|| {
                 if unsafe { cc_voice_speech_prepare(raw.as_ptr()) } != 1 {
                     return Err(Error::Unavailable);
@@ -138,28 +148,100 @@ mod native {
                 result => result,
             }
         }
+        fn begin(&mut self, cancelled: &(dyn Fn() -> bool + Sync)) -> Result<(), Error> {
+            if cancelled() {
+                return self.cancel_and_wait();
+            }
+            if self.begun {
+                return Ok(());
+            }
+            if unsafe { cc_voice_speech_begin(self.raw.as_ptr()) } != 1 {
+                return Err(Error::Unavailable);
+            }
+            self.wait(4, cancelled, Duration::from_secs(30))?;
+            self.begun = true;
+            Ok(())
+        }
+        fn append_pcm(
+            &mut self,
+            offset: usize,
+            samples: &[f32],
+            cancelled: &(dyn Fn() -> bool + Sync),
+        ) -> Result<(), Error> {
+            if offset != self.streamed
+                || samples.is_empty()
+                || samples.len() > 4096
+                || offset.saturating_add(samples.len()) > 16_000 * 60
+                || samples.iter().any(|s| !s.is_finite() || s.abs() > 1.0)
+            {
+                return Err(Error::Bounds);
+            }
+            self.begin(cancelled)?;
+            if unsafe { cc_voice_speech_append(self.raw.as_ptr(), samples.as_ptr(), samples.len()) }
+                != 1
+            {
+                return Err(Error::Unavailable);
+            }
+            self.streamed += samples.len();
+            Ok(())
+        }
+        pub fn stream(
+            &mut self,
+            offset: usize,
+            samples: &[f32],
+            cancelled: &(dyn Fn() -> bool + Sync),
+        ) -> Result<(), Error> {
+            if samples.len() > 4096 || samples.iter().any(|s| !s.is_finite()) {
+                return Err(Error::Bounds);
+            }
+            // Match the canonical final-WAV codec exactly so its unread tail
+            // and this prefix do not use different quantization.
+            let pcm = samples
+                .iter()
+                .map(|s| ((s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16) as f32 / 32768.0)
+                .collect::<Vec<_>>();
+            self.append_pcm(offset, &pcm, cancelled)
+        }
+        pub fn partial(&mut self) -> Option<String> {
+            if !self.begun {
+                return None;
+            }
+            let revision = unsafe { cc_voice_speech_revision(self.raw.as_ptr()) };
+            if revision == self.revision {
+                return None;
+            }
+            let length =
+                unsafe { cc_voice_speech_partial(self.raw.as_ptr(), std::ptr::null_mut(), 0) };
+            if !(0..=1_048_576).contains(&length) {
+                return None;
+            }
+            // Bounded slack permits a small concurrent native update. Larger
+            // growth is retried on the next owned tick without publishing it.
+            let mut bytes = vec![0; (length as usize).saturating_add(1024).min(1_048_576)];
+            let count = unsafe {
+                cc_voice_speech_partial(self.raw.as_ptr(), bytes.as_mut_ptr(), bytes.len())
+            };
+            if count < 0 || count as usize > bytes.len() {
+                return None;
+            }
+            bytes.truncate(count as usize);
+            let text = String::from_utf8(bytes).ok()?;
+            self.revision = revision;
+            Some(text)
+        }
         pub fn transcribe(
             &mut self,
             wav: &[u8],
             cancelled: &(dyn Fn() -> bool + Sync),
         ) -> Result<String, Error> {
             let samples = pcm_samples(wav)?;
-            if cancelled() {
-                return self.cancel_and_wait().map(|_| String::new());
+            if self.streamed > samples.len() {
+                return Err(Error::Bounds);
             }
-            if unsafe { cc_voice_speech_begin(self.raw.as_ptr()) } != 1 {
-                return Err(Error::Unavailable);
-            }
-            self.wait(4, cancelled, Duration::from_secs(30))?;
-            for chunk in samples.chunks(4096) {
-                if cancelled() {
-                    return self.cancel_and_wait().map(|_| String::new());
-                }
-                if unsafe { cc_voice_speech_append(self.raw.as_ptr(), chunk.as_ptr(), chunk.len()) }
-                    != 1
-                {
-                    return Err(Error::Unavailable);
-                }
+            self.begin(cancelled)?;
+            let tail = &samples[self.streamed..];
+            for chunk in tail.chunks(4096) {
+                self.append_pcm(self.streamed, chunk, cancelled)?;
             }
             if unsafe { cc_voice_speech_finish(self.raw.as_ptr()) } != 1 {
                 return Err(Error::Unavailable);
@@ -194,6 +276,18 @@ pub(super) use native::Session;
 pub(super) struct Session;
 #[cfg(not(all(target_os = "macos", feature = "native-microphone")))]
 impl Session {
+    pub fn stream(
+        &mut self,
+        _: usize,
+        _: &[f32],
+        _: &(dyn Fn() -> bool + Sync),
+    ) -> Result<(), Error> {
+        Err(Error::Unavailable)
+    }
+    pub fn partial(&mut self) -> Option<String> {
+        None
+    }
+
     pub fn cancel(&mut self) -> Result<(), Error> {
         Ok(())
     }

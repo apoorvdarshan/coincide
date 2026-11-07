@@ -110,7 +110,7 @@ impl Coincide {
                     cx,
                 ),
             );
-        pane=pane.child(match voice.engine {Engine::Whisper=>"Local Whisper uses the executable and model selected below. Selecting an engine does not open the microphone.",Engine::Apple=>if voice_speech::compiled(){"On-device Apple Speech prepares its language assets and authorization only after explicit Dictate. Audio remains on this device. This adapter inserts final text after Stop."}else{"Apple Speech is unavailable on this platform/build. Select Local Whisper for equivalent offline dictation."},Engine::OpenAi|Engine::Groq=>"Recordings are sent to this service under your account and its data policies. Explicitly save or load a Voice key below; provider accounts do not supply Voice credentials."});
+        pane=pane.child(match voice.engine {Engine::Whisper=>"Local Whisper uses the executable and model selected below. Selecting an engine does not open the microphone.",Engine::Apple=>if voice_speech::compiled(){"On-device Apple Speech prepares its language assets and authorization only after explicit Dictate. Audio remains on this device. Interim text appears as a preview; final text is inserted after Stop."}else{"Apple Speech is unavailable on this platform/build. Select Local Whisper for equivalent offline dictation."},Engine::OpenAi|Engine::Groq=>"Recordings are sent to this service under your account and its data policies. Explicitly save or load a Voice key below; provider accounts do not supply Voice credentials."});
         let models: &[(&str, &str)] = match voice.engine {
             Engine::OpenAi => &[
                 ("gpt-transcribe", "GPT Transcribe"),
@@ -408,6 +408,19 @@ impl Coincide {
                     },
                 )
             })
+            .when_some(
+                self.microphone_panel.read(cx).partial_preview(),
+                |pane, text| {
+                    pane.child(
+                        div()
+                            .id("dictation-partial-preview")
+                            .max_h(px(64.0))
+                            .overflow_hidden()
+                            .child("Dictation preview · final text is inserted after Stop")
+                            .child(text.to_owned()),
+                    )
+                },
+            )
             .when(!active && self.microphone_panel.read(cx).failed(), |pane| {
                 pane.child(self.microphone_panel.read(cx).status_text())
             })

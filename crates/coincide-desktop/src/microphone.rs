@@ -65,6 +65,14 @@ pub struct CapturedAudio {
     pub wav: Vec<u8>,
     pub limit_reached: bool,
 }
+/// Native-only personal audio. No Debug/Serialize or document constructor.
+pub struct CaptureChunk {
+    pub session: Uuid,
+    pub generation: u64,
+    pub binding: CaptureBinding,
+    pub offset: usize,
+    pub samples: Vec<f32>,
+}
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CaptureProgress {
     pub session: Uuid,
@@ -115,6 +123,9 @@ fn validate_devices(devices: &[InputDevice]) -> Result<(), CaptureError> {
     Ok(())
 }
 trait CaptureBackend {
+    fn read_samples(&mut self, _: usize, _: usize) -> Result<Vec<f32>, CaptureError> {
+        Ok(Vec::new())
+    }
     fn input_devices(&mut self) -> Result<Vec<InputDevice>, CaptureError> {
         Err(CaptureError::Unavailable)
     }
@@ -268,6 +279,47 @@ impl Microphone {
         });
         self.events.push_back(CaptureEvent::Started(id));
         Ok(id)
+    }
+    /// Read only the live owner's published prefix. This does not open a
+    /// device or grant a new consumer any capture authority.
+    pub fn read_chunk(
+        &mut self,
+        id: Uuid,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Option<CaptureChunk>, CaptureError> {
+        if limit == 0 || limit > 4096 {
+            return Err(CaptureError::InvalidLimit);
+        }
+        let session = self
+            .session
+            .as_ref()
+            .filter(|session| {
+                session.id == id
+                    && session.generation == self.generation
+                    && self.binding.as_ref() == Some(&session.binding)
+            })
+            .ok_or(CaptureError::InvalidBinding)?;
+        if offset > session.maximum_samples {
+            return Err(CaptureError::Overflow);
+        }
+        let samples = self.backend.read_samples(offset, limit)?;
+        if samples.len() > limit
+            || offset.saturating_add(samples.len()) > session.maximum_samples
+            || samples.iter().any(|sample| !sample.is_finite())
+        {
+            return Err(CaptureError::Overflow);
+        }
+        if samples.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(CaptureChunk {
+            session: id,
+            generation: session.generation,
+            binding: session.binding.clone(),
+            offset,
+            samples,
+        }))
     }
     pub fn stop(&mut self, session: Uuid) -> Result<(), CaptureError> {
         let active = self
@@ -455,7 +507,16 @@ mod platform {
         fn cc_mic_sample_count(handle: *mut c_void) -> usize;
         fn cc_mic_copy_samples(handle: *mut c_void, destination: *mut f32, capacity: usize) -> i32;
         fn cc_mic_destroy(handle: *mut c_void);
+        fn cc_mic_read_samples(
+            handle: *mut c_void,
+            offset: usize,
+            out: *mut f32,
+            capacity: usize,
+            written: *mut usize,
+        ) -> i32;
         fn cc_mic_progress(handle: *mut c_void, samples: *mut usize, level: *mut f32) -> i32;
+        #[cfg(test)]
+        pub(super) fn cc_mic_fixture_read_published() -> i32;
         #[cfg(test)]
         pub(super) fn cc_mic_fixture_convert(
             input: *const f32,
@@ -494,6 +555,34 @@ mod platform {
         }
     }
     impl CaptureBackend for Native {
+        fn read_samples(&mut self, offset: usize, limit: usize) -> Result<Vec<f32>, CaptureError> {
+            if limit == 0 || limit > 4096 {
+                return Err(CaptureError::InvalidLimit);
+            }
+            let Some(handle) = self.capture else {
+                return Err(CaptureError::InvalidBinding);
+            };
+            let mut samples = vec![0.0; limit];
+            let mut written = 0;
+            let code = unsafe {
+                cc_mic_read_samples(
+                    handle.as_ptr(),
+                    offset,
+                    samples.as_mut_ptr(),
+                    limit,
+                    &mut written,
+                )
+            };
+            if code != 0 {
+                return Err(error(code));
+            }
+            if written > limit {
+                return Err(CaptureError::Overflow);
+            }
+            samples.truncate(written);
+            Ok(samples)
+        }
+
         fn input_devices(&mut self) -> Result<Vec<InputDevice>, CaptureError> {
             if self.capture.is_some() {
                 return Err(CaptureError::Busy);
@@ -665,9 +754,21 @@ mod tests {
         recording: bool,
         progress: Option<BackendProgress>,
         event: Option<BackendEvent>,
+        published: Vec<f32>,
     }
     struct Fake(Rc<RefCell<FakeState>>);
     impl CaptureBackend for Fake {
+        fn read_samples(&mut self, offset: usize, limit: usize) -> Result<Vec<f32>, CaptureError> {
+            let state = self.0.borrow();
+            if offset > state.published.len() {
+                return Err(CaptureError::InvalidBinding);
+            }
+            Ok(state.published[offset..]
+                .iter()
+                .take(limit)
+                .copied()
+                .collect())
+        }
         fn progress(&self) -> Option<BackendProgress> {
             self.0.borrow().progress
         }
@@ -740,10 +841,46 @@ mod tests {
             recording: false,
             progress: None,
             event: None,
+            published: Vec::new(),
         }));
         let mut controller = Microphone::with_backend(Box::new(Fake(state.clone())));
         controller.set_binding(Some(binding(1)));
         (controller, state)
+    }
+    #[::core::prelude::v1::test]
+    fn published_pcm_chunks_are_bounded_and_bound_to_actual_session_and_target() {
+        let (mut microphone, state) = setup(Permission::Authorized);
+        let session = microphone.start(1).unwrap();
+        state.borrow_mut().published = vec![0.0, 0.5, -0.5];
+        let chunk = microphone.read_chunk(session, 0, 2).unwrap().unwrap();
+        assert_eq!(chunk.samples, vec![0.0, 0.5]);
+        assert_eq!(chunk.offset, 0);
+        assert!(chunk.binding == binding(1));
+        assert_eq!(chunk.session, session);
+        assert_eq!(
+            microphone
+                .read_chunk(session, 2, 2)
+                .unwrap()
+                .unwrap()
+                .samples,
+            vec![-0.5]
+        );
+        assert!(microphone.read_chunk(session, 3, 2).unwrap().is_none());
+        assert!(matches!(
+            microphone.read_chunk(Uuid::new_v4(), 0, 2),
+            Err(CaptureError::InvalidBinding)
+        ));
+        assert!(matches!(
+            microphone.read_chunk(session, 0, 4097),
+            Err(CaptureError::InvalidLimit)
+        ));
+        assert_eq!(state.borrow().starts, 1);
+        assert_eq!(state.borrow().requests, 0);
+        microphone.set_binding(Some(binding(2)));
+        assert!(matches!(
+            microphone.read_chunk(session, 0, 2),
+            Err(CaptureError::InvalidBinding)
+        ));
     }
     #[::core::prelude::v1::test]
     fn unimplemented_selected_device_adapter_never_calls_default_start() {
@@ -921,6 +1058,11 @@ mod tests {
         );
         controller.set_binding(Some(binding(1)));
         assert_eq!(controller.start(1), Err(CaptureError::Unavailable));
+    }
+    #[cfg(all(target_os = "macos", feature = "native-microphone"))]
+    #[::core::prelude::v1::test]
+    fn native_published_reader_fixture_uses_only_private_samples_and_queue() {
+        assert_eq!(unsafe { platform::cc_mic_fixture_read_published() }, 0);
     }
     #[cfg(all(target_os = "macos", feature = "native-microphone"))]
     #[::core::prelude::v1::test]
