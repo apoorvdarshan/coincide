@@ -4,7 +4,7 @@
 //! All Engine calls run in one background worker, never GPUI render.
 use crate::worker_owner::{Admission, ShutdownStatus as ReadShutdownStatus, WorkerOwner};
 use anyhow::{Context as _, Result, bail, ensure};
-use coincide_core::api::{SharedEngine, call};
+use coincide_core::api::SharedEngine;
 use gpui_kit::{
     assets::IconName,
     base::Disableable,
@@ -15,7 +15,7 @@ use gpui_kit::{
 use serde_json::{Value, json};
 use std::{
     path::Path,
-    sync::mpsc,
+    sync::{Mutex, mpsc},
     time::{Duration, Instant},
 };
 
@@ -463,6 +463,51 @@ fn load(api: &mut impl FnMut(&str, Value) -> Result<Value>, load: &Load) -> Resu
         detail,
     })
 }
+/// Engine contention must remain cancellable after the UI closes. This is a
+/// read admission only; the Engine still owns and drains any operation started.
+fn call_admitted(
+    engine: &SharedEngine,
+    method: &str,
+    params: Value,
+    admission: &Admission,
+) -> Result<Value> {
+    with_admitted_lock(
+        engine,
+        admission,
+        Instant::now() + Duration::from_secs(3),
+        |engine| {
+            let response = engine.dispatch(json!({"method":method,"params":params}));
+            if let Some(error) = response.get("error") {
+                bail!("{}", error["message"].as_str().unwrap_or("Command failed"));
+            }
+            Ok(response["result"].clone())
+        },
+    )
+}
+fn with_admitted_lock<T, R>(
+    state: &Mutex<T>,
+    admission: &Admission,
+    deadline: Instant,
+    work: impl FnOnce(&mut T) -> Result<R>,
+) -> Result<R> {
+    loop {
+        ensure!(admission.allowed(), "GitHub UI read admissions are closed");
+        ensure!(
+            Instant::now() < deadline,
+            "GitHub Engine is busy; retry with Refresh"
+        );
+        match state.try_lock() {
+            Ok(mut state) => {
+                ensure!(admission.allowed(), "GitHub UI read admissions are closed");
+                return work(&mut state);
+            }
+            Err(std::sync::TryLockError::WouldBlock) => {
+                std::thread::sleep(Duration::from_millis(10))
+            }
+            Err(_) => bail!("GitHub Engine is unavailable"),
+        }
+    }
+}
 fn load_admitted(
     api: &mut impl FnMut(&str, Value) -> Result<Value>,
     request: &Load,
@@ -781,7 +826,7 @@ impl GitHubReviewPanel {
         let tx = self.load_tx.clone();
         if !self.workers.spawn(move |admission| {
             let result = load_admitted(
-                &mut |method, params| call(&engine, method, params),
+                &mut |method, params| call_admitted(&engine, method, params, &admission),
                 &request,
                 &admission,
             );
@@ -839,7 +884,7 @@ impl GitHubReviewPanel {
         let tx = self.tx.clone();
         if !self.workers.spawn(move |admission| {
             let result = fetch_admitted(
-                &mut |method, params| call(&engine, method, params),
+                &mut |method, params| call_admitted(&engine, method, params, &admission),
                 &request,
                 &admission,
             );
@@ -2036,5 +2081,64 @@ mod tests {
                 .recv_timeout(std::time::Duration::from_secs(5))
                 .unwrap()
         );
+    }
+    #[::core::prelude::v1::test]
+    fn held_engine_acquisition_is_deadlined_and_closed_admission_is_interruptible() {
+        use super::with_admitted_lock;
+        use crate::worker_owner::WorkerOwner;
+        use std::{
+            sync::{Arc, Mutex},
+            time::{Duration, Instant},
+        };
+        let engine = Arc::new(Mutex::new(()));
+        let guard = engine.lock().unwrap();
+        let mut owner = WorkerOwner::default();
+        let worker_engine = engine.clone();
+        let (sent, done) = std::sync::mpsc::channel();
+        assert!(owner.spawn(move |admission| {
+            let started = Instant::now();
+            assert!(
+                with_admitted_lock(
+                    &worker_engine,
+                    &admission,
+                    started + Duration::from_millis(80),
+                    |_| Ok(())
+                )
+                .is_err()
+            );
+            sent.send(started.elapsed()).unwrap();
+        }));
+        assert!(done.recv_timeout(Duration::from_secs(1)).unwrap() < Duration::from_secs(1));
+        let until = Instant::now() + Duration::from_secs(1);
+        while owner.status().unjoined != 0 {
+            assert!(Instant::now() < until);
+            std::thread::yield_now();
+        }
+        let worker_engine = engine.clone();
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (sent, done) = std::sync::mpsc::channel();
+        assert!(owner.spawn(move |admission| {
+            entered_tx.send(()).unwrap();
+            sent.send(
+                with_admitted_lock(
+                    &worker_engine,
+                    &admission,
+                    Instant::now() + Duration::from_secs(3),
+                    |_| Ok(()),
+                )
+                .is_err(),
+            )
+            .unwrap();
+        }));
+        entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        owner.close();
+        assert!(done.recv_timeout(Duration::from_secs(1)).unwrap());
+        drop(guard);
+        let until = Instant::now() + Duration::from_secs(1);
+        while owner.status().unjoined != 0 {
+            assert!(Instant::now() < until);
+            std::thread::yield_now();
+        }
+        assert_eq!(owner.status().returned, 2);
     }
 }
