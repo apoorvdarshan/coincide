@@ -72,7 +72,7 @@ impl Native {
         };
     }
 }
-fn stream<T: cpal::SizedSample + Copy>(
+fn stream<T: cpal::SizedSample + Copy + 'static>(
     device: &cpal::Device,
     config: cpal::StreamConfig,
     shared: Arc<Buffer>,
