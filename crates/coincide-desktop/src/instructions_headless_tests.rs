@@ -145,7 +145,22 @@ fn headless_native_handlers_busy_initialization_picker_cas_git_and_owned_quit(
             .contains("not ready")
     );
     drop(guard);
-    // Retry the same real native handler after the owner becomes available.
+    // The same retained owner's read-only poll also recovers constructor busy
+    // without creating/adopting a file or granting a native setup capability.
+    cx.update(|_, cx| panel.update(cx, |panel, cx| panel.poll_initial_instruction_setup(cx)));
+    assert!(cx.read(|app| panel.read(app).setup.metadata.is_some()));
+    assert_eq!(
+        engine
+            .lock()
+            .unwrap()
+            .store
+            .document("instructions.json")
+            .unwrap()
+            .unwrap(),
+        original
+    );
+    // Explicit native handler still supplies the chooser authority.
+
     cx.update(|window, cx| panel.update(cx, |panel, cx| panel.setup_choose_master(window, cx)));
     assert!(cx.did_prompt_for_paths());
     {

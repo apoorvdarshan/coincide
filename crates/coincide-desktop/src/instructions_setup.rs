@@ -32,6 +32,7 @@ pub(super) struct Setup {
     pub(super) picker_pending: bool,
     generation: u64,
     status: String,
+    initial_retry: Option<String>,
 }
 impl Setup {
     pub(super) fn visible_status(&self) -> String {
@@ -73,25 +74,36 @@ impl Setup {
             picker_pending: false,
             generation: 0,
             status,
+            initial_retry: None,
         };
         if let Err(error) = result.refresh() {
             result.status = error.to_string();
+            if crate::engine_busy(&error) {
+                result.initial_retry = Some(result.status.clone());
+            }
         }
         result
     }
     fn refresh(&mut self) -> Result<()> {
         let owner = crate::try_state(&self.engine)?;
-        self.metadata = Some(Metadata::from_document(
-            owner.store.document("instructions.json")?,
-        )?);
-        self.projects = owner
+        let metadata = Metadata::from_document(owner.store.document("instructions.json")?)?;
+        let projects = owner
             .store
             .projects()?
             .as_array()
             .context("Projects are malformed")?
             .clone();
-        if let Some(scope) = &self.scope {
-            self.files = scope.discover_native(&owner.store)?;
+        let files = self
+            .scope
+            .as_ref()
+            .map(|scope| scope.discover_native(&owner.store))
+            .transpose()?;
+        // Publish the read snapshot only after every part succeeds. A failed
+        // discovery must not make a half-initialized pane appear ready.
+        self.metadata = Some(metadata);
+        self.projects = projects;
+        if let Some(files) = files {
+            self.files = files;
         }
         Ok(())
     }
@@ -106,6 +118,35 @@ impl Setup {
     }
 }
 impl InstructionsPanel {
+    /// Retry only a typed initial EngineBusy result on the existing owner poll.
+    /// This refreshes metadata/discovery; it never adopts a master, loads editor
+    /// text, creates files or writes configuration.
+    pub(super) fn poll_initial_instruction_setup(&mut self, cx: &mut Context<Self>) {
+        let Some(initial) = self.setup.initial_retry.clone() else {
+            return;
+        };
+        if self.setup.metadata.is_some() {
+            self.setup.initial_retry = None;
+            return;
+        }
+        match self.setup.refresh() {
+            Ok(()) => {
+                self.setup.initial_retry = None;
+                if self.setup.status == initial {
+                    self.setup.status.clear();
+                }
+                cx.notify();
+            }
+            Err(error) if crate::engine_busy(&error) => {}
+            Err(error) => {
+                self.setup.initial_retry = None;
+                if self.setup.status == initial {
+                    self.setup.status = error.to_string();
+                }
+                cx.notify();
+            }
+        }
+    }
     fn setup_clean(&mut self, cx: &mut Context<Self>) -> bool {
         if self.dirty(cx) {
             self.setup.status = format!(
