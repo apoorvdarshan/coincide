@@ -22,7 +22,9 @@ use webview2_com::{
 };
 use windows::core::{HSTRING, PWSTR};
 use wry::WebViewExtWindows;
-const NATIVE_FILL_VALIDATED: bool = false;
+// Production bridge passed the isolated native SDK fixture on all three hosts
+// in Rust CI run 42353376575 (f4249ba4). Runtime checks still fail closed.
+const NATIVE_FILL_VALIDATED: bool = true;
 pub fn available() -> bool {
     NATIVE_FILL_VALIDATED
 }
