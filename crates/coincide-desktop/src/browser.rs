@@ -74,6 +74,18 @@ struct Tab {
     console: Rc<RefCell<BrowserConsole>>,
     credential_console_suppressed: Arc<AtomicBool>,
     navigation: Arc<AtomicU64>,
+    /// Linux Wry queues scripts before the first commit and drops their
+    /// callbacks, so tracked evaluations wait for that commit.
+    scripts_ready: Arc<AtomicBool>,
+}
+impl Tab {
+    fn ensure_scripts_ready(&self) -> Result<()> {
+        ensure!(
+            self.scripts_ready.load(Ordering::Acquire),
+            "The page has not started loading yet; use wait-for before inspecting it"
+        );
+        Ok(())
+    }
 }
 impl Drop for Tab {
     fn drop(&mut self) {
@@ -118,6 +130,8 @@ enum NativeEvent {
         id: String,
         thread: String,
         tab: String,
+        /// The probed document was replaced before it answered.
+        stale: bool,
         result: Value,
     },
     Title {
@@ -485,6 +499,7 @@ impl BrowserController {
                     !tab.loading,
                     "Wait for navigation to finish before uploading"
                 );
+                tab.ensure_scripts_ready()?;
                 let epoch = tab.navigation.load(Ordering::Acquire);
                 let sender = self.sender.clone();
                 let id = request.id.clone();
@@ -591,6 +606,7 @@ impl BrowserController {
                     self.scripts.len() < 64 && !self.scripts.contains_key(&request.id),
                     "Browser script capacity reached or request already active"
                 );
+                self.tabs[thread][index].ensure_scripts_ready()?;
                 let source = script_for_request(&request)?.context("Unsupported browser action")?;
                 let sender = self.sender.clone();
                 let id = request.id.clone();
@@ -705,6 +721,7 @@ impl BrowserController {
         let load_console_suppressed = credential_console_suppressed.clone();
         let load_console = console.clone();
         let navigation = Arc::new(AtomicU64::new(0));
+        let scripts_ready = Arc::new(AtomicBool::new(!cfg!(target_os = "linux")));
         #[cfg(not(target_os = "linux"))]
         let navigation_handler = navigation.clone();
         #[cfg(not(target_os = "linux"))]
@@ -939,6 +956,19 @@ impl BrowserController {
                 let _ = dialog_sender.try_send(NativeEvent::DialogChanged);
             },
         );
+        #[cfg(target_os = "linux")]
+        {
+            use webkit2gtk::{LoadEvent, WebViewExt};
+            use wry::WebViewExtUnix;
+            // Connected after Wry's own handler, which flushes its pre-commit
+            // queue first; later evaluations deliver their callbacks.
+            let ready = scripts_ready.clone();
+            view.raw().webview().connect_load_changed(move |_, event| {
+                if matches!(event, LoadEvent::Committed) {
+                    ready.store(true, Ordering::Release);
+                }
+            });
+        }
         if (cfg!(target_os = "linux") || matches!(profile, ProfileChoice::Private))
             && url != "about:blank"
         {
@@ -957,6 +987,7 @@ impl BrowserController {
             console,
             credential_console_suppressed,
             navigation,
+            scripts_ready,
         });
         self.shutdown.ever_native = true;
         self.active.insert(thread.into(), id.clone());
@@ -1023,6 +1054,7 @@ impl BrowserController {
                     id,
                     thread,
                     tab,
+                    stale,
                     result,
                 } => {
                     if let Some(wait) = self.waits.get_mut(&id) {
@@ -1033,6 +1065,10 @@ impl BrowserController {
                         if Instant::now() >= wait.deadline {
                             let wait = self.waits.remove(&id).expect("existing wait");
                             self.finish_wait(wait, json!({"found":false,"error":"Timed out waiting for the browser condition"}));
+                        } else if stale {
+                            // Like Swift, a wait spans navigation: a replaced
+                            // document's answer is no evidence, so probe the new one.
+                            wait.next_probe = Instant::now();
                         } else if result.get("error").is_some() || result["found"] == true {
                             let wait = self.waits.remove(&id).expect("existing wait");
                             self.finish_wait(wait, result);
@@ -1303,7 +1339,10 @@ impl BrowserController {
                 changed = true;
                 continue;
             };
-            if !wait.in_flight && now >= wait.next_probe {
+            if !wait.in_flight
+                && now >= wait.next_probe
+                && tab.scripts_ready.load(Ordering::Acquire)
+            {
                 let source = script_for_request(&wait.request)
                     .and_then(|script| script.context("Unsupported wait operation"));
                 let result = source.and_then(|source| {
@@ -1321,13 +1360,15 @@ impl BrowserController {
                             &source,
                             &self.shutdown.callbacks,
                             move |payload| {
+                                let same = navigation.load(Ordering::Acquire) == epoch;
                                 let _ = sender.try_send(NativeEvent::WaitReply {
                                     id: id.clone(),
                                     thread: thread.clone(),
                                     tab: tab_id.clone(),
+                                    stale: !same,
                                     result: public_script_reply(
                                         &payload,
-                                        navigation.load(Ordering::Acquire) == epoch,
+                                        same,
                                         protected.load(Ordering::Acquire),
                                         false,
                                     ),
