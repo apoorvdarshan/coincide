@@ -197,7 +197,7 @@ impl Engine {
         // Revocation succeeded independently of cleanup. Preserve tombstones on
         // failure; the UI reports cleanup pending and offers a real retry.
         let home_clean = remove_home(&self.store.data_directory()?, &plan.account).is_ok();
-        let no_secret = plan.account.key.is_none();
+        let no_secret = plan.account.key.is_none() && plan.account.admin_key.is_none();
         let mut cleanup_pending = !home_clean || !no_secret;
         if home_clean && no_secret {
             cleanup_pending = (|| -> Result<()> {
@@ -264,6 +264,17 @@ impl Engine {
                         account_secret_store::SecretPurpose::ApiKey
                     ),
                     "Removed key belongs to another account"
+                );
+                secrets.delete(slot)?;
+            }
+            if let Some(slot) = &account.admin_key {
+                ensure!(
+                    slot.belongs_to(
+                        provider,
+                        &account.id,
+                        account_secret_store::SecretPurpose::AdminKey
+                    ),
+                    "Removed Admin key belongs to another account"
                 );
                 secrets.delete(slot)?;
             }
