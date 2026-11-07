@@ -143,6 +143,7 @@ pub(crate) struct LaunchConfiguration {
     stamp: Stamp,
     record: Record,
     profile: Option<accounts::LoginHome>,
+    metadata_only: bool,
     derived_executable: Option<Binary>,
     derived_companion: Option<Binary>,
 }
@@ -883,6 +884,7 @@ impl Engine {
             },
             record,
             profile: None,
+            metadata_only: false,
             derived_executable: None,
             derived_companion: None,
         }))
@@ -890,6 +892,13 @@ impl Engine {
     pub(crate) fn provider_launch_configuration_for_thread(
         &self,
         thread: &Value,
+    ) -> Result<Option<LaunchConfiguration>> {
+        self.provider_launch_configuration_for_thread_mode(thread, false)
+    }
+    fn provider_launch_configuration_for_thread_mode(
+        &self,
+        thread: &Value,
+        metadata: bool,
     ) -> Result<Option<LaunchConfiguration>> {
         let provider = text(&thread["selection"], "provider");
         if !crate::composer_selection::default_account(&thread["selection"]["accountID"])
@@ -909,7 +918,7 @@ impl Engine {
                 .as_str()
                 .context("Native account identity must be text")?;
             return self
-                .native_account_launch_configuration(&provider, account)
+                .native_account_configuration_mode(&provider, account, metadata)
                 .map(Some);
         }
         self.provider_launch_configuration(&provider)
@@ -927,12 +936,20 @@ impl Engine {
             && let Some(id) = params["threadId"].as_str()
         {
             let thread = self.store.thread(id)?;
-            if !crate::composer_selection::default_account(&thread["selection"]["accountID"])
+            let same_provider = if method.starts_with("providers.codex.") {
+                thread["selection"]["provider"] == "codex"
+            } else {
+                params["provider"].is_null()
+                    || params["provider"] == thread["selection"]["provider"]
+            };
+            if same_provider
+                && !crate::composer_selection::default_account(&thread["selection"]["accountID"])
                 && self.routes_native_provider_account(&thread)?
             {
-                return Ok(enter(
-                    self.provider_launch_configuration_for_thread(&thread)?,
-                ));
+                return Ok(enter(self.provider_launch_configuration_for_thread_mode(
+                    &thread,
+                    !method.ends_with(".refresh"),
+                )?));
             }
         }
         let provider = if method.starts_with("providers.codex.")
@@ -986,6 +1003,10 @@ impl LaunchConfiguration {
         Ok(())
     }
     pub(crate) fn validate_launch(&self) -> Result<()> {
+        ensure!(
+            !self.metadata_only,
+            "Account metadata cannot authorize a provider child; capture an owned launch first"
+        );
         if let Some(profile) = &self.profile {
             profile.validate()?;
         }

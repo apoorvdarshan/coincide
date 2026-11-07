@@ -32,6 +32,13 @@ pub(super) trait Backend: Send + Sync {
 }
 struct OsBackend;
 fn entry(service: &str, id: &str) -> Result<Entry> {
+    // Unit tests must never unlock a developer's OS store accidentally. The
+    // separately gated hosted-runner integration binary compiles the library
+    // without cfg(test) and may exercise its own unique synthetic entries.
+    ensure!(
+        !cfg!(test),
+        "Unit tests must inject a synthetic native secret backend"
+    );
     // Store initialization is deliberately lazy: even a presence query must not
     // cause a Secret Service/Keychain unlock prompt.
     #[cfg(target_os = "macos")]

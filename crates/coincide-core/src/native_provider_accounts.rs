@@ -47,6 +47,7 @@ pub(super) struct LoginHome {
     _lease: Arc<File>,
     base_environment: BTreeMap<String, String>,
     captured_auth: Value,
+    metadata_only: bool,
 }
 fn supported(provider: &str) -> Result<&'static str> {
     match provider {
@@ -182,6 +183,14 @@ impl LoginHome {
         Self::capture_with_lock(root, account, false)
     }
     fn capture_with_lock(root: &Path, account: Account, exclusive: bool) -> Result<Self> {
+        Self::capture_mode(root, account, exclusive, false)
+    }
+    fn capture_mode(
+        root: &Path,
+        account: Account,
+        exclusive: bool,
+        metadata: bool,
+    ) -> Result<Self> {
         ensure!(
             account.home == home(root, &account.provider, &account.id)?,
             "Native account home is outside its owner"
@@ -247,8 +256,11 @@ impl LoginHome {
             _lease: Arc::new(lease),
             base_environment,
             captured_auth: Value::Null,
+            metadata_only: metadata,
         };
-        captured.captured_auth = captured.auth_stamp()?;
+        if !metadata {
+            captured.captured_auth = captured.auth_stamp()?;
+        }
         Ok(captured)
     }
     pub(super) fn validate(&self) -> Result<()> {
@@ -275,10 +287,14 @@ impl LoginHome {
             && self.account.authentication == Authentication::ApiKey
             && self.account.codex_enrollment.is_some()
         {
-            codex_key_enrollment::validate_auth(&self.account)?;
+            if self.metadata_only {
+                codex_key_enrollment::validate_auth_metadata(&self.account)?;
+            } else {
+                codex_key_enrollment::validate_auth(&self.account)?;
+            }
         }
         ensure!(
-            self.auth_stamp()? == self.captured_auth,
+            self.metadata_only || self.auth_stamp()? == self.captured_auth,
             "Native login authentication changed; capture the account again"
         );
         Ok(())
@@ -642,13 +658,38 @@ impl Engine {
         provider: &str,
         id: &str,
     ) -> Result<LaunchConfiguration> {
+        self.native_account_configuration_mode(provider, id, false)
+    }
+    pub(super) fn native_account_configuration_mode(
+        &self,
+        provider: &str,
+        id: &str,
+        metadata: bool,
+    ) -> Result<LaunchConfiguration> {
         let owner = Private::open(&self.store, false)?
             .context("Add this account in native Settings first")?;
         let raw = self.store.native_accounts_payload(provider)?;
         let payload = read(&owner, provider, raw.as_deref())?;
         let account = account(&payload, provider, id)?;
         if account.authentication == Authentication::ApiKey {
-            return keys::launch_configuration(&owner, &self.store, account);
+            return if metadata {
+                keys::metadata_configuration(&owner, &self.store, account)
+            } else {
+                keys::launch_configuration(&owner, &self.store, account)
+            };
+        }
+        if metadata {
+            let profile =
+                LoginHome::capture_mode(&self.store.data_directory()?, account, false, true)?;
+            let record = read_record(&owner.read()?, provider)?;
+            ensure!(
+                record.is_some()
+                    || !self
+                        .store
+                        .requires_native_provider_configuration(provider)?,
+                "Approved provider configuration is missing"
+            );
+            return build_configuration(&owner, profile, record, None);
         }
         drop(owner);
         self.native_login_launch_configuration(provider, id)
@@ -749,7 +790,9 @@ fn build_configuration(
         .context("Native account source missing")?
         .into();
     let identity = serde_json::from_value(owner.source["identity"].clone())?;
+    let metadata_only = profile.metadata_only;
     Ok(LaunchConfiguration {
+        metadata_only,
         stamp: Stamp {
             source,
             identity,

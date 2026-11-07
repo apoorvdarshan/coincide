@@ -405,6 +405,21 @@ pub(super) fn launch_with_secrets(
     account: Account,
     secrets: &NativeSecretStore,
 ) -> Result<LaunchConfiguration> {
+    key_configuration_mode(owner, store, account, Some(secrets))
+}
+pub(super) fn metadata_configuration(
+    owner: &Private,
+    store: &Store,
+    account: Account,
+) -> Result<LaunchConfiguration> {
+    key_configuration_mode(owner, store, account, None)
+}
+fn key_configuration_mode(
+    owner: &Private,
+    store: &Store,
+    account: Account,
+    secrets: Option<&NativeSecretStore>,
+) -> Result<LaunchConfiguration> {
     let summary = summary(&account)?;
     ensure!(
         matches!(
@@ -414,22 +429,33 @@ pub(super) fn launch_with_secrets(
         "This API-key provider still requires its guarded native runtime enrollment"
     );
     if account.provider == "codex" {
-        codex_key_enrollment::validate(owner, &account)?;
+        if secrets.is_some() {
+            codex_key_enrollment::validate(owner, &account)?;
+        } else {
+            codex_key_enrollment::validate_metadata(owner, &account)?;
+        }
     }
     let slot = account
         .key
         .as_ref()
         .context("Save this account's API key in native Settings before use")?
         .clone();
-    let value = secrets.read(&slot)?;
-    let value =
-        std::str::from_utf8(&value).context("The saved API key has unsupported encoding")?;
-    ensure!(
-        !value.is_empty() && !value.chars().any(char::is_control),
-        "Replace the invalid saved account key"
-    );
+    let value = secrets.map(|secrets| secrets.read(&slot)).transpose()?;
+    let value = value
+        .as_ref()
+        .map(|value| {
+            std::str::from_utf8(value).context("The saved API key has unsupported encoding")
+        })
+        .transpose()?;
+    if let Some(value) = value {
+        ensure!(
+            !value.is_empty() && !value.chars().any(char::is_control),
+            "Replace the invalid saved account key"
+        );
+    }
     let provider = account.provider.clone();
-    let profile = LoginHome::capture(&store.data_directory()?, account)?;
+    let profile =
+        LoginHome::capture_mode(&store.data_directory()?, account, false, secrets.is_none())?;
     let record = read_record(&owner.read()?, &provider)?;
     ensure!(
         record.is_some() || !store.requires_native_provider_configuration(&provider)?,
@@ -439,12 +465,18 @@ pub(super) fn launch_with_secrets(
         validate_environment(&record.environment)?;
     }
     let mut configuration = build_configuration(owner, profile, record, None)?;
-    configuration
-        .record
+    let mut effective = configuration.record.clone();
+    effective
         .environment
-        .insert(summary.key_variable, value.into());
+        .insert(summary.key_variable.clone(), serde_json::to_string(&slot)?);
+    if let Some(value) = value {
+        configuration
+            .record
+            .environment
+            .insert(summary.key_variable, value.into());
+    }
     let bytes = zeroize::Zeroizing::new(serde_json::to_vec(
-        &json!({"captured":configuration.stamp,"keySlot":slot,"effective":configuration.record}),
+        &json!({"captured":configuration.stamp,"keySlot":slot,"effective":effective}),
     )?);
     configuration.stamp.digest = crate::digest_hex::lower_hex(Sha256::digest(bytes.as_slice()));
     Ok(configuration)
@@ -760,6 +792,54 @@ mod tests {
                 )
                 .is_err()
         );
+    }
+    #[test]
+    fn metadata_scope_matches_private_identity_without_reading_secret_or_authorizing_child() {
+        let (_root, mut engine, binary) = super::super::super::tests::fixture();
+        super::super::super::tests::save(&mut engine, "grok", &binary, "synthetic-global");
+        let account = engine
+            .create_native_key_account("grok", "Work", "XAI_API_KEY")
+            .unwrap();
+        let owner = Private::open(&engine.store, false).unwrap().unwrap();
+        let secrets = NativeSecretStore::from_owner(&owner)
+            .unwrap()
+            .with_backend(Arc::new(Fake::default()));
+        engine
+            .save_account_key_with(
+                &owner,
+                &secrets,
+                "grok",
+                &account.id,
+                &account.revision,
+                "synthetic-launch-only-key",
+            )
+            .unwrap();
+        let raw = engine.store.native_accounts_payload("grok").unwrap();
+        let row = super::super::account(
+            &read(&owner, "grok", raw.as_deref()).unwrap(),
+            "grok",
+            &account.id,
+        )
+        .unwrap();
+        let actual = launch_with_secrets(&owner, &engine.store, row.clone(), &secrets).unwrap();
+        // This route has no secret backend argument. Default SDK operations are
+        // prohibited in unit tests, so any accidental OS access also fails.
+        let metadata = metadata_configuration(&owner, &engine.store, row).unwrap();
+        assert_eq!(actual.stamp, metadata.stamp);
+        assert!(actual.validate_launch().is_ok());
+        assert!(metadata.validate_launch().is_err());
+        {
+            let _scope = enter(Some(metadata));
+            assert!(effective_var("XAI_API_KEY").is_none());
+            assert!(apply_to_child(&mut Command::new(&binary), false).is_err());
+        }
+        {
+            let _scope = enter(Some(actual));
+            assert_eq!(
+                effective_var("XAI_API_KEY"),
+                Some("synthetic-launch-only-key".into())
+            );
+        }
     }
     #[test]
     fn all_provider_services_are_validated_without_vault_reads_or_json_authority() {

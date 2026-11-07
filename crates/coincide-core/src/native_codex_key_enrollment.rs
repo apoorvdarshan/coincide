@@ -42,7 +42,7 @@ fn auth(home: &Path) -> Result<(Value, zeroize::Zeroizing<Vec<u8>>)> {
         identity == crate::private_fs::identity(&path)?,
         "Codex key enrollment file was replaced"
     );
-    let value = json!({"identity":identity,"length":bytes.len(),"digest":crate::digest_hex::lower_hex(Sha256::digest(bytes.as_slice()))});
+    let value = json!({"identity":identity,"length":bytes.len(),"modified":file.metadata()?.modified()?.duration_since(std::time::UNIX_EPOCH)?.as_nanos(),"digest":crate::digest_hex::lower_hex(Sha256::digest(bytes.as_slice()))});
     Ok((value, bytes))
 }
 impl Engine {
@@ -192,6 +192,45 @@ impl NativeCodexKeyEnrollment {
             configuration: self.configuration,
         })
     }
+}
+pub(super) fn validate_auth_metadata(account: &Account) -> Result<()> {
+    let proof = &account
+        .codex_enrollment
+        .as_ref()
+        .context("Apply the saved Codex key before use")?["auth"];
+    let path = account.home.join("auth.json");
+    private(&path, false)?;
+    let metadata = fs::symlink_metadata(&path)?;
+    ensure!(
+        proof["identity"] == serde_json::to_value(crate::private_fs::identity(&path)?)?
+            && proof["length"] == metadata.len()
+            && proof["modified"]
+                == json!(
+                    metadata
+                        .modified()?
+                        .duration_since(std::time::UNIX_EPOCH)?
+                        .as_nanos()
+                ),
+        "Codex enrollment metadata changed; apply the saved key again"
+    );
+    Ok(())
+}
+pub(super) fn validate_metadata(owner: &Private, account: &Account) -> Result<()> {
+    let enrollment = account
+        .codex_enrollment
+        .as_ref()
+        .context("Apply the saved Codex key before use")?;
+    ensure!(
+        enrollment["slot"]
+            == account
+                .key
+                .as_ref()
+                .context("Saved Codex key missing")?
+                .id()
+            && enrollment["global"] == global(owner, &read_record(&owner.read()?, "codex")?)?,
+        "Saved Codex configuration changed; apply its key again"
+    );
+    validate_auth_metadata(account)
 }
 pub(super) fn validate_auth(account: &Account) -> Result<()> {
     let enrollment = account
