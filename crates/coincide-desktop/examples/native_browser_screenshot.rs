@@ -97,6 +97,7 @@ input{display:block;box-sizing:border-box;width:300px;height:44px;margin:10px;fo
         read: Option<mpsc::Receiver<String>>,
         layout: Option<Layout>,
         stage: Stage,
+        reported: Option<Stage>,
         pending: bool,
         started: Instant,
         waited: Instant,
@@ -152,6 +153,7 @@ input{display:block;box-sizing:border-box;width:300px;height:44px;margin:10px;fo
                 read: None,
                 layout: None,
                 stage: Stage::Ready,
+                reported: None,
                 pending: false,
                 started: Instant::now(),
                 waited: Instant::now(),
@@ -182,7 +184,9 @@ input{display:block;box-sizing:border-box;width:300px;height:44px;margin:10px;fo
         }
         fn fail(&mut self, error: impl Into<String>) {
             if self.failure.is_none() {
-                self.failure = Some(format!("{:?}: {}", self.stage, error.into()));
+                let failure = format!("{:?}: {}", self.stage, error.into());
+                eprintln!("synthetic native screenshot failure: {failure}");
+                self.failure = Some(failure);
             }
             self.stage = Stage::Drain;
         }
@@ -231,9 +235,21 @@ input{display:block;box-sizing:border-box;width:300px;height:44px;margin:10px;fo
             }
         }
         fn poll(&mut self, cx: &mut Context<Self>) -> bool {
+            if self.reported != Some(self.stage) {
+                self.reported = Some(self.stage);
+                println!(
+                    "synthetic native screenshot stage {:?} at {:.1}s",
+                    self.stage,
+                    self.started.elapsed().as_secs_f64()
+                );
+            }
             if self.started.elapsed() > Duration::from_secs(90) && self.stage != Stage::Drain {
                 // A deadline is a failure, never a native callback ACK.
-                self.fail("fixture deadline exceeded; retaining pending callback owners");
+                self.fail(format!(
+                    "fixture deadline exceeded (evaluation pending: {}, screenshot pending: {}); retaining pending callback owners",
+                    self.read.is_some(),
+                    self.pending
+                ));
             }
             match self.stage {
                 Stage::Ready => {
@@ -348,6 +364,14 @@ input{display:block;box-sizing:border-box;width:300px;height:44px;margin:10px;fo
                     }
                     if self.read.is_some() {
                         let _ = self.evaluated();
+                    }
+                    if self.started.elapsed() > Duration::from_secs(150) {
+                        // Report the retained owners and fail; exiting is never a
+                        // claimed native return.
+                        eprintln!(
+                            "synthetic native screenshot: FAIL, owners still pending after the deadline: {status:?}"
+                        );
+                        std::process::exit(2);
                     }
                 }
             }
@@ -470,8 +494,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-/// Linux Wry queues evaluations before the first commit and drops their
-/// callbacks; evaluate only once the native view finished loading the page.
+/// Wry queues evaluations issued before the first navigation starts (macOS)
+/// or commits (Linux) and drops their callbacks; evaluate only once the
+/// native view finished loading the fixture page.
 #[cfg(target_os = "linux")]
 fn native_loaded(view: &wry::WebView) -> bool {
     use webkit2gtk::WebViewExt;
@@ -479,7 +504,22 @@ fn native_loaded(view: &wry::WebView) -> bool {
     let view = view.webview();
     !view.is_loading() && view.uri().is_some_and(|uri| uri.as_str() == fixture::URL)
 }
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
+fn native_loaded(view: &wry::WebView) -> bool {
+    use objc2::rc::Retained;
+    use objc2_web_kit::WKWebView;
+    use wry::WebViewExtMacOS;
+    let native: Retained<WKWebView> = view.webview().into_super();
+    // SAFETY: UI thread, retained view, nullable getters.
+    unsafe {
+        !native.isLoading()
+            && native
+                .URL()
+                .and_then(|url| url.absoluteString())
+                .is_some_and(|url| url.to_string() == fixture::URL)
+    }
+}
+#[cfg(target_os = "windows")]
 fn native_loaded(_: &wry::WebView) -> bool {
     true
 }
