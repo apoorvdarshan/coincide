@@ -62,3 +62,10 @@ the fixture checks that WebKitGTK still lacks it.
   - Windows and Linux: the WebView is probed on an owned https page for the API the reported support depends on.
 - Not verified anywhere automated: a real Bitwarden vault, the Touch ID dialog (it would block an unattended runner),
   and the prompt's pixels.
+
+LocalAuthentication reply blocks retain a captured lease in the browser shutdown
+accounting. Invalidating a prompt or receiving its result does not release that
+lease; shutdown stays unready until the SDK releases the actual reply block.
+An inert held-verifier regression covers cancellation, late result delivery and
+final block release without showing Touch ID or reading a vault. This accounts
+for captured Rust ownership, not native SDK or context deallocation.

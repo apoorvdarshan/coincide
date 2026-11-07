@@ -11,6 +11,7 @@
 //! without the WebAuthn API, so pages there never ask (see
 //! docs/rust/PASSKEYS.md). The private key is read from `bw` on a worker for one
 //! signature and never reaches the page, an agent API or a log.
+use super::shutdown::{Callbacks, NativeLease};
 use coincide_core::{
     credentials::Failure,
     passkeys::{
@@ -54,20 +55,23 @@ pub(crate) fn support() -> &'static str {
     }
 }
 
-type Verify = fn(&str, Box<dyn FnOnce(UserVerification) + Send>) -> Option<Box<dyn FnOnce()>>;
+type Verify =
+    fn(&str, Box<dyn FnOnce(UserVerification) + Send>, NativeLease) -> Option<Box<dyn FnOnce()>>;
 
 /// The platform's user verification, ending with `done` on any thread. Returns
 /// how to cancel it while it is asking.
 fn verify_user(
     reason: &str,
     done: Box<dyn FnOnce(UserVerification) + Send>,
+    native_block: NativeLease,
 ) -> Option<Box<dyn FnOnce()>> {
     #[cfg(target_os = "macos")]
     {
-        platform::verify_user(reason, done)
+        platform::verify_user(reason, done, native_block)
     }
     #[cfg(not(target_os = "macos"))]
     {
+        let _held = native_block;
         let _ = reason;
         done(UserVerification::Unavailable);
         None
@@ -267,6 +271,7 @@ pub(crate) struct Passkeys {
     vault: Option<Vault>,
     preferences: Preferences,
     verify: Verify,
+    callbacks: Callbacks,
     sign_ins: HashMap<String, SignIn>,
     notices: HashMap<String, NoticeState>,
     next_id: u64,
@@ -278,13 +283,14 @@ pub(crate) struct Passkeys {
 }
 
 impl Passkeys {
-    pub(crate) fn new(changed: impl Fn() + 'static) -> Self {
+    pub(crate) fn new(changed: impl Fn() + 'static, callbacks: Callbacks) -> Self {
         let (sender, results) = mpsc::channel();
         let mut this = Self {
             channel: Channel::new(changed),
             vault: None,
             preferences: Preferences::default(),
             verify: verify_user,
+            callbacks,
             sign_ins: HashMap::new(),
             notices: HashMap::new(),
             next_id: 0,
@@ -683,6 +689,7 @@ impl Passkeys {
                     outcome: Outcome::Verified(outcome),
                 });
             }),
+            self.callbacks.lifetimes().block(),
         );
         if let Some(sign_in) = self.sign_ins.get_mut(&tab)
             && let Stage::Verifying { cancel: slot, .. } = &mut sign_in.stage

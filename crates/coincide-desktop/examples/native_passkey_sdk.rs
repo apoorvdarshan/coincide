@@ -12,6 +12,9 @@
 #[allow(dead_code)] // Reuse the production boundary without its unrelated app callers.
 #[path = "../src/browser_passkeys.rs"]
 mod browser_passkeys;
+#[allow(dead_code)]
+#[path = "../src/browser_shutdown.rs"]
+mod shutdown;
 
 use gpui_kit::{
     App, AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Window, div,
@@ -498,7 +501,7 @@ mod macos {
             key: coincide_core::passkeys::synthetic::Key::generate(),
             lists: AtomicUsize::new(0),
         });
-        let mut passkeys = browser_passkeys::Passkeys::new(|| {});
+        let mut passkeys = browser_passkeys::Passkeys::new(|| {}, shutdown::Callbacks::default());
         passkeys.set_vault(Some(vault.clone()));
         let (navigation, requested) = (Arc::new(AtomicU64::new(1)), Arc::new(AtomicU64::new(0)));
         // SAFETY: main thread; a fresh configuration with an ephemeral store, used
