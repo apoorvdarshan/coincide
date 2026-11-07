@@ -34,6 +34,19 @@ fn stale() -> Failure {
     }
     Failure::StaleObservation
 }
+#[track_caller]
+fn denied() -> Failure {
+    #[cfg(test)]
+    {
+        let caller = std::panic::Location::caller();
+        eprintln!(
+            "owned-x11-permission source-line {}:{}",
+            caller.file(),
+            caller.line()
+        );
+    }
+    Failure::PermissionDenied
+}
 fn stale_trace(_stage: &str) {
     #[cfg(test)]
     {
@@ -45,12 +58,34 @@ fn stale_trace(_stage: &str) {
 }
 macro_rules! x {
     ($e:expr) => {
-        $e.map_err(|_| Failure::Native)?
+        $e.map_err(|_| native_failure())?
     };
 }
 
+#[track_caller]
 fn native<T, E>(result: Result<T, E>) -> R<T> {
-    result.map_err(|_| Failure::Native)
+    match result {
+        Ok(value) => Ok(value),
+        Err(_) => {
+            native_trace(std::panic::Location::caller());
+            Err(Failure::Native)
+        }
+    }
+}
+#[track_caller]
+fn native_failure() -> Failure {
+    native_trace(std::panic::Location::caller());
+    Failure::Native
+}
+fn native_trace(_caller: &std::panic::Location<'_>) {
+    #[cfg(test)]
+    {
+        eprintln!(
+            "owned-x11-native source-line {}:{}",
+            _caller.file(),
+            _caller.line()
+        );
+    }
 }
 fn io<T>(result: std::io::Result<T>) -> R<T> {
     result.map_err(|_| stale())
@@ -60,7 +95,7 @@ fn bounded_file(path: impl AsRef<std::path::Path>, cap: usize) -> R<String> {
     io(File::open(path))?
         .take((cap + 1) as u64)
         .read_to_string(&mut data)
-        .map_err(|_| Failure::Native)?;
+        .map_err(|_| native_failure())?;
     if data.len() > cap {
         return Err(Failure::TooLarge);
     }
@@ -82,7 +117,7 @@ struct Process {
 impl Process {
     fn open(pid: u32) -> R<Self> {
         if pid == 0 || pid == std::process::id() {
-            return Err(Failure::PermissionDenied);
+            return Err(denied());
         }
         let base = format!("/proc/{pid}");
         let proc = io(File::open(&base))?;
@@ -91,7 +126,7 @@ impl Process {
         let exe_id = metadata_id(&io(executable.metadata())?);
         // SAFETY: geteuid is a side-effect-free process identity getter.
         if proc_id.2 != unsafe { libc::geteuid() } {
-            return Err(Failure::PermissionDenied);
+            return Err(denied());
         }
         let path = io(std::fs::read_link(format!("{base}/exe")))?;
         if policy::restricted_executable(&path.to_string_lossy()) {
@@ -149,7 +184,7 @@ fn geometry(connection: &shared::XConnection<'_>, window: u32) -> R<Geometry> {
         || a.map_state != MapState::VIEWABLE
         || a.override_redirect
     {
-        return Err(Failure::PermissionDenied);
+        return Err(denied());
     }
     Ok(Geometry {
         frame: [
@@ -204,7 +239,7 @@ fn client(connection: &shared::XConnection<'_>, window: u32) -> R<(u32, u32, u32
 }
 fn protected(connection: &shared::XConnection<'_>, window: u32) -> R<()> {
     if !native(shared::eligible_window(connection, window))? {
-        return Err(Failure::PermissionDenied);
+        return Err(denied());
     }
     for name in [
         b"_NET_WM_CONTENT_PROTECTION".as_slice(),
@@ -212,7 +247,7 @@ fn protected(connection: &shared::XConnection<'_>, window: u32) -> R<()> {
     ] {
         let property = native(shared::property(connection, window, name, AtomEnum::ANY))?;
         if property.value.iter().any(|byte| *byte != 0) {
-            return Err(Failure::PermissionDenied);
+            return Err(denied());
         }
     }
     Ok(())
@@ -277,7 +312,7 @@ struct Window {
 impl Window {
     fn open(connection: &shared::XConnection<'_>, root: u32, pid: u32, window: u32) -> R<Self> {
         if window == 0 || window == root {
-            return Err(Failure::PermissionDenied);
+            return Err(denied());
         }
         let watch = Watch::open(window)?;
         protected(connection, window)?;
@@ -340,7 +375,7 @@ fn proxy<'a>(
     interface: &'a str,
 ) -> R<zbus::blocking::Proxy<'a>> {
     zbus::blocking::Proxy::new(bus, object.0.as_str(), object.1.as_str(), interface)
-        .map_err(|_| Failure::Native)
+        .map_err(|_| native_failure())
 }
 fn bus_pid(bus: &zbus::blocking::Connection, name: &str) -> R<u32> {
     if !name.starts_with(':') {
@@ -352,7 +387,7 @@ fn bus_pid(bus: &zbus::blocking::Connection, name: &str) -> R<u32> {
         "/org/freedesktop/DBus",
         "org.freedesktop.DBus",
     )
-    .map_err(|_| Failure::Native)?;
+    .map_err(|_| native_failure())?;
     dbus.call("GetConnectionUnixProcessID", &(name,))
         .map_err(|_| stale())
 }
@@ -365,7 +400,7 @@ fn children(
 ) -> R<Vec<shared::Object>> {
     checked(permit, deadline)?;
     let accessible = native(shared::accessible(bus, object))?;
-    let count = accessible.child_count().map_err(|_| Failure::Native)?;
+    let count = accessible.child_count().map_err(|_| native_failure())?;
     if count < 0 || count as usize > cap {
         return Err(Failure::TooLarge);
     }
@@ -380,7 +415,7 @@ fn children(
 fn bounds(bus: &zbus::blocking::Connection, object: &shared::Object) -> R<[i32; 4]> {
     let result: (i32, i32, i32, i32) = proxy(bus, object, "org.a11y.atspi.Component")?
         .call("GetExtents", &(0u32,))
-        .map_err(|_| Failure::Native)?;
+        .map_err(|_| native_failure())?;
     Ok([result.0, result.1, result.2, result.3])
 }
 fn tree_root(
@@ -392,7 +427,7 @@ fn tree_root(
     let registry = (
         "org.a11y.atspi.Registry".into(),
         zbus::zvariant::OwnedObjectPath::try_from("/org/a11y/atspi/accessible/root")
-            .map_err(|_| Failure::Native)?,
+            .map_err(|_| native_failure())?,
     );
     let mut selected = None;
     for app in children(bus, &registry, permit, deadline, 128)? {
@@ -408,7 +443,7 @@ fn tree_root(
             }
         }
     }
-    selected.ok_or(Failure::PermissionDenied)
+    selected.ok_or_else(denied)
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Element {
@@ -428,9 +463,9 @@ fn element(
     parent: Option<shared::Object>,
 ) -> R<Element> {
     let accessible = native(shared::accessible(bus, &object))?;
-    let role = accessible.get_role().map_err(|_| Failure::Native)?;
-    let states = accessible.get_state().map_err(|_| Failure::Native)?;
-    let actual_parent = shared::object(accessible.parent().map_err(|_| Failure::Native)?);
+    let role = accessible.get_role().map_err(|_| native_failure())?;
+    let states = accessible.get_state().map_err(|_| native_failure())?;
+    let actual_parent = shared::object(accessible.parent().map_err(|_| native_failure())?);
     if parent.is_some() && parent != actual_parent {
         return Err(stale());
     }
@@ -441,7 +476,7 @@ fn element(
     let title = if secure {
         String::new()
     } else {
-        shared::bounded_text(&accessible.name().map_err(|_| Failure::Native)?, 1024)
+        shared::bounded_text(&accessible.name().map_err(|_| native_failure())?, 1024)
     };
     let value = if !secure && matches!(role, Role::Text | Role::Entry | Role::Paragraph) {
         proxy(bus, &object, "org.a11y.atspi.Text")?
@@ -575,7 +610,7 @@ impl NativeBackend {
             .setup()
             .roots
             .get(screen)
-            .ok_or(Failure::Native)?
+            .ok_or_else(native_failure)?
             .root;
         match call {
             NativeCall::ListApps | NativeCall::ListWindows(_) => {
@@ -630,7 +665,7 @@ impl NativeBackend {
                     .iter()
                     .any(|node| node.secure && (screenshot || node.focused))
                 {
-                    return Err(Failure::PermissionDenied);
+                    return Err(denied());
                 }
                 let source_nodes = nodes.clone();
                 let mut elements = BTreeMap::new();
@@ -659,7 +694,7 @@ impl NativeBackend {
                     // Re-scan security after pixel IO; never publish if the tree changed.
                     let (after, post) = tree(&bus, &window, permit, deadline)?;
                     if after != accessible || post.iter().any(|e| e.secure) {
-                        return Err(Failure::PermissionDenied);
+                        return Err(denied());
                     }
                     if post != source_nodes {
                         return Err(stale());
@@ -703,7 +738,7 @@ impl NativeBackend {
                 let bus = native(shared::accessibility_bus())?;
                 let (current_root, entries) = tree(&bus, &observed.window, permit, deadline)?;
                 if current_root != observed.root || entries.iter().any(|e| e.secure && e.focused) {
-                    return Err(Failure::PermissionDenied);
+                    return Err(denied());
                 }
                 let id = match &action {
                     NativeCall::Press { native }
@@ -730,7 +765,7 @@ impl NativeBackend {
                 };
                 match action {
                     NativeCall::Press { .. } => {
-                        let object = &target.ok_or(Failure::Native)?.object;
+                        let object = &target.ok_or_else(native_failure)?.object;
                         let action = proxy(&bus, object, "org.a11y.atspi.Action")?;
                         let count: i32 = action
                             .get_property("NActions")
@@ -744,7 +779,7 @@ impl NativeBackend {
                             checked(permit, deadline)?;
                             let name: String = action
                                 .call("GetName", &(index,))
-                                .map_err(|_| Failure::Native)?;
+                                .map_err(|_| native_failure())?;
                             if matches!(
                                 name.to_ascii_lowercase().as_str(),
                                 "click" | "press" | "activate" | "toggle" | "select"
@@ -754,20 +789,20 @@ impl NativeBackend {
                             }
                         }
                         let index = selected.ok_or(Failure::Unsupported)?;
-                        recheck_element(&bus, target.ok_or(Failure::Native)?)?;
+                        recheck_element(&bus, target.ok_or_else(native_failure)?)?;
                         observed.window.verify(&connection)?;
                         checked(permit, deadline)?;
                         let done: bool = action
                             .call("DoAction", &(index,))
-                            .map_err(|_| Failure::Native)?;
+                            .map_err(|_| native_failure())?;
                         if !done {
-                            return Err(Failure::Native);
+                            return Err(native_failure());
                         }
                     }
                     NativeCall::SetValue { text, .. } => {
-                        let target = target.ok_or(Failure::Native)?;
+                        let target = target.ok_or_else(native_failure)?;
                         if !target.states.contains(State::Editable) {
-                            return Err(Failure::PermissionDenied);
+                            return Err(denied());
                         }
                         let edit = proxy(&bus, &target.object, "org.a11y.atspi.EditableText")?;
                         recheck_element(&bus, target)?;
@@ -775,13 +810,13 @@ impl NativeBackend {
                         checked(permit, deadline)?;
                         let done: bool = edit
                             .call("SetTextContents", &(text.as_str(),))
-                            .map_err(|_| Failure::Native)?;
+                            .map_err(|_| native_failure())?;
                         if !done {
-                            return Err(Failure::Native);
+                            return Err(native_failure());
                         }
                     }
                     NativeCall::Key { key, .. } => {
-                        let target = target.ok_or(Failure::Native)?;
+                        let target = target.ok_or_else(native_failure)?;
                         // No focus-stealing: the observed target must already own focus.
                         if !target.focused {
                             return Err(stale());
@@ -803,7 +838,7 @@ impl NativeBackend {
                         ))
                         .reply());
                         if mapping.keysyms_per_keycode == 0 {
-                            return Err(Failure::Native);
+                            return Err(native_failure());
                         }
                         let mut matches = mapping
                             .keysyms
@@ -846,13 +881,13 @@ impl NativeBackend {
                                     "GetAccessibleAtPoint",
                                     &(i32::from(px), i32::from(py), 0u32),
                                 )
-                                .map_err(|_| Failure::Native)?;
+                                .map_err(|_| native_failure())?;
                         let hit = native(
                             shared::object(hit).ok_or_else(|| anyhow::anyhow!("No accessible hit")),
                         )?;
                         let entry = entries.iter().find(|e| e.object == hit).ok_or(stale())?;
                         if entry.secure || !entry.states.contains(State::Enabled) {
-                            return Err(Failure::PermissionDenied);
+                            return Err(denied());
                         }
                         input_guard(&connection, observed, permit, deadline)?;
                         x!(x!(connection.xtest_fake_input(
@@ -922,8 +957,8 @@ fn input_pair(
         || {
             connection
                 .xtest_fake_input(down, detail, 0, root, 0, 0, 0)
-                .map_err(|_| Failure::Native)
-                .and_then(|cookie| cookie.check().map_err(|_| Failure::Native))
+                .map_err(|_| native_failure())
+                .and_then(|cookie| cookie.check().map_err(|_| native_failure()))
         },
         || {
             release
@@ -931,8 +966,8 @@ fn input_pair(
                 .deadline(Instant::now() + Duration::from_millis(150));
             release
                 .xtest_fake_input(up, detail, 0, root, 0, 0, 0)
-                .map_err(|_| Failure::Native)
-                .and_then(|cookie| cookie.check().map_err(|_| Failure::Native))
+                .map_err(|_| native_failure())
+                .and_then(|cookie| cookie.check().map_err(|_| native_failure()))
         },
     )
 }
@@ -991,11 +1026,11 @@ fn input_guard(
     }
     let pointer = x!(x!(connection.query_pointer(observed.window.identity.root)).reply());
     if u16::from(pointer.mask) != 0 {
-        return Err(Failure::PermissionDenied);
+        return Err(denied());
     }
     let keys = x!(x!(connection.query_keymap()).reply());
     if keys.keys.iter().any(|byte| *byte != 0) {
-        return Err(Failure::PermissionDenied);
+        return Err(denied());
     }
     checked(permit, deadline)
 }
