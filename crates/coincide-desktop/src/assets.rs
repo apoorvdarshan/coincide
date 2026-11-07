@@ -43,6 +43,16 @@ icon_assets!(
         Lightbulb,
         Mail,
         Users,
+        // Bot editor personality chips.
+        Binoculars,
+        Briefcase,
+        CircleSlash,
+        Crosshair,
+        Drama,
+        Footprints,
+        GraduationCap,
+        Leaf,
+        PencilLine,
         Ban,
         BatteryCharging,
         BatteryFull,
@@ -223,6 +233,12 @@ mod tests {
             "icons/circle-question-mark.svg",
             // Pull request glyphs and schedule row marks.
             // The Diff inspector's empty states.
+            // The bot editor's personality chips.
+            "icons/circle-slash.svg",
+            "icons/graduation-cap.svg",
+            "icons/pencil-line.svg",
+            // Empty states shared by sidebar chrome and Diff inspector.
+            "icons/folder-x.svg",
             "icons/diff.svg",
             "icons/folder-x.svg",
             "icons/git-pull-request.svg",

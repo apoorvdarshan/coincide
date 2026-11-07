@@ -1,6 +1,7 @@
 //! Bounded bot editing in the Rust Store overlay. Captured bots.json originals
-//! and instruction files are never written; bot persona is the only editable
-//! instruction source here. Runtime bot activation is not connected by this API.
+//! and instruction files are never written; bot persona and personality are the
+//! only editable instruction sources here, beside the bot's look and folder.
+//! Runtime bot activation is not connected by this API.
 use super::*;
 use crate::organization::{DOCUMENT_LIMIT, RECORD_LIMIT};
 use sha2::{Digest, Sha256};
@@ -86,10 +87,13 @@ fn patch(value: &Value) -> Result<serde_json::Map<String, Value>> {
     let patch = value.as_object().context("Bot patch must be an object")?;
     ensure!(
         !patch.is_empty()
-            && patch
-                .keys()
-                .all(|key| matches!(key.as_str(), "name" | "persona")),
-        "Only bot name and persona can be edited"
+            && patch.keys().all(|key| {
+                matches!(
+                    key.as_str(),
+                    "name" | "persona" | "avatar" | "personality" | "folder"
+                )
+            }),
+        "Only bot name, look, personality, instructions and folder can be edited"
     );
     let mut validated = patch.clone();
     if let Some(name) = patch.get("name") {
@@ -107,7 +111,92 @@ fn patch(value: &Value) -> Result<serde_json::Map<String, Value>> {
             "Bot instructions must contain at most 20,000 characters and no NUL"
         );
     }
+    if let Some(avatar) = patch.get("avatar") {
+        validated.insert("avatar".into(), self::avatar(avatar)?);
+    }
+    if let Some(personality) = patch.get("personality") {
+        validated.insert("personality".into(), self::personality(personality)?);
+    }
+    if let Some(folder) = patch.get("folder") {
+        validated.insert("folder".into(), self::folder(folder)?);
+    }
     Ok(validated)
+}
+/// A look the editor offers: one of this version's characters in one of its tints.
+fn avatar(value: &Value) -> Result<Value> {
+    let fields = value.as_object().context("Bot look must be an object")?;
+    ensure!(
+        fields.len() == 2 && fields.contains_key("shape") && fields.contains_key("tint"),
+        "Bot look needs exactly a shape and a tint"
+    );
+    let shape = fields["shape"]
+        .as_str()
+        .and_then(crate::bot_artwork::Character::from_raw)
+        .filter(|shape| fields["shape"] == shape.raw())
+        .context("Unknown bot character")?;
+    let tint = fields["tint"]
+        .as_str()
+        .and_then(crate::bot_artwork::Tint::from_raw)
+        .context("Unknown bot color")?;
+    Ok(json!({"shape":shape.raw(),"tint":tint.raw()}))
+}
+/// A preset this version has, the user's own description, or null for none. The
+/// description is saved trimmed, as Swift saves it, and kept beside a preset.
+fn personality(value: &Value) -> Result<Value> {
+    if value.is_null() {
+        return Ok(Value::Null);
+    }
+    let fields = value
+        .as_object()
+        .context("Bot personality must be an object or null")?;
+    ensure!(
+        fields
+            .keys()
+            .all(|key| matches!(key.as_str(), "preset" | "custom")),
+        "Unknown bot personality field"
+    );
+    let preset = match fields.get("preset").filter(|value| !value.is_null()) {
+        Some(id) => Some(
+            id.as_str()
+                .and_then(crate::bot_personality::preset)
+                .context("Unknown bot personality preset")?
+                .id,
+        ),
+        None => None,
+    };
+    let custom = fields
+        .get("custom")
+        .map(|value| value.as_str().context("Custom personality must be text"))
+        .transpose()?
+        .unwrap_or("")
+        .trim();
+    ensure!(
+        custom.chars().count() <= crate::bot_personality::CUSTOM_LIMIT && !custom.contains('\0'),
+        "Custom personality must contain at most 4,000 characters and no NUL"
+    );
+    Ok(match preset {
+        Some(preset) => json!({"preset":preset,"custom":custom}),
+        None if custom.is_empty() => Value::Null,
+        None => json!({"custom":custom}),
+    })
+}
+/// An absolute folder, `~` for the home folder's subfolders, or null for home.
+/// Existence is checked when a conversation starts there (`bot_runtime::cwd`).
+fn folder(value: &Value) -> Result<Value> {
+    if value.is_null() {
+        return Ok(Value::Null);
+    }
+    let folder = value.as_str().context("Bot folder must be text or null")?;
+    ensure!(
+        !folder.is_empty()
+            && folder.len() <= 4096
+            && !folder.chars().any(char::is_control)
+            && (std::path::Path::new(folder).is_absolute()
+                || folder == "~"
+                || folder.starts_with("~/")),
+        "Bot folder must be an absolute path"
+    );
+    Ok(json!(folder))
 }
 impl Engine {
     pub(super) fn organization_command(&mut self, method: &str, params: &Value) -> Result<Value> {
@@ -152,7 +241,12 @@ impl Engine {
         };
         let bot = snapshot.document["bots"][position].as_object_mut().unwrap();
         for (key, value) in patch {
-            bot.insert(key, value);
+            // Swift saves no key for no personality and the home folder.
+            if value.is_null() {
+                bot.remove(&key);
+            } else {
+                bot.insert(key, value);
+            }
         }
         let baseline = crate::digest_hex::lower_hex(Sha256::digest(validate(&snapshot.document)?));
         // Store repeats the comparison inside an IMMEDIATE transaction, covering

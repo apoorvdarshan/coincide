@@ -431,7 +431,9 @@ impl Engine {
             "cli.sessions.import" => {
                 ensure!(cfg!(any(unix, windows)), "CLI-session file import is not supported on this platform yet");
                 let result = session_import_api::import(&mut self.store, p)?;
-                self.revision += 1;
+                if result["existing"] != true {
+                    self.revision += 1;
+                }
                 Ok(result)
             }
             "providers.codex.profiles.limits.refresh" | "providers.codex.profiles.limits.status" => self.codex_profile_limits_command(method,p),

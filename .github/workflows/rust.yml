@@ -280,6 +280,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Select-String -Path "$env:RUNNER_TEMP/keyboard-menu-tests.log" -Pattern 'test result: ok. [1-9][0-9]* passed; 0 failed;')) { throw 'Expected nonzero keyboard and menu tests' }
           if (-not (Select-String -Path "$env:RUNNER_TEMP/keyboard-menu-tests.log" -SimpleMatch 'terminal_keys_follow_platform_terminal_conventions ... ok')) { throw 'Expected Windows terminal key conventions' }
+      - name: Test bot avatar rendering, bot editor and App Updates logic without a window
+        shell: pwsh
+        run: |
+          cargo test -p coincide-desktop --bin coincide-rust --features native-microphone --locked -- bot_avatar::tests bot_settings::tests updater_settings::tests --nocapture | Tee-Object -FilePath "$env:RUNNER_TEMP/bot-editor-tests.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Select-String -Path "$env:RUNNER_TEMP/bot-editor-tests.log" -SimpleMatch 'test result: ok. 15 passed; 0 failed; 0 ignored;')) { throw 'Expected exactly 15 bot avatar, bot editor and App Updates tests' }
       - name: Test transcript link routing, plan card, changed files and rewind logic
         shell: pwsh
         run: |
@@ -487,6 +493,11 @@ jobs:
           cargo test -p coincide-desktop --bin coincide-rust --features native-microphone --locked -- keyboard_settings::tests app_menu::tests command_palette::tests terminal_workspace::tests::prompt_jumps --nocapture | tee "$RUNNER_TEMP/keyboard-menu-tests.log"
           grep -E 'test result: ok. [1-9][0-9]* passed; 0 failed;' "$RUNNER_TEMP/keyboard-menu-tests.log"
           grep -F 'terminal_keys_follow_platform_terminal_conventions ... ok' "$RUNNER_TEMP/keyboard-menu-tests.log"
+      - name: Test bot avatar rendering, bot editor and App Updates logic without a window
+        run: |
+          set -o pipefail
+          cargo test -p coincide-desktop --bin coincide-rust --features native-microphone --locked -- bot_avatar::tests bot_settings::tests updater_settings::tests --nocapture | tee "$RUNNER_TEMP/bot-editor-tests.log"
+          grep -F 'test result: ok. 15 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/bot-editor-tests.log"
       - name: Test transcript link routing, plan card, changed files and rewind logic
         run: |
           set -o pipefail
