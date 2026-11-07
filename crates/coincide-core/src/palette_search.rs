@@ -806,3 +806,22 @@ pub fn rank(
 #[cfg(test)]
 #[path = "palette_search_tests.rs"]
 mod tests;
+
+/// One character as message search compares it; None for a combining mark.
+pub(crate) fn fold_char(character: char) -> Option<char> {
+    if is_combining_mark(character) {
+        return None;
+    }
+    if character.is_ascii() {
+        return Some(character.to_ascii_lowercase());
+    }
+    if character == '‘' || character == '’' {
+        return Some('\'');
+    }
+    let mut lower = character.to_lowercase();
+    let lowered = match (lower.next(), lower.next()) {
+        (Some(single), None) => single,
+        _ => character,
+    };
+    Some(strip_latin_diacritic(lowered).to_ascii_lowercase())
+}

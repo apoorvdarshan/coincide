@@ -29,6 +29,7 @@ pub mod cli_session_import;
 pub mod credentials;
 pub mod dictation;
 pub mod git_actions;
+pub mod github_repository;
 pub mod local_usage;
 pub mod organization;
 pub mod passkeys;
@@ -103,7 +104,6 @@ pub mod appshots;
 
 pub mod reply_selection;
 
-pub mod palette_search;
 pub mod project_search;
 
 pub mod voice;
