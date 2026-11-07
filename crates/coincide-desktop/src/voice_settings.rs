@@ -441,11 +441,18 @@ impl Coincide {
             .gap_2()
             .child(
                 Button::new("composer-dictation")
-                    .label(if active {
+                    .icon(gpui_kit::assets::IconName::Mic)
+                    .accessibility_label(if active {
                         "Stop dictation"
                     } else {
-                        "Microphone"
+                        "Start dictation"
                     })
+                    .tooltip(if active { "Stop dictation" } else { "Start dictation" })
+                    .compact()
+                    .ghost()
+                    .xsmall()
+                    .h(px(26.))
+                    .rounded(px(7.))
                     .disabled(
                         !voice.enabled
                             || (voice.engine == Engine::Apple && !voice_speech::compiled())

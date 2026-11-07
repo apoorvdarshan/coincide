@@ -5169,7 +5169,6 @@ impl Render for Coincide {
                                                 .mt_2()
                                                 .when(!self.composer_files.opened, |view| view.child(self.composer_selection_footer(cx)))
                                                 .child(self.composer_file_button(cx))
-                                                .child(self.composer_voice_control(cx))
                                                 .child(
                                                     Button::new("attach-images")
                                                         .icon(gpui_kit::assets::IconName::Paperclip)
@@ -5186,6 +5185,7 @@ impl Render for Coincide {
                                                             this.attach_images(cx)
                                                         })),
                                                 )
+                                                .child(self.composer_voice_control(cx))
                                                 .when(self.running.contains(&selected_id), |view| view.child(self.composer_stop_button(cx)))
                                                 .when(implement_button.is_none(), |view| view.child(
                                                     Button::new("send")
