@@ -63,6 +63,8 @@ pub mod composer_context;
 
 pub mod composer_policy;
 
+pub mod composer_suggestions;
+
 pub mod browser_bookmarks;
 pub mod browser_history;
 
