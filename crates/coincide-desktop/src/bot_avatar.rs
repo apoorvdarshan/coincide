@@ -69,3 +69,17 @@ mod tests {
         }
     }
 }
+
+/// The avatar for a bot's saved `avatar` object, with the same fallbacks as
+/// the bot editor: unknown shapes become the alien, unknown tints its own.
+pub(crate) fn avatar_for(value: &serde_json::Value, side: f32) -> impl IntoElement {
+    let shape = value["shape"]
+        .as_str()
+        .and_then(Character::from_raw)
+        .unwrap_or(Character::Alien);
+    let tint = value["tint"]
+        .as_str()
+        .and_then(Tint::from_raw)
+        .unwrap_or(shape.default_tint());
+    avatar(shape, tint, side)
+}

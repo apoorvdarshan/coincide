@@ -38,7 +38,7 @@ pub(super) struct State {
     pub(super) preview: Option<dictation_preview::Preview>,
     pub(super) restored_preview: Option<gpui_base::input::NativeTextRevision>,
     /// macOS's 🌐 key setting, re-read at most every two seconds.
-    fn_usage: std::cell::Cell<Option<(Instant, voice_system::FnKeyUsage)>>,
+    fn_usage_cache: std::cell::Cell<Option<(Instant, voice_system::FnKeyUsage)>>,
 }
 impl Default for State {
     fn default() -> Self {
@@ -53,19 +53,19 @@ impl Default for State {
             ticket: None,
             preview: None,
             restored_preview: None,
-            fn_usage: Default::default(),
+            fn_usage_cache: Default::default(),
         }
     }
 }
 impl State {
     pub(super) fn fn_usage(&self) -> voice_system::FnKeyUsage {
-        if let Some((read, usage)) = self.fn_usage.get()
+        if let Some((read, usage)) = self.fn_usage_cache.get()
             && read.elapsed() < std::time::Duration::from_secs(2)
         {
             return usage;
         }
         let usage = voice_system::FnKeyUsage::current();
-        self.fn_usage.set(Some((Instant::now(), usage)));
+        self.fn_usage_cache.set(Some((Instant::now(), usage)));
         usage
     }
     pub(super) fn recording_ended(&mut self) {
