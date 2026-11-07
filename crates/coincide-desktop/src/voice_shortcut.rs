@@ -116,11 +116,8 @@ impl Coincide {
         }
         self.microphone_window_active = true;
         self.microphone_settings_active = false;
-        self.composer
-            .read(cx)
-            .focus_handle()
-            .clone()
-            .focus(window, cx);
+        let focus = self.composer.read(cx).focus_handle(cx).clone();
+        focus.focus(window, cx);
         let Some(binding) = self.sync_transcription_binding(cx) else {
             return;
         };
