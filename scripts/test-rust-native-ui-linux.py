@@ -310,9 +310,10 @@ def main():
         command("xdotool", "type", "--clearmodifiers", "--delay", "15", draft, env=env)
         command("import", "-window", window, str(artifacts / "composer-after-type.png"), env=env)
         # Drafts persist at the composer's blur boundary, not on every keystroke,
-        # so the typing path never waits on the store. Click the conversation
-        # header to blur without changing the thread, then assert persistence.
-        command("xdotool", "mousemove", "--window", window, "900", "200", "click", "1", env=env)
+        # so the typing path never waits on the store. Focus the sidebar search
+        # field to blur the composer, assert persistence, then focus the
+        # composer again for the next typing step.
+        command("xdotool", "mousemove", "--window", window, "150", "80", "click", "1", env=env)
         try:
             wait_for("native keyboard draft saved", lambda: rpc("threads.read", threadId=thread_id).get("draft") == draft)
         except BaseException:
@@ -331,6 +332,8 @@ def main():
             except Exception as diagnostic_error:
                 report["composerFailureEvidenceError"] = type(diagnostic_error).__name__
             raise
+        command("xdotool", "mousemove", "--window", window,
+                str((left + right) // 2), str((top + bottom) // 2), "click", "1", env=env)
         capture(window, "typed-draft", "keyboard draft")
         report["checks"].append("visible rendered native window and X11 keyboard draft persisted")
         # Real X11 typing of a `/` word opens the production suggestion list
