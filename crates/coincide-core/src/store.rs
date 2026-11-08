@@ -1002,6 +1002,43 @@ impl Store {
             .as_object()
             .context("Thread patch must be an object")?;
         validate_patch(patch)?;
+        // Draft typing is the hottest composer path. Update the draft field in
+        // place and return a tiny acknowledgement instead of parsing, rewriting
+        // and re-indexing the whole transcript and serializing it back to the UI.
+        if patch.len() == 1
+            && let Some(draft) = patch.get("draft")
+        {
+            let draft = draft.as_str().context("draft must be text")?;
+            ensure!(draft.len() <= 1_048_576, "Draft exceeds 1 MiB");
+            let tx = self.connection_mut()?.transaction()?;
+            // Preserve the derived navigation cache; the document trigger clears it.
+            let navigation = tx
+                .query_row(
+                    "SELECT metadata FROM thread_navigation WHERE id=?1 COLLATE NOCASE",
+                    [id],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .optional()?
+                .flatten()
+                .and_then(|metadata| {
+                    let mut value: Value = serde_json::from_str(&metadata).ok()?;
+                    value["has_draft"] = json!(!draft.is_empty());
+                    Some(value.to_string())
+                });
+            let changed = tx.execute(
+                "UPDATE threads SET document=json_set(document,'$.draft',?2) WHERE id=?1 COLLATE NOCASE",
+                params![id, draft],
+            )?;
+            ensure!(changed == 1, "Thread not found");
+            if let Some(metadata) = navigation {
+                tx.execute(
+                    "INSERT INTO thread_navigation(id,metadata) VALUES (?1,?2) ON CONFLICT(id) DO UPDATE SET metadata=excluded.metadata",
+                    params![id, metadata],
+                )?;
+            }
+            tx.commit()?;
+            return Ok(json!({"id": id, "draft": draft}));
+        }
         let mut value = self.thread(id)?;
         for (key, next) in patch {
             value[key] = next.clone();
@@ -2019,6 +2056,31 @@ mod tests {
                 .is_err()
         );
         assert_eq!(db.thread(ID).unwrap()["draft"], "new draft");
+    }
+
+    #[test]
+    fn draft_only_patch_is_compact_and_preserves_the_transcript() {
+        let (_dir, _source, mut db) = setup();
+        let items = json!([
+            {"kind": "future", "text": "first"},
+            {"kind": "future", "text": "second"}
+        ]);
+        let v = json!({"id":ID,"items":items,"title":"Draft holder","createdAt":800000000.0,"draft":""});
+        db.save(&v).unwrap();
+        let changed = db.patch_thread(ID, &json!({"draft":"hello"})).unwrap();
+        assert_eq!(changed, json!({"id":ID,"draft":"hello"}));
+        let read = db.thread(ID).unwrap();
+        assert_eq!(read["draft"], "hello");
+        assert_eq!(read["items"], items);
+        assert_eq!(
+            db.summaries("", false).unwrap()[0]
+                .navigation
+                .as_ref()
+                .and_then(|n| n.has_draft),
+            Some(true)
+        );
+        db.patch_thread(ID, &json!({"draft":""})).unwrap();
+        assert_eq!(db.thread(ID).unwrap()["draft"], "");
     }
 
     #[test]

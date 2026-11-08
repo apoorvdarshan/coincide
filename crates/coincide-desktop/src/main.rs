@@ -535,6 +535,7 @@ struct Coincide {
     pending_native_selection: Option<Option<String>>,
     startup_selection_pending: bool,
     pending_drafts: std::collections::HashMap<String, PendingDraft>,
+    draft_save_epoch: u64,
     composer: Entity<TextareaState>,
     model_input: Entity<InputState>,
     model_picker_search: Entity<InputState>,
@@ -1404,7 +1405,23 @@ impl Coincide {
                             retry: true,
                         },
                     );
-                    this.save_pending_draft(&id);
+                    // Drafts are persisted after a short idle period. Writing a
+                    // multi-megabyte thread document on every keystroke made
+                    // typing in long imported threads unusable.
+                    this.draft_save_epoch = this.draft_save_epoch.wrapping_add(1);
+                    let epoch = this.draft_save_epoch;
+                    let save_id = id.clone();
+                    cx.spawn(async move |this, cx| {
+                        cx.background_executor()
+                            .timer(Duration::from_millis(500))
+                            .await;
+                        let _ = this.update(cx, |this, _| {
+                            if this.draft_save_epoch == epoch {
+                                this.save_pending_draft(&save_id);
+                            }
+                        });
+                    })
+                    .detach();
                 }
             }),
         ];
@@ -1648,6 +1665,7 @@ impl Coincide {
             pending_native_selection: None,
             startup_selection_pending: true,
             pending_drafts: Default::default(),
+            draft_save_epoch: 0,
             composer,
             model_input,
             model_picker_search,
