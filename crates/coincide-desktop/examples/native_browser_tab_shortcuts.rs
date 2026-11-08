@@ -97,6 +97,7 @@ struct Fixture {
     cases: Vec<Case>,
     index: usize,
     hidden_sibling: bool,
+    shown_sibling: bool,
     focused: Option<Instant>,
     waiting: Option<Waiting>,
     started: Instant,
@@ -171,6 +172,7 @@ impl Fixture {
             cases: cases(),
             index: 0,
             hidden_sibling: false,
+            shown_sibling: false,
             focused: None,
             waiting: None,
             started: Instant::now(),
@@ -287,10 +289,14 @@ impl Fixture {
                 cx.notify();
                 return false;
             }
-            if self.index == 4 {
+            if self.index == 4 && !self.shown_sibling {
                 // Hiding the sibling can unmap the shared native parent; make
-                // the remaining owned view visible again before focusing it.
+                // the remaining owned view visible again, then let GTK map it
+                // before focusing it.
                 self.views[1].update(cx, |view, _| view.show());
+                self.shown_sibling = true;
+                cx.notify();
+                return false;
             }
             if self.index == 7 {
                 self.shutdown
@@ -298,10 +304,16 @@ impl Fixture {
                     .closed
                     .store(true, Ordering::Release);
             }
+            let before = focus_state(self.views[case.view].read(cx).raw());
             match focus(self.views[case.view].read(cx).raw()) {
                 Ok(()) => self.focused = Some(Instant::now()),
                 Err(error) => self.fail(format!("owned view focus failed: {error}")),
             }
+            println!(
+                "focus case {} before=[{before}] after=[{}]",
+                self.index,
+                focus_state(self.views[case.view].read(cx).raw())
+            );
         } else if self.focused.unwrap().elapsed() > Duration::from_millis(100) {
             // Exercise the same current-focus predicate production dispatch uses,
             // independently of merely receiving an accelerator callback.
@@ -310,7 +322,14 @@ impl Fixture {
             let sibling_focused =
                 self.targets[1 - case.view].focused(self.views[1 - case.view].read(cx).raw());
             if !selected_focused || sibling_focused {
-                self.fail(format!("current native focus did not belong exclusively to the owned selected view (case={}, selected={}, sibling={})", self.index, selected_focused, sibling_focused));
+                self.fail(format!(
+                    "current native focus did not belong exclusively to the owned selected view (case={}, selected={}, sibling={}, selectedState={}, siblingState={})",
+                    self.index,
+                    selected_focused,
+                    sibling_focused,
+                    focus_state(self.views[case.view].read(cx).raw()),
+                    focus_state(self.views[1 - case.view].read(cx).raw()),
+                ));
                 return false;
             }
             match key(self.views[case.view].read(cx).raw(), case) {
@@ -380,6 +399,61 @@ fn key(view: &wry::WebView, case: Case) -> anyhow::Result<KeyGuard> {
 #[cfg(target_os = "linux")]
 fn focus(view: &wry::WebView) -> anyhow::Result<()> {
     native_shortcuts::focus(view)
+}
+#[cfg(target_os = "linux")]
+fn focus_state(view: &wry::WebView) -> String {
+    use gtk::{glib::translate::ToGlibPtr, prelude::WidgetExt as _};
+    use wry::WebViewExtUnix as _;
+    let widget = view.webview();
+    let owned = widget
+        .window()
+        .map(|window| unsafe { gdk_x11_window_get_xid(window.to_glib_none().0) })
+        .unwrap_or(0);
+    let (current, parent, map_state) = x11rb::connect(None)
+        .ok()
+        .map(|(connection, _)| {
+            use x11rb::protocol::xproto::ConnectionExt as _;
+            let current = connection
+                .get_input_focus()
+                .ok()
+                .and_then(|cookie| cookie.reply().ok())
+                .map(|reply| reply.focus)
+                .unwrap_or(0);
+            let parent = u32::try_from(owned)
+                .ok()
+                .and_then(|owned| connection.query_tree(owned).ok())
+                .and_then(|cookie| cookie.reply().ok())
+                .map(|tree| tree.parent)
+                .unwrap_or(0);
+            let state = |window: u32| {
+                connection
+                    .get_window_attributes(window)
+                    .ok()
+                    .and_then(|cookie| cookie.reply().ok())
+                    .map(|attributes| format!("{:?}", attributes.map_state))
+                    .unwrap_or_else(|| "unknown".into())
+            };
+            let map_state = u32::try_from(owned)
+                .ok()
+                .map(|owned| format!("{}/{}", state(owned), state(parent)))
+                .unwrap_or_else(|| "unknown".into());
+            (current, parent, map_state)
+        })
+        .unwrap_or((0, 0, "unknown".into()));
+    format!(
+        "visible={} mapped={} owned={owned} parent={parent} mapState={map_state} current={current}",
+        widget.is_visible(),
+        widget.is_mapped()
+    )
+}
+#[cfg(target_os = "linux")]
+#[link(name = "gdk-3")]
+unsafe extern "C" {
+    fn gdk_x11_window_get_xid(window: *mut gtk::gdk::ffi::GdkWindow) -> std::os::raw::c_ulong;
+}
+#[cfg(not(target_os = "linux"))]
+fn focus_state(_view: &wry::WebView) -> String {
+    String::from("unsupported")
 }
 #[cfg(target_os = "linux")]
 fn key(view: &wry::WebView, case: Case) -> anyhow::Result<KeyGuard> {

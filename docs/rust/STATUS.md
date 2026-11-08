@@ -1535,3 +1535,18 @@ synthetic Codex rollout file:
 
 This verifies preview, transactional import, idempotent re-import and
 non-destructive source handling outside the unit suite.
+
+## Real usage-limit acceptance (2026-11-08)
+
+Through the native control API on this Mac, with the installed provider CLIs:
+
+- `usage.codexLimits.refresh` returned a request id, and
+  `usage.codexLimits.status` reached `ready` with a snapshot whose provenance is
+  `codex_app_server_account_rate_limits`: plan `pro`, one weekly window
+  (10080 minutes), and `hasCredits: false` with balance `0`.
+- `usage.claudeLimits.refresh` accepted the read, and the installed Claude Code
+  `2.1.311` answered `no_reported_limits`, which is the reader's documented
+  result for a CLI without `get_usage`; it is not a malformed-response failure.
+
+This verifies a live provider limits read and the older-CLI fallback. It does
+not prove that either provider shows the same values in the Swift app.

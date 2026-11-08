@@ -275,13 +275,37 @@ fn pairing_then_hello_drives_the_workspace_and_open_threads() {
     assert_eq!(hello["body"]["appVersion"], "9.9.9");
     assert_eq!(hello["body"]["protocolVersion"], 1);
 
-    request(
-        &mut client,
-        "w",
-        "workspace",
-        Some(json!({"includeArchived":false})),
-    );
-    let workspace = reply(&mut client, "w");
+    // The adapter answers a read while the desktop holds Engine with the
+    // documented busy failure instead of waiting; a client retries the read.
+    let workspace = {
+        let mut message = Value::Null;
+        for _ in 0..100 {
+            request(
+                &mut client,
+                "w",
+                "workspace",
+                Some(json!({"includeArchived":false})),
+            );
+            message = reply(&mut client, "w");
+            if message["kind"] == "response" {
+                break;
+            }
+            assert_eq!(message["kind"], "error", "{message}");
+            assert_eq!(message["error"]["code"], "failed", "{message}");
+            assert!(
+                message["error"]["message"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("busy")),
+                "{message}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(
+            message["kind"], "response",
+            "workspace stayed busy: {message}"
+        );
+        message
+    };
     let body = &workspace["body"];
     assert_eq!(body["projects"][0]["name"], "Fixture");
     assert_eq!(

@@ -325,8 +325,18 @@ impl WebView {
     /// Set visibility and report native errors without discarding the loaded page.
     pub fn set_visible(&self, visible: bool) -> wry::Result<()> {
         // A focus error must not leave a closing native view covering the window.
+        // X11 reverts focus when the focused container is unmapped; moving it to
+        // that same container first only queues a later focus change that can
+        // steal focus from the view shown in its place.
         let focus_result = if !visible && self.visible.get() {
-            self.webview.focus_parent()
+            #[cfg(target_os = "linux")]
+            {
+                Ok(())
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                self.webview.focus_parent()
+            }
         } else {
             Ok(())
         };

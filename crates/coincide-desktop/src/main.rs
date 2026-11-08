@@ -2149,7 +2149,7 @@ impl Coincide {
             .then(|| self.browser_settings_panel.clone());
         let dialog_banner = self.browser_dialog_banner(cx);
         let user_turn_banner = self.browser_user_turn_banner(cx);
-        let page = self.browser_page(&thread, webview.clone(), cx);
+        let page = self.browser_page(&thread, webview, cx);
         let passkey_banner = self.browser_passkey_banner(cx);
         Some(
             div()
@@ -2252,12 +2252,6 @@ impl Coincide {
                 .children(user_turn_banner)
                 .child(page)
                 .children(passkey_banner)
-                .child(
-                    div()
-                        .flex_1()
-                        .min_h_0()
-                        .when_some(webview, |pane, view| pane.child(view)),
-                )
                 .into_any_element(),
         )
     }
