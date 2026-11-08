@@ -1557,3 +1557,19 @@ Through the native control API on this Mac, with the installed provider CLIs:
 
 This verifies a live provider limits read and the older-CLI fallback. It does
 not prove that either provider shows the same values in the Swift app.
+
+## Real macOS notification acceptance (2026-11-08)
+
+- Staged `Coincide Rust.app` with bundle id `com.apoorvdarshan.coincide.rust`,
+  signed with the existing Developer ID Application identity, and passed
+  `scripts/rust-packaging.py` manifest/validate (integrity passed; signing,
+  notarization, updater and rollback remain unverified).
+- Enabled desktop notifications in Settings and granted the system permission
+  ("System notifications are allowed").
+- Sent a real OpenCode (DeepSeek V4.1 Flash) turn in a throwaway data directory.
+  With the app in the background, macOS delivered the "Coincide Rust — Agent
+  finished" banner.
+
+This verifies permission, enablement and one real completion notification. It
+does not verify notification clicks/actions, failure or approval alerts, or a
+notarized release.
