@@ -310,10 +310,16 @@ def main():
         command("xdotool", "type", "--clearmodifiers", "--delay", "15", draft, env=env)
         command("import", "-window", window, str(artifacts / "composer-after-type.png"), env=env)
         # Drafts persist at the thread-switch boundary, not on every keystroke,
-        # so the typing path never waits on the store. Reopening the same thread
-        # is the app's own boundary: it flushes the pending draft before reading
-        # the thread again. Then focus the composer for the next typing step.
+        # so the typing path never waits on the store. Switch to a fresh thread
+        # and back: the switch is the app's own draft boundary. Then focus the
+        # composer again for the next typing step.
+        other = rpc("threads.create", projectId=created_project["id"])
+        rpc("threads.open", threadId=other["id"])
+        wait_for("switch to the flush thread",
+                 lambda: rpc("app.status").get("activeThread") == other["id"])
         rpc("threads.open", threadId=thread_id)
+        wait_for("return to the typed thread",
+                 lambda: rpc("app.status").get("activeThread") == thread_id)
         try:
             wait_for("native keyboard draft saved", lambda: rpc("threads.read", threadId=thread_id).get("draft") == draft)
         except BaseException:
