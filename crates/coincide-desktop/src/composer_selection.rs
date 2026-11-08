@@ -2631,6 +2631,61 @@ impl Coincide {
     pub(super) fn composer_selection_expanded(&self) -> bool {
         self.selection_ui.expanded
     }
+    /// Swift's start of an empty thread: the serif headline just above the
+    /// composer, with the agent and model the thread will use.
+    pub(super) fn chat_welcome(&self, cx: &mut Context<Self>) -> AnyElement {
+        let _ = cx;
+        let Some(thread) = &self.selected else {
+            return div().into_any_element();
+        };
+        let project_id = &thread["projectID"];
+        let project = self.projects.iter().find(|project| &project["id"] == project_id);
+        let chats = project.is_some_and(|project| project["isChats"] == true || project["isBots"] == true)
+            || project_id.is_null()
+            || project_id.as_str() == Some("00000000-0000-0000-0000-000000000000");
+        let headline = if chats {
+            "What can I help with?".to_owned()
+        } else if let Some(name) = project.and_then(|project| project["name"].as_str()) {
+            format!("What should we build in {name}?")
+        } else {
+            "What should we build?".to_owned()
+        };
+        let provider = text(&thread["selection"], "provider");
+        let model = reported_picker_model_label(thread, &self.selection_ui.catalog)
+            .unwrap_or_else(|| text(&thread["selection"], "modelID"));
+        let using = if model.is_empty() || model == "default" {
+            format!(
+                "Using {}",
+                models_settings::provider_display_name(&provider)
+            )
+        } else {
+            format!(
+                "Using {} · {model}",
+                models_settings::provider_display_name(&provider)
+            )
+        };
+        div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap_2()
+            .px(px(24.))
+            .pb_5()
+            .child(
+                div()
+                    .font_family("New York")
+                    .text_3xl()
+                    .text_center()
+                    .child(headline),
+            )
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(self.color(0xe4e9f2).opacity(0.6))
+                    .child(using),
+            )
+            .into_any_element()
+    }
     fn model_picker_filter_bar(&self, cx: &mut Context<Self>) -> AnyElement {
         let _ = cx;
         div()

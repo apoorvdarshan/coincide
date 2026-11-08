@@ -5061,6 +5061,15 @@ impl Render for Coincide {
                     .child(conversation_content)
                     .when_some(pending_pane, |view, pane| view.child(pane))
                     .when_some(terminal_bottom,|view,pane|view.child(pane))
+                    .when(
+                        show_composer
+                            && self.selected.as_ref().is_some_and(|thread| {
+                                thread["items"]
+                                    .as_array()
+                                    .is_some_and(|items| items.is_empty())
+                            }),
+                        |view| view.child(self.chat_welcome(cx)),
+                    )
                     .when(show_composer, |view| {
                         view.child(
                             div()

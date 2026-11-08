@@ -1672,9 +1672,12 @@ cutover; no Swift app or Swift data was removed or modified.
 - Verified through the installed control API: OpenCode refresh reached `ready`
   with 31 models, an ordinary thread's capabilities reported `low/high/max`,
   and `agent.select` saved `opencode/deepseek-v4.1-flash` with `max` effort.
+- An empty thread shows Swift's welcome above the composer: a serif
+  "What should we build in <project>?" (or "What can I help with?" in a chat)
+  and the agent/model line.
 - Built, signed with the shared Developer ID identity, notarized (submission
-  `700b2e2e-1954-48a1-ab51-ac18e2d86bbc`, Accepted), stapled and installed
-  `0.1.10` (build 20); Gatekeeper reports a notarized Developer ID.
+  `9a330386-8b47-46dc-a5a6-5d7eb003d9f6`, Accepted), stapled and installed
+  `0.1.11` (build 21); Gatekeeper reports a notarized Developer ID.
 - `cargo test -p coincide-core --lib` passed 1159 tests (9 ignored) and
   `cargo test -p coincide-desktop --bin coincide-rust` passed 810 tests
   (26 ignored) with the app stopped. The two updater stopped-target tests fail
