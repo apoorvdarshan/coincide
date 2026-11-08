@@ -1491,3 +1491,17 @@ Against `apoorvdarshan/coincide` with the user's existing `gh` credentials:
 This verifies the GitHub PR workspace's read path, exact-head binding and merge
 method discovery. Writes (reviews, merges) were not exercised because they
 change live GitHub state.
+
+## Real schedule lifecycle acceptance (2026-11-08)
+
+Against a throwaway data directory through the native control API:
+
+- `schedules.create` stored a daily schedule in `awaitingRustApproval` with the
+  thread and project targets bound.
+- `schedules.list` returned it; `schedules.pause` and `schedules.resume`
+  toggled it; `schedules.delete` removed it and the list was empty.
+- Approval stays native-UI only (the Settings › Scheduled "Approve in Rust"
+  button), as designed; the control API has no approval method.
+
+This verifies the schedule lifecycle apart from execution and the native
+approval click, which the UI acceptance already covered.
