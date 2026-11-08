@@ -1681,7 +1681,7 @@ impl ProcessGuard for MacProcessGuard {
                         size,
                     )
                 };
-                if got == size && unsafe { info.assume_init() }.pbi_status == libc::SZOMB as u32 {
+                if got == size && unsafe { info.assume_init() }.pbi_status == libc::SZOMB {
                     continue;
                 }
                 if let Ok(path) = process_path(pid) {
