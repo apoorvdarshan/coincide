@@ -147,6 +147,9 @@ impl Coincide {
                 let _ = view.read(cx).set_zoom(zoom);
             }
         }
+        eprintln!(
+            "browser_page dimensions={dimensions:?} viewport={viewport:?} measured={measured:?}"
+        );
         let page = div().flex_1().min_h_0().relative().child(
             canvas(
                 move |bounds, window, _| {

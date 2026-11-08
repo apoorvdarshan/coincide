@@ -290,7 +290,10 @@ impl WebView {
             return Ok(());
         }
         #[cfg(target_os = "linux")]
-        let rect = linux::device_bounds(document, self.scale_factor.get());
+        let rect = {
+            eprintln!("webview set_geometry document={:?} clip={:?} scale={}", document, clip, self.scale_factor.get());
+            linux::device_bounds(document, self.scale_factor.get())
+        };
         #[cfg(not(target_os = "linux"))]
         let rect = Rect {
             position: wry::dpi::LogicalPosition::new(
