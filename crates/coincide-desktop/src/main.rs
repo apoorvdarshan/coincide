@@ -393,6 +393,7 @@ struct Coincide {
     running: Vec<String>,
     pending_requests: Vec<Value>,
     follow_up_picker: bool,
+    follow_up_anchor: Option<Point<Pixels>>,
     follow_up_deliveries: Vec<composer_follow_up_mount::PendingDelivery>,
     pending_inputs: std::collections::HashMap<(String, String, String), Entity<InputState>>,
     pending_choices: std::collections::HashMap<(String, String, String), Vec<String>>,
@@ -1516,6 +1517,7 @@ impl Coincide {
             running: Vec::new(),
             pending_requests: Vec::new(),
             follow_up_picker: false,
+            follow_up_anchor: None,
             follow_up_deliveries: Vec::new(),
             pending_inputs: Default::default(),
             pending_choices: Default::default(),
@@ -1657,7 +1659,18 @@ impl Coincide {
             composer,
             model_input,
             model_picker_search,
-            selection_ui: Default::default(),
+            selection_ui: {
+                let mut ui = composer_selection::ComposerSelection::default();
+                if let Ok(directory) = coincide_core::control::data_directory()
+                    && let Ok(text) =
+                        std::fs::read_to_string(directory.join("model-catalog-cache.json"))
+                    && let Ok(cached) = serde_json::from_str::<Value>(&text)
+                    && cached["state"] == "ready"
+                {
+                    ui.catalog = cached;
+                }
+                ui
+            },
             composer_accessory_scroll: ScrollHandle::default(),
             composer_files,
             composer_suggestions: Default::default(),
@@ -5106,7 +5119,7 @@ impl Render for Coincide {
                                             div()
                                                 .relative()
                                                 .min_h_0()
-                                                .max_h(px(if self.composer_selection_expanded() { 460. } else { 160. }))
+                                                .max_h(px(160.))
                                                 .flex_shrink_1()
                                                 .when(self.composer_files.opened, |view| view.flex_shrink_0())
                                                 .flex()
@@ -5118,14 +5131,12 @@ impl Render for Coincide {
                                                         .track_scroll(&self.composer_accessory_scroll)
                                                         .pr_4()
                                                         .min_h_0()
-                                                        .max_h(px(if self.composer_selection_expanded() { 460. } else { 160. }))
+                                                        .max_h(px(160.))
                                                         .flex_shrink_1()
                                                         .when(self.composer_files.opened, |view| view.flex_shrink_0())
                                                         .overflow_y_scroll()
                                                         .when(self.composer_files.opened, |view| view.when_some(self.composer_file_pane(cx), |view, files| view.child(files)))
                                                         .when(!self.composer_files.opened, |view| view
-                                                        .when(self.composer_selection_expanded(), |view| view.child(self.composer_selection_pane(cx)))
-                                                        .when_some(self.follow_up_pane(cx), |view, pane| view.child(pane))
                                                         .when_some(
                                                             self.composer_steering_pane(cx),
                                                             |view, steering| view.child(steering),
@@ -5257,6 +5268,7 @@ impl Render for Coincide {
             )
             .capture_key_down(cx.listener(|this, event, window, cx| {
                 if !this.voice_key_down(event, window, cx)
+                    && !this.escape_dismisses_popover(event, cx)
                     && !this.sidebar_search_shortcut(event, window, cx)
                     && !this.inbox_undo_shortcut(event, window, cx)
                     && !this.context_details_shortcut(event, window, cx)
@@ -5280,6 +5292,9 @@ impl Render for Coincide {
             .child(navigation_rail)
             .when_some(sidebar, |view, sidebar| view.child(sidebar))
             .child(chat_inspector::columns(chat_column, inspector_pane))
+            .when_some(self.composer_popover(window, cx), |view, popover| {
+                view.child(popover)
+            })
             .when_some(historical_image, |view, image| view.child(image))
             .when_some(self.project_defaults_form(cx), |view, form| {
                 view.child(form)

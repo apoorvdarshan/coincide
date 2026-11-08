@@ -61,7 +61,7 @@ pub(super) fn provider_label(provider: &str, label: String) -> AnyElement {
                     .w(px(13.))
                     .h(px(13.))
                     .rounded(px(3.))
-                    .bg(rgb(0x2b3444)),
+                    .bg(rgb(0x2b2b2b)),
             )
         })
         .when(image.is_none(), |view| {

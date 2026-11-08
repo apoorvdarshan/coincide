@@ -456,7 +456,13 @@ impl Coincide {
                                                             }),
                                                     ),
                                             )
-                                            .child(div().truncate().text_xs().child(preview)),
+                                            .child(
+                                                div()
+                                                    .truncate()
+                                                    .text_size(px(13.))
+                                                    .text_color(ink.opacity(0.62))
+                                                    .child(preview.trim().to_owned()),
+                                            ),
                                     )
                                     .when(running, |row| {
                                         row.child(

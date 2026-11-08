@@ -88,11 +88,43 @@ impl Coincide {
             .xsmall()
             .h(px(26.))
             .rounded(px(7.))
-            .on_click(cx.listener(|this, _, _, cx| {
+            .on_click(cx.listener(|this, event: &gpui_kit::ClickEvent, _, cx| {
                 this.follow_up_picker = !this.follow_up_picker;
+                this.follow_up_anchor = Some(event.position());
+                if this.follow_up_picker {
+                    this.selection_ui.expanded = false;
+                }
                 cx.notify();
             }))
             .into_any_element()
+    }
+    /// Swift's follow-up menu: a small popover above the chip with Queue,
+    /// Steer and Interrupt and what each does.
+    pub(super) fn follow_up_menu(&self, cx: &mut Context<Self>) -> AnyElement {
+        let Some(thread) = self.selected.as_ref() else {
+            return div().into_any_element();
+        };
+        let chosen = choice::selected(thread, &self.settings);
+        let mut menu = div().flex().flex_col().gap_1().p_2();
+        for behavior in [Behavior::Queue, Behavior::Steer, Behavior::Interrupt] {
+            let unsupported =
+                behavior == Behavior::Steer && thread["selection"]["provider"] != "codex";
+            menu = menu.child(self.picker_menu_row(
+                format!("follow-up-{}", behavior.key()),
+                behavior.label().into(),
+                Some(behavior_help(behavior).into()),
+                Some(behavior_icon(behavior)),
+                chosen == behavior,
+                unsupported,
+                move |this, _, cx| {
+                    this.choose_follow_up(behavior, cx);
+                    this.follow_up_picker = false;
+                    cx.notify();
+                },
+                cx,
+            ));
+        }
+        menu.into_any_element()
     }
     pub(super) fn follow_up_pane(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         if !self.follow_up_picker {
