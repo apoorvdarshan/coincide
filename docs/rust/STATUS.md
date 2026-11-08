@@ -1519,3 +1519,19 @@ Against a throwaway data directory through the native control API:
 This verifies local bot creation, baseline-checked edits and listing. Starting a
 bot conversation still requires a configured provider, which this store does not
 have.
+
+## Real CLI-session import acceptance (2026-11-08)
+
+Against a throwaway data directory through the native control API, with a
+synthetic Codex rollout file:
+
+- `cli.sessions.preview` reported provider `codex`, one message and
+  `continuesSession: true` with a SHA-256 of the source.
+- `cli.sessions.import` created a thread from that exact SHA and returned its
+  source key under `ImportedSessions/codex/…`.
+- Re-running `cli.sessions.import` with the same SHA returned `existing: true`
+  and the same thread id, so the import is idempotent.
+- The source file was byte-identical afterwards.
+
+This verifies preview, transactional import, idempotent re-import and
+non-destructive source handling outside the unit suite.
