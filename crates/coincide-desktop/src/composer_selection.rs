@@ -3130,7 +3130,7 @@ impl Coincide {
                 anchored()
                     .position(anchor)
                     .anchor(Anchor::BottomLeft)
-                    .offset(point(px(-8.), px(-14.)))
+                    .offset(point(px(-24.), px(-14.)))
                     .snap_to_window()
                     .child(
                         div()

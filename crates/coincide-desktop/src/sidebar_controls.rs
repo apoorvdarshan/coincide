@@ -182,26 +182,13 @@ impl Coincide {
                         cx.listener(move |this, _, _, cx| this.toggle_sidebar_section(section, cx)),
                     )
                     .child(
-                        div()
-                            .w_full()
-                            .flex()
-                            .items_center()
-                            .gap_1()
-                            .child(
-                                Icon::new(if collapsed {
-                                    IconName::ChevronRight
-                                } else {
-                                    IconName::ChevronDown
-                                })
-                                .xsmall(),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(self.color(0xe4e9f2).opacity(0.55))
-                                    .child(label),
-                            ),
+                        div().w_full().flex().items_center().child(
+                            div()
+                                .text_xs()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(self.color(0xe4e9f2).opacity(0.55))
+                                .child(label),
+                        ),
                     ),
             )
             .when(section == "projects", |row| {
