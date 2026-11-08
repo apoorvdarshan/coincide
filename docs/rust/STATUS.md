@@ -1694,11 +1694,19 @@ cutover; no Swift app or Swift data was removed or modified.
   both lines share a left edge.
 - A cached OpenCode list stays selectable while the background refresh runs;
   only providers that need a private effort proof are relocked during it.
+- Popovers now touch their chip (14-point offset) instead of floating over
+  the chat with a large gap.
+- Model discovery also runs on imported or otherwise locked threads, since it
+  is read-only; those threads show their provider's models even while model
+  changes stay locked until forked.
+- Sidebar section headers are left-aligned small grey labels (Bots, Pinned,
+  Projects) instead of centred button labels, matching Swift.
 - Built, signed with the shared Developer ID identity, notarized (submissions
   `34def274-ced7-4f29-b16f-4b2b2277e90b` for 0.1.15,
-  `66606092-81c0-4b5b-9454-33ec1bca1150` for 0.1.16 and
-  `9fcc3d97-49f0-4ac9-8391-cfba5655fbe9` for 0.1.17, all Accepted), stapled
-  and installed `0.1.17` (build 27); Gatekeeper reports a notarized Developer
+  `66606092-81c0-4b5b-9454-33ec1bca1150` for 0.1.16,
+  `9fcc3d97-49f0-4ac9-8391-cfba5655fbe9` for 0.1.17 and
+  `ac4c9859-b651-42d9-8a53-827578314f2b` for 0.1.18, all Accepted), stapled
+  and installed `0.1.18` (build 28); Gatekeeper reports a notarized Developer
   ID.
 - `cargo test -p coincide-core --lib` passed 1159 tests (9 ignored) and
   `cargo test -p coincide-desktop --bin coincide-rust` passed 810 tests

@@ -2208,20 +2208,8 @@ impl Coincide {
         let Some(draft) = self.selection_ui.drafts.get(&text(thread, "id")) else {
             return;
         };
-        if capability_lock(
-            &self.selection_ui.capabilities,
-            self.running.contains(&text(thread, "id")),
-        )
-        .is_some()
-            && !automatic_default_replacement_context(
-                draft,
-                thread,
-                &self.selection_ui.capabilities,
-                self.running.contains(&text(thread, "id")),
-            )
-        {
-            return;
-        }
+        // Discovery is read-only, so it stays available for an imported or
+        // locked thread whose selection cannot change.
         let tab_provider = self
             .selection_ui
             .tab_provider
@@ -2247,21 +2235,6 @@ impl Coincide {
             let id = text(thread, "id");
             let current = engine.store.thread(&id)?;
             draft.params(&current)?;
-            let caps = selection_response(
-                &mut engine,
-                "agent.selection.capabilities",
-                json!({"threadId":id}),
-            )?;
-            if let Some(reason) = capability_lock(&caps, self.running.contains(&id))
-                && !automatic_default_replacement_context(
-                    draft,
-                    &current,
-                    &caps,
-                    self.running.contains(&id),
-                )
-            {
-                anyhow::bail!(reason);
-            }
             selection_response(
                 &mut engine,
                 "agent.models.refresh",
@@ -3157,7 +3130,7 @@ impl Coincide {
                 anchored()
                     .position(anchor)
                     .anchor(Anchor::BottomLeft)
-                    .offset(point(px(-10.), px(-140.)))
+                    .offset(point(px(-8.), px(-14.)))
                     .snap_to_window()
                     .child(
                         div()
