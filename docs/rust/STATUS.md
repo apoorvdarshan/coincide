@@ -1573,3 +1573,50 @@ not prove that either provider shows the same values in the Swift app.
 This verifies permission, enablement and one real completion notification. It
 does not verify notification clicks/actions, failure or approval alerts, or a
 notarized release.
+
+## Real Rust preview update staging (2026-11-08)
+
+- Built a `0.1.1` candidate from the same preview binaries, signed every nested
+  executable and the bundle with the existing Developer ID (team
+  `23RV7FYH36`), submitted it to Apple's notary service, stapled the accepted
+  ticket, and passed `spctl --assess --type execute`.
+- Packaged `Coincide-Rust-macos-arm64.zip` (57,346,284 bytes, SHA-256
+  `bc510e4b107b824754283f0be559624586346760f60f0bb93b8658a04e0c3a8a`) with
+  the top-level `Coincide Rust.app` layout the preview extractor requires, and
+  served a `rust-preview` feed and the artifact over valid HTTPS for the run.
+- Ran the production updater with the real HTTPS transport, ZIP extractor,
+  disk probe and a Developer ID/Gatekeeper trust adapter: the check offered
+  `0.1.1`, the download length and SHA-256 matched, extraction passed, the
+  extracted bundle's identity, version and architecture matched, its signature
+  verified, and a private staged job completed with
+  `install_authorized: false`.
+
+This verifies the feed/artifact contract, download integrity and staging trust
+for a real signed and notarized preview artifact. The desktop app still has no
+configured update channel or native helper/quit wiring, so no in-app Check,
+Download or Install on Quit ran; replacement, rollback and relaunch remain
+unverified.
+
+## Swift data rehearsal on a copy (2026-11-08)
+
+- Captured a read-only 641-file (281,244,437-byte) snapshot of the live Swift
+  `~/Library/Application Support/Coincide` data: root JSON, threads,
+  attachments, checkpoints and task records. Every JSON file parsed.
+- Imported it into a fresh isolated Rust database with `coincide-store import`:
+  81 threads, 641 files, 81 summaries, no missing source bytes. Every source
+  file and every thread document matched the snapshot exactly (bytes for the
+  originals, JSON semantics for the canonicalized documents), including all
+  474 attachment files; transcript search returned the expected thread.
+- Opened the imported copy in the signed Rust preview: all 81 threads
+  (including archived), the projects and the bots loaded; a 287-item transcript
+  paginated and rendered tool, table, error and provider content; imported
+  threads stayed locked for provider changes until forked.
+
+Captured but not applied or migrated: browser cookies, keychain entries,
+passkeys and the persistent browser profile; provider account files and live
+sessions; remote-device state; runtime processes and sockets; UI state and
+drafts; scheduled-task application; shell integration. Imported attachment
+references still use the original Swift attachments folder, so that folder must
+be retained (or its files copied) after the Swift app is removed. The source
+was live while snapshotted, so this is a rehearsal, not a quiesced final
+cutover; no Swift app or Swift data was removed or modified.
