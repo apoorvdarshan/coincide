@@ -1505,3 +1505,17 @@ Against a throwaway data directory through the native control API:
 
 This verifies the schedule lifecycle apart from execution and the native
 approval click, which the UI acceptance already covered.
+
+## Real bot lifecycle acceptance (2026-11-08)
+
+Against a throwaway data directory through the native control API:
+
+- `bots.list` returned the starter lineup and its baseline.
+- `bots.save` created a bot (after retrying past the starter-bot baseline
+  change), and `bots.read` returned it.
+- `bots.patch` renamed it against the read baseline, and `bots.list` showed the
+  renamed bot alongside the starter.
+
+This verifies local bot creation, baseline-checked edits and listing. Starting a
+bot conversation still requires a configured provider, which this store does not
+have.
