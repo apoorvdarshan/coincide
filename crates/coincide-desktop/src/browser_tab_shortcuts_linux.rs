@@ -145,6 +145,12 @@ pub(super) fn focus(view: &wry::WebView) -> Result<()> {
             use x11rb::protocol::xproto::{ConnectionExt, InputFocus};
             let _ = connection.set_input_focus(InputFocus::PARENT, owned, x11rb::CURRENT_TIME);
             let _ = connection.flush();
+            if let Ok(Some(x11rb::protocol::Event::Error(error))) = connection.poll_for_event() {
+                eprintln!(
+                    "native browser focus set failed for {owned}: code={} major={} minor={}",
+                    error.error_code, error.major_opcode, error.minor_opcode
+                );
+            }
         }
         widget.display().sync();
         if owns_input_focus(&widget) {
