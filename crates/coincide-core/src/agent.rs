@@ -142,7 +142,16 @@ pub enum Event {
 }
 pub enum Control {
     Stop,
-    Reply { id: Value, result: Value },
+    Reply {
+        id: Value,
+        result: Value,
+    },
+    /// Text to add to the running turn. Only providers with native steering
+    /// accept it; others answer with an error.
+    Steer {
+        text: String,
+        reply: mpsc::SyncSender<Result<(), String>>,
+    },
 }
 /// Rust-thread ownership only: Returned does not prove provider success or
 /// successful child/process-group cleanup. No status waits for a worker.
@@ -401,6 +410,22 @@ impl Session {
         &self,
     ) -> Option<crate::named_profile_resume::Acknowledged> {
         self.named_completion.lock().ok()?.take()
+    }
+    /// Sends text into the running turn through the provider's own control
+    /// channel. The call is bounded; the adapter answers after the provider
+    /// accepted or rejected the message.
+    pub(crate) fn steer_text(&self, text: &str) -> Result<()> {
+        ensure!(!text.trim().is_empty(), "Steering text must be nonempty");
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.control.send(Control::Steer {
+            text: text.to_owned(),
+            reply,
+        })?;
+        match receiver.recv_timeout(Duration::from_secs(10)) {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) => bail!(error),
+            Err(_) => bail!("The provider did not accept the steering message in time"),
+        }
     }
     pub(crate) fn can_steer(&self) -> bool {
         self.steering
@@ -713,6 +738,10 @@ fn run(
                 }
                 Control::Reply { id, result } => {
                     transport.write(&json!({"id":id,"result":result}))?
+                }
+                Control::Steer { reply, .. } => {
+                    let _ =
+                        reply.send(Err("Codex steering uses its own active-turn channel".into()));
                 }
             }
         }

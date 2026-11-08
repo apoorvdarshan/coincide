@@ -75,7 +75,10 @@ impl Coincide {
         };
         let behavior = choice::effective(
             choice::selected(thread, &self.settings),
-            thread["selection"]["provider"] == "codex",
+            matches!(
+                thread["selection"]["provider"].as_str(),
+                Some("codex" | "opencode")
+            ),
         );
         Button::new("selection-follow-up-disclosure")
             .label(behavior.label())
@@ -106,8 +109,11 @@ impl Coincide {
         let chosen = choice::selected(thread, &self.settings);
         let mut menu = div().flex().flex_col().gap_1().p_2();
         for behavior in [Behavior::Queue, Behavior::Steer, Behavior::Interrupt] {
-            let unsupported =
-                behavior == Behavior::Steer && thread["selection"]["provider"] != "codex";
+            let unsupported = behavior == Behavior::Steer
+                && !matches!(
+                    thread["selection"]["provider"].as_str(),
+                    Some("codex" | "opencode")
+                );
             menu = menu.child(self.picker_menu_row(
                 format!("follow-up-{}", behavior.key()),
                 behavior.label().into(),
@@ -137,8 +143,11 @@ impl Coincide {
             .gap_1()
             .child("While the agent works");
         for behavior in [Behavior::Steer, Behavior::Queue, Behavior::Interrupt] {
-            let unsupported =
-                behavior == Behavior::Steer && thread["selection"]["provider"] != "codex";
+            let unsupported = behavior == Behavior::Steer
+                && !matches!(
+                    thread["selection"]["provider"].as_str(),
+                    Some("codex" | "opencode")
+                );
             pane = pane.child(
                 Button::new(SharedString::from(format!("follow-up-{}", behavior.key())))
                     .label(behavior.label())

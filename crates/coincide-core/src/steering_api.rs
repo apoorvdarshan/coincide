@@ -58,6 +58,12 @@ impl Engine {
             }
             return Ok(reply);
         }
+        let stored = self.store.thread(thread)?;
+        if stored["selection"]["provider"] == "opencode" {
+            let expected = json!({"id":thread,"draft":required(p,"text")?,
+                "draftContext":null,"rustDraftImages":[]});
+            return self.steer_opencode_composer(&expected);
+        }
         self.begin_steering(p, None, None)
     }
     pub(super) fn steer_owned_queue(
@@ -73,6 +79,81 @@ impl Engine {
     }
     pub(super) fn steer_native_composer(&mut self, expected: &Value) -> Result<Value> {
         self.begin_steering(&json!({"threadId":required(expected,"id")?,"text":expected["draft"].as_str().unwrap_or_default()}), None, Some(expected))
+    }
+    /// OpenCode takes a steering prompt on its own session, so the message is
+    /// delivered and persisted here in one bounded step instead of the Codex
+    /// ticket/poll pipeline.
+    pub(super) fn steer_opencode_composer(&mut self, expected: &Value) -> Result<Value> {
+        self.require_admissions()?;
+        let thread = required(expected, "id")?;
+        ensure!(
+            !self.unsaved_threads.contains_key(thread),
+            "Transcript persistence is recovering; retry after recovery"
+        );
+        let text = expected["draft"].as_str().unwrap_or_default().to_owned();
+        let context = expected["draftContext"].clone();
+        crate::composer_context::validate(&context)?;
+        ensure!(
+            !text.trim().is_empty() || crate::composer_context::has_context(&context),
+            "Add text or references before steering"
+        );
+        ensure!(
+            expected["rustDraftImages"].is_null()
+                || expected["rustDraftImages"]
+                    .as_array()
+                    .is_some_and(Vec::is_empty),
+            "OpenCode steering is text-only; send images as a new message"
+        );
+        let stored = self.store.thread(thread)?;
+        ensure!(
+            !self.store.is_imported(thread)?,
+            "Imported conversations are read-only for agent execution until cutover; fork first"
+        );
+        ensure!(
+            stored["selection"]["provider"] == "opencode",
+            "Active-turn steering is supported only for Codex and OpenCode"
+        );
+        self.require_provider_enabled("opencode")?;
+        self.validate_native_follow_up_policy(&stored)?;
+        ensure!(
+            stored["interactionMode"]
+                .as_str()
+                .is_none_or(|mode| mode == "build"),
+            "Text steering is available only in Build mode"
+        );
+        let runtime_text = crate::composer_context::prompt(&text, &context)?;
+        let run = self.runs.get(thread).context("Thread is not running")?;
+        ensure!(
+            !run.cancelled && run.persistence_error.is_none(),
+            "The running turn is stopping or recovering"
+        );
+        ensure!(
+            run.usage_context
+                .as_ref()
+                .is_some_and(|context| context.matches(&stored)),
+            "Stored selection or project differs from the running turn"
+        );
+        run.session.steer_text(&runtime_text)?;
+        let mut saved = stored.clone();
+        let item_id = Uuid::new_v4().to_string();
+        append(&mut saved, "user", &text, None);
+        let item = saved["items"].as_array_mut().unwrap().last_mut().unwrap();
+        item["id"] = json!(item_id);
+        item["steered"] = json!(true);
+        item["provider"] = json!("opencode");
+        if crate::composer_context::has_context(&context) {
+            item["context"] = context;
+        }
+        if let Err(error) = self.store.save_with_usage(
+            &saved,
+            self.pending_usage.get(thread).map(|record| &record.0),
+        ) {
+            self.unsaved_threads.insert(thread.into(), saved);
+            return Err(error);
+        }
+        self.pending_usage.remove(thread);
+        self.revision += 1;
+        Ok(json!({"operationId":item_id,"threadId":thread,"status":"delivered","persisted":true}))
     }
     fn begin_steering(
         &mut self,

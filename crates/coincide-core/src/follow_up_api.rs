@@ -117,7 +117,11 @@ impl Engine {
             "Transcript persistence is recovering"
         );
         ensure!(
-            behavior != Behavior::Steer || expected["selection"]["provider"] == "codex",
+            behavior != Behavior::Steer
+                || matches!(
+                    expected["selection"]["provider"].as_str(),
+                    Some("codex" | "opencode")
+                ),
             "This provider does not support native steering yet"
         );
         let thread = self.store.choose_follow_up(expected, behavior)?;
@@ -131,7 +135,10 @@ impl Engine {
             .document("settings.json")?
             .unwrap_or_else(|| json!({}));
         let run = self.runs.get(required(thread, "id")?);
-        let supports = thread["selection"]["provider"] == "codex";
+        let supports = matches!(
+            thread["selection"]["provider"].as_str(),
+            Some("codex" | "opencode")
+        );
         let behavior = choice::effective(choice::selected(thread, &settings), supports);
         let ready = run.is_some_and(|run| {
             !run.cancelled
@@ -139,7 +146,7 @@ impl Engine {
                 && thread["interactionMode"]
                     .as_str()
                     .is_none_or(|mode| mode == "build")
-                && run.session.can_steer()
+                && (run.provider == "opencode" || run.session.can_steer())
         });
         let approval = run.is_some_and(|run| {
             run.pending
@@ -293,15 +300,13 @@ impl Engine {
             .store
             .document("settings.json")?
             .unwrap_or_else(|| json!({}));
-        let behavior = choice::effective(
-            choice::selected(&current, &settings),
-            run.provider == "codex",
-        );
-        let can_steer = run.provider == "codex"
+        let supports_steering = matches!(run.provider.as_str(), "codex" | "opencode");
+        let behavior = choice::effective(choice::selected(&current, &settings), supports_steering);
+        let can_steer = supports_steering
             && current["interactionMode"]
                 .as_str()
                 .is_none_or(|mode| mode == "build")
-            && run.session.can_steer();
+            && (run.provider == "opencode" || run.session.can_steer());
         let approval = run
             .pending
             .values()
@@ -371,7 +376,13 @@ impl Engine {
         };
         match dispatch {
             Dispatch::Steer => {
-                let result = if let Some(claim) = &op.queue {
+                let result = if self
+                    .runs
+                    .get(&id)
+                    .is_some_and(|run| run.provider == "opencode")
+                {
+                    self.steer_opencode_composer(&current)?
+                } else if let Some(claim) = &op.queue {
                     self.steer_owned_queue(&id, claim)?
                 } else {
                     self.steer_native_composer(&current)?

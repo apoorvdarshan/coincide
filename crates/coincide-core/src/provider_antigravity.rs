@@ -227,6 +227,11 @@ fn run_owned(
                     }
                 }
                 Control::Reply { .. } => {}
+                Control::Steer { reply, .. } => {
+                    let _ = reply.send(Err(
+                        "This provider does not support active-turn steering".into()
+                    ));
+                }
             }
         }
         if (completed && (stopping.is_some() || transport.is_flushed()?))

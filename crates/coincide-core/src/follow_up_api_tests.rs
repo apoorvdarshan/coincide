@@ -260,6 +260,7 @@ fn redirect_declines_only_offered_approval_and_dismisses_question_before_actual_
                 replies.insert(id.as_i64().unwrap(), result);
             }
             agent::Control::Stop => panic!("Redirect must not stop the steerable turn"),
+            agent::Control::Steer { .. } => panic!("Redirect must not steer the turn"),
         }
     }
     assert_eq!(replies[&77], json!({"decision":"decline"}));

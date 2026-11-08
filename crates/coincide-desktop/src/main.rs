@@ -4959,8 +4959,10 @@ impl Render for Coincide {
             .map(|v| text(v, "title"))
             .unwrap_or_else(|| "Welcome to Coincide".into());
         let entity = cx.entity();
+        let jump_to_latest = !self.transcript_list.is_following_tail();
         let transcript = div()
             .on_children_prepainted(self.media_layout_observer(cx))
+            .relative()
             .flex_1()
             .min_h(px(120.))
             .on_mouse_down(
@@ -4972,7 +4974,33 @@ impl Render for Coincide {
                     entity.update(cx, |this, cx| this.message(index, window, cx))
                 })
                 .size_full(),
-            );
+            )
+            .when(jump_to_latest, |view| {
+                view.child(
+                    div()
+                        .absolute()
+                        .bottom(px(14.))
+                        .left_0()
+                        .right_0()
+                        .flex()
+                        .justify_center()
+                        .child(
+                            Button::new("jump-to-latest")
+                                .label("Jump to Latest")
+                                .icon(gpui_kit::assets::IconName::ArrowDown)
+                                .compact()
+                                .h(px(28.))
+                                .rounded(px(14.))
+                                .bg(self.color(0x202a3b))
+                                .border_1()
+                                .border_color(self.color(0x29303d))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.transcript_list.scroll_to_end();
+                                    cx.notify();
+                                })),
+                        ),
+                )
+            });
         let conversation_content = if self.session_import_open {
             div()
                 .id("session-import-surface")
