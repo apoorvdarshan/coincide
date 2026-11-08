@@ -54,13 +54,14 @@ pub(super) fn provider_label(provider: &str, label: String) -> AnyElement {
         .gap(px(5.))
         .min_w_0()
         .when_some(image.clone(), |view, image| {
-            // Original monochrome branding is black on transparency. A small
-            // light backing preserves its pixels in either app appearance.
+            // White template branding on a dark tile stays legible in either
+            // app appearance.
             view.child(
                 img(image.clone())
                     .w(px(13.))
                     .h(px(13.))
-                    .rounded(px(2.)),
+                    .rounded(px(3.))
+                    .bg(rgb(0x2b3444)),
             )
         })
         .when(image.is_none(), |view| {

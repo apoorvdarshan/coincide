@@ -2766,7 +2766,8 @@ impl Coincide {
                 img(image)
                     .w(px(14.))
                     .h(px(14.))
-                    .rounded(px(2.)),
+                    .rounded(px(3.))
+                    .bg(rgb(0x2b3444)),
             );
         }
         row_view
@@ -2877,7 +2878,8 @@ impl Coincide {
                             img(image)
                                 .w(px(18.))
                                 .h(px(18.))
-                                .rounded(px(4.)),
+                                .rounded(px(4.))
+                                .bg(rgb(0x2b3444)),
                         )
                     })
                     .when(chat_layout::provider_logo(&id).is_none(), |button| {

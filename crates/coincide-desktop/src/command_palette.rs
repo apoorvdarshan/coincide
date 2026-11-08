@@ -1440,7 +1440,12 @@ impl CommandPalette {
             Some(PaletteIcon::Symbol(icon)) => div().text_color(secondary).child(*icon),
             Some(PaletteIcon::Provider(provider)) => {
                 match super::chat_layout::provider_logo(provider) {
-                    Some(logo) => div().child(img(logo).size(px(15.))),
+                    Some(logo) => div().child(
+                        img(logo)
+                            .size(px(15.))
+                            .rounded(px(3.))
+                            .bg(rgb(0x2b3444)),
+                    ),
                     None => div().text_color(secondary).child(IconName::MessagesSquare),
                 }
             }

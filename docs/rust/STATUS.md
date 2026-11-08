@@ -1675,9 +1675,12 @@ cutover; no Swift app or Swift data was removed or modified.
 - An empty thread shows Swift's welcome above the composer: a serif
   "What should we build in <project>?" (or "What can I help with?" in a chat)
   and the agent/model line.
+- Provider logos are white template art on a dark tile, so the composer,
+  sidebar, command palette and settings keep legible marks in either app
+  appearance.
 - Built, signed with the shared Developer ID identity, notarized (submission
-  `9a330386-8b47-46dc-a5a6-5d7eb003d9f6`, Accepted), stapled and installed
-  `0.1.11` (build 21); Gatekeeper reports a notarized Developer ID.
+  `55f6cb23-68f2-4a23-80b8-e822d2e38600`, Accepted), stapled and installed
+  `0.1.12` (build 22); Gatekeeper reports a notarized Developer ID.
 - `cargo test -p coincide-core --lib` passed 1159 tests (9 ignored) and
   `cargo test -p coincide-desktop --bin coincide-rust` passed 810 tests
   (26 ignored) with the app stopped. The two updater stopped-target tests fail

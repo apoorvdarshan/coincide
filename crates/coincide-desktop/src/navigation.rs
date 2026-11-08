@@ -391,7 +391,12 @@ impl Coincide {
             {
                 // Monochrome branding keeps a light backing in either appearance.
                 Some(logo) => {
-                    leading.child(img(logo).size(px(14.)).rounded(px(2.)).bg(rgb(0xffffff)))
+                    leading.child(
+                        img(logo)
+                            .size(px(14.))
+                            .rounded(px(3.))
+                            .bg(rgb(0x2b3444)),
+                    )
                 }
                 None => leading.child(Icon::new(IconName::Cpu).xsmall()),
             },
