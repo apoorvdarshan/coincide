@@ -996,48 +996,52 @@ impl Store {
 
     /// Patch supported fields without rebuilding transcript search indexes for
     /// drafts and flags.
+    /// Composer-only compact draft write. Updates one JSON field, preserves the
+    /// derived navigation cache and avoids serializing the entire transcript.
+    pub fn patch_draft(&mut self, id: &str, draft: &str) -> Result<Value> {
+        ensure!(draft.len() <= 1_048_576, "Draft exceeds 1 MiB");
+        self.connection()?;
+        let tx = self.connection_mut()?.transaction()?;
+        let navigation = tx
+            .query_row(
+                "SELECT metadata FROM thread_navigation WHERE id=?1 COLLATE NOCASE",
+                [id],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()?
+            .flatten()
+            .and_then(|metadata| {
+                let mut value: Value = serde_json::from_str(&metadata).ok()?;
+                value["has_draft"] = json!(!draft.is_empty());
+                Some(value.to_string())
+            });
+        let changed = tx.execute(
+            "UPDATE threads SET document=json_set(document,'$.draft',?2) WHERE id=?1 COLLATE NOCASE",
+            params![id, draft],
+        )?;
+        ensure!(changed == 1, "Thread not found");
+        if let Some(metadata) = navigation {
+            tx.execute(
+                "INSERT INTO thread_navigation(id,metadata) VALUES (?1,?2) ON CONFLICT(id) DO UPDATE SET metadata=excluded.metadata",
+                params![id, metadata],
+            )?;
+        }
+        tx.commit()?;
+        Ok(json!({"id": id, "draft": draft}))
+    }
     pub fn patch_thread(&mut self, id: &str, patch: &Value) -> Result<Value> {
         self.connection()?;
         let patch = patch
             .as_object()
             .context("Thread patch must be an object")?;
         validate_patch(patch)?;
-        // Draft typing is the hottest composer path. Update the draft field in
-        // place and return a tiny acknowledgement instead of parsing, rewriting
-        // and re-indexing the whole transcript and serializing it back to the UI.
+        // Keep the historical full-thread result for existing callers; the
+        // composer uses patch_draft for its small, hot acknowledgement.
         if patch.len() == 1
             && let Some(draft) = patch.get("draft")
         {
-            let draft = draft.as_str().context("draft must be text")?;
-            ensure!(draft.len() <= 1_048_576, "Draft exceeds 1 MiB");
-            let tx = self.connection_mut()?.transaction()?;
-            // Preserve the derived navigation cache; the document trigger clears it.
-            let navigation = tx
-                .query_row(
-                    "SELECT metadata FROM thread_navigation WHERE id=?1 COLLATE NOCASE",
-                    [id],
-                    |row| row.get::<_, Option<String>>(0),
-                )
-                .optional()?
-                .flatten()
-                .and_then(|metadata| {
-                    let mut value: Value = serde_json::from_str(&metadata).ok()?;
-                    value["has_draft"] = json!(!draft.is_empty());
-                    Some(value.to_string())
-                });
-            let changed = tx.execute(
-                "UPDATE threads SET document=json_set(document,'$.draft',?2) WHERE id=?1 COLLATE NOCASE",
-                params![id, draft],
-            )?;
-            ensure!(changed == 1, "Thread not found");
-            if let Some(metadata) = navigation {
-                tx.execute(
-                    "INSERT INTO thread_navigation(id,metadata) VALUES (?1,?2) ON CONFLICT(id) DO UPDATE SET metadata=excluded.metadata",
-                    params![id, metadata],
-                )?;
-            }
-            tx.commit()?;
-            return Ok(json!({"id": id, "draft": draft}));
+            self.patch_draft(id, draft.as_str().context("draft must be text")?)?;
+            return self.thread(id);
         }
         let mut value = self.thread(id)?;
         for (key, next) in patch {
@@ -2067,7 +2071,7 @@ mod tests {
         ]);
         let v = json!({"id":ID,"items":items,"title":"Draft holder","createdAt":800000000.0,"draft":""});
         db.save(&v).unwrap();
-        let changed = db.patch_thread(ID, &json!({"draft":"hello"})).unwrap();
+        let changed = db.patch_draft(ID, "hello").unwrap();
         assert_eq!(changed, json!({"id":ID,"draft":"hello"}));
         let read = db.thread(ID).unwrap();
         assert_eq!(read["draft"], "hello");
@@ -2079,7 +2083,7 @@ mod tests {
                 .and_then(|n| n.has_draft),
             Some(true)
         );
-        db.patch_thread(ID, &json!({"draft":""})).unwrap();
+        db.patch_draft(ID, "").unwrap();
         assert_eq!(db.thread(ID).unwrap()["draft"], "");
     }
 

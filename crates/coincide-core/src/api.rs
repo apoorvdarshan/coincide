@@ -748,7 +748,18 @@ impl Engine {
             "threads.create" => self.create_ordinary_thread(p),
             "threads.patch" => {
                 ensure!(!self.unsaved_threads.contains_key(required(p,"threadId")?),"Transcript persistence is recovering; retry this edit after recovery");
-                let v=self.store.patch_thread(required(p,"threadId")?,&p["patch"])?;
+                let id=required(p,"threadId")?;
+                let patch=&p["patch"];
+                let compact = p["compact"].as_bool()==Some(true)
+                    && patch.as_object().is_some_and(|fields| fields.len()==1)
+                    && patch.get("draft").is_some_and(Value::is_string);
+                let v = if compact {
+                    let draft = patch["draft"].as_str().expect("validated draft text");
+                    self.store.patch_draft(id, draft)?;
+                    json!({"id":id,"draft":draft})
+                } else {
+                    self.store.patch_thread(id,patch)?
+                };
                 self.revision+=1;Ok(v)
             }
             "threads.fork" | "threads.edit-branch" => {

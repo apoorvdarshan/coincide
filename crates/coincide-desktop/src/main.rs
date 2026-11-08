@@ -217,7 +217,7 @@ fn persist_pending_draft(engine: &SharedEngine, id: &str, text: &str) -> Result<
         return engine.persist_frozen_draft(id, text);
     }
     let response = engine.dispatch(json!({
-        "method":"threads.patch", "params":{"threadId":id,"patch":{"draft":text}}
+        "method":"threads.patch", "params":{"threadId":id,"patch":{"draft":text},"compact":true}
     }));
     if let Some(error) = response.get("error") {
         anyhow::bail!("{}", error["message"].as_str().unwrap_or("Command failed"));
