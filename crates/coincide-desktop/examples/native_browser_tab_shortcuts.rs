@@ -232,6 +232,11 @@ impl Fixture {
                 .loaded
                 .iter()
                 .all(|loaded| loaded.load(Ordering::Acquire))
+            || (self.index == 0
+                && !self
+                    .views
+                    .iter()
+                    .all(|view| native_viewable(view.read(cx).raw())))
         {
             return false;
         }
@@ -445,6 +450,35 @@ fn focus_state(view: &wry::WebView) -> String {
         widget.is_visible(),
         widget.is_mapped()
     )
+}
+#[cfg(target_os = "linux")]
+fn native_viewable(view: &wry::WebView) -> bool {
+    use gtk::{glib::translate::ToGlibPtr, prelude::WidgetExt as _};
+    use wry::WebViewExtUnix as _;
+    let widget = view.webview();
+    if !widget.is_visible() || !widget.is_mapped() {
+        return false;
+    }
+    let Some(window) = widget.window() else {
+        return false;
+    };
+    let xid = unsafe { gdk_x11_window_get_xid(window.to_glib_none().0) };
+    let Ok(xid) = u32::try_from(xid) else {
+        return false;
+    };
+    let Ok((connection, _)) = x11rb::connect(None) else {
+        return false;
+    };
+    use x11rb::protocol::xproto::{ConnectionExt as _, MapState};
+    connection
+        .get_window_attributes(xid)
+        .ok()
+        .and_then(|cookie| cookie.reply().ok())
+        .is_some_and(|attributes| attributes.map_state == MapState::VIEWABLE)
+}
+#[cfg(not(target_os = "linux"))]
+fn native_viewable(_view: &wry::WebView) -> bool {
+    true
 }
 #[cfg(target_os = "linux")]
 #[link(name = "gdk-3")]
