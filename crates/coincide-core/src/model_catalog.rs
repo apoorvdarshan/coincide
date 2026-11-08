@@ -720,10 +720,10 @@ fn cli_models(
         }
     }
     let mut text = String::new();
-    if let Some(mut stdout) = child.stdout.take() {
+    if let Some(stdout) = child.stdout.take() {
         let _ = stdout.take(1024 * 1024).read_to_string(&mut text);
     }
-    if let Some(mut stderr) = child.stderr.take() {
+    if let Some(stderr) = child.stderr.take() {
         let _ = stderr.take(1024 * 1024).read_to_string(&mut text);
     }
     let lines = strip_ansi(&text);
