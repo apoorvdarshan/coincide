@@ -171,6 +171,8 @@ impl Coincide {
                     .left_0()
                     .w(px(width))
                     .h(px(height))
+                    .flex()
+                    .overflow_hidden()
                     .child(view),
             ),
             (Some(view), None) => page.child(div().absolute().size_full().child(view)),
