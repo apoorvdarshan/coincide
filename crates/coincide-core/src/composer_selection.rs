@@ -15,7 +15,7 @@ pub fn capabilities() -> Value {
             "steering":{"supported":id=="codex","textOnly":true,"requiresActiveTurn":true,"requiresBuildMode":true,"reason":if id=="codex" {Value::Null}else{json!("Active-turn steering is implemented only for Codex")}},
             "effort":{"supported":false,"reason":if id=="codex" {"Choose an explicit Codex model and refresh its catalog for supported effort choices."}else{"Reasoning effort is not connected for this provider."}},
             "speed":{"supported":false,"reason":if id=="codex" {"Choose an explicit Codex model and refresh its catalog for supported speed choices."}else{"Speed is not connected for this provider."}},
-            "accessModes":if id=="codex"||id=="opencode"{json!(["approval","fullAccess"])}else{json!(["approval"])},"interactionModes":if id=="codex"{json!(["build","plan"])}else{json!(["build"])},
+            "accessModes":json!(["approval","fullAccess"]),"interactionModes":if id=="codex"{json!(["build","plan"])}else{json!(["build"])},
             "modesOrdinaryThreadsOnly":id=="codex",
             "planModelRequirement":if id=="codex"{json!("explicit_model_required")}else{Value::Null}})
     }).collect::<Vec<_>>();

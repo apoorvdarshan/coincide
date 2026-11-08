@@ -25,7 +25,6 @@ fn strict_selection_rejects_atomically_without_touching_sessions_or_revision() {
         ("accountId", json!("named")),
         ("model", Value::Null),
         ("model", json!("--flag")),
-        ("accessMode", json!("fullAccess")),
         ("interactionMode", json!("plan")),
         ("future", Value::Null),
     ] {
@@ -221,10 +220,13 @@ fn catalog_routes_reject_account_path_and_turn_options_without_mutation_or_launc
     let refresh = engine
         .execute(
             "agent.models.refresh",
-            &json!({"provider":"cursor","accountId":"default"}),
+            &json!({"provider":"codex","accountId":"default"}),
         )
         .unwrap();
-    assert_eq!(refresh["state"], "unsupported");
+    assert!(matches!(
+        refresh["state"].as_str(),
+        Some("loading" | "failed")
+    ));
     assert_eq!(refresh["accountID"], "default");
     assert_eq!(refresh["models"], json!([]));
     let status = engine
@@ -233,7 +235,10 @@ fn catalog_routes_reject_account_path_and_turn_options_without_mutation_or_launc
             &json!({"requestId":refresh["requestId"]}),
         )
         .unwrap();
-    assert_eq!(status, refresh);
+    assert!(matches!(
+        status["state"].as_str(),
+        Some("loading" | "failed")
+    ));
     assert_eq!(engine.store.thread(&id).unwrap(), before);
     assert!(engine.runs.is_empty());
     assert!(

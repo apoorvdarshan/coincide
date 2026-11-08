@@ -254,6 +254,13 @@ fn run_flavored(
                 let options = params["options"]
                     .as_array()
                     .context("ACP permission options missing")?;
+                if launch.full_access
+                    && let Some(option) = selected_option(options, "allow_once")
+                {
+                    transport.write(&json!({"jsonrpc":"2.0","id":id,
+                        "result":{"outcome":{"outcome":"selected","optionId":option["optionId"]}}}))?;
+                    continue;
+                }
                 let mut decisions = vec!["decline", "cancel"];
                 if selected_option(options, "allow_once").is_some() {
                     decisions.insert(0, "accept");

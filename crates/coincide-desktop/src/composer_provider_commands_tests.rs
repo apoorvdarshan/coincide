@@ -270,7 +270,7 @@ fn provider_commands_engine_child() {
     let mut f = fixture(&root.join("incompatible-modes"));
     let mut t = saved(&f);
     t["selection"]["provider"] = json!("codex");
-    t["accessMode"] = json!("fullAccess");
+    t["interactionMode"] = json!("plan");
     f.engine.store.save(&t).unwrap();
     let pending = submission(&f);
     let before = saved(&f);

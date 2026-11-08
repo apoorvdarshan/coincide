@@ -22,14 +22,7 @@ fn static_capabilities_never_claim_discovered_or_authenticated_models() {
         assert_eq!(provider["customModel"]["availability"], "unverified");
         assert_eq!(provider["effort"]["supported"], false);
         assert_eq!(provider["speed"]["supported"], false);
-        assert_eq!(
-            provider["accessModes"],
-            if provider["provider"] == "codex" || provider["provider"] == "opencode" {
-                json!(["approval", "fullAccess"])
-            } else {
-                json!(["approval"])
-            }
-        );
+        assert_eq!(provider["accessModes"], json!(["approval", "fullAccess"]));
         assert_eq!(
             provider["interactionModes"],
             if provider["provider"] == "codex" {

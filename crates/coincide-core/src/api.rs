@@ -826,7 +826,15 @@ impl Engine {
                 let provider = crate::model_catalog::refresh_provider(p)?;
                 self.require_provider_enabled(provider)?;
                 let executable = if crate::model_catalog::supported(provider) {
-                    let variable = if provider == "codex" { "COINCIDE_CODEX_EXECUTABLE" } else { "COINCIDE_CLAUDE_EXECUTABLE" };
+                    let variable = match provider {
+                        "codex" => "COINCIDE_CODEX_EXECUTABLE",
+                        "claude" => "COINCIDE_CLAUDE_EXECUTABLE",
+                        "opencode" => "COINCIDE_OPENCODE_EXECUTABLE",
+                        "cursor" => "COINCIDE_CURSOR_EXECUTABLE",
+                        "grok" => "COINCIDE_GROK_EXECUTABLE",
+                        "antigravity" => "COINCIDE_ANTIGRAVITY_EXECUTABLE",
+                        _ => "",
+                    };
                     std::env::var_os(variable).map(PathBuf::from).or_else(|| {
                         self.provider_discovery.as_ref()?["providers"].as_array()?.iter()
                             .find(|entry| entry["provider"] == provider)?["executable"].as_str().map(PathBuf::from)
