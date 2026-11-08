@@ -309,11 +309,11 @@ def main():
         draft = "Native X11 keyboard draft survives restart"
         command("xdotool", "type", "--clearmodifiers", "--delay", "15", draft, env=env)
         command("import", "-window", window, str(artifacts / "composer-after-type.png"), env=env)
-        # Drafts persist at the composer's blur boundary, not on every keystroke,
-        # so the typing path never waits on the store. Focus the sidebar search
-        # field to blur the composer, assert persistence, then focus the
-        # composer again for the next typing step.
-        command("xdotool", "mousemove", "--window", window, "150", "80", "click", "1", env=env)
+        # Drafts persist at the thread-switch boundary, not on every keystroke,
+        # so the typing path never waits on the store. Reopening the same thread
+        # is the app's own boundary: it flushes the pending draft before reading
+        # the thread again. Then focus the composer for the next typing step.
+        rpc("threads.open", threadId=thread_id)
         try:
             wait_for("native keyboard draft saved", lambda: rpc("threads.read", threadId=thread_id).get("draft") == draft)
         except BaseException:
