@@ -85,9 +85,8 @@ impl Coincide {
             .tooltip("Choose what Send does while the agent works")
             .ghost()
             .compact()
-            .xsmall()
-            .h(px(26.))
-            .rounded(px(7.))
+            .h(px(28.))
+            .rounded(px(8.))
             .on_click(cx.listener(|this, event: &gpui_kit::ClickEvent, _, cx| {
                 this.follow_up_picker = !this.follow_up_picker;
                 this.follow_up_anchor = Some(event.position());
