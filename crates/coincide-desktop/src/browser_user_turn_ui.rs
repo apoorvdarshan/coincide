@@ -176,12 +176,9 @@ impl Coincide {
         match (webview, dimensions) {
             (Some(view), Some((width, height))) => page.child(
                 div()
-                    .absolute()
-                    .top_0()
-                    .left_0()
                     .w(px(width))
                     .h(px(height))
-                    .flex()
+                    .flex_none()
                     .overflow_hidden()
                     .child(view),
             ),
