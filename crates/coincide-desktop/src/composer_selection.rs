@@ -2551,9 +2551,8 @@ impl Coincide {
                     })
                     .accessibility_label(help.clone())
                     .tooltip(help)
-                    .xsmall()
-                    .h(px(26.))
-                    .rounded(px(7.))
+                    .h(px(28.))
+                    .rounded(px(8.))
                     .when(facet == PickerFacet::Model, |button| {
                         button.max_w(px(240.)).child(chat_layout::provider_label(
                             &text(selection, "provider"),
