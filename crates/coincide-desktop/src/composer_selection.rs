@@ -2281,6 +2281,7 @@ impl Coincide {
                 } else {
                     let keeps_ready_list = self.selection_ui.catalog["state"] == "ready"
                         && self.selection_ui.catalog["provider"] == request.provider.as_str();
+                    let background_opencode = keeps_ready_list && request.provider == "opencode";
                     if !keeps_ready_list {
                         self.selection_ui.catalog = value;
                     }
@@ -2288,8 +2289,12 @@ impl Coincide {
                     self.selection_ui.catalog_last_poll = None;
                     // Starting a new job revokes the prior private proof. Do not
                     // keep displaying its effective default as currently proved.
-                    self.selection_ui.capabilities = Value::Null;
-                    self.selection_ui.context = None;
+                    // OpenCode variants need no proof, so its cached list stays
+                    // usable while the background read finishes.
+                    if !background_opencode {
+                        self.selection_ui.capabilities = Value::Null;
+                        self.selection_ui.context = None;
+                    }
                 }
             }
             Err(error) => {

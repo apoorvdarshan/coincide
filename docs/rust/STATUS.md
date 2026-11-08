@@ -1692,10 +1692,13 @@ cutover; no Swift app or Swift data was removed or modified.
   "Loading models…".
 - Bot preview lines trim leading whitespace and use the title's point size so
   both lines share a left edge.
+- A cached OpenCode list stays selectable while the background refresh runs;
+  only providers that need a private effort proof are relocked during it.
 - Built, signed with the shared Developer ID identity, notarized (submissions
-  `34def274-ced7-4f29-b16f-4b2b2277e90b` for 0.1.15 and
-  `66606092-81c0-4b5b-9454-33ec1bca1150` for 0.1.16, both Accepted), stapled
-  and installed `0.1.16` (build 26); Gatekeeper reports a notarized Developer
+  `34def274-ced7-4f29-b16f-4b2b2277e90b` for 0.1.15,
+  `66606092-81c0-4b5b-9454-33ec1bca1150` for 0.1.16 and
+  `9fcc3d97-49f0-4ac9-8391-cfba5655fbe9` for 0.1.17, all Accepted), stapled
+  and installed `0.1.17` (build 27); Gatekeeper reports a notarized Developer
   ID.
 - `cargo test -p coincide-core --lib` passed 1159 tests (9 ignored) and
   `cargo test -p coincide-desktop --bin coincide-rust` passed 810 tests
