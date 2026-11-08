@@ -3471,6 +3471,7 @@ impl Coincide {
                     .ghost()
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.selection_ui.expanded = false;
+                        this.open_settings_panel(window, cx);
                         this.navigate_settings_section(
                             settings::SettingsSection::Models,
                             window,

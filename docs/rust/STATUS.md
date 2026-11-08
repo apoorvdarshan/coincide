@@ -1678,9 +1678,11 @@ cutover; no Swift app or Swift data was removed or modified.
 - Provider logos are white template art on a dark tile, so the composer,
   sidebar, command palette and settings keep legible marks in either app
   appearance.
+- The picker's Agent Settings footer opens the settings window on Models;
+  it previously changed the section without opening a closed window.
 - Built, signed with the shared Developer ID identity, notarized (submission
-  `55f6cb23-68f2-4a23-80b8-e822d2e38600`, Accepted), stapled and installed
-  `0.1.12` (build 22); Gatekeeper reports a notarized Developer ID.
+  `a9702f74-4691-4ecd-8d7b-bbd202302896`, Accepted), stapled and installed
+  `0.1.13` (build 23); Gatekeeper reports a notarized Developer ID.
 - `cargo test -p coincide-core --lib` passed 1159 tests (9 ignored) and
   `cargo test -p coincide-desktop --bin coincide-rust` passed 810 tests
   (26 ignored) with the app stopped. The two updater stopped-target tests fail
