@@ -1728,8 +1728,12 @@ impl ProcessGuard for MacProcessGuard {
 mod tests {
     use super::*;
     #[cfg(target_os = "macos")]
+    static PROOF_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[cfg(target_os = "macos")]
     #[test]
     fn stopped_target_proof_ignores_zombie_preview_name() {
+        let _guard = PROOF_TEST_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         let bin = dir.path().join("coincide-rust");
         std::fs::copy("/bin/sleep", &bin).unwrap();
@@ -1745,6 +1749,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn stopped_target_proof_tolerates_unrelated_uninspectable_processes() {
+        let _guard = PROOF_TEST_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         MacProcessGuard
             .ensure_stopped(&dir.path().join("Coincide Rust.app"))
