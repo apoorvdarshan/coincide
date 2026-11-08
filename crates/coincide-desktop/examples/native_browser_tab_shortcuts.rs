@@ -232,10 +232,11 @@ impl Fixture {
                 .loaded
                 .iter()
                 .all(|loaded| loaded.load(Ordering::Acquire))
-            || !self
-                .views
-                .iter()
-                .all(|view| native_viewable(view.read(cx).raw()))
+            || (self.index == 0
+                && !self
+                    .views
+                    .iter()
+                    .all(|view| native_viewable(view.read(cx).raw())))
         {
             return false;
         }
