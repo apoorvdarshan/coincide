@@ -155,6 +155,7 @@ mod turn_changes;
 #[cfg(feature = "preview-updater-helper")]
 pub mod updater_helper_transport;
 mod updater_lifecycle;
+mod updater_mount;
 mod updater_settings;
 mod window_chrome;
 mod workspace;
@@ -1084,13 +1085,14 @@ impl Coincide {
         let provider_settings = provider_settings::ProviderSettings::new(window, cx);
         let session_import_panel =
             cx.new(|cx| session_import::SessionImportPanel::new(engine.clone(), window, cx));
-        // No update channel or signed helper is configured for this build, so
-        // the section shows its unavailable state and never checks a feed.
+        // The channel is present only when the trusted launcher supplies the
+        // feed/base/anchor; otherwise this remains the unavailable default.
+        let updater_mount = updater_mount::Mount::prepare();
         let updater_settings = cx.new(|cx| {
             updater_settings::UpdaterSettingsView::new(
-                Default::default(),
-                None,
-                Box::new(updater_lifecycle::UnavailableHelper),
+                updater_mount.settings,
+                updater_mount.policy,
+                updater_mount.launcher,
                 engine.clone(),
                 cx,
             )
@@ -3375,6 +3377,12 @@ impl Coincide {
             quit_shortcut::cancel(cx);
             self.native_quit_observed = true;
         }
+        if menu_quit {
+            self.native_quit_observed = true;
+            if let Some(guard) = &self.native_quit {
+                guard.observe_user_quit();
+            }
+        }
         if (menu_quit || native_quit)
             && !self.block_voice_close(window, cx)
             && !self.block_provider_configuration_close(window, cx)
@@ -3402,7 +3410,7 @@ impl Coincide {
             quit_shortcut::cancel(cx);
             // Phones are disconnected before the engine is saved and stopped.
             self.remote_panel.update(cx, |panel, _| panel.shut_down());
-            if self.poll_global_quit(window, cx) {
+            if self.poll_global_quit(window, cx) && self.updater_quit_ready(cx) {
                 self.finish_normal_quit(cx);
             }
             cx.notify();

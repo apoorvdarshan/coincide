@@ -859,6 +859,19 @@ impl PreparedNativeHelper {
 }
 /// Worker-thread only. Native operations/UUID copy are never invoked at module
 /// load or by default. Fixed existing private OS-account directories required.
+/// The running parent's exact process identity, for trusted native startup
+/// configuration. Never accepted from a request, job file or environment value.
+pub fn current_parent_binding() -> Result<ParentBinding> {
+    #[cfg(target_os = "macos")]
+    {
+        native::current_parent_binding()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        bail!("Native parent identity is unavailable on this platform")
+    }
+}
+
 pub fn prepare_native_helper(anchor: &str, deadline: Instant) -> Result<PreparedNativeHelper> {
     #[cfg(target_os = "macos")]
     {
@@ -1207,6 +1220,9 @@ mod native {
             start_seconds: info.pbi_start_tvsec,
             start_micros: info.pbi_start_tvusec,
         })
+    }
+    pub(super) fn current_parent_binding() -> Result<ParentBinding> {
+        process_binding(unsafe { libc::getpid() })
     }
     fn no_links(path: &Path) -> Result<()> {
         ensure!(

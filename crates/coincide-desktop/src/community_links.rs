@@ -299,14 +299,43 @@ fn report_url(template: &str, coincide: Option<&str>, system: Option<&str>) -> S
     url
 }
 
+/// The installed bundle's version, so an update is visible without a rebuild.
+#[cfg(target_os = "macos")]
+fn bundle_version() -> Option<String> {
+    use std::process::Command;
+    let executable = std::env::current_exe().ok()?;
+    let app = executable.parent()?.parent()?.parent()?;
+    let output = Command::new("/usr/bin/plutil")
+        .args(["-extract", "CFBundleShortVersionString", "raw", "-o", "-"])
+        .arg(app.join("Contents/Info.plist"))
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let version = String::from_utf8(output.stdout).ok()?.trim().to_owned();
+    (!version.is_empty()).then_some(version)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn bundle_version() -> Option<String> {
+    None
+}
+
 /// This app's version as the bug form reads it, naming the Rust desktop app.
+/// The bundle is read once per process; updates relaunch the app.
 pub(super) fn app_version() -> String {
-    format!(
-        "{} (Rust desktop, {} {})",
-        env!("CARGO_PKG_VERSION"),
-        std::env::consts::OS,
-        std::env::consts::ARCH
-    )
+    static VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    VERSION
+        .get_or_init(|| {
+            let version = bundle_version().unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_owned());
+            format!(
+                "{version} (Rust desktop, {} {})",
+                std::env::consts::OS,
+                std::env::consts::ARCH
+            )
+        })
+        .clone()
 }
 
 /// The bug form's "macOS version", "macOS 26.1 (25B78)". Other systems leave

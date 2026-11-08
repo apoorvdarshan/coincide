@@ -29,6 +29,76 @@ impl Coincide {
             .update(cx, |panel, _| panel.shutdown_status());
         drained && workflow_drained(&status)
     }
+    /// Gates the already-drained normal quit on the update lifecycle, when an
+    /// installation was approved. Returns true only when no update is armed or
+    /// the helper confirmed its consent after every real drain owner completed.
+    pub(super) fn updater_quit_ready(&mut self, cx: &mut Context<Self>) -> bool {
+        use crate::updater_lifecycle::{LifecycleState, Progress, ShutdownHooks, ShutdownStep};
+        struct AlreadyDrained;
+        impl ShutdownHooks for AlreadyDrained {
+            fn poll_step(&mut self, _: ShutdownStep) -> anyhow::Result<Progress> {
+                // This runs only after poll_global_quit reported the real drain
+                // complete; each acknowledgement is therefore actual, not assumed.
+                Ok(Progress::Complete)
+            }
+        }
+        // The settings window can close during quitting, so the root tick must
+        // also poll the helper session rather than depending on that window's task.
+        self.updater_settings.update(cx, |view, cx| view.tick(cx));
+        let action = match self.updater_settings.read(cx).model.lifecycle().cloned() {
+            None
+            | Some(LifecycleState::Cancelled)
+            | Some(LifecycleState::Blocked(_))
+            | Some(LifecycleState::WaitingForProposal)
+            | Some(LifecycleState::WaitingForReady)
+            | Some(LifecycleState::AwaitingNativeApproval(_))
+            | Some(LifecycleState::Cancelling) => return true,
+            Some(LifecycleState::ReadyForNormalQuit) => 1,
+            Some(LifecycleState::ShuttingDown(step)) => {
+                self.status = format!("Finishing {step:?} before the update installs…");
+                2
+            }
+            Some(LifecycleState::WaitingForConsent) => {
+                self.status = "Waiting for the update helper to confirm it is safe to quit…".into();
+                return false;
+            }
+            Some(LifecycleState::NormalQuitPermitted) => 3,
+            Some(LifecycleState::Exiting) => return false,
+            Some(LifecycleState::ConsentUncertain(reason)) => {
+                // Never claim a clean quit when consent may already have reached
+                // the helper. The user can still force quit from the OS.
+                self.status = format!(
+                    "Quit is paused because the update consent is uncertain ({reason}). Force quit to stop without installing, or reopen Coincide."
+                );
+                return false;
+            }
+        };
+        match action {
+            1 => {
+                self.status = "Saving and stopping work before the update installs…".into();
+                let result = self
+                    .updater_settings
+                    .update(cx, |view, _| view.model.begin_normal_quit());
+                if let Err(error) = result {
+                    self.status = format!("The verified update isn't armed: {error}");
+                }
+                false
+            }
+            2 => {
+                let mut hooks = AlreadyDrained;
+                self.updater_settings
+                    .update(cx, |view, _| view.model.advance_shutdown(&mut hooks));
+                false
+            }
+            _ => {
+                self.status = "Your work is saved. The update installs as Coincide quits…".into();
+                let permit = self.updater_settings.update(cx, |view, _| {
+                    view.model.take_normal_quit_permission().is_some()
+                });
+                permit
+            }
+        }
+    }
     pub(super) fn finish_normal_quit(&mut self, cx: &mut Context<Self>) {
         if self.quit_issued {
             return;
@@ -193,24 +263,76 @@ impl Coincide {
             .browser
             .as_mut()
             .is_none_or(|b| b.poll_shutdown().owners_drained() && b.cookie_import_drained());
+        let media_ready = media.ready();
+        let workflows_ready = statuses.iter().all(workflow_drained);
+        let github_ready = workflow_drained(&github.read)
+            && github.actions.is_none_or(|s| s.ready())
+            && github.writes.is_none_or(|s| s.ready());
+        let microphone_ready = microphone.ordinary_exit_ready();
+        let appshots_ready = self.appshots.drained();
+        let computer_use_ready = self.computer_use_shutdown_ready();
+        let images_ready = self.image_validations_running == 0
+            && self.image_validation_tasks.is_empty()
+            && self.navigation_tasks.is_empty();
+        let thread_bulk_ready = self.thread_bulk.receipts_drained();
+        let composer_files_ready = self.composer_files.receipts_drained();
         let external = self.quit_frame_seen
             && drafts_saved
-            && media.ready()
-            && statuses.iter().all(workflow_drained)
-            && workflow_drained(&github.read)
-            && github.actions.is_none_or(|s| s.ready())
-            && github.writes.is_none_or(|s| s.ready())
-            && microphone.ordinary_exit_ready()
+            && media_ready
+            && workflows_ready
+            && github_ready
+            && microphone_ready
             && notifications_done
             && terminals_done
             && browser_done
-            && self.appshots.drained()
-            && self.computer_use_shutdown_ready()
-            && self.image_validations_running == 0
-            && self.image_validation_tasks.is_empty()
-            && self.navigation_tasks.is_empty()
-            && self.thread_bulk.receipts_drained()
-            && self.composer_files.receipts_drained();
+            && appshots_ready
+            && computer_use_ready
+            && images_ready
+            && thread_bulk_ready
+            && composer_files_ready;
+        let mut waiting = Vec::new();
+        if !self.quit_frame_seen {
+            waiting.push("quit frame");
+        }
+        if !drafts_saved {
+            waiting.push("drafts");
+        }
+        if !media_ready {
+            waiting.push("media");
+        }
+        if !workflows_ready {
+            waiting.push("panel workflows");
+        }
+        if !github_ready {
+            waiting.push("github");
+        }
+        if !microphone_ready {
+            waiting.push("microphone");
+        }
+        if !notifications_done {
+            waiting.push("notifications");
+        }
+        if !terminals_done {
+            waiting.push("terminals");
+        }
+        if !browser_done {
+            waiting.push("browser");
+        }
+        if !appshots_ready {
+            waiting.push("appshots");
+        }
+        if !computer_use_ready {
+            waiting.push("computer use");
+        }
+        if !images_ready {
+            waiting.push("images");
+        }
+        if !thread_bulk_ready {
+            waiting.push("sidebar operations");
+        }
+        if !composer_files_ready {
+            waiting.push("file discovery");
+        }
         let Some(runtime) = &self.quit_runtime else {
             if let Some(error) = &self.quit_runtime_error {
                 self.status = format!("Quitting is paused: {error}");
@@ -224,6 +346,11 @@ impl Coincide {
         } else if !drafts_saved {
             self.status =
                 "Drafts are waiting to save. Use Retry save if a previous save failed.".into();
+        } else if !external {
+            self.status = format!(
+                "Finishing background work. Waiting for: {}.",
+                waiting.join(", ")
+            );
         } else {
             self.status =
                 "Finishing background work. Your data remains open until saving completes.".into();
