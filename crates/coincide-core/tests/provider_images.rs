@@ -99,6 +99,7 @@ fn launch(
             session: None,
             prompt: prompt.into(),
             model: None,
+            variant: None,
         },
         images,
     );
@@ -208,6 +209,7 @@ fn claude_oversize_images_fail_preflight_without_starting_process() {
             session: None,
             prompt: "inspect".into(),
             model: None,
+            variant: None,
         },
         vec![image],
     );

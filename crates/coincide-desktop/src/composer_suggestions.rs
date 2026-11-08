@@ -806,12 +806,11 @@ impl Coincide {
         use gpui_kit::assets::IconName;
         let logo = |provider: &str| {
             chat_layout::provider_logo(provider).map(|image| {
-                // Original monochrome branding is black on transparency; keep a light backing.
                 img(image)
                     .w(px(14.))
                     .h(px(14.))
-                    .rounded(px(2.))
-                    .bg(rgb(0xffffff))
+                    .rounded(px(3.))
+                    .bg(rgb(0x2b3444))
                     .into_any_element()
             })
         };

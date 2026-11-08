@@ -876,6 +876,17 @@ impl Engine {
                         provider["effort"] = self.composer_effort_capability(&thread["selection"]);
                         provider["speed"] = self.composer_speed_capability(&thread["selection"]);
                     }
+                    if thread["selection"]["provider"] == "opencode"
+                        && thread["rustBotContext"].is_null()
+                        && thread["botID"].is_null()
+                        && !self.store.is_imported(id)?
+                        && let Some((choices, reported)) = self.model_catalog.reported_efforts(&thread["selection"])
+                        && let Some(provider) = result["providers"].as_array_mut().and_then(|providers| providers.iter_mut().find(|provider| provider["provider"] == "opencode"))
+                    {
+                        provider["effort"] = json!({"supported":true,"choices":choices,"reportedDefault":reported,
+                            "effectiveDefault":null,"provenance":"provider_model_list","requiresExplicitModel":true,
+                            "reason":null});
+                    }
                     // A repair capability is separate from the locked/proof state.
                     // It permits only removing effort, never sending unproved work.
                     result["repairClearAvailable"] = json!(!self.admissions_frozen() && thread["rustBotContext"].is_null()
@@ -1342,6 +1353,11 @@ impl Engine {
             .collect::<Result<Vec<_>>>()?;
         agent::validate_images(&adapter, &images)?;
         let model = crate::composer_selection::launch_model(&v["selection"])?;
+        // OpenCode selects a model's reasoning variant in its model reference;
+        // other providers carry effort on their own wire fields.
+        let variant = (provider.as_str() == "opencode")
+            .then(|| v["selection"]["effort"].as_str().map(str::to_owned))
+            .flatten();
         let executable_variable = match provider.as_str() {
             "claude" => "COINCIDE_CLAUDE_EXECUTABLE",
             "codex" => "COINCIDE_CODEX_EXECUTABLE",
@@ -1438,6 +1454,7 @@ impl Engine {
                         session,
                         prompt: outgoing,
                         model,
+                        variant,
                     },
                     images,
                     bot_instructions,

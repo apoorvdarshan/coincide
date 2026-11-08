@@ -190,6 +190,7 @@ fn run(
         session: None,
         prompt: String::new(),
         model: None,
+        variant: None,
     };
     let mut transport = transport::Transport::spawn_codex_profile(&launch, &profile)?;
     transport.write(&request(1,"initialize",json!({"clientInfo":{"name":"coincide","title":"Coincide","version":env!("CARGO_PKG_VERSION")}})))?;

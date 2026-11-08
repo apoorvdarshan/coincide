@@ -37,6 +37,7 @@ sys.stdin.readline()
         session: Some("existing-native-session".into()),
         prompt: "fixture prompt".into(),
         model: None,
+        variant: None,
     });
     let deadline = Instant::now() + Duration::from_secs(10);
     let mut output = String::new();
@@ -90,6 +91,7 @@ fn active_turn_fixture(body: &str) -> (tempfile::TempDir, Session) {
         session: None,
         prompt: "synthetic".into(),
         model: None,
+        variant: None,
     });
     (dir, session)
 }

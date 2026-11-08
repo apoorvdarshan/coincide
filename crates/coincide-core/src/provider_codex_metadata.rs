@@ -102,6 +102,7 @@ pub(crate) fn check(
         session: None,
         prompt: String::new(),
         model: None,
+        variant: None,
     };
     let args = profile.map_or_else(|| vec!["app-server".into()], |profile| profile.arguments());
     let transport = CatalogTransport::spawn(&launch, &args, &[], &[], profile)?;

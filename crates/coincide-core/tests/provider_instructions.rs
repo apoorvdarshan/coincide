@@ -24,6 +24,7 @@ fn launch(root: &Path, session: Option<&str>) -> Launch {
         session: session.map(str::to_owned),
         prompt: "fixture user prompt".into(),
         model: Some("fixture-model".into()),
+        variant: None,
     }
 }
 fn settle(session: &Session) -> Result<Vec<String>, String> {

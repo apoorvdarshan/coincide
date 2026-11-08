@@ -164,6 +164,7 @@ fn fixture(mode: &str, resume: bool, image: bool) -> (tempfile::TempDir, Session
             session: resume.then(|| "native/id".into()),
             prompt: "fixture prompt".into(),
             model: Some("vendor/model/variant".into()),
+            variant: None,
         },
         images,
     );

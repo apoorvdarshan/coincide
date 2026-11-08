@@ -503,7 +503,7 @@ impl Mapper {
     }
 }
 
-fn model(value: Option<&str>) -> Result<Option<Value>> {
+fn model(value: Option<&str>, variant: Option<&str>) -> Result<Option<Value>> {
     let Some(value) = value.filter(|value| !value.is_empty() && *value != "default") else {
         return Ok(None);
     };
@@ -511,7 +511,11 @@ fn model(value: Option<&str>) -> Result<Option<Value>> {
         .split_once('/')
         .filter(|(provider, id)| !provider.is_empty() && !id.is_empty())
         .context("OpenCode model must use provider/model format")?;
-    Ok(Some(json!({"providerID":provider,"id":id})))
+    let mut model = json!({"providerID":provider,"id":id});
+    if let Some(variant) = variant.filter(|variant| !variant.is_empty()) {
+        model["variant"] = json!(variant);
+    }
+    Ok(Some(model))
 }
 fn permissions() -> Value {
     json!([{"action":"shell","resource":"*","effect":"ask"},{"action":"edit","resource":"*","effect":"ask"},{"action":"external_directory","resource":"*","effect":"ask"}])
@@ -538,7 +542,7 @@ fn run_inner(
     commands: Receiver<Control>,
     events: &Sender<Event>,
 ) -> Result<()> {
-    let model = model(launch.model.as_deref())?;
+    let model = model(launch.model.as_deref(), launch.variant.as_deref())?;
     // Declaration order is ownership-critical: Server (or its local child on
     // startup error) is destroyed BEFORE Runtime joins aborted HTTP workers.
     let mut runtime = Runtime {
@@ -786,3 +790,22 @@ fn run_inner(
 #[cfg(test)]
 #[path = "provider_opencode_request_tests.rs"]
 mod request_owner_tests;
+
+#[cfg(test)]
+mod model_reference_tests {
+    use super::model;
+    use serde_json::json;
+    #[test]
+    fn reasoning_variant_is_carried_in_the_model_reference() {
+        assert_eq!(
+            model(Some("opencode/deepseek-v4.1-flash"), Some("max")).unwrap(),
+            Some(json!({"providerID":"opencode","id":"deepseek-v4.1-flash","variant":"max"}))
+        );
+        assert_eq!(
+            model(Some("opencode/deepseek-v4.1-flash"), None).unwrap(),
+            Some(json!({"providerID":"opencode","id":"deepseek-v4.1-flash"}))
+        );
+        assert!(model(Some("default"), Some("high")).unwrap().is_none());
+        assert!(model(Some("no-slash"), Some("high")).is_err());
+    }
+}

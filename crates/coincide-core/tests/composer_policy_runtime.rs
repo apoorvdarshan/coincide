@@ -63,6 +63,7 @@ sys.stdin.readline()
             session: resume.then(|| "owned-source".into()),
             prompt: "synthetic".into(),
             model: (selected != "default").then(|| selected.into()),
+            variant: None,
         },
         Vec::new(),
         None,

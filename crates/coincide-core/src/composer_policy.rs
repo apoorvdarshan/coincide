@@ -234,6 +234,11 @@ impl Policy {
         Ok(())
     }
     fn validate_effort_proof(&self) -> Result<()> {
+        // OpenCode carrying a reasoning variant in its model reference needs no
+        // separate proof: the variant is part of the model it was discovered with.
+        if self.provider == "opencode" {
+            return Ok(());
+        }
         if let Some(proof) = &self.named_proof {
             ensure!(
                 self.effort_proof.is_none(),

@@ -162,6 +162,7 @@ fn launch_capture_preserves_exact_custom_id_and_only_default_omits_override() {
             session: Some("fixture-session".into()),
             prompt: "fixture".into(),
             model: launch_model(&selected).unwrap(),
+            variant: None,
         };
         assert_eq!(
             captured.model.as_deref(),

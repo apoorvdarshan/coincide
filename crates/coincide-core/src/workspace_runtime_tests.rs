@@ -186,6 +186,7 @@ fn invalid_inputs_root_rebinding_busy_and_capacity_fail_before_dispatch() {
                 session: None,
                 prompt: String::new(),
                 model: None,
+                variant: None,
             }),
             provider: "codex".into(),
             transcript_start: 0,

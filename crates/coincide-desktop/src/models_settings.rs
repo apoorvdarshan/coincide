@@ -375,7 +375,7 @@ pub(super) fn custom_model_problem(
     custom.then(|| "That custom model is already added.".into())
 }
 #[derive(Clone, Copy)]
-enum Change<'a> {
+pub(super) enum Change<'a> {
     Favorite(&'a str, &'a str, bool),
     Hidden(&'a str, &'a str, bool),
     Custom(&'a str, &'a str, bool),
@@ -460,7 +460,7 @@ fn bulk_patch(settings: &Value, changes: &[Change<'_>]) -> Result<Value> {
     }
     Ok(merged)
 }
-fn save(engine: &SharedEngine, changes: &[Change<'_>]) -> Result<Value> {
+pub(super) fn save(engine: &SharedEngine, changes: &[Change<'_>]) -> Result<Value> {
     let mut owner = try_state(engine)?;
     anyhow::ensure!(!owner.admissions_frozen(), "App is closing");
     // Native editing merges the current raw document under the same owner lock;

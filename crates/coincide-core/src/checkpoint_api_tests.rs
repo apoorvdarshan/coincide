@@ -354,6 +354,7 @@ fn a_stop_during_the_prelude_ends_the_turn_without_launching_the_agent() {
             session: None,
             prompt: String::new(),
             model: None,
+            variant: None,
         },
         Vec::new(),
         None,

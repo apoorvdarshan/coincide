@@ -21,6 +21,7 @@ fn run(engine: &mut Engine, id: &str) -> mpsc::Sender<Event> {
         session: None,
         prompt: String::new(),
         model: None,
+        variant: None,
     });
     let (sender, receiver) = mpsc::channel();
     session.events = receiver;

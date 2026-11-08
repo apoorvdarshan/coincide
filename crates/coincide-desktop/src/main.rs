@@ -535,7 +535,6 @@ struct Coincide {
     pending_native_selection: Option<Option<String>>,
     startup_selection_pending: bool,
     pending_drafts: std::collections::HashMap<String, PendingDraft>,
-    draft_save_epoch: u64,
     composer: Entity<TextareaState>,
     model_input: Entity<InputState>,
     model_picker_search: Entity<InputState>,
@@ -1388,6 +1387,9 @@ impl Coincide {
                 }
             }),
             cx.subscribe(&composer, |this, _, event, cx| {
+                if matches!(event, InputEvent::Blur) {
+                    this.flush_pending_drafts();
+                }
                 if matches!(event, InputEvent::Change) {this.thread_bulk.invalidate();this.composer_files.text_changed();this.invalidate_terminal_contexts(cx);}
                 if matches!(event, InputEvent::Change)
                     && let Some(v) = this.selected.as_mut()
@@ -1405,23 +1407,10 @@ impl Coincide {
                             retry: true,
                         },
                     );
-                    // Drafts are persisted after a short idle period. Writing a
-                    // multi-megabyte thread document on every keystroke made
-                    // typing in long imported threads unusable.
-                    this.draft_save_epoch = this.draft_save_epoch.wrapping_add(1);
-                    let epoch = this.draft_save_epoch;
-                    let save_id = id.clone();
-                    cx.spawn(async move |this, cx| {
-                        cx.background_executor()
-                            .timer(Duration::from_millis(500))
-                            .await;
-                        let _ = this.update(cx, |this, _| {
-                            if this.draft_save_epoch == epoch {
-                                this.save_pending_draft(&save_id);
-                            }
-                        });
-                    })
-                    .detach();
+                    // Drafts persist when the composer loses focus, the thread
+                    // changes or the app quits. Keeping the store off the typing
+                    // path is essential: a long imported thread rewrites a
+                    // multi-megabyte document and blocks the UI.
                 }
             }),
         ];
@@ -1665,7 +1654,6 @@ impl Coincide {
             pending_native_selection: None,
             startup_selection_pending: true,
             pending_drafts: Default::default(),
-            draft_save_epoch: 0,
             composer,
             model_input,
             model_picker_search,
@@ -2342,6 +2330,7 @@ impl Coincide {
         complete
     }
     fn select(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.flush_pending_drafts();
         self.startup_selection_pending = false;
         self.composer_files.invalidate();
         self.thread_bulk.close_selection();
@@ -5072,6 +5061,15 @@ impl Render for Coincide {
                     .child(conversation_content)
                     .when_some(pending_pane, |view, pane| view.child(pane))
                     .when_some(terminal_bottom,|view,pane|view.child(pane))
+                    .when(
+                        show_composer
+                            && self.selected.as_ref().is_some_and(|thread| {
+                                thread["items"]
+                                    .as_array()
+                                    .is_some_and(|items| items.is_empty())
+                            }),
+                        |view| view.child(self.chat_welcome(cx)),
+                    )
                     .when(show_composer, |view| {
                         view.child(
                             div()
@@ -5108,7 +5106,7 @@ impl Render for Coincide {
                                             div()
                                                 .relative()
                                                 .min_h_0()
-                                                .max_h(px(160.))
+                                                .max_h(px(if self.composer_selection_expanded() { 460. } else { 160. }))
                                                 .flex_shrink_1()
                                                 .when(self.composer_files.opened, |view| view.flex_shrink_0())
                                                 .flex()
@@ -5120,7 +5118,7 @@ impl Render for Coincide {
                                                         .track_scroll(&self.composer_accessory_scroll)
                                                         .pr_4()
                                                         .min_h_0()
-                                                        .max_h(px(160.))
+                                                        .max_h(px(if self.composer_selection_expanded() { 460. } else { 160. }))
                                                         .flex_shrink_1()
                                                         .when(self.composer_files.opened, |view| view.flex_shrink_0())
                                                         .overflow_y_scroll()
@@ -5332,7 +5330,111 @@ fn schedule_date(value: &Value) -> String {
         .map(|date| date.format("%Y-%m-%d %H:%M UTC").to_string())
         .unwrap_or_else(|_| "Unavailable".into())
 }
+/// Finder launches inherit launchd's minimal PATH, while agent CLIs live wherever
+/// the user's shell puts them. Ask the login shell once, bounded, and merge the
+/// directories Coincide also searches before any provider discovery starts.
+#[cfg(unix)]
+fn adopt_login_shell_path() {
+    use std::{
+        io::Read,
+        process::{Command, Stdio},
+        time::{Duration, Instant},
+    };
+    const START: &str = "__COINCIDE_PATH_START__";
+    const END: &str = "__COINCIDE_PATH_END__";
+    let shell = std::env::var("SHELL")
+        .ok()
+        .filter(|shell| std::path::Path::new(shell).is_file())
+        .unwrap_or_else(|| "/bin/zsh".into());
+    let current_path = std::env::var("PATH").unwrap_or_default();
+    // A terminal launch already carries the user's PATH; only Finder's minimal
+    // environment needs the login shell.
+    let needs_shell = !current_path
+        .split(':')
+        .any(|entry| entry == "/opt/homebrew/bin")
+        && !current_path
+            .split(':')
+            .any(|entry| entry == "/usr/local/bin");
+    let mut from_shell = None;
+    if needs_shell
+        && let Ok(mut child) = Command::new(&shell)
+            .args([
+                "-ilc",
+                &format!("printf '%s%s%s' '{START}' \"$PATH\" '{END}'"),
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+    {
+        let deadline = Instant::now() + Duration::from_millis(2500);
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(25));
+                }
+                _ => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break;
+                }
+            }
+        }
+        if let Some(mut output) = child.stdout.take() {
+            let mut text = String::new();
+            let _ = output.take(64 * 1024).read_to_string(&mut text);
+            if let Some(start) = text.find(START)
+                && let Some(end) = text[start..].find(END)
+            {
+                let path = &text[start + START.len()..start + end];
+                if !path.is_empty() && path.len() <= 32 * 1024 {
+                    from_shell = Some(path.to_owned());
+                }
+            }
+        }
+    }
+    let home = std::env::var("HOME").unwrap_or_default();
+    let extras = [
+        "/opt/homebrew/bin".to_owned(),
+        "/opt/homebrew/sbin".to_owned(),
+        "/usr/local/bin".to_owned(),
+        format!("{home}/.local/bin"),
+        format!("{home}/.bun/bin"),
+        format!("{home}/.npm-global/bin"),
+        format!("{home}/.cargo/bin"),
+        format!("{home}/.grok/bin"),
+        format!("{home}/.opencode/bin"),
+        format!("{home}/.cursor/bin"),
+        "/usr/bin".to_owned(),
+        "/bin".to_owned(),
+        "/usr/sbin".to_owned(),
+        "/sbin".to_owned(),
+    ];
+    let current = current_path.clone();
+    let mut seen = std::collections::HashSet::new();
+    let mut parts = Vec::new();
+    for entry in from_shell
+        .iter()
+        .flat_map(|path| path.split(':'))
+        .chain(current.split(':'))
+        .chain(extras.iter().map(String::as_str))
+        .filter(|entry| !entry.is_empty())
+    {
+        if seen.insert(entry.to_owned()) {
+            parts.push(entry.to_owned());
+        }
+    }
+    let merged = parts.join(":");
+    if merged != current {
+        // Called before any other thread or provider process exists.
+        unsafe { std::env::set_var("PATH", merged) };
+    }
+}
+#[cfg(not(unix))]
+fn adopt_login_shell_path() {}
 fn main() -> Result<()> {
+    adopt_login_shell_path();
     let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
     if arguments
         .first()

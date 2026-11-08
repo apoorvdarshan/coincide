@@ -36,6 +36,7 @@ fn fixture_with_prompt(
             session: resume.map(str::to_owned),
             prompt: prompt.into(),
             model: model.map(str::to_owned),
+            variant: None,
         },
     );
     (dir, session)
