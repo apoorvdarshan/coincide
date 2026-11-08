@@ -2,6 +2,10 @@
 //! which keeps an agent's fixed testing viewport inside the panel.
 use super::*;
 
+/// The fixed page size last laid out, for the browser tab list's diagnostics.
+pub(crate) static LAST_PAGE_DIMENSIONS: std::sync::OnceLock<std::sync::Mutex<Option<(f32, f32)>>> =
+    std::sync::OnceLock::new();
+
 /// How much a fixed viewport must shrink to fit the page area. Native views
 /// cannot be clipped inside a scrolling canvas without window composition, so
 /// a larger viewport is shown scaled with the engine's page zoom: the page
@@ -150,6 +154,12 @@ impl Coincide {
         eprintln!(
             "browser_page dimensions={dimensions:?} viewport={viewport:?} measured={measured:?}"
         );
+        if let Some(size) = dimensions {
+            *LAST_PAGE_DIMENSIONS
+                .get_or_init(|| std::sync::Mutex::new(None))
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = Some(size);
+        }
         let page = div().flex_1().min_h_0().relative().child(
             canvas(
                 move |bounds, window, _| {
