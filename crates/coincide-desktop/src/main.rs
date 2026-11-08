@@ -535,7 +535,6 @@ struct Coincide {
     pending_native_selection: Option<Option<String>>,
     startup_selection_pending: bool,
     pending_drafts: std::collections::HashMap<String, PendingDraft>,
-    draft_save_epoch: u64,
     composer: Entity<TextareaState>,
     model_input: Entity<InputState>,
     model_picker_search: Entity<InputState>,
@@ -1388,6 +1387,9 @@ impl Coincide {
                 }
             }),
             cx.subscribe(&composer, |this, _, event, cx| {
+                if matches!(event, InputEvent::Blur) {
+                    this.flush_pending_drafts();
+                }
                 if matches!(event, InputEvent::Change) {this.thread_bulk.invalidate();this.composer_files.text_changed();this.invalidate_terminal_contexts(cx);}
                 if matches!(event, InputEvent::Change)
                     && let Some(v) = this.selected.as_mut()
@@ -1405,23 +1407,10 @@ impl Coincide {
                             retry: true,
                         },
                     );
-                    // Drafts are persisted after a short idle period. Writing a
-                    // multi-megabyte thread document on every keystroke made
-                    // typing in long imported threads unusable.
-                    this.draft_save_epoch = this.draft_save_epoch.wrapping_add(1);
-                    let epoch = this.draft_save_epoch;
-                    let save_id = id.clone();
-                    cx.spawn(async move |this, cx| {
-                        cx.background_executor()
-                            .timer(Duration::from_millis(500))
-                            .await;
-                        let _ = this.update(cx, |this, _| {
-                            if this.draft_save_epoch == epoch {
-                                this.save_pending_draft(&save_id);
-                            }
-                        });
-                    })
-                    .detach();
+                    // Drafts persist when the composer loses focus, the thread
+                    // changes or the app quits. Keeping the store off the typing
+                    // path is essential: a long imported thread rewrites a
+                    // multi-megabyte document and blocks the UI.
                 }
             }),
         ];
@@ -1665,7 +1654,6 @@ impl Coincide {
             pending_native_selection: None,
             startup_selection_pending: true,
             pending_drafts: Default::default(),
-            draft_save_epoch: 0,
             composer,
             model_input,
             model_picker_search,
@@ -2342,6 +2330,7 @@ impl Coincide {
         complete
     }
     fn select(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.flush_pending_drafts();
         self.startup_selection_pending = false;
         self.composer_files.invalidate();
         self.thread_bulk.close_selection();
