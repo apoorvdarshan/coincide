@@ -1718,7 +1718,8 @@ cutover; no Swift app or Swift data was removed or modified.
   `9fcc3d97-49f0-4ac9-8391-cfba5655fbe9` for 0.1.17 and
   `ac4c9859-b651-42d9-8a53-827578314f2b` for 0.1.18 and
   `9a1aeb73-2120-41e1-9a00-9298d9de49a6` for 0.1.19 and
-  `7ea13f32-b928-4b6a-8d63-06cf539a6ca2` for 0.1.20, all Accepted), stapled
+  `7ea13f32-b928-4b6a-8d63-06cf539a6ca2` for 0.1.20 and
+  `4cd62e69-6500-4935-bfac-db2dd69d2d15` for 0.1.21, all Accepted), stapled
   and installed `0.1.21` (build 31); Gatekeeper reports a notarized Developer
   ID.
 - `cargo test -p coincide-core --lib` passed 1159 tests (9 ignored) and
