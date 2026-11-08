@@ -81,7 +81,7 @@ fn icon_tile(section: Section, size: f32) -> AnyElement {
             .h(px(size))
             .flex_shrink_0()
             .rounded(px(size * 0.2))
-            .bg(rgb(0x2b3444))
+            .bg(rgb(0x2b2b2b))
             .into_any_element();
     }
     let (icon, tint) = section_icon(section);

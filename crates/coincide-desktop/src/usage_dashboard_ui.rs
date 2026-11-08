@@ -273,7 +273,7 @@ impl Coincide {
                 .h(px(size))
                 .flex_shrink_0()
                 .rounded(px(size * 0.2))
-                .bg(rgb(0x2b3444))
+                .bg(rgb(0x2b2b2b))
                 .into_any_element(),
             None => Icon::new(gpui_kit::assets::IconName::Cpu)
                 .xsmall()

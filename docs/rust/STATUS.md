@@ -1680,9 +1680,26 @@ cutover; no Swift app or Swift data was removed or modified.
   appearance.
 - The picker's Agent Settings footer opens the settings window on Models;
   it previously changed the section without opening a closed window.
-- Built, signed with the shared Developer ID identity, notarized (submission
-  `a9702f74-4691-4ecd-8d7b-bbd202302896`, Accepted), stapled and installed
-  `0.1.13` (build 23); Gatekeeper reports a notarized Developer ID.
+- The picker now opens as a floating popover above the clicked chip, like
+  Swift: the chat and composer keep their layout, an outside click closes it,
+  and Escape dismisses it. Effort, access, mode and follow-up are compact
+  menus anchored to their buttons instead of inline developer panels.
+- Picker surfaces use the neutral palette (`surface`, `border`, a neutral
+  selected row) instead of the blue-tinted panel and white primary chips.
+- The last ready catalog is cached in the data directory, so a restart opens
+  the picker with the model list immediately while a background refresh
+  updates it. Opening the picker no longer replaces a ready list with
+  "Loading models…".
+- Bot preview lines trim leading whitespace and use the title's point size so
+  both lines share a left edge.
+- A cached OpenCode list stays selectable while the background refresh runs;
+  only providers that need a private effort proof are relocked during it.
+- Built, signed with the shared Developer ID identity, notarized (submissions
+  `34def274-ced7-4f29-b16f-4b2b2277e90b` for 0.1.15,
+  `66606092-81c0-4b5b-9454-33ec1bca1150` for 0.1.16 and
+  `9fcc3d97-49f0-4ac9-8391-cfba5655fbe9` for 0.1.17, all Accepted), stapled
+  and installed `0.1.17` (build 27); Gatekeeper reports a notarized Developer
+  ID.
 - `cargo test -p coincide-core --lib` passed 1159 tests (9 ignored) and
   `cargo test -p coincide-desktop --bin coincide-rust` passed 810 tests
   (26 ignored) with the app stopped. The two updater stopped-target tests fail

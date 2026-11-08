@@ -810,7 +810,7 @@ impl Coincide {
                     .w(px(14.))
                     .h(px(14.))
                     .rounded(px(3.))
-                    .bg(rgb(0x2b3444))
+                    .bg(rgb(0x2b2b2b))
                     .into_any_element()
             })
         };

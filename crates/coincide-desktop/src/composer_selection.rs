@@ -891,11 +891,13 @@ pub(super) struct ComposerSelection {
     pending_provider_picker: Option<PickerRestore>,
     automatic_profile_context: Option<Value>,
     automatic_profile_quiet: Option<(Value, Instant)>,
-    expanded: bool,
+    pub(super) expanded: bool,
     pub(super) facet: PickerFacet,
     favorites_only: bool,
     /// The agent tab the picker lists; nil while searching across every agent.
     tab_provider: Option<String>,
+    /// Where the footer chip was clicked, in window coordinates.
+    popover_anchor: Option<Point<Pixels>>,
 }
 #[derive(Clone)]
 struct PickerRestore {
@@ -2173,6 +2175,29 @@ impl Coincide {
         }
         cx.notify();
     }
+    /// Show the last catalog at once and only read again when there is none.
+    /// Opening the picker never turns a ready list back into "Loading models…".
+    fn ensure_picker_catalog(&mut self, cx: &mut Context<Self>) {
+        let Some(thread) = self.selected.as_ref() else {
+            return;
+        };
+        let Some(draft) = self.selection_ui.drafts.get(&text(thread, "id")) else {
+            return;
+        };
+        let provider = self
+            .selection_ui
+            .tab_provider
+            .clone()
+            .unwrap_or_else(|| draft.provider.clone());
+        let catalog = &self.selection_ui.catalog;
+        if catalog["provider"] == provider.as_str()
+            && catalog["state"] == "ready"
+            && catalog["accountID"].as_str() == default_account_id(&draft.account)
+        {
+            return;
+        }
+        self.refresh_model_catalog(cx);
+    }
     fn refresh_model_catalog(&mut self, cx: &mut Context<Self>) {
         if self.selection_ui.catalog_request.is_some() {
             return;
@@ -2254,13 +2279,22 @@ impl Coincide {
                 if request.request_id.is_empty() || !catalog_response_matches(&value, &request) {
                     self.selection_ui.catalog = json!({"provider":request.provider,"accountID":request.account_id,"state":"failed","error":"Invalid catalog refresh response"});
                 } else {
-                    self.selection_ui.catalog = value;
+                    let keeps_ready_list = self.selection_ui.catalog["state"] == "ready"
+                        && self.selection_ui.catalog["provider"] == request.provider.as_str();
+                    let background_opencode = keeps_ready_list && request.provider == "opencode";
+                    if !keeps_ready_list {
+                        self.selection_ui.catalog = value;
+                    }
                     self.selection_ui.catalog_request = Some(request);
                     self.selection_ui.catalog_last_poll = None;
                     // Starting a new job revokes the prior private proof. Do not
                     // keep displaying its effective default as currently proved.
-                    self.selection_ui.capabilities = Value::Null;
-                    self.selection_ui.context = None;
+                    // OpenCode variants need no proof, so its cached list stays
+                    // usable while the background read finishes.
+                    if !background_opencode {
+                        self.selection_ui.capabilities = Value::Null;
+                        self.selection_ui.context = None;
+                    }
                 }
             }
             Err(error) => {
@@ -2298,6 +2332,15 @@ impl Coincide {
                 self.selection_ui.catalog = value;
                 if done {
                     self.selection_ui.catalog_request = None;
+                    if self.selection_ui.catalog["state"] == "ready"
+                        && let Ok(directory) = coincide_core::control::data_directory()
+                    {
+                        let _ = std::fs::create_dir_all(&directory);
+                        let _ = std::fs::write(
+                            directory.join("model-catalog-cache.json"),
+                            self.selection_ui.catalog.to_string(),
+                        );
+                    }
                     if request.thread_id.is_some() {
                         self.selection_ui.context = None;
                     }
@@ -2539,7 +2582,7 @@ impl Coincide {
                     .h(px(26.))
                     .rounded(px(7.))
                     .when(facet == PickerFacet::Model, |button| {
-                        button.child(chat_layout::provider_label(
+                        button.max_w(px(240.)).child(chat_layout::provider_label(
                             &text(selection, "provider"),
                             label.clone(),
                         ))
@@ -2568,25 +2611,28 @@ impl Coincide {
                     .compact()
                     .when(
                         self.selection_ui.expanded && self.selection_ui.facet == facet,
-                        |button| button.primary(),
+                        |button| button.bg(self.color(0x202a3b)),
                     )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        let was_open =
-                            this.selection_ui.expanded && this.selection_ui.facet == facet;
-                        this.selection_ui.expanded = !was_open;
-                        this.selection_ui.facet = facet;
-                        if !was_open {
-                            this.selection_ui.tab_provider = this
-                                .selected
-                                .as_ref()
-                                .map(|thread| text(&thread["selection"], "provider"))
-                                .filter(|provider| !provider.is_empty());
-                            if facet == PickerFacet::Model {
-                                this.refresh_model_catalog(cx);
+                    .on_click(
+                        cx.listener(move |this, event: &gpui_kit::ClickEvent, _, cx| {
+                            let was_open =
+                                this.selection_ui.expanded && this.selection_ui.facet == facet;
+                            this.selection_ui.expanded = !was_open;
+                            this.selection_ui.facet = facet;
+                            this.selection_ui.popover_anchor = Some(event.position());
+                            if !was_open {
+                                this.selection_ui.tab_provider = this
+                                    .selected
+                                    .as_ref()
+                                    .map(|thread| text(&thread["selection"], "provider"))
+                                    .filter(|provider| !provider.is_empty());
+                                if facet == PickerFacet::Model {
+                                    this.ensure_picker_catalog(cx);
+                                }
                             }
-                        }
-                        cx.notify();
-                    })),
+                            cx.notify();
+                        }),
+                    ),
             );
             if facet == PickerFacet::Access {
                 controls = controls.child(self.follow_up_button(cx));
@@ -2612,17 +2658,35 @@ impl Coincide {
         }
         self.selection_ui.expanded = true;
         self.selection_ui.facet = facet;
+        self.selection_ui.popover_anchor = None;
+        self.follow_up_picker = false;
         self.selection_ui.tab_provider = self
             .selected
             .as_ref()
             .map(|thread| text(&thread["selection"], "provider"))
             .filter(|provider| !provider.is_empty());
         if facet == PickerFacet::Model {
-            self.refresh_model_catalog(cx);
+            self.ensure_picker_catalog(cx);
         }
         cx.notify();
     }
     /// The saved conversation's selection capabilities, as last read; no engine call.
+    pub(super) fn escape_dismisses_popover(
+        &mut self,
+        event: &gpui_kit::KeyDownEvent,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if event.keystroke.key != "escape" {
+            return false;
+        }
+        if self.selection_ui.expanded || self.follow_up_picker {
+            self.selection_ui.expanded = false;
+            self.follow_up_picker = false;
+            cx.notify();
+            return true;
+        }
+        false
+    }
     pub(super) fn composer_selection_capabilities(&self) -> &Value {
         &self.selection_ui.capabilities
     }
@@ -2702,6 +2766,74 @@ impl Coincide {
             )
             .into_any_element()
     }
+    /// One row in a compact picker menu, with a check, an optional icon and
+    /// an optional description, matching Swift's popup rows.
+    /// A neutral selection fill that does not borrow the provider accent.
+    fn picker_selection_bg(&self) -> Rgba {
+        if self.appearance_dark {
+            rgb(0x2b2b2b)
+        } else {
+            rgb(0xebebeb)
+        }
+    }
+    pub(super) fn picker_menu_row(
+        &self,
+        id: String,
+        title: String,
+        detail: Option<String>,
+        icon: Option<gpui_kit::assets::IconName>,
+        selected: bool,
+        disabled: bool,
+        action: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let tall = detail.is_some();
+        Button::new(SharedString::from(id))
+            .w_full()
+            .h(px(if tall { 48. } else { 34. }))
+            .rounded(px(8.))
+            .ghost()
+            .when(selected, |button| button.bg(self.picker_selection_bg()))
+            .disabled(disabled)
+            .on_click(cx.listener(move |this, _, window, cx| action(this, window, cx)))
+            .child(
+                div()
+                    .w_full()
+                    .min_w_0()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .w(px(16.))
+                            .flex_shrink_0()
+                            .flex()
+                            .justify_center()
+                            .when(selected, |slot| {
+                                slot.child(Icon::new(gpui_kit::assets::IconName::Check).xsmall())
+                            }),
+                    )
+                    .when_some(icon, |row, icon| row.child(Icon::new(icon).xsmall()))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .child(div().text_sm().truncate().child(title))
+                            .when_some(detail, |column, detail| {
+                                column.child(
+                                    div()
+                                        .truncate()
+                                        .text_xs()
+                                        .text_color(self.color(0xe4e9f2).opacity(0.55))
+                                        .child(detail),
+                                )
+                            }),
+                    ),
+            )
+            .into_any_element()
+    }
     /// One model row: a check for the saved choice, its agent's logo when the
     /// list mixes agents, its name, context size and favorite star.
     fn picker_model_row(
@@ -2740,8 +2872,8 @@ impl Coincide {
             .flex()
             .items_center()
             .gap_2()
-            .when(selected, |row| row.bg(self.color(0x232b39)))
-            .hover(|row| row.bg(self.color(0x1d2430)))
+            .when(selected, |row| row.bg(self.picker_selection_bg()))
+            .hover(|row| row.bg(self.color(0x111722)))
             .when(disabled, |row| row.opacity(0.55))
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.choose_picker_model(
@@ -2769,7 +2901,7 @@ impl Coincide {
                     .w(px(14.))
                     .h(px(14.))
                     .rounded(px(3.))
-                    .bg(rgb(0x2b3444)),
+                    .bg(rgb(0x2b2b2b)),
             );
         }
         row_view
@@ -2848,7 +2980,7 @@ impl Coincide {
                 .h(px(30.))
                 .w(px(38.))
                 .rounded(px(7.))
-                .when(favorites, |button| button.bg(self.color(0x2b3444)))
+                .when(favorites, |button| button.bg(self.picker_selection_bg()))
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.selection_ui.favorites_only = true;
                     this.selection_ui.facet = PickerFacet::Model;
@@ -2874,14 +3006,14 @@ impl Coincide {
                     .h(px(30.))
                     .w(px(38.))
                     .rounded(px(7.))
-                    .when(selected, |button| button.bg(self.color(0x2b3444)))
+                    .when(selected, |button| button.bg(self.picker_selection_bg()))
                     .when_some(chat_layout::provider_logo(&id), |button, image| {
                         button.child(
                             img(image)
                                 .w(px(18.))
                                 .h(px(18.))
                                 .rounded(px(4.))
-                                .bg(rgb(0x2b3444)),
+                                .bg(rgb(0x2b2b2b)),
                         )
                     })
                     .when(chat_layout::provider_logo(&id).is_none(), |button| {
@@ -2902,7 +3034,7 @@ impl Coincide {
                         this.selection_ui.tab_provider = Some(id.clone());
                         this.selection_ui.favorites_only = false;
                         this.selection_ui.facet = PickerFacet::Model;
-                        this.refresh_model_catalog(cx);
+                        this.ensure_picker_catalog(cx);
                         cx.notify();
                     })),
             );
@@ -2972,6 +3104,79 @@ impl Coincide {
         }
         chips.into_any_element()
     }
+    /// Swift's picker opens as a popover above the control that was clicked,
+    /// never as a panel inside the composer. The whole window behind it closes
+    /// it, and an outside click is consumed rather than reaching the chat.
+    pub(super) fn composer_popover(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if self.follow_up_picker {
+            return Some(self.composer_popover_shell(window, 340., self.follow_up_menu(cx), cx));
+        }
+        if !self.selection_ui.expanded {
+            return None;
+        }
+        let width = if self.selection_ui.facet == PickerFacet::Model {
+            420.
+        } else {
+            340.
+        };
+        Some(self.composer_popover_shell(window, width, self.composer_selection_pane(cx), cx))
+    }
+    fn composer_popover_shell(
+        &self,
+        window: &Window,
+        width: f32,
+        content: AnyElement,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let anchor = self
+            .selection_ui
+            .popover_anchor
+            .or(self.follow_up_anchor)
+            .unwrap_or_else(|| {
+                let size = window.viewport_size();
+                point(size.width / 2. - px(width / 2.), size.height - px(96.))
+            });
+        div()
+            .absolute()
+            .inset_0()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    if this.selection_ui.expanded || this.follow_up_picker {
+                        this.selection_ui.expanded = false;
+                        this.follow_up_picker = false;
+                        cx.notify();
+                    }
+                }),
+            )
+            .child(
+                anchored()
+                    .position(anchor)
+                    .anchor(Anchor::BottomLeft)
+                    .offset(point(px(-10.), px(-140.)))
+                    .snap_to_window()
+                    .child(
+                        div()
+                            .id("composer-popover-card")
+                            .w(px(width))
+                            .max_h(px(540.))
+                            .overflow_y_scroll()
+                            .rounded(px(14.))
+                            .bg(self.color(0x181d28))
+                            .border_1()
+                            .border_color(self.color(0x29303d))
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                cx.stop_propagation();
+                            })
+                            .child(content),
+                    ),
+            )
+            .into_any_element()
+    }
     pub(super) fn composer_selection_pane(&self, cx: &mut Context<Self>) -> AnyElement {
         if !self.selection_ui.expanded {
             return div().into_any_element();
@@ -3022,272 +3227,215 @@ impl Coincide {
             .and_then(|rows| rows.iter().find(|row| row["provider"] == draft.provider));
         let known_provider = provider.is_some();
         let draft_mode_problem = mode_problem(draft, provider);
-        let mut modes = div()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .child(div().text_sm().child(format!(
-                "Proposed access: {} · interaction: {}",
-                draft.proposed_access, draft.proposed_interaction
-            )));
-        for (key, choices) in [
-            (
-                "accessModes",
-                vec![
-                    ("approval", "Approval required"),
-                    ("fullAccess", "Full access (no app approvals)"),
-                ],
-            ),
-            (
-                "interactionModes",
-                vec![("build", "Build"), ("plan", "Plan")],
-            ),
-        ] {
-            if (self.selection_ui.facet == PickerFacet::Access && key != "accessModes")
-                || (self.selection_ui.facet == PickerFacet::Mode && key != "interactionModes")
-            {
-                continue;
-            }
-            let mut row = div().flex().flex_wrap().gap_2();
-            for (mode, label) in choices {
-                if !provider.is_some_and(|provider| advertised_mode(provider, key, mode)) {
-                    continue;
-                }
-                let selected = if key == "accessModes" {
-                    draft.proposed_access == mode
-                } else {
-                    draft.proposed_interaction == mode
-                };
-                row = row.child(
-                    Button::new(SharedString::from(format!("selection-mode-{key}-{mode}")))
-                        .label(label)
-                        .when(selected, |button| button.primary())
-                        .disabled(disabled)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.edit_selection_immediately(
-                                |draft| {
-                                    if key == "accessModes" {
-                                        draft.proposed_access = json!(mode);
-                                    } else {
-                                        draft.proposed_interaction = json!(mode);
-                                    }
-                                },
-                                cx,
-                            )
-                        })),
-                );
-            }
-            modes = modes.child(row);
-        }
-        if draft.proposed_access == "fullAccess" {
-            modes = modes.child(div().text_xs().child("Full access lets Codex run without app approval prompts. Choose it only for a conversation you trust."));
-        }
-        if draft.proposed_interaction == "plan" {
-            modes = modes.child(div().text_xs().child("Plan needs an explicit model ID and is available for ordinary Codex conversations. It does not send a message when selected."));
-        }
         let draft_account_problem = provider.and_then(|provider| {
             account_problem(provider, &draft.account, &self.selection_ui.accounts)
         });
-        let proposed_effort_label = if draft.proposed_effort.is_null() {
-            effort_default_label(draft, thread, provider)
-        } else {
-            draft
-                .proposed_effort
-                .as_str()
-                .unwrap_or("Unsupported stored choice (retained)")
-                .to_owned()
-        };
-        let mut effort_panel = div().flex().flex_col().gap_1().child(
-            div()
-                .text_sm()
-                .child(format!("Proposed effort: {proposed_effort_label}")),
-        );
-        match effort_choices(draft, thread, provider) {
-            Ok(choices) => {
-                let source_id = text(thread, "id");
-                let source_selection = thread["selection"].clone();
-                let default_id = source_id.clone();
-                let default_selection = source_selection.clone();
-                let mut row = div().flex().flex_wrap().gap_2().child(
-                    Button::new("selection-effort-default")
-                        .label(if exact_astra_model(draft) {
-                            "Model/app default effort (clear explicit choice)"
-                        } else {
-                            "Provider default effort (clear explicit choice)"
-                        })
-                        .when(draft.proposed_effort.is_null(), |button| button.primary())
-                        .disabled(disabled)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.choose_effort(&default_id, &default_selection, Value::Null, cx)
-                        })),
-                );
-                for choice in choices {
-                    let source_id = source_id.clone();
-                    let source_selection = source_selection.clone();
-                    row = row.child(
-                        Button::new(SharedString::from(format!("selection-effort-{choice}")))
-                            .label(choice.clone())
-                            .when(
-                                draft.proposed_effort.as_str() == Some(choice.as_str()),
-                                |button| button.primary(),
-                            )
-                            .disabled(disabled)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.choose_effort(&source_id, &source_selection, json!(choice), cx)
-                            })),
-                    );
-                }
-                effort_panel = effort_panel.child(row);
-                if let Some(default) =
-                    provider.and_then(|p| p["effort"]["reportedDefault"].as_str())
-                {
-                    effort_panel = effort_panel.child(div().text_xs().child(if exact_astra_model(draft) {
-                        format!("Provider-reported default: {default}. Model/app default is shown separately; stored null is retained.")
-                    } else {format!("Provider-reported default: {default}. No effort is selected automatically.")}));
-                }
-            }
-            Err(error) => {
-                effort_panel = effort_panel.child(div().text_xs().child(error.to_string()))
-            }
-        }
-        if exact_astra_model(draft) {
-            effort_panel=effort_panel.child(div().text_xs().child("Clearing explicit effort selects this model's app default. It requires a fresh catalog proof; Send remains unavailable when that default cannot be proved."));
-        }
-        if self.selection_ui.capabilities["repairClearAvailable"] == true {
-            let repair_problem = repair_clear_params(
-                draft,
-                thread,
-                &self.selection_ui.capabilities,
-                self.running.contains(&text(thread, "id")),
-            )
-            .err();
+        let draft_speed_problem = speed_problem(draft, thread, provider);
+        if self.selection_ui.facet != PickerFacet::Model {
             let source_id = text(thread, "id");
             let source_selection = thread["selection"].clone();
-            effort_panel=effort_panel.child(Button::new("selection-effort-repair-clear").label("Clear saved effort only")
-                .disabled(repair_problem.is_some()).on_click(cx.listener(move|this,_,_,cx|this.clear_saved_effort(&source_id,&source_selection,cx))))
-                .child(div().text_xs().child(repair_problem.map(|e|e.to_string()).unwrap_or_else(||"Clears only the saved effort. Other choices are checked separately. No message is sent.".into())));
-        }
-        let draft_speed_problem = speed_problem(draft, thread, provider);
-        let speed_label = if draft.proposed_speed.is_null() {
-            "Standard".to_owned()
-        } else {
-            draft
-                .proposed_speed
-                .as_str()
-                .unwrap_or("Unsupported stored choice (retained)")
-                .to_owned()
-        };
-        let mut speed_panel = div().flex().flex_col().gap_1().child(
-            div()
-                .text_sm()
-                .child(format!("Proposed speed: {speed_label}")),
-        );
-        match speed_choices(draft, thread, provider) {
-            Ok(choices) => {
-                let source_id = text(thread, "id");
-                let source_selection = thread["selection"].clone();
-                let default_id = source_id.clone();
-                let default_selection = source_selection.clone();
-                speed_panel = speed_panel.child(
-                    Button::new("selection-speed-standard")
-                        .label("Standard speed (clear explicit tier)")
-                        .when(draft.proposed_speed.is_null(), |button| button.primary())
-                        .disabled(disabled)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.choose_speed(&default_id, &default_selection, Value::Null, cx)
-                        })),
-                );
-                for choice in choices {
-                    let id = choice.id.clone();
-                    let source_id = source_id.clone();
-                    let source_selection = source_selection.clone();
-                    speed_panel = speed_panel.child(
-                        Button::new(SharedString::from(format!("selection-speed-{id}")))
-                            .label(choice.name)
-                            .when(
-                                draft.proposed_speed.as_str() == Some(id.as_str()),
-                                |button| button.primary(),
-                            )
-                            .disabled(disabled)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.choose_speed(&source_id, &source_selection, json!(id), cx)
-                            })),
-                    );
-                    if let Some(detail) = choice.detail {
-                        speed_panel = speed_panel.child(div().text_xs().child(detail));
+            let mut menu = div().flex().flex_col().gap_1().p_2().child(
+                div()
+                    .px_1()
+                    .pb_1()
+                    .text_xs()
+                    .text_color(self.color(0xe4e9f2).opacity(0.6))
+                    .child(match self.selection_ui.facet {
+                        PickerFacet::Effort => "Reasoning",
+                        PickerFacet::Speed => "Speed",
+                        PickerFacet::Access => "Access",
+                        PickerFacet::Mode => "Mode",
+                        PickerFacet::Model => "",
+                    }),
+            );
+            match self.selection_ui.facet {
+                PickerFacet::Effort => match effort_choices(draft, thread, provider) {
+                    Ok(choices) => {
+                        let id = source_id.clone();
+                        let selection = source_selection.clone();
+                        menu = menu.child(self.picker_menu_row(
+                            "picker-effort-default".into(),
+                            "Provider default".into(),
+                            None,
+                            None,
+                            draft.proposed_effort.is_null(),
+                            disabled,
+                            move |this, _, cx| {
+                                this.choose_effort(&id, &selection, Value::Null, cx);
+                                this.selection_ui.expanded = false;
+                            },
+                            cx,
+                        ));
+                        for choice in choices {
+                            let id = source_id.clone();
+                            let selection = source_selection.clone();
+                            let label = effort_picker_title(&json!(choice));
+                            let value = json!(choice);
+                            let selected = draft.proposed_effort.as_str() == Some(choice.as_str());
+                            menu = menu.child(self.picker_menu_row(
+                                format!("picker-effort-{choice}"),
+                                label,
+                                None,
+                                None,
+                                selected,
+                                disabled,
+                                move |this, _, cx| {
+                                    this.choose_effort(&id, &selection, value.clone(), cx);
+                                    this.selection_ui.expanded = false;
+                                },
+                                cx,
+                            ));
+                        }
+                    }
+                    Err(error) => {
+                        menu = menu.child(
+                            div()
+                                .px_1()
+                                .text_xs()
+                                .text_color(self.color(0xe4e9f2).opacity(0.6))
+                                .child(error.to_string()),
+                        );
+                    }
+                },
+                PickerFacet::Speed => match speed_choices(draft, thread, provider) {
+                    Ok(choices) => {
+                        let id = source_id.clone();
+                        let selection = source_selection.clone();
+                        menu = menu.child(self.picker_menu_row(
+                            "picker-speed-standard".into(),
+                            "Standard".into(),
+                            None,
+                            None,
+                            draft.proposed_speed.is_null(),
+                            disabled,
+                            move |this, _, cx| {
+                                this.choose_speed(&id, &selection, Value::Null, cx);
+                                this.selection_ui.expanded = false;
+                            },
+                            cx,
+                        ));
+                        for choice in choices {
+                            let id = source_id.clone();
+                            let selection = source_selection.clone();
+                            let selected =
+                                draft.proposed_speed.as_str() == Some(choice.id.as_str());
+                            let value = json!(choice.id.clone());
+                            menu = menu.child(self.picker_menu_row(
+                                format!("picker-speed-{}", choice.id),
+                                choice.name.clone(),
+                                choice.detail.clone(),
+                                None,
+                                selected,
+                                disabled,
+                                move |this, _, cx| {
+                                    this.choose_speed(&id, &selection, value.clone(), cx);
+                                    this.selection_ui.expanded = false;
+                                },
+                                cx,
+                            ));
+                        }
+                    }
+                    Err(error) => {
+                        menu = menu.child(
+                            div()
+                                .px_1()
+                                .text_xs()
+                                .text_color(self.color(0xe4e9f2).opacity(0.6))
+                                .child(error.to_string()),
+                        );
+                    }
+                },
+                PickerFacet::Access => {
+                    for (mode, title, detail, icon) in [
+                        (
+                            "approval",
+                            "Ask for approval",
+                            "Asks before running commands and changing files.",
+                            gpui_kit::assets::IconName::Lock,
+                        ),
+                        (
+                            "fullAccess",
+                            "Full access",
+                            "Runs commands and edits files without asking.",
+                            gpui_kit::assets::IconName::LockOpen,
+                        ),
+                    ] {
+                        let available = provider
+                            .is_some_and(|provider| advertised_mode(provider, "accessModes", mode));
+                        menu = menu.child(self.picker_menu_row(
+                            format!("picker-access-{mode}"),
+                            title.into(),
+                            Some(detail.into()),
+                            Some(icon),
+                            draft.proposed_access == mode,
+                            disabled || !available,
+                            move |this, _, cx| {
+                                this.edit_selection_immediately(
+                                    |draft| draft.proposed_access = json!(mode),
+                                    cx,
+                                );
+                                this.selection_ui.expanded = false;
+                            },
+                            cx,
+                        ));
                     }
                 }
-                speed_panel = speed_panel.child(div().text_xs().child("These are provider-reported service tiers. Apply changes the selection without sending a message. Standard explicitly clears a retained faster tier when needed."));
-            }
-            Err(error) => speed_panel = speed_panel.child(div().text_xs().child(error.to_string())),
-        }
-        for (repair, flag, button_id, label, explanation) in [
-            (
-                SpeedRepair::Speed,
-                "repairSpeedClearAvailable",
-                "selection-speed-repair-clear",
-                "Clear saved speed only",
-                "Clears only saved speed to Standard; effort and other choices are retained. No message is sent.",
-            ),
-            (
-                SpeedRepair::Both,
-                "repairOptionsClearAvailable",
-                "selection-options-repair-clear",
-                "Clear saved effort and speed only",
-                "Explicitly clears both saved effort and speed. Other selection fields, draft and references are retained. No message is sent.",
-            ),
-        ] {
-            if self.selection_ui.capabilities[flag] == true {
-                let problem = speed_repair_params(
-                    draft,
-                    thread,
-                    &self.selection_ui.capabilities,
-                    self.running.contains(&text(thread, "id")),
-                    repair,
-                )
-                .err();
-                let source_id = text(thread, "id");
-                let source_selection = thread["selection"].clone();
-                speed_panel = speed_panel
-                    .child(
-                        Button::new(button_id)
-                            .label(label)
-                            .disabled(problem.is_some())
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.clear_saved_speed_options(
-                                    &source_id,
-                                    &source_selection,
-                                    repair,
-                                    cx,
-                                )
-                            })),
-                    )
-                    .child(
-                        div().text_xs().child(
-                            problem
-                                .map(|error| error.to_string())
-                                .unwrap_or_else(|| explanation.into()),
+                PickerFacet::Mode => {
+                    for (mode, title, detail, icon) in [
+                        (
+                            "build",
+                            "Build",
+                            "Makes changes in the project.",
+                            gpui_kit::assets::IconName::Hammer,
                         ),
-                    );
+                        (
+                            "plan",
+                            "Plan",
+                            "Researches and proposes changes without editing.",
+                            gpui_kit::assets::IconName::PencilRuler,
+                        ),
+                    ] {
+                        let available = provider.is_some_and(|provider| {
+                            advertised_mode(provider, "interactionModes", mode)
+                        });
+                        menu = menu.child(self.picker_menu_row(
+                            format!("picker-mode-{mode}"),
+                            title.into(),
+                            Some(detail.into()),
+                            Some(icon),
+                            draft.proposed_interaction == mode,
+                            disabled || !available,
+                            move |this, _, cx| {
+                                this.edit_selection_immediately(
+                                    |draft| draft.proposed_interaction = json!(mode),
+                                    cx,
+                                );
+                                this.selection_ui.expanded = false;
+                            },
+                            cx,
+                        ));
+                    }
+                }
+                PickerFacet::Model => {}
             }
-        }
-        if self.selection_ui.facet != PickerFacet::Model {
-            let section = match self.selection_ui.facet {
-                PickerFacet::Effort => effort_panel.into_any_element(),
-                PickerFacet::Speed => speed_panel.into_any_element(),
-                _ => modes.into_any_element(),
-            };
-            return div()
-                .p_3()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(section)
+            return menu
                 .when_some(lock, |view, reason| {
-                    view.child(div().text_sm().child(reason))
+                    view.child(
+                        div()
+                            .px_1()
+                            .text_xs()
+                            .text_color(self.color(0xe4e9f2).opacity(0.6))
+                            .child(reason),
+                    )
                 })
                 .when(!self.selection_ui.error.is_empty(), |view| {
-                    view.child(self.selection_ui.error.clone())
+                    view.child(
+                        div()
+                            .px_1()
+                            .text_xs()
+                            .text_color(self.color(0xe4e9f2).opacity(0.6))
+                            .child(self.selection_ui.error.clone()),
+                    )
                 })
                 .into_any_element();
         }
@@ -3526,13 +3674,7 @@ impl Coincide {
             .flex()
             .flex_col()
             .min_w_0()
-            .w_full()
-            .max_w(px(520.))
-            .p_2()
-            .rounded(px(14.))
-            .border_1()
-            .border_color(self.color(0x2b3342))
-            .bg(self.color(0x1a212b))
+            .p_3()
             .child(div().min_w_0().child(pane))
             .into_any_element()
     }
