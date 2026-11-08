@@ -304,10 +304,16 @@ impl Fixture {
                     .closed
                     .store(true, Ordering::Release);
             }
+            let before = focus_state(self.views[case.view].read(cx).raw());
             match focus(self.views[case.view].read(cx).raw()) {
                 Ok(()) => self.focused = Some(Instant::now()),
                 Err(error) => self.fail(format!("owned view focus failed: {error}")),
             }
+            println!(
+                "focus case {} before=[{before}] after=[{}]",
+                self.index,
+                focus_state(self.views[case.view].read(cx).raw())
+            );
         } else if self.focused.unwrap().elapsed() > Duration::from_millis(100) {
             // Exercise the same current-focus predicate production dispatch uses,
             // independently of merely receiving an accelerator callback.
@@ -396,14 +402,31 @@ fn focus(view: &wry::WebView) -> anyhow::Result<()> {
 }
 #[cfg(target_os = "linux")]
 fn focus_state(view: &wry::WebView) -> String {
-    use gtk::prelude::WidgetExt as _;
+    use gtk::{gdk, glib::translate::ToGlibPtr, prelude::WidgetExt as _};
     use wry::WebViewExtUnix as _;
     let widget = view.webview();
+    let owned = widget
+        .window()
+        .map(|window| unsafe { gdk_x11_window_get_xid(window.to_glib_none().0) })
+        .unwrap_or(0);
+    let current = x11rb::connect(None)
+        .ok()
+        .and_then(|(connection, _)| {
+            use x11rb::protocol::xproto::ConnectionExt as _;
+            connection.get_input_focus().ok()?.reply().ok()
+        })
+        .map(|reply| reply.focus)
+        .unwrap_or(0);
     format!(
-        "visible={} mapped={}",
+        "visible={} mapped={} owned={owned} current={current}",
         widget.is_visible(),
         widget.is_mapped()
     )
+}
+#[cfg(target_os = "linux")]
+#[link(name = "gdk-3")]
+unsafe extern "C" {
+    fn gdk_x11_window_get_xid(window: *mut gdk::ffi::GdkWindow) -> std::os::raw::c_ulong;
 }
 #[cfg(not(target_os = "linux"))]
 fn focus_state(_view: &wry::WebView) -> String {
