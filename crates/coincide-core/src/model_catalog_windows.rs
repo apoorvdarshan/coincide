@@ -119,6 +119,7 @@ impl<'a> ProcessRpc<'a> {
             prompt: String::new(),
             model: None,
             variant: None,
+            full_access: false,
         };
         Ok(Self {
             transport: crate::agent::CatalogTransport::spawn(

@@ -37,6 +37,7 @@ fn fixture_with_prompt(
             prompt: prompt.into(),
             model: model.map(str::to_owned),
             variant: None,
+            full_access: false,
         },
     );
     (dir, session)

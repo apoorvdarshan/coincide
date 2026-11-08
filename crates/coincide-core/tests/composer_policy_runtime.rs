@@ -64,6 +64,7 @@ sys.stdin.readline()
             prompt: "synthetic".into(),
             model: (selected != "default").then(|| selected.into()),
             variant: None,
+            full_access: false,
         },
         Vec::new(),
         None,

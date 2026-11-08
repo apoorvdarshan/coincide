@@ -60,6 +60,7 @@ sys.stdin.readline()
         prompt: "initial".into(),
         model: None,
         variant: None,
+        full_access: false,
     });
     loop {
         match session.events.recv_timeout(Duration::from_secs(5)).unwrap() {

@@ -1358,6 +1358,7 @@ impl Engine {
         let variant = (provider.as_str() == "opencode")
             .then(|| v["selection"]["effort"].as_str().map(str::to_owned))
             .flatten();
+        let full_access = v["accessMode"] == "fullAccess";
         let executable_variable = match provider.as_str() {
             "claude" => "COINCIDE_CLAUDE_EXECUTABLE",
             "codex" => "COINCIDE_CODEX_EXECUTABLE",
@@ -1455,6 +1456,7 @@ impl Engine {
                         prompt: outgoing,
                         model,
                         variant,
+                        full_access,
                     },
                     images,
                     bot_instructions,

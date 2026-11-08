@@ -24,7 +24,7 @@ fn static_capabilities_never_claim_discovered_or_authenticated_models() {
         assert_eq!(provider["speed"]["supported"], false);
         assert_eq!(
             provider["accessModes"],
-            if provider["provider"] == "codex" {
+            if provider["provider"] == "codex" || provider["provider"] == "opencode" {
                 json!(["approval", "fullAccess"])
             } else {
                 json!(["approval"])
@@ -163,6 +163,7 @@ fn launch_capture_preserves_exact_custom_id_and_only_default_omits_override() {
             prompt: "fixture".into(),
             model: launch_model(&selected).unwrap(),
             variant: None,
+            full_access: false,
         };
         assert_eq!(
             captured.model.as_deref(),

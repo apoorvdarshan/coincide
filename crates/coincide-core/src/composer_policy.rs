@@ -149,6 +149,7 @@ impl Policy {
         }
         ensure!(
             provider == "codex"
+                || (provider == "opencode" && interaction == Interaction::Build)
                 || (access == Access::Approval && interaction == Interaction::Build),
             "Plan/full access policy is not implemented for this provider"
         );

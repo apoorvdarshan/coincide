@@ -110,7 +110,8 @@ fn other_provider_modes_effort_speed_named_accounts_and_imports_fail_without_dow
             source["selection"]["provider"] = json!(provider);
             source[key] = json!(value);
             let before = source.clone();
-            assert!(Policy::parse(&source, Origin::Ordinary).is_err());
+            let allowed = provider == "opencode" && key == "accessMode";
+            assert_eq!(Policy::parse(&source, Origin::Ordinary).is_ok(), allowed);
             assert_eq!(source, before);
         }
     }
