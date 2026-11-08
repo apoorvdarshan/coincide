@@ -402,7 +402,7 @@ fn focus(view: &wry::WebView) -> anyhow::Result<()> {
 }
 #[cfg(target_os = "linux")]
 fn focus_state(view: &wry::WebView) -> String {
-    use gtk::{gdk, glib::translate::ToGlibPtr, prelude::WidgetExt as _};
+    use gtk::{glib::translate::ToGlibPtr, prelude::WidgetExt as _};
     use wry::WebViewExtUnix as _;
     let widget = view.webview();
     let owned = widget
@@ -426,7 +426,7 @@ fn focus_state(view: &wry::WebView) -> String {
 #[cfg(target_os = "linux")]
 #[link(name = "gdk-3")]
 unsafe extern "C" {
-    fn gdk_x11_window_get_xid(window: *mut gdk::ffi::GdkWindow) -> std::os::raw::c_ulong;
+    fn gdk_x11_window_get_xid(window: *mut gtk::gdk::ffi::GdkWindow) -> std::os::raw::c_ulong;
 }
 #[cfg(not(target_os = "linux"))]
 fn focus_state(_view: &wry::WebView) -> String {
