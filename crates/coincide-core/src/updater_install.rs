@@ -34,6 +34,7 @@ use std::{
 #[link(name = "proc")]
 unsafe extern "C" {
     fn proc_pidpath(pid: libc::c_int, buffer: *mut libc::c_void, buffersize: u32) -> libc::c_int;
+    fn proc_name(pid: libc::c_int, buffer: *mut libc::c_void, buffersize: u32) -> libc::c_int;
     fn proc_pidinfo(
         pid: libc::c_int,
         flavor: libc::c_int,
@@ -1655,6 +1656,34 @@ impl ProcessGuard for MacProcessGuard {
                 .take(count as usize / std::mem::size_of::<i32>())
                 .filter(|pid| *pid > 1)
             {
+                // A zombie/defunct process reports no executable name even
+                // when its path remains visible; it is not running.
+                let alive = unsafe { libc::kill(pid, 0) } == 0
+                    || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM);
+                if alive {
+                    let mut probe = [0u8; 64];
+                    let length =
+                        unsafe { proc_name(pid, probe.as_mut_ptr().cast(), probe.len() as u32) };
+                    if length == 0 {
+                        continue;
+                    }
+                }
+                // A just-exited app can remain a zombie carrying the target name
+                // until its parent reaps it; a zombie is not running.
+                let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::uninit();
+                let size = std::mem::size_of::<libc::proc_bsdinfo>() as i32;
+                let got = unsafe {
+                    proc_pidinfo(
+                        pid,
+                        libc::PROC_PIDTBSDINFO,
+                        0,
+                        info.as_mut_ptr().cast(),
+                        size,
+                    )
+                };
+                if got == size && unsafe { info.assume_init() }.pbi_status == libc::SZOMB {
+                    continue;
+                }
                 if let Ok(path) = process_path(pid) {
                     ensure!(
                         path != executable && !path.starts_with(target),
@@ -1665,14 +1694,24 @@ impl ProcessGuard for MacProcessGuard {
                         bail!("Another Rust preview executable is running");
                     }
                 } else {
-                    // A disappeared PID is harmless. Do not silently classify a live,
-                    // uninspectable process as proof that the target is stopped.
+                    // A disappeared PID is harmless. A live path-uninspectable
+                    // process still proves it is outside the target when its
+                    // executable name is not the preview main. Refuse a name
+                    // match or an unreadable name.
                     let exists = unsafe { libc::kill(pid, 0) };
-                    ensure!(
-                        exists == -1
-                            && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH),
-                        "Cannot prove all observed native processes are outside the target"
-                    );
+                    let alive = exists == 0
+                        || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM);
+                    if alive {
+                        let mut name = [0u8; 64];
+                        let length =
+                            unsafe { proc_name(pid, name.as_mut_ptr().cast(), name.len() as u32) };
+                        ensure!(
+                            // A zombie/defunct process reports no name; it is not
+                            // running. Any named process must not be the preview app.
+                            length == 0 || &name[..length as usize] != MAIN.as_bytes(),
+                            "Cannot prove the live uninspectable process is outside the target"
+                        );
+                    }
                 }
             }
             Ok(())
@@ -1688,6 +1727,34 @@ impl ProcessGuard for MacProcessGuard {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    #[cfg(target_os = "macos")]
+    static PROOF_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn stopped_target_proof_ignores_zombie_preview_name() {
+        let _guard = PROOF_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("coincide-rust");
+        std::fs::copy("/bin/sleep", &bin).unwrap();
+        let mut child = std::process::Command::new(&bin).arg("30").spawn().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        child.kill().unwrap();
+        // The child is a zombie carrying the preview name until wait().
+        MacProcessGuard
+            .ensure_stopped(&dir.path().join("Coincide Rust.app"))
+            .unwrap();
+        child.wait().unwrap();
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn stopped_target_proof_tolerates_unrelated_uninspectable_processes() {
+        let _guard = PROOF_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        MacProcessGuard
+            .ensure_stopped(&dir.path().join("Coincide Rust.app"))
+            .unwrap();
+    }
     use crate::updater::{
         Config, Dependencies, DiskSpace, Limits, OperationContext, RequestPolicy, Response,
         SignatureStatus, State, Transport, TrustReport, TrustVerifier,

@@ -34,12 +34,15 @@ def scratch_parent(path):
 
 
 def stage(scratch_root, platform, desktop, cli, store, version, commit,
-          assets_dir=None, icon=None, minimum_macos=None, build_number='1'):
+          assets_dir=None, icon=None, minimum_macos=None, build_number='1', helper=None):
     parent = scratch_parent(scratch_root)
     packaging.require(platform in packaging.PLATFORMS, 'unsupported platform')
     packaging.require(re.fullmatch(r'\d+\.\d+\.\d+', version) is not None, 'version must be major.minor.patch')
     packaging.require(re.fullmatch(r'[1-9]\d*', build_number) is not None, 'build number must be a positive integer')
     binaries = [regular(p) for p in (desktop, cli, store)]
+    if helper is not None:
+        packaging.require(platform == 'macos', 'helper binary is macOS-only')
+        helper = regular(helper)
     if assets_dir is not None:
         # inventory checks every nested entry before copytree can follow a symlink.
         assets_dir = Path(assets_dir).absolute()
@@ -68,6 +71,10 @@ def stage(scratch_root, platform, desktop, cli, store, version, commit,
             target = bindir / (name + ('.exe' if platform == 'windows' else ''))
             shutil.copyfile(source, target)
             target.chmod(0o755)
+        if helper is not None:
+            target = bindir / 'CoincideRustUpdater'
+            shutil.copyfile(helper, target)
+            target.chmod(0o755)
         if assets_dir is not None:
             # Keep caller assets in a namespace that cannot replace generated files.
             shutil.copytree(assets_dir, resources / 'assets')
@@ -86,9 +93,10 @@ def stage(scratch_root, platform, desktop, cli, store, version, commit,
         manifest = packaging.manifest(artifact, platform, version, commit)
         validation = packaging.validate(artifact, manifest)
         (result / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8')
+        inputs = [str(p) for p in binaries] + ([str(helper)] if helper is not None else [])
         report = {'artifact': str(artifact), 'manifest': str(result / 'manifest.json'),
                   'validation': validation, 'build_number': build_number,
-                  'source_inputs': [str(p) for p in binaries]}
+                  'source_inputs': inputs}
         (result / 'validation.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
         return report
     except BaseException:
@@ -104,6 +112,7 @@ def main():
     parser.add_argument('--desktop-bin', type=Path, required=True)
     parser.add_argument('--cli-bin', type=Path, required=True)
     parser.add_argument('--store-bin', type=Path, required=True)
+    parser.add_argument('--helper-bin', type=Path)
     parser.add_argument('--version', required=True)
     parser.add_argument('--commit', required=True)
     parser.add_argument('--assets-dir', type=Path)
@@ -114,7 +123,7 @@ def main():
     try:
         print(json.dumps(stage(args.scratch_root, args.platform, args.desktop_bin, args.cli_bin,
                                args.store_bin, args.version, args.commit, args.assets_dir, args.icon,
-                               args.minimum_macos_version, args.build_number), indent=2))
+                               args.minimum_macos_version, args.build_number, args.helper_bin), indent=2))
     except (ValueError, OSError, KeyError, TypeError) as error:
         print('staging failed: ' + str(error), file=sys.stderr)
         return 1

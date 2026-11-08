@@ -124,6 +124,9 @@ impl Coincide {
                 .child(Button::new("about-copy-version").label("Copy Version Info").on_click(cx.listener(move |_,_,_,cx| {
                     cx.write_to_clipboard(ClipboardItem::new_string(report.clone()));
                 }))));
+        // App Updates stays unavailable unless the trusted launcher configured a
+        // preview channel; mounting it never checks a feed by itself.
+        content = content.child(self.updater_settings.clone());
         for group in Group::ALL {
             let rows = LINKS
                 .iter()

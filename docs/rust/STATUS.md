@@ -1597,6 +1597,37 @@ configured update channel or native helper/quit wiring, so no in-app Check,
 Download or Install on Quit ran; replacement, rollback and relaunch remain
 unverified.
 
+## Real in-app preview update installation (2026-11-08)
+
+- Wired an opt-in preview channel into the desktop app. The feed, artifact base
+  and Developer ID anchor come only from trusted launch variables; Settings ›
+  About mounts App Updates; Install on Quit is separately gated. Nothing here is
+  reachable from an API, settings patch or page request.
+- Built and notarized a `0.1.0` host and a `0.1.1` candidate, served the feed and
+  artifact, then used the app itself for Check → Download → Install on Quit. The
+  native approval showed the exact `0.1.1` over `0.1.0` target, signing anchor
+  and archive SHA-256.
+- After approval and a normal menu Quit, the app completed all nine drain
+  checkpoints, the helper verified the staged bytes and the stopped target,
+  wrote consent, and replaced the bundle.
+- Verified the result: installed `CFBundleShortVersionString` `0.1.1`, valid
+  Developer ID signature, Gatekeeper acceptance, `.Coincide-Rust-backup-<transaction>.app`
+  retained at `0.1.0`, journal phase `Committed`, outcome `Installed`. The
+  installed app was relaunched and opened normally.
+- Fixed launch wiring found by the run: create the private `transactions` and
+  `helpers` roots before the helper starts; observe the app's own Quit menu as a
+  native user quit; let the stopped-target proof tolerate unrelated
+  uninspectable processes and exited zombies while still refusing a live
+  `coincide-rust`; read the About version from the bundle at runtime.
+
+This verifies one real signed and notarized preview update through replacement.
+It does not verify rollback after a failed health check, crash or power loss
+during the exchange, discovery from the default profile without the isolated
+test cache bridge, notarized public distribution, or Windows/Linux
+installation. The acceptance helper pinned the temporary test feed at compile
+time, as the design requires; production packaging must pin the production
+feed. The installed test artifact predates the runtime version-label fix.
+
 ## Swift data rehearsal on a copy (2026-11-08)
 
 - Captured a read-only 641-file (281,244,437-byte) snapshot of the live Swift

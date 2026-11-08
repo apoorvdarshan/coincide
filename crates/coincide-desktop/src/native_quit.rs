@@ -76,6 +76,9 @@ impl QuitState {
         }
         requested
     }
+    fn observe_user_quit(&self) {
+        self.observed.store(true, Ordering::Release);
+    }
     fn cancel(&self) {
         self.requested.store(false, Ordering::Release);
         self.observed.store(false, Ordering::Release);
@@ -120,6 +123,14 @@ impl NativeQuit {
             }
         }
         false
+    }
+    /// The app's own Quit menu item is a native user action, like an OS quit
+    /// request. It must not mint a permit from JSON or an unrelated caller.
+    pub(super) fn observe_user_quit(&self) {
+        #[cfg(target_os = "macos")]
+        if macos::INSTALLED.get() == Some(&self.identity) {
+            macos::STATE.observe_user_quit();
+        }
     }
     /// User cancelled the unsaved-editor decision before any shutdown begins.
     pub(super) fn cancel_request(&self) {
