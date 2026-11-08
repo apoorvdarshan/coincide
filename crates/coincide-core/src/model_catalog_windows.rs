@@ -118,6 +118,7 @@ impl<'a> ProcessRpc<'a> {
             session: None,
             prompt: String::new(),
             model: None,
+            variant: None,
         };
         Ok(Self {
             transport: crate::agent::CatalogTransport::spawn(

@@ -207,6 +207,7 @@ fn cursor_fixture_child() {
             cwd: directory.clone(),
             session: mode.starts_with("resume").then(|| "native".into()),
             model: (!mode.starts_with("inherited-model")).then(|| "chosen-model".into()),
+            variant: None,
             prompt: "fixture prompt".into(),
         },
     );

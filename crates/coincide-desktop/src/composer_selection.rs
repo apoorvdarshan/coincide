@@ -172,11 +172,17 @@ fn effort_choices(
     let provider = provider.context("Effort capabilities are unavailable")?;
     let capability = &provider["effort"];
     anyhow::ensure!(
-        draft.provider == "codex"
+        (draft.provider == "codex"
             && provider["provider"] == "codex"
             && capability["supported"] == true
             && capability["provenance"] == "provider_model_list"
-            && capability["requiresExplicitModel"] == true,
+            && capability["requiresExplicitModel"] == true)
+            || (draft.provider == "opencode"
+                && provider["provider"] == "opencode"
+                && capability["supported"] == true
+                && capability["provenance"] == "provider_model_list"
+                && capability["requiresExplicitModel"] == true
+                && capability["choices"].is_array()),
         "{}",
         capability["reason"]
             .as_str()
@@ -184,7 +190,7 @@ fn effort_choices(
     );
     anyhow::ensure!(
         draft.use_custom && !draft.custom.is_empty() && draft.custom != "default",
-        "Choose an explicit Codex model before effort options"
+        "Choose an explicit model before effort options"
     );
     let values = capability["choices"]
         .as_array()
@@ -888,6 +894,8 @@ pub(super) struct ComposerSelection {
     expanded: bool,
     pub(super) facet: PickerFacet,
     favorites_only: bool,
+    /// The agent tab the picker lists; nil while searching across every agent.
+    tab_provider: Option<String>,
 }
 #[derive(Clone)]
 struct PickerRestore {
@@ -1009,6 +1017,20 @@ fn model_marked(settings: &Value, key: &str, provider: &str, model: &str) -> boo
         rows.iter()
             .any(|row| row["provider"] == provider && row["modelID"] == model)
     })
+}
+fn compact_context(tokens: u64) -> String {
+    if tokens >= 1_000_000 {
+        let millions = tokens as f64 / 1_000_000.;
+        if (millions - millions.round()).abs() < 0.05 {
+            format!("{}M", millions.round() as u64)
+        } else {
+            format!("{millions:.1}M")
+        }
+    } else if tokens >= 1_000 {
+        format!("{}K", (tokens as f64 / 1_000.).round() as u64)
+    } else {
+        tokens.to_string()
+    }
 }
 fn filtered_picker_models<'a>(
     settings: &Value,
@@ -1763,6 +1785,23 @@ impl Coincide {
         self.selection_ui.accounts = accounts;
         self.selection_ui.codex_accounts = codex_accounts;
         self.selection_ui.native_accounts = native_accounts;
+        // The composer's chip and picker show provider display names, so read
+        // each provider's catalog once per window session. Refresh re-reads it.
+        let provider = text(&thread["selection"], "provider");
+        if self.selection_ui.catalog_request.is_none()
+            && self.selection_ui.catalog["provider"].as_str() != Some(provider.as_str())
+            && self.selection_ui.capabilities["providers"]
+                .as_array()
+                .is_some_and(|rows| {
+                    rows.iter().any(|row| {
+                        row["provider"] == provider
+                            && row["modelDiscovery"]["supported"] == true
+                    })
+                })
+        {
+            self.selection_ui.tab_provider = Some(provider);
+            self.refresh_model_catalog(cx);
+        }
         // A pending handoff uses the existing tick/next actual UI update.
         // Repeated lock contention must not create a notify/render retry loop.
         if changed {
@@ -2159,9 +2198,14 @@ impl Coincide {
         {
             return;
         }
+        let tab_provider = self
+            .selection_ui
+            .tab_provider
+            .clone()
+            .unwrap_or_else(|| draft.provider.clone());
         let Some(provider) = self.selection_ui.capabilities["providers"]
             .as_array()
-            .and_then(|providers| providers.iter().find(|p| p["provider"] == draft.provider))
+            .and_then(|providers| providers.iter().find(|p| p["provider"] == tab_provider))
         else {
             return;
         };
@@ -2170,7 +2214,7 @@ impl Coincide {
         {
             return;
         }
-        let provider = draft.provider.clone();
+        let provider = tab_provider;
         let account_id = default_account_id(&draft.account)
             .unwrap_or("default")
             .to_owned();
@@ -2258,6 +2302,11 @@ impl Coincide {
                     if request.thread_id.is_some() {
                         self.selection_ui.context = None;
                     }
+                    // Reasoning choices for OpenCode are part of the catalog.
+                    if self.selection_ui.catalog["provider"] == "opencode" {
+                        self.selection_ui.capability_cache.invalidate();
+                        self.refresh_selection_capabilities(cx);
+                    }
                 }
             }
             Ok(_) => {
@@ -2272,11 +2321,15 @@ impl Coincide {
         }
         cx.notify();
     }
-    fn select_catalog_model(
+    /// Chooses a discovered model the way Swift's picker does: one click saves
+    /// the provider and model, closes the popover, and leaves effort at the
+    /// provider's default until the reasoning chips choose one.
+    fn choose_picker_model(
         &mut self,
         thread_id: &str,
+        provider: &str,
+        model: &str,
         request_id: &str,
-        model: String,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2309,7 +2362,7 @@ impl Coincide {
             || catalog["state"] != "ready"
             || catalog["provenance"] != "provider_model_list"
             || catalog["requestId"].as_str() != Some(request_id)
-            || catalog["provider"].as_str() != Some(draft.provider.as_str())
+            || catalog["provider"].as_str() != Some(provider)
             || catalog["accountID"].as_str() != default_account_id(&draft.account)
             || !catalog["models"]
                 .as_array()
@@ -2317,15 +2370,53 @@ impl Coincide {
         {
             return;
         }
-        self.edit_selection(
-            |draft| {
-                draft.custom = model.clone();
-                draft.use_custom = true;
-            },
-            cx,
-        );
+        let chosen_provider = provider.to_owned();
+        let chosen_model = model.to_owned();
+        let Some(draft) = self.selection_ui.drafts.get_mut(thread_id) else {
+            return;
+        };
+        draft.provider = chosen_provider.clone();
+        draft.custom = chosen_model.clone();
+        draft.use_custom = true;
+        draft.proposed_effort = Value::Null;
+        draft.proposed_speed = Value::Null;
         self.model_input
-            .update(cx, |input, cx| input.set_value(model, window, cx));
+            .update(cx, |input, cx| input.set_value(chosen_model.clone(), window, cx));
+        self.apply_selection_draft(cx);
+        let applied = self.selected.as_ref().is_some_and(|thread| {
+            thread["id"] == thread_id
+                && thread["selection"]["provider"] == chosen_provider.as_str()
+                && thread["selection"]["modelID"] == chosen_model.as_str()
+        });
+        if applied {
+            self.selection_ui.expanded = false;
+            self.selection_ui.tab_provider = None;
+        }
+        cx.notify();
+    }
+    /// Stars or unstars a model from the picker, like Swift's hover star.
+    fn toggle_picker_favorite(
+        &mut self,
+        provider: &str,
+        model: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let favorite = model_marked(&self.settings, "favoriteModels", provider, model);
+        match models_settings::save(
+            &self.engine,
+            &[models_settings::Change::Favorite(
+                provider,
+                model,
+                !favorite,
+            )],
+        ) {
+            Ok(settings) => self.accept_settings(settings, window, cx),
+            Err(error) => {
+                self.status = format!("Favorite was not saved: {error}");
+                cx.notify();
+            }
+        }
     }
     pub(super) fn composer_selection_footer(&self, cx: &mut Context<Self>) -> AnyElement {
         let Some(thread) = &self.selected else {
@@ -2355,7 +2446,18 @@ impl Coincide {
             reported_picker_model_label(thread, &self.selection_ui.catalog)
                 .unwrap_or_else(|| footer_value(&selection["modelID"], "Choose model"))
         };
-        let effort = effort_picker_title(&selection["effort"]);
+        let effort = if selection["effort"].is_null() {
+            self.selection_ui.capabilities["providers"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|provider| provider["provider"] == selection["provider"])
+                .and_then(|provider| provider["effort"]["reportedDefault"].as_str())
+                .map(|default| effort_picker_title(&json!(default)))
+                .unwrap_or_else(|| effort_picker_title(&selection["effort"]))
+        } else {
+            effort_picker_title(&selection["effort"])
+        };
         let speed = self.selection_ui.capabilities["providers"]
             .as_array()
             .into_iter()
@@ -2373,15 +2475,26 @@ impl Coincide {
         let access = if thread["accessMode"] == "fullAccess" {
             "Full access"
         } else {
-            "Approval"
+            "Ask for approval"
         };
         let mode = if thread["interactionMode"] == "plan" {
             "Plan"
         } else {
             "Build"
         };
+        let speed_supported = self.selection_ui.capabilities["providers"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|provider| provider["provider"] == selection["provider"])
+            .is_some_and(|provider| {
+                provider["speed"]["supported"] == true
+                    && provider["speed"]["choices"]
+                        .as_array()
+                        .is_some_and(|choices| !choices.is_empty())
+            });
         let mut controls = div().flex().flex_wrap().items_center().gap_1().gap(px(2.));
-        for (facet, id, label, help) in [
+        let facets = [
             (
                 PickerFacet::Model,
                 "selection-disclosure",
@@ -2412,7 +2525,11 @@ impl Coincide {
                 mode.into(),
                 "Build or Plan".into(),
             ),
-        ] {
+        ];
+        for (facet, id, label, help) in facets
+            .into_iter()
+            .filter(|(facet, ..)| *facet != PickerFacet::Speed || speed_supported)
+        {
             controls = controls.child(
                 Button::new(id)
                     .when(facet != PickerFacet::Model, |button| {
@@ -2456,9 +2573,20 @@ impl Coincide {
                         |button| button.primary(),
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.selection_ui.expanded =
-                            !this.selection_ui.expanded || this.selection_ui.facet != facet;
+                        let was_open =
+                            this.selection_ui.expanded && this.selection_ui.facet == facet;
+                        this.selection_ui.expanded = !was_open;
                         this.selection_ui.facet = facet;
+                        if !was_open {
+                            this.selection_ui.tab_provider = this
+                                .selected
+                                .as_ref()
+                                .map(|thread| text(&thread["selection"], "provider"))
+                                .filter(|provider| !provider.is_empty());
+                            if facet == PickerFacet::Model {
+                                this.refresh_model_catalog(cx);
+                            }
+                        }
                         cx.notify();
                     })),
             );
@@ -2486,6 +2614,14 @@ impl Coincide {
         }
         self.selection_ui.expanded = true;
         self.selection_ui.facet = facet;
+        self.selection_ui.tab_provider = self
+            .selected
+            .as_ref()
+            .map(|thread| text(&thread["selection"], "provider"))
+            .filter(|provider| !provider.is_empty());
+        if facet == PickerFacet::Model {
+            self.refresh_model_catalog(cx);
+        }
         cx.notify();
     }
     /// The saved conversation's selection capabilities, as last read; no engine call.
@@ -2496,22 +2632,123 @@ impl Coincide {
         self.selection_ui.expanded
     }
     fn model_picker_filter_bar(&self, cx: &mut Context<Self>) -> AnyElement {
+        let _ = cx;
         div()
             .flex()
             .items_center()
             .gap_2()
-            .child(Input::new(&self.model_picker_search).w_full())
+            .px_2()
             .child(
-                Button::new("picker-favorites-only")
-                    .label("Favorites only")
-                    .icon(gpui_kit::assets::IconName::Star)
-                    .compact()
-                    .ghost()
-                    .when(self.selection_ui.favorites_only, |button| button.primary())
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.selection_ui.favorites_only = !this.selection_ui.favorites_only;
-                        cx.notify();
-                    })),
+                Input::new(&self.model_picker_search)
+                    .prefix(gpui_kit::assets::IconName::Search)
+                    .w_full(),
+            )
+            .into_any_element()
+    }
+    /// One model row: a check for the saved choice, its agent's logo when the
+    /// list mixes agents, its name, context size and favorite star.
+    fn picker_model_row(
+        &self,
+        row: &Value,
+        provider: &str,
+        current_model: &str,
+        thread_id: &str,
+        request_id: &str,
+        disabled: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let id = text(row, "id");
+        let name = text(row, "displayName");
+        let selected = current_model == id;
+        let favorite = model_marked(&self.settings, "favoriteModels", provider, &id);
+        let context = row["contextWindow"]
+            .as_u64()
+            .map(compact_context)
+            .unwrap_or_default();
+        let mixes = self.selection_ui.favorites_only
+            || !self.model_picker_search.read(cx).value().trim().is_empty();
+        let chosen_provider = provider.to_owned();
+        let chosen_model = id.clone();
+        let source_thread = thread_id.to_owned();
+        let source_request = request_id.to_owned();
+        let star_provider = provider.to_owned();
+        let star_model = id.clone();
+        let mut row_view = div()
+            .id(SharedString::from(format!(
+                "selection-catalog-model-{provider}-{id}"
+            )))
+            .h(px(30.))
+            .px_2()
+            .rounded(px(7.))
+            .flex()
+            .items_center()
+            .gap_2()
+            .when(selected, |row| row.bg(self.color(0x232b39)))
+            .hover(|row| row.bg(self.color(0x1d2430)))
+            .when(disabled, |row| row.opacity(0.55))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.choose_picker_model(
+                    &source_thread,
+                    &chosen_provider,
+                    &chosen_model,
+                    &source_request,
+                    window,
+                    cx,
+                )
+            }))
+            .child(
+                div()
+                    .w(px(12.))
+                    .flex_shrink_0()
+                    .flex()
+                    .justify_center()
+                    .when(selected, |slot| {
+                        slot.child(Icon::new(gpui_kit::assets::IconName::Check).xsmall())
+                    }),
+            );
+        if mixes && let Some(image) = chat_layout::provider_logo(provider) {
+            row_view = row_view.child(
+                img(image)
+                    .w(px(14.))
+                    .h(px(14.))
+                    .rounded(px(2.)),
+            );
+        }
+        row_view
+            .child(div().flex_1().min_w_0().truncate().text_sm().child(name))
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .text_xs()
+                    .text_color(self.color(0xe4e9f2).opacity(0.5))
+                    .child(context),
+            )
+            .child(
+                Button::new(SharedString::from(format!(
+                    "selection-favorite-{provider}-{id}"
+                )))
+                .icon(match favorite {
+                    true => gpui_kit::assets::IconName::StarFill,
+                    false => gpui_kit::assets::IconName::Star,
+                })
+                .accessibility_label(match favorite {
+                    true => "Remove from Favorites",
+                    false => "Add to Favorites",
+                })
+                .tooltip(match favorite {
+                    true => "Remove from Favorites",
+                    false => "Add to Favorites",
+                })
+                .xsmall()
+                .ghost()
+                .h(px(24.))
+                .w(px(24.))
+                .p_0()
+                .opacity(if favorite { 1.0 } else { 0.35 })
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    cx.stop_propagation();
+                    this.toggle_picker_favorite(&star_provider, &star_model, window, cx);
+                })),
             )
             .into_any_element()
     }
@@ -2532,7 +2769,34 @@ impl Coincide {
     }
     fn composer_provider_tabs(&self, thread: &Value, cx: &mut Context<Self>) -> AnyElement {
         let source = Arc::new(picker_view_scope(thread));
-        let mut tabs = div().flex().flex_wrap().gap_1();
+        let saved_provider = text(&thread["selection"], "provider");
+        let shown = self
+            .selection_ui
+            .tab_provider
+            .clone()
+            .unwrap_or_else(|| saved_provider.clone());
+        let mut tabs = div().flex().items_center().gap_1().flex_wrap();
+        let favorites = self.selection_ui.favorites_only;
+        tabs = tabs.child(
+            Button::new("picker-tab-favorites")
+                .icon(match favorites {
+                    true => gpui_kit::assets::IconName::StarFill,
+                    false => gpui_kit::assets::IconName::Star,
+                })
+                .accessibility_label("Favorites")
+                .tooltip("Favorites")
+                .compact()
+                .ghost()
+                .h(px(30.))
+                .w(px(38.))
+                .rounded(px(7.))
+                .when(favorites, |button| button.bg(self.color(0x2b3444)))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.selection_ui.favorites_only = true;
+                    this.selection_ui.facet = PickerFacet::Model;
+                    cx.notify();
+                })),
+        );
         for provider in self.selection_ui.capabilities["providers"]
             .as_array()
             .into_iter()
@@ -2540,14 +2804,29 @@ impl Coincide {
             .filter(|provider| provider["enabled"] != false)
         {
             let id = text(provider, "provider");
+            let label = text(provider, "displayName");
             let source = source.clone();
+            let selected = shown == id && !favorites;
             tabs = tabs.child(
                 Button::new(SharedString::from(format!("selection-provider-{id}")))
-                    .label(text(provider, "displayName"))
+                    .accessibility_label(label.clone())
+                    .tooltip(label)
                     .compact()
                     .ghost()
-                    .when(thread["selection"]["provider"] == id, |button| {
-                        button.primary()
+                    .h(px(30.))
+                    .w(px(38.))
+                    .rounded(px(7.))
+                    .when(selected, |button| button.bg(self.color(0x2b3444)))
+                    .when_some(chat_layout::provider_logo(&id), |button, image| {
+                        button.child(
+                            img(image)
+                                .w(px(18.))
+                                .h(px(18.))
+                                .rounded(px(4.)),
+                        )
+                    })
+                    .when(chat_layout::provider_logo(&id).is_none(), |button| {
+                        button.icon(gpui_kit::assets::IconName::Cpu)
                     })
                     .disabled(self.running.contains(&text(thread, "id")))
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -2561,15 +2840,11 @@ impl Coincide {
                             cx.notify();
                             return;
                         }
-                        if this
-                            .selected
-                            .as_ref()
-                            .is_some_and(|thread| thread["selection"]["provider"] == id)
-                        {
-                            return;
-                        }
-                        this.selection_ui.pending_provider = None;
-                        this.switch_provider_from_history(id.clone(), None, cx);
+                        this.selection_ui.tab_provider = Some(id.clone());
+                        this.selection_ui.favorites_only = false;
+                        this.selection_ui.facet = PickerFacet::Model;
+                        this.refresh_model_catalog(cx);
+                        cx.notify();
                     })),
             );
         }
@@ -2682,13 +2957,6 @@ impl Coincide {
             self.running.contains(&text(thread, "id")),
         );
         let model_disabled = disabled && !replacement_context;
-        let apply_disabled = disabled
-            && !automatic_default_replacement_target(
-                draft,
-                thread,
-                &self.selection_ui.capabilities,
-                self.running.contains(&text(thread, "id")),
-            );
         let providers = self.composer_provider_tabs(thread, cx);
         let provider = self.selection_ui.capabilities["providers"]
             .as_array()
@@ -2761,12 +3029,6 @@ impl Coincide {
         let draft_account_problem = provider.and_then(|provider| {
             account_problem(provider, &draft.account, &self.selection_ui.accounts)
         });
-        let default_supported = provider.is_some_and(|p| {
-            p["models"]
-                .as_array()
-                .is_some_and(|models| models.iter().any(|model| model["id"] == "default"))
-        });
-        let draft_effort_problem = effort_problem(draft, thread, provider);
         let proposed_effort_label = if draft.proposed_effort.is_null() {
             effort_default_label(draft, thread, provider)
         } else {
@@ -2970,27 +3232,143 @@ impl Coincide {
                 })
                 .into_any_element();
         }
-        let mut accounts = div()
-            .flex()
-            .flex_wrap()
-            .gap_2()
-            .child(div().text_sm().child(account_label(&draft.account)));
-        let native_roster = self
+        // Swift's picker: search, agent tabs, the chosen agent's models with
+        // their context sizes, then reasoning chips and refresh/settings.
+        let tab_provider = self
             .selection_ui
-            .native_accounts
-            .iter()
-            .any(|row| row.provider == draft.provider);
-        accounts = accounts.when(!native_roster, |accounts| {
-            accounts.child(
-                Button::new("selection-account-default")
-                    .label("Use default account")
-                    .disabled(disabled || !known_provider)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.edit_selection(|draft| draft.account = Value::Null, cx)
-                    })),
-            )
-        });
-        if provider.is_some_and(|provider| provider["accountPolicy"] == "configured_antigravity") {
+            .tab_provider
+            .clone()
+            .unwrap_or_else(|| draft.provider.clone());
+        let query = self.model_picker_search.read(cx).value();
+        let current_model = if draft.provider == tab_provider {
+            draft.custom.clone()
+        } else {
+            String::new()
+        };
+        let catalog = &self.selection_ui.catalog;
+        let same_scope = catalog["provider"].as_str() == Some(tab_provider.as_str())
+            && catalog["accountID"].as_str() == default_account_id(&draft.account);
+        let state = if same_scope {
+            catalog["state"].as_str().unwrap_or("")
+        } else {
+            ""
+        };
+        let thread_id = text(thread, "id");
+        let request_id = text(catalog, "requestId");
+        let mut list = div()
+            .id("selection-model-list")
+            .max_h(px(264.))
+            .overflow_y_scroll()
+            .flex()
+            .flex_col();
+        let mut shown = 0usize;
+        if state == "ready" {
+            for row in filtered_picker_models(
+                &self.settings,
+                catalog,
+                &tab_provider,
+                &current_model,
+                &query,
+                self.selection_ui.favorites_only,
+            ) {
+                if text(row, "id").is_empty() {
+                    continue;
+                }
+                shown += 1;
+                list = list.child(self.picker_model_row(
+                    row,
+                    &tab_provider,
+                    &current_model,
+                    &thread_id,
+                    &request_id,
+                    model_disabled,
+                    cx,
+                ));
+            }
+        }
+        let discovery_reason = self.selection_ui.capabilities["providers"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|provider| provider["provider"] == tab_provider)
+            .and_then(|provider| provider["modelDiscovery"]["reason"].as_str())
+            .unwrap_or("Models have not been read yet.");
+        let empty = match state {
+            "loading" => "Loading models…".to_owned(),
+            "unsupported" | "failed" => text(catalog, "error"),
+            "ready" if shown == 0 && !query.trim().is_empty() => "No models match.".to_owned(),
+            "ready" if self.selection_ui.favorites_only => {
+                "No favorites yet. Star a model to keep it here.".to_owned()
+            }
+            "ready" => "No models yet.".to_owned(),
+            _ => discovery_reason.to_owned(),
+        };
+        if shown == 0 {
+            list = list.child(
+                div()
+                    .px_2()
+                    .py_3()
+                    .text_xs()
+                    .text_color(self.color(0xe4e9f2).opacity(0.6))
+                    .child(empty),
+            );
+        }
+        let mut reasoning = div().flex().items_center().gap_1();
+        let mut shows_reasoning = false;
+        if tab_provider == "opencode"
+            && draft.provider == "opencode"
+            && !draft.has_edits()
+            && state == "ready"
+            && let Some(row) = catalog["models"].as_array().and_then(|rows| {
+                rows.iter()
+                    .find(|row| row["id"] == thread["selection"]["modelID"])
+            })
+        {
+            let efforts = row["reportedEfforts"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            if !efforts.is_empty() {
+                shows_reasoning = true;
+                reasoning = reasoning.child(
+                    div()
+                        .w(px(76.))
+                        .flex_shrink_0()
+                        .text_xs()
+                        .text_color(self.color(0xe4e9f2).opacity(0.6))
+                        .child("Reasoning"),
+                );
+                let source_id = thread_id.clone();
+                let source_selection = thread["selection"].clone();
+                for effort in efforts {
+                    let selected = thread["selection"]["effort"].as_str()
+                        == Some(effort.as_str())
+                        || (thread["selection"]["effort"].is_null()
+                            && row["reportedDefaultEffort"].as_str() == Some(effort.as_str()));
+                    let value = effort.clone();
+                    let id = source_id.clone();
+                    let selection = source_selection.clone();
+                    reasoning = reasoning.child(
+                        Button::new(SharedString::from(format!("picker-effort-{effort}")))
+                            .label(effort_picker_title(&json!(effort)))
+                            .compact()
+                            .ghost()
+                            .h(px(24.))
+                            .rounded(px(12.))
+                            .when(selected, |button| button.primary())
+                            .disabled(model_disabled)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.choose_effort(&id, &selection, json!(value), cx)
+                            })),
+                    );
+                }
+            }
+        }
+        let mut accounts = div().flex().flex_wrap().items_center().gap_2();
+        if draft.provider == "antigravity" {
             for (id, account) in self.selection_ui.accounts.as_object().into_iter().flatten() {
                 let id = id.clone();
                 let name = account["name"]
@@ -3001,58 +3379,80 @@ impl Coincide {
                 accounts = accounts.child(
                     Button::new(SharedString::from(format!("selection-account-{id}")))
                         .label(name)
+                        .compact()
+                        .ghost()
                         .when(draft.account.as_str() == Some(id.as_str()), |button| {
                             button.primary()
                         })
-                        .disabled(disabled)
+                        .disabled(model_disabled)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.edit_selection(|draft| draft.account = json!(id), cx)
                         })),
                 );
             }
         }
-        let mut pane = div().flex().flex_col().gap_2().mb_2().child(providers)
-            .child(div().text_sm().child(format!("Saved: {} · {} · {}",text(&thread["selection"],"provider"),text(&thread["selection"],"modelID"),account_label(&thread["selection"]["accountID"]))))
-            .when(draft.provider == "codex", |view|view.child(self.composer_codex_accounts(thread,cx)))
-            .when(draft.provider != "codex", |view|view.child(accounts))
-            .child(self.composer_native_accounts(thread,cx))
+        let footer = div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_2()
+            .child(
+                Button::new("selection-refresh-models")
+                    .label("Refresh")
+                    .icon(gpui_kit::assets::IconName::RotateCw)
+                    .compact()
+                    .ghost()
+                    .disabled(self.selection_ui.catalog_request.is_some())
+                    .on_click(cx.listener(|this, _, _, cx| this.refresh_model_catalog(cx))),
+            )
+            .child(
+                Button::new("picker-agent-settings")
+                    .label("Agent Settings…")
+                    .icon(gpui_kit::assets::IconName::Settings)
+                    .compact()
+                    .ghost()
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.selection_ui.expanded = false;
+                        this.navigate_settings_section(
+                            settings::SettingsSection::Models,
+                            window,
+                            cx,
+                        );
+                    })),
+            );
+        let mut pane = div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .min_w_0()
+            .mb_2()
+            .child(providers)
+            .when(draft.provider == "antigravity", |pane| pane.child(accounts))
             .child(self.model_picker_filter_bar(cx))
-            .child(div().flex().flex_wrap().items_center().gap_2()
-                .child(Button::new("selection-model-default").label("Provider default").when(!draft.use_custom,|button|button.primary()).disabled(model_disabled || !default_supported)
-                    .on_click(cx.listener(|this,_,_,cx|this.edit_selection(|draft|draft.use_custom=false,cx))))
-                .child(Button::new("selection-model-custom").label("Custom model ID").when(draft.use_custom,|button|button.primary()).disabled(model_disabled || provider.is_none_or(|p|p["customModel"]["supported"] != true))
-                    .on_click(cx.listener(|this,_,_,cx|this.edit_selection(|draft|draft.use_custom=true,cx))))
-                .child(div().flex_1().min_w_0().child(Input::new(&self.model_input))))
-            .child(div().text_xs().child(if draft.use_custom { "Custom IDs are unverified unless listed in the provider-reported catalog below. Model access and authentication are not verified." } else { "The provider resolves its default model when used. Authentication and availability have not been checked." }))
-            .child(div().text_xs().child(format!("Stored effort: {} · speed: {} · access: {} · interaction: {}",draft.original["effort"],draft.original["speed"],draft.access,draft.interaction)))
-            .child(div().flex().flex_wrap().gap_2()
-                .child(Button::new("selection-apply").label("Apply selection").disabled(apply_disabled || !known_provider || draft_account_problem.is_some() || draft_mode_problem.is_some() || draft_effort_problem.is_some() || draft_speed_problem.is_some())
-                    .on_click(cx.listener(|this,_,_,cx|this.apply_selection_draft(cx))))
-                .child(Button::new("selection-refresh").label("Refresh capabilities").on_click(cx.listener(|this,_,_,cx|{ this.selection_ui.capability_cache.invalidate(); this.refresh_selection_capabilities(cx); })))
-                .child(Button::new("selection-reload").label("Discard selection edits").on_click(cx.listener(|this,_,window,cx|this.reload_selection_draft(window,cx))))
-                .child(Button::new("provider-antigravity-setup").accessibility_id("provider-antigravity-setup").label("Antigravity accounts")
-                    .on_click(cx.listener(|this,_,window,cx|{
-                        this.bots_open=false;this.notifications_open=false;this.transcription_open=false;this.credentials_open=false;
-                        this.open_antigravity_settings(window,cx);this.sync_transcription_binding(cx);
-                    }))))
-            .child(div().text_xs().child("Your previous account and model are restored when available. Your message stays here."));
-        if let Some(reason) = draft_mode_problem {
+            .child(list)
+            .when(shows_reasoning, |pane| {
+                pane.child(div().h(px(1.)).w_full().bg(self.color(0x29303d)))
+                    .child(reasoning)
+            })
+            .child(div().h(px(1.)).w_full().bg(self.color(0x29303d)))
+            .child(footer);
+        if let Some(reason) = draft_mode_problem.clone() {
             pane = pane.child(div().text_sm().child(reason));
         }
-        if let Some(reason) = draft_account_problem {
+        if let Some(reason) = draft_account_problem.clone() {
             pane = pane.child(div().text_sm().child(reason));
         }
-        if let Some(reason) = draft_speed_problem {
+        if let Some(reason) = draft_speed_problem.clone() {
             pane = pane.child(div().text_sm().child(reason));
         }
         if replacement_context {
-            pane=pane.child(div().text_sm().child("The current model's app default is unproved. Refresh its catalog, or explicitly choose another provider/model and Apply. Modes, effort, speed and Send remain locked; the replacement is validated normally."));
+            pane = pane.child(div().text_sm().child("The current model's app default is unproved. Refresh its catalog, or explicitly choose another provider/model and Apply. Modes, effort, speed and Send remain locked; the replacement is validated normally."));
         }
         if let Some(reason) = lock {
             pane = pane.child(div().text_sm().child(reason));
         }
         if conflict {
-            pane=pane.child(div().text_sm().child("Saved selection changed. Your selection draft is retained; discard selection edits to reload before applying."));
+            pane = pane.child(div().text_sm().child("Saved selection changed. Your selection draft is retained; discard selection edits to reload before applying."));
         }
         if !known_provider {
             pane = pane.child(div().text_sm().child(format!(
@@ -3063,94 +3463,20 @@ impl Coincide {
         if !self.selection_ui.error.is_empty() {
             pane = pane.child(div().text_sm().child(self.selection_ui.error.clone()));
         }
-        let discovery_supported =
-            provider.is_some_and(|provider| provider["modelDiscovery"]["supported"] == true);
-        let discovery_reason = provider
-            .and_then(|provider| provider["modelDiscovery"]["reason"].as_str())
-            .unwrap_or("Model discovery is unavailable for this provider.")
-            .to_owned();
-        pane = pane.child(
-            Button::new("selection-model-refresh")
-                .label("Refresh provider model catalog")
-                .disabled(
-                    model_disabled
-                        || !discovery_supported
-                        || self.selection_ui.catalog_request.is_some()
-                        || provider.is_some_and(|provider| {
-                            account_problem(provider, &draft.account, &self.selection_ui.accounts)
-                                .is_some()
-                        }),
-                )
-                .on_click(cx.listener(|this, _, _, cx| this.refresh_model_catalog(cx))),
-        );
-        pane=pane.child(div().text_xs().child(if discovery_supported {"Refresh retrieves provider-reported models without sending a message or changing your selection.".to_owned()}else{discovery_reason}));
-        let catalog = &self.selection_ui.catalog;
-        let same_scope = catalog["provider"].as_str() == Some(draft.provider.as_str())
-            && catalog["accountID"].as_str() == default_account_id(&draft.account);
-        if !same_scope && self.selection_ui.catalog_request.is_some() {
-            pane = pane.child(
-                div()
-                    .text_sm()
-                    .child("A previously requested provider catalog is still loading."),
-            );
-        }
-        if same_scope
-            && matches!(catalog["state"].as_str(), Some("failed" | "unsupported"))
-            && !catalog["error"].is_null()
-        {
-            pane = pane.child(div().text_sm().child(text(catalog, "error")));
-        } else if same_scope && catalog["state"] == "loading" {
-            pane = pane.child(div().text_sm().child("Loading provider model catalog…"));
-        } else if same_scope && catalog["state"] == "ready" {
-            pane=pane.child(div().text_xs().child("Provider-reported catalog. Authentication and actual model access are not verified. Effort and speed choices require refreshed capabilities for the exact saved model."));
-            let mut models = div()
-                .id("selection-discovered-models")
-                .max_h(px(160.))
-                .overflow_y_scroll()
-                .flex()
-                .flex_col()
-                .gap_1();
-            if catalog["models"].is_array() {
-                let rows = self.visible_picker_models(catalog, thread, cx);
-                for model in &rows {
-                    let id = text(model, "id");
-                    if id.is_empty() {
-                        continue;
-                    }
-                    let name = text(model, "displayName");
-                    let target = text(thread, "id");
-                    let request_id = text(catalog, "requestId");
-                    models = models.child(
-                        Button::new(SharedString::from(format!("selection-catalog-model-{id}")))
-                            .label(format!("{name} · {id}"))
-                            .disabled(model_disabled)
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.select_catalog_model(
-                                    &target,
-                                    &request_id,
-                                    id.clone(),
-                                    window,
-                                    cx,
-                                )
-                            })),
-                    );
-                }
-                if rows.is_empty() {
-                    models = models.child(div().child("No models match the current filters."));
-                }
-            }
-            pane = pane.child(models);
-        }
         div()
             .flex()
             .flex_col()
-            .gap_2()
             .min_w_0()
-            // The outer composer accessory viewport already supplies a bounded,
-            // persistent scrollbar. A second capped viewport hides controls
-            // behind an independent scroll position without an accessible thumb.
+            .w_full()
+            .max_w(px(520.))
+            .p_2()
+            .rounded(px(14.))
+            .border_1()
+            .border_color(self.color(0x2b3342))
+            .bg(self.color(0x1a212b))
             .child(div().min_w_0().child(pane))
             .into_any_element()
+
     }
 }
 

@@ -414,6 +414,33 @@ impl ModelCatalog {
             .map(|job| job.response.clone())
             .context("Model catalog request not found or expired")
     }
+    /// Reasoning variants for the saved default-account selection, from the
+    /// latest ready catalog. Display metadata only; no proof or authority.
+    pub(crate) fn reported_efforts(&self, selection: &Value) -> Option<(Vec<String>, Option<String>)> {
+        let provider = selection["provider"].as_str()?;
+        let model = selection["modelID"].as_str().filter(|model| *model != "default")?;
+        let job = self.jobs.values().find(|job| {
+            job.named.is_none()
+                && job.response["provider"] == provider
+                && job.response["state"] == "ready"
+        })?;
+        let row = job.response["models"]
+            .as_array()?
+            .iter()
+            .find(|row| row["id"] == model)?;
+        let efforts = row["reportedEfforts"]
+            .as_array()?
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        (!efforts.is_empty()).then(|| {
+            (
+                efforts,
+                row["reportedDefaultEffort"].as_str().map(str::to_owned),
+            )
+        })
+    }
 }
 
 /// Strict public request contract; only the existing default account may be read.
@@ -453,7 +480,7 @@ pub fn status_id(params: &Value) -> Result<&str> {
 }
 
 pub fn supported(provider: &str) -> bool {
-    cfg!(any(unix, windows)) && matches!(provider, "codex" | "claude")
+    cfg!(any(unix, windows)) && matches!(provider, "codex" | "claude" | "opencode")
 }
 
 fn text_field<'a>(entry: &'a Value, field: &str, limit: usize) -> Result<Option<&'a str>> {
@@ -613,12 +640,46 @@ fn discover(
     timeout: Duration,
     cancelled: &AtomicBool,
 ) -> Result<Vec<Value>> {
+    if provider == "opencode" {
+        return opencode_models(&executable, cancelled);
+    }
     let mut rpc = ProcessRpc::spawn(provider, executable, timeout, cancelled)?;
     match provider {
         "codex" => codex_models(&mut rpc),
         "claude" => claude_models(&mut rpc),
         _ => bail!("Read-only model discovery is unsupported for this provider"),
     }
+}
+
+/// OpenCode lists its models over its own authenticated loopback HTTP API. The
+/// owned server is started, read and torn down inside this bounded worker; no
+/// session, prompt or authentication operation is sent.
+#[cfg(any(unix, windows))]
+fn opencode_models(executable: &std::path::Path, cancelled: &AtomicBool) -> Result<Vec<Value>> {
+    let (rows, _account) = crate::agent::opencode_installation_metadata(
+        executable,
+        &|| !cancelled.load(Ordering::Acquire),
+    )?;
+    ensure!(rows.len() <= MAX_MODELS, "Model catalog exceeds 1000 entries");
+    let mut models = Vec::new();
+    let mut ids = HashSet::new();
+    for mut row in rows {
+        let id = text_field(&row, "id", 512)?
+            .context("OpenCode model has no ID")?
+            .to_owned();
+        crate::composer_selection::validate_model(&id)?;
+        if let Some(efforts) = row.get_mut("reportedEfforts").and_then(Value::as_array_mut) {
+            efforts.retain(|effort| {
+                effort
+                    .as_str()
+                    .is_some_and(|effort| !effort.is_empty() && effort.len() <= 128)
+            });
+        }
+        if ids.insert(id) {
+            models.push(row);
+        }
+    }
+    Ok(models)
 }
 
 #[cfg(any(unix, windows))]

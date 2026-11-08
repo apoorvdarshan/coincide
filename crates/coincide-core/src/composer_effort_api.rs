@@ -25,6 +25,11 @@ impl Engine {
         &self,
         selection: &Value,
     ) -> Result<Option<crate::model_catalog::CodexEffortProof>> {
+        // OpenCode carries its reasoning variant in the model reference and
+        // needs no Codex executable proof.
+        if selection["provider"] == "opencode" {
+            return Ok(None);
+        }
         if selection["effort"].is_null()
             && selection["speed"].is_null()
             && !crate::model_catalog::astra_default_needed(selection)

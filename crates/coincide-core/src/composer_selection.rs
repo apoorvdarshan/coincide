@@ -74,12 +74,12 @@ pub fn validate_selection(value: &Value) -> Result<()> {
     let effort = &thread["selection"]["effort"];
     ensure!(
         effort.is_null()
-            || (provider == "codex"
+            || (matches!(provider, "codex" | "opencode")
                 && effort.as_str().is_some_and(|value| !value.is_empty()
                     && value.len() <= 128
                     && value.trim() == value
                     && !value.chars().any(char::is_control))),
-        "Effort is supported only for an explicit Codex model with advertised choices"
+        "Effort is supported only for an explicit model with advertised reasoning choices"
     );
     let account = &thread["selection"]["accountID"];
     ensure!(

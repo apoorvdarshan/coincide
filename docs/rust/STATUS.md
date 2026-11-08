@@ -1651,3 +1651,31 @@ references still use the original Swift attachments folder, so that folder must
 be retained (or its files copied) after the Swift app is removed. The source
 was live while snapshotted, so this is a rehearsal, not a quiesced final
 cutover; no Swift app or Swift data was removed or modified.
+
+## OpenCode model catalog and composer picker parity (2026-11-08)
+
+- `agent.models.refresh` now discovers OpenCode 2's catalog through its owned,
+  authenticated loopback server: 31 models with display names, input context
+  windows, image support, reasoning variants and each model's default variant.
+  `opencode/deepseek-v4.1-flash` reports `low`, `high`, `max` variants with a
+  `high` default. No session, prompt or authentication request is sent.
+- OpenCode reasoning variants are part of the model reference sent to the
+  server (`{"providerID","id","variant"}`), so the composer's reasoning chips
+  change the actual variant instead of storing display-only metadata.
+- The composer model picker follows the Swift picker: provider logo tabs with a
+  Favorites tab, search, a short scrolling model list with the saved check,
+  context size and hover star, reasoning chips, and a Refresh / Agent Settings
+  footer. Choosing a model saves it immediately and closes the picker.
+- Finder launches now adopt the login shell's PATH plus Homebrew and user CLI
+  directories before provider discovery. Without this, a Finder-launched app
+  reported every agent CLI (including `opencode`) as `not_found`.
+- Verified through the installed control API: OpenCode refresh reached `ready`
+  with 31 models, an ordinary thread's capabilities reported `low/high/max`,
+  and `agent.select` saved `opencode/deepseek-v4.1-flash` with `max` effort.
+- Built, signed with the shared Developer ID identity, notarized (submission
+  `700b2e2e-1954-48a1-ab51-ac18e2d86bbc`, Accepted), stapled and installed
+  `0.1.10` (build 20); Gatekeeper reports a notarized Developer ID.
+- `cargo test -p coincide-core --lib` passed 1159 tests (9 ignored) and
+  `cargo test -p coincide-desktop --bin coincide-rust` passed 810 tests
+  (26 ignored) with the app stopped. The two updater stopped-target tests fail
+  while another `Coincide Rust` process is running; they pass in isolation.

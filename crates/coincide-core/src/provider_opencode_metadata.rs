@@ -14,6 +14,69 @@ struct Entry {
     family: Option<String>,
     released: Option<f64>,
     deprecated: bool,
+    context_window: Option<u64>,
+    efforts: Vec<String>,
+    default_effort: Option<String>,
+    supports_images: Option<bool>,
+}
+const EFFORT_RANK: [&str; 7] = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+/// Reasoning variants in increasing effort order, as OpenCode 2 reports them.
+fn ordered_efforts(model: &Value) -> Vec<String> {
+    let mut unique = Vec::<String>::new();
+    for variant in model["variants"].as_array().into_iter().flatten().take(64) {
+        if let Some(id) = text(&variant["id"])
+            && !unique.contains(&id)
+        {
+            unique.push(id);
+        }
+    }
+    let mut known = unique
+        .iter()
+        .filter(|effort| EFFORT_RANK.contains(&effort.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    known.sort_by_key(|effort| {
+        EFFORT_RANK
+            .iter()
+            .position(|rank| rank == effort)
+            .unwrap_or(EFFORT_RANK.len())
+    });
+    known.extend(
+        unique
+            .into_iter()
+            .filter(|effort| !EFFORT_RANK.contains(&effort.as_str())),
+    );
+    known
+}
+/// The reasoning variant OpenCode 2 selects for a model when none is chosen.
+fn default_effort(provider: &str, efforts: &[String]) -> Option<String> {
+    if efforts.len() == 1 {
+        return efforts.first().cloned();
+    }
+    let find = |wanted: &str| {
+        efforts
+            .iter()
+            .find(|effort| effort.as_str() == wanted)
+            .cloned()
+    };
+    if provider == "anthropic" || provider.starts_with("google") {
+        return find("high");
+    }
+    if provider == "openai" || provider == "opencode" {
+        return find("medium").or_else(|| find("high"));
+    }
+    None
+}
+fn context_window(model: &Value) -> Option<u64> {
+    model["limit"]["input"]
+        .as_u64()
+        .filter(|window| *window > 0)
+        .or_else(|| model["limit"]["context"].as_u64().filter(|window| *window > 0))
+}
+fn supports_images(model: &Value) -> Option<bool> {
+    model["capabilities"]["input"]
+        .as_array()
+        .map(|inputs| inputs.iter().any(|input| input == "image"))
 }
 fn rows(models: &Value, providers: &Value) -> Vec<Value> {
     let names = providers["data"]
@@ -38,13 +101,18 @@ fn rows(models: &Value, providers: &Value) -> Vec<Value> {
             continue;
         }
         let name = text(&model["name"]).unwrap_or(id);
+        let efforts = ordered_efforts(model);
         entries.push(Entry {
             id: slug,
             name,
-            provider,
+            provider: provider.clone(),
             family: text(&model["family"]),
             released: model["time"]["released"].as_f64(),
             deprecated: model["status"] == "deprecated",
+            context_window: context_window(model),
+            default_effort: default_effort(&provider, &efforts),
+            efforts,
+            supports_images: supports_images(model),
         });
         if entries.len() == 1000 {
             break;
@@ -82,6 +150,10 @@ fn rows(models: &Value, providers: &Value) -> Vec<Value> {
                  family,
                  released,
                  deprecated,
+                 context_window,
+                 efforts,
+                 default_effort,
+                 supports_images,
              }| {
                 let retired = deprecated
                     || family
@@ -100,7 +172,10 @@ fn rows(models: &Value, providers: &Value) -> Vec<Value> {
                 } else {
                     name
                 };
-                (retired, label.clone(), json!({"id":id,"displayName":label}))
+                (retired, label.clone(), json!({"id":id,"displayName":label,
+                    "contextWindow":context_window,"reportedEfforts":efforts,
+                    "reportedDefaultEffort":default_effort,"reportedSpeeds":[],
+                    "supportsImages":supports_images}))
             },
         )
         .collect::<Vec<_>>();
@@ -188,6 +263,7 @@ pub(super) fn read(
         session: None,
         prompt: String::new(),
         model: None,
+        variant: None,
     };
     let (_control, commands) = mpsc::channel();
     let (events, _messages) = mpsc::channel();
@@ -213,7 +289,7 @@ mod tests {
     use super::*;
     #[test]
     fn owned_catalog_reads_exclude_disabled_models_mcp_accounts_and_credential_fields() {
-        let models = json!({"data":[{"providerID":"openai","id":"older","name":"Same","family":"family","time":{"released":1}},{"providerID":"openai","id":"newer","name":"Same","family":"family","time":{"released":2}},{"providerID":"anthropic","id":"current","name":"Same"},{"providerID":"openai","id":"disabled","enabled":false},{"providerID":"openai","id":"newer","name":"Duplicate"}]});
+        let models = json!({"data":[{"providerID":"openai","id":"older","name":"Same","family":"family","time":{"released":1},"limit":{"input":200000},"variants":[{"id":"high"},{"id":"low"}],"capabilities":{"input":["text","image"]}},{"providerID":"openai","id":"newer","name":"Same","family":"family","time":{"released":2}},{"providerID":"anthropic","id":"current","name":"Same"},{"providerID":"openai","id":"disabled","enabled":false},{"providerID":"openai","id":"newer","name":"Duplicate"}]});
         let providers = json!({"data":[{"id":"openai","name":"Default / OpenAI"},{"id":"anthropic","name":"Anthropic"}]});
         let integrations = json!({"data":[{"id":"mcp_private","name":"Private tool","connections":[{}]},{"id":"empty","connections":[]},{"id":"openai","name":"OpenAI","connections":[{"apiKey":"synthetic-private-value"}]}]});
         let mut paths = Vec::new();
@@ -238,6 +314,14 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["anthropic/current", "openai/newer", "openai/older"]
         );
+        let older = rows
+            .iter()
+            .find(|row| row["id"] == "openai/older")
+            .unwrap();
+        assert_eq!(older["contextWindow"], json!(200000));
+        assert_eq!(older["reportedEfforts"], json!(["low", "high"]));
+        assert_eq!(older["reportedDefaultEffort"], json!("high"));
+        assert_eq!(older["supportsImages"], json!(true));
         assert!(
             rows.iter()
                 .all(|row| row["displayName"].as_str().unwrap().contains('('))

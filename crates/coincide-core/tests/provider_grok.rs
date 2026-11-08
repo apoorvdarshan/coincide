@@ -34,6 +34,7 @@ fn fixture(
             session: resume.map(str::to_owned),
             prompt: "fixture prompt".into(),
             model: model.map(str::to_owned),
+            variant: None,
         },
         images,
     );

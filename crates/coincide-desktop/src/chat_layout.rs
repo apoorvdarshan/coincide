@@ -60,8 +60,7 @@ pub(super) fn provider_label(provider: &str, label: String) -> AnyElement {
                 img(image.clone())
                     .w(px(13.))
                     .h(px(13.))
-                    .rounded(px(2.))
-                    .bg(rgb(0xffffff)),
+                    .rounded(px(2.)),
             )
         })
         .when(image.is_none(), |view| {

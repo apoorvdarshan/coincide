@@ -128,6 +128,8 @@ pub struct Launch {
     pub session: Option<String>,
     pub prompt: String,
     pub model: Option<String>,
+    /// OpenCode's reasoning variant for `model`, when one was chosen.
+    pub variant: Option<String>,
 }
 #[derive(Debug)]
 pub enum Event {
@@ -1304,6 +1306,7 @@ mod tests {
                 session: None,
                 prompt: "hello".into(),
                 model: None,
+                variant: None,
             },
             &[],
         );

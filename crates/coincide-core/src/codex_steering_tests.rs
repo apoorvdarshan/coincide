@@ -59,6 +59,7 @@ sys.stdin.readline()
         session: None,
         prompt: "initial".into(),
         model: None,
+        variant: None,
     });
     loop {
         match session.events.recv_timeout(Duration::from_secs(5)).unwrap() {
