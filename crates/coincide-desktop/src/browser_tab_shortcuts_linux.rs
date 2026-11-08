@@ -153,7 +153,9 @@ pub(super) fn focus(view: &wry::WebView) -> Result<()> {
         if std::time::Instant::now() >= deadline {
             return Ok(());
         }
-        while gtk::events_pending() {
+        // A freshly shown view maps through queued GTK sources, not only
+        // pending events, so pump the default context unconditionally.
+        for _ in 0..4 {
             gtk::main_iteration_do(false);
         }
         std::thread::sleep(std::time::Duration::from_millis(10));

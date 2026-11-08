@@ -97,6 +97,7 @@ struct Fixture {
     cases: Vec<Case>,
     index: usize,
     hidden_sibling: bool,
+    shown_sibling: bool,
     focused: Option<Instant>,
     waiting: Option<Waiting>,
     started: Instant,
@@ -171,6 +172,7 @@ impl Fixture {
             cases: cases(),
             index: 0,
             hidden_sibling: false,
+            shown_sibling: false,
             focused: None,
             waiting: None,
             started: Instant::now(),
@@ -287,10 +289,14 @@ impl Fixture {
                 cx.notify();
                 return false;
             }
-            if self.index == 4 {
+            if self.index == 4 && !self.shown_sibling {
                 // Hiding the sibling can unmap the shared native parent; make
-                // the remaining owned view visible again before focusing it.
+                // the remaining owned view visible again, then let GTK map it
+                // before focusing it.
                 self.views[1].update(cx, |view, _| view.show());
+                self.shown_sibling = true;
+                cx.notify();
+                return false;
             }
             if self.index == 7 {
                 self.shutdown
@@ -310,7 +316,14 @@ impl Fixture {
             let sibling_focused =
                 self.targets[1 - case.view].focused(self.views[1 - case.view].read(cx).raw());
             if !selected_focused || sibling_focused {
-                self.fail(format!("current native focus did not belong exclusively to the owned selected view (case={}, selected={}, sibling={})", self.index, selected_focused, sibling_focused));
+                self.fail(format!(
+                    "current native focus did not belong exclusively to the owned selected view (case={}, selected={}, sibling={}, selectedState={}, siblingState={})",
+                    self.index,
+                    selected_focused,
+                    sibling_focused,
+                    focus_state(self.views[case.view].read(cx).raw()),
+                    focus_state(self.views[1 - case.view].read(cx).raw()),
+                ));
                 return false;
             }
             match key(self.views[case.view].read(cx).raw(), case) {
@@ -380,6 +393,21 @@ fn key(view: &wry::WebView, case: Case) -> anyhow::Result<KeyGuard> {
 #[cfg(target_os = "linux")]
 fn focus(view: &wry::WebView) -> anyhow::Result<()> {
     native_shortcuts::focus(view)
+}
+#[cfg(target_os = "linux")]
+fn focus_state(view: &wry::WebView) -> String {
+    use gtk::prelude::WidgetExt as _;
+    use wry::WebViewExtUnix as _;
+    let widget = view.webview();
+    format!(
+        "visible={} mapped={}",
+        widget.is_visible(),
+        widget.is_mapped()
+    )
+}
+#[cfg(not(target_os = "linux"))]
+fn focus_state(_view: &wry::WebView) -> String {
+    String::from("unsupported")
 }
 #[cfg(target_os = "linux")]
 fn key(view: &wry::WebView, case: Case) -> anyhow::Result<KeyGuard> {
