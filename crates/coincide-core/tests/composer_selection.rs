@@ -24,7 +24,7 @@ fn static_capabilities_never_claim_discovered_or_authenticated_models() {
         assert_eq!(provider["speed"]["supported"], false);
         assert_eq!(
             provider["accessModes"],
-            if provider["provider"] == "codex" {
+            if provider["provider"] == "codex" || provider["provider"] == "opencode" {
                 json!(["approval", "fullAccess"])
             } else {
                 json!(["approval"])
