@@ -1463,13 +1463,20 @@ Green and verified by the Rust workflow on `main`:
 - Linux and Windows: tab-shortcut and passkey fixtures.
 - Linux native UI script: composer, settings routes, palette, drafts, restart.
 
+Resolved in section A:
+
+- Browser fixed viewport on Linux/Windows: the browser pane mounted the same
+  webview entity twice — once inside the fixed-viewport wrapper and again
+  filling the page area — so the second prepaint sized the native view to the
+  panel. The page now mounts once; the Linux and Windows fixtures report
+  `NativeViewport400x300`.
+- Exact-view browser tab keys on Linux: hiding a sibling focused the container
+  it was about to unmap, which later stole focus from the view shown in its
+  place. Hiding no longer re-focuses that container, and the fixture now
+  reports the selected view's X input focus before every chord.
+
 Still open in section A:
 
-- Browser fixed viewport on Linux/Windows: the controller holds the requested
-  size and the panel lays out the fixed box, but WebKitGTK/WebView2 still
-  report the panel size to the page. Running the same fixture locally on
-  macOS passes the 400x300 step, so the panel code is correct and the gap is
-  in gpui_webview's native sizing on Linux/Windows.
 - Real passkey/password-manager sign-in outside the synthetic fixture, OS
   notification delivery, and any workflow that mutates live schedules or
   GitHub state.
