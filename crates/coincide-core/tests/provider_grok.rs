@@ -35,6 +35,7 @@ fn fixture(
             prompt: "fixture prompt".into(),
             model: model.map(str::to_owned),
             variant: None,
+            full_access: false,
         },
         images,
     );

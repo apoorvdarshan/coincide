@@ -103,6 +103,7 @@ mod tests {
             prompt: String::new(),
             model: None,
             variant: None,
+            full_access: false,
         });
         let (sender, receiver) = std::sync::mpsc::channel();
         session.events = receiver;

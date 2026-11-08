@@ -517,8 +517,9 @@ fn model(value: Option<&str>, variant: Option<&str>) -> Result<Option<Value>> {
     }
     Ok(Some(model))
 }
-fn permissions() -> Value {
-    json!([{"action":"shell","resource":"*","effect":"ask"},{"action":"edit","resource":"*","effect":"ask"},{"action":"external_directory","resource":"*","effect":"ask"}])
+fn permissions(full_access: bool) -> Value {
+    let effect = if full_access { "allow" } else { "ask" };
+    json!([{"action":"shell","resource":"*","effect":effect},{"action":"edit","resource":"*","effect":effect},{"action":"external_directory","resource":"*","effect":effect}])
 }
 
 pub(super) fn run(
@@ -618,7 +619,7 @@ fn run_inner(
             &server.http,
             "PATCH",
             root.clone(),
-            Some(json!({"permissions":permissions()})),
+            Some(json!({"permissions":permissions(launch.full_access)})),
         )?;
         if session["data"]["agent"] != "build" {
             runtime.request(
@@ -638,7 +639,7 @@ fn run_inner(
         }
         id.clone()
     } else {
-        let mut body = json!({"location":{"directory":launch.cwd},"agent":"build","permissions":permissions()});
+        let mut body = json!({"location":{"directory":launch.cwd},"agent":"build","permissions":permissions(launch.full_access)});
         if let Some(model) = model {
             body["model"] = model;
         }
@@ -807,5 +808,26 @@ mod model_reference_tests {
         );
         assert!(model(Some("default"), Some("high")).unwrap().is_none());
         assert!(model(Some("no-slash"), Some("high")).is_err());
+    }
+    #[test]
+    fn full_access_turns_permission_prompts_into_allows() {
+        for action in ["shell", "edit", "external_directory"] {
+            let allowed = super::permissions(true);
+            let row = allowed
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["action"] == action)
+                .unwrap();
+            assert_eq!(row["effect"], "allow");
+            let asked = super::permissions(false);
+            let row = asked
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["action"] == action)
+                .unwrap();
+            assert_eq!(row["effect"], "ask");
+        }
     }
 }

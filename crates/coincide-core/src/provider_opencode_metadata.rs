@@ -272,6 +272,7 @@ pub(super) fn read(
         prompt: String::new(),
         model: None,
         variant: None,
+        full_access: false,
     };
     let (_control, commands) = mpsc::channel();
     let (events, _messages) = mpsc::channel();

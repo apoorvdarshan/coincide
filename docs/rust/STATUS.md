@@ -1701,13 +1701,17 @@ cutover; no Swift app or Swift data was removed or modified.
   changes stay locked until forked.
 - Sidebar section headers are left-aligned small grey labels (Bots, Pinned,
   Projects) with no chevron, matching Swift.
+- OpenCode offers Full access as well as Ask for approval. Full access sends
+  `allow` permissions for shell, edits and external directories instead of
+  `ask`; the composer advertises both modes for OpenCode.
 - Built, signed with the shared Developer ID identity, notarized (submissions
   `34def274-ced7-4f29-b16f-4b2b2277e90b` for 0.1.15,
   `66606092-81c0-4b5b-9454-33ec1bca1150` for 0.1.16,
   `9fcc3d97-49f0-4ac9-8391-cfba5655fbe9` for 0.1.17 and
   `ac4c9859-b651-42d9-8a53-827578314f2b` for 0.1.18 and
-  `9a1aeb73-2120-41e1-9a00-9298d9de49a6` for 0.1.19, all Accepted), stapled
-  and installed `0.1.19` (build 29); Gatekeeper reports a notarized Developer
+  `9a1aeb73-2120-41e1-9a00-9298d9de49a6` for 0.1.19 and
+  `7ea13f32-b928-4b6a-8d63-06cf539a6ca2` for 0.1.20, all Accepted), stapled
+  and installed `0.1.20` (build 30); Gatekeeper reports a notarized Developer
   ID.
 - `cargo test -p coincide-core --lib` passed 1159 tests (9 ignored) and
   `cargo test -p coincide-desktop --bin coincide-rust` passed 810 tests

@@ -196,6 +196,7 @@ fn antigravity_fixture_child() {
             prompt: "fixture prompt".into(),
             model: Some("chosen".into()),
             variant: None,
+            full_access: false,
         },
     );
     let deadline = Instant::now() + Duration::from_secs(10);

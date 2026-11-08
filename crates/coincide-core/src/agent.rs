@@ -130,6 +130,8 @@ pub struct Launch {
     pub model: Option<String>,
     /// OpenCode's reasoning variant for `model`, when one was chosen.
     pub variant: Option<String>,
+    /// OpenCode runs without approval prompts when the thread chose full access.
+    pub full_access: bool,
 }
 #[derive(Debug)]
 pub enum Event {
@@ -1307,6 +1309,7 @@ mod tests {
                 prompt: "hello".into(),
                 model: None,
                 variant: None,
+                full_access: false,
             },
             &[],
         );

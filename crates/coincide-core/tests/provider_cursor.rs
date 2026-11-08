@@ -208,6 +208,7 @@ fn cursor_fixture_child() {
             session: mode.starts_with("resume").then(|| "native".into()),
             model: (!mode.starts_with("inherited-model")).then(|| "chosen-model".into()),
             variant: None,
+            full_access: false,
             prompt: "fixture prompt".into(),
         },
     );
