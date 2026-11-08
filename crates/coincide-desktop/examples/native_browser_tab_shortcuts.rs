@@ -409,16 +409,39 @@ fn focus_state(view: &wry::WebView) -> String {
         .window()
         .map(|window| unsafe { gdk_x11_window_get_xid(window.to_glib_none().0) })
         .unwrap_or(0);
-    let current = x11rb::connect(None)
+    let (current, parent, map_state) = x11rb::connect(None)
         .ok()
-        .and_then(|(connection, _)| {
+        .map(|(connection, _)| {
             use x11rb::protocol::xproto::ConnectionExt as _;
-            connection.get_input_focus().ok()?.reply().ok()
+            let current = connection
+                .get_input_focus()
+                .ok()
+                .and_then(|cookie| cookie.reply().ok())
+                .map(|reply| reply.focus)
+                .unwrap_or(0);
+            let parent = u32::try_from(owned)
+                .ok()
+                .and_then(|owned| connection.query_tree(owned).ok())
+                .and_then(|cookie| cookie.reply().ok())
+                .map(|tree| tree.parent)
+                .unwrap_or(0);
+            let state = |window: u32| {
+                connection
+                    .get_window_attributes(window)
+                    .ok()
+                    .and_then(|cookie| cookie.reply().ok())
+                    .map(|attributes| format!("{:?}", attributes.map_state))
+                    .unwrap_or_else(|| "unknown".into())
+            };
+            let map_state = u32::try_from(owned)
+                .ok()
+                .map(|owned| format!("{}/{}", state(owned), state(parent)))
+                .unwrap_or_else(|| "unknown".into());
+            (current, parent, map_state)
         })
-        .map(|reply| reply.focus)
-        .unwrap_or(0);
+        .unwrap_or((0, 0, "unknown".into()));
     format!(
-        "visible={} mapped={} owned={owned} current={current}",
+        "visible={} mapped={} owned={owned} parent={parent} mapState={map_state} current={current}",
         widget.is_visible(),
         widget.is_mapped()
     )
