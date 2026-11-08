@@ -173,13 +173,6 @@ impl Coincide {
                     .compact()
                     .flex_1()
                     .h(px(30.))
-                    .justify_start()
-                    .icon(if collapsed {
-                        IconName::ChevronRight
-                    } else {
-                        IconName::ChevronDown
-                    })
-                    .label(label)
                     .disabled(searching)
                     .accessibility_label(format!(
                         "{} {label}",
@@ -187,6 +180,15 @@ impl Coincide {
                     ))
                     .on_click(
                         cx.listener(move |this, _, _, cx| this.toggle_sidebar_section(section, cx)),
+                    )
+                    .child(
+                        div().w_full().flex().items_center().child(
+                            div()
+                                .text_xs()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(self.color(0xe4e9f2).opacity(0.55))
+                                .child(label),
+                        ),
                     ),
             )
             .when(section == "projects", |row| {
