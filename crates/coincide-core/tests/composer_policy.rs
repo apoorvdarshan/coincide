@@ -110,7 +110,8 @@ fn other_provider_modes_effort_speed_named_accounts_and_imports_fail_without_dow
             source["selection"]["provider"] = json!(provider);
             source[key] = json!(value);
             let before = source.clone();
-            let allowed = provider == "opencode" && key == "accessMode";
+            // Every provider offers full access; plan remains Codex-only.
+            let allowed = key == "accessMode";
             assert_eq!(Policy::parse(&source, Origin::Ordinary).is_ok(), allowed);
             assert_eq!(source, before);
         }

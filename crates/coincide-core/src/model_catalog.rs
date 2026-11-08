@@ -485,7 +485,11 @@ pub fn status_id(params: &Value) -> Result<&str> {
 }
 
 pub fn supported(provider: &str) -> bool {
-    cfg!(any(unix, windows)) && matches!(provider, "codex" | "claude" | "opencode")
+    cfg!(any(unix, windows))
+        && matches!(
+            provider,
+            "codex" | "claude" | "opencode" | "cursor" | "grok" | "antigravity"
+        )
 }
 
 fn text_field<'a>(entry: &'a Value, field: &str, limit: usize) -> Result<Option<&'a str>> {
@@ -648,6 +652,9 @@ fn discover(
     if provider == "opencode" {
         return opencode_models(&executable, cancelled);
     }
+    if matches!(provider, "cursor" | "grok" | "antigravity") {
+        return cli_models(provider, &executable, timeout, cancelled);
+    }
     let mut rpc = ProcessRpc::spawn(provider, executable, timeout, cancelled)?;
     match provider {
         "codex" => codex_models(&mut rpc),
@@ -656,6 +663,144 @@ fn discover(
     }
 }
 
+/// Cursor, Grok and Antigravity list models through their own CLIs (or a
+/// built-in fallback). The read is bounded and never starts an agent turn.
+#[cfg(any(unix, windows))]
+fn cli_models(
+    provider: &str,
+    executable: &std::path::Path,
+    timeout: Duration,
+    cancelled: &AtomicBool,
+) -> Result<Vec<Value>> {
+    use std::{
+        io::Read,
+        process::{Command, Stdio},
+        time::Instant,
+    };
+    ensure!(
+        executable.is_absolute(),
+        "Model discovery requires an absolute configured executable"
+    );
+    ensure!(
+        !cancelled.load(Ordering::Acquire),
+        "Model discovery cancelled"
+    );
+    let mut command = Command::new(executable);
+    command
+        .arg("models")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .current_dir(std::env::temp_dir());
+    for key in std::env::vars_os().map(|(key, _)| key) {
+        if key.to_str().is_some_and(|key| key.starts_with("COINCIDE_")) {
+            command.env_remove(key);
+        }
+    }
+    command.env("GROK_DISABLE_AUTOUPDATER", "1");
+    let mut child = command
+        .spawn()
+        .context("Model discovery could not start the provider CLI")?;
+    let deadline = Instant::now() + timeout.min(Duration::from_secs(15));
+    loop {
+        ensure!(
+            !cancelled.load(Ordering::Acquire),
+            "Model discovery cancelled"
+        );
+        match child.try_wait()? {
+            Some(_) => break,
+            None if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            None => {
+                let _ = child.kill();
+                let _ = child.wait();
+                bail!("Provider model listing timed out");
+            }
+        }
+    }
+    let mut text = String::new();
+    if let Some(mut stdout) = child.stdout.take() {
+        let _ = stdout.take(1024 * 1024).read_to_string(&mut text);
+    }
+    if let Some(mut stderr) = child.stderr.take() {
+        let _ = stderr.take(1024 * 1024).read_to_string(&mut text);
+    }
+    let lines = strip_ansi(&text);
+    let mut models = Vec::new();
+    let mut ids = HashSet::new();
+    fn push_cli_model(
+        models: &mut Vec<Value>,
+        ids: &mut HashSet<String>,
+        id: &str,
+        name: Option<&str>,
+    ) {
+        if id.is_empty()
+            || id.len() > 256
+            || id.chars().any(char::is_whitespace)
+            || crate::composer_selection::validate_model(id).is_err()
+            || !ids.insert(id.to_owned())
+        {
+            return;
+        }
+        models.push(
+            json!({"id":id,"displayName":name.filter(|name| !name.is_empty()).unwrap_or(id),
+            "reportedEfforts":[],"reportedDefaultEffort":null,"reportedSpeeds":[],
+            "supportsImages":null}),
+        );
+    }
+    for line in lines.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("* ").or_else(|| line.strip_prefix("- ")) {
+            // Grok: "* grok-build (default)".
+            let mut parts = rest.split_whitespace();
+            if let Some(id) = parts.next() {
+                push_cli_model(&mut models, &mut ids, id, None);
+            }
+        } else if let Some((id, name)) = line.split_once(" - ") {
+            // Cursor: "composer-2.5 - Composer 2.5".
+            let id = id.trim();
+            let mut name = name.trim();
+            for suffix in [" (current, default)", " (current)", " (default)"] {
+                name = name.strip_suffix(suffix).unwrap_or(name);
+            }
+            push_cli_model(&mut models, &mut ids, id, Some(name.trim()));
+        }
+    }
+    if models.is_empty() {
+        let fallback = match provider {
+            "cursor" => Some(("composer-2.5", "Composer 2.5")),
+            "grok" => Some(("grok-build", "Grok Build")),
+            "antigravity" => Some(("antigravity-default", "Antigravity Default")),
+            _ => None,
+        };
+        if let Some((id, name)) = fallback {
+            push_cli_model(&mut models, &mut ids, id, Some(name));
+        }
+    }
+    ensure!(
+        !models.is_empty(),
+        "The provider reported no models and has no built-in fallback"
+    );
+    Ok(models)
+}
+fn strip_ansi(value: &str) -> String {
+    let mut result = String::with_capacity(value.len());
+    let mut chars = value.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' {
+            // CSI/OSC sequences: drop until the final letter or BEL.
+            for next in chars.by_ref() {
+                if next.is_ascii_alphabetic() || next == '\u{7}' {
+                    break;
+                }
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
 /// OpenCode lists its models over its own authenticated loopback HTTP API. The
 /// owned server is started, read and torn down inside this bounded worker; no
 /// session, prompt or authentication operation is sent.
@@ -1156,23 +1301,15 @@ mod tests {
         assert!(status_id(&json!({"requestId":"fixture","provider":"codex"})).is_err());
     }
     #[test]
-    fn unsupported_providers_do_not_launch_and_retention_is_bounded() {
-        let mut service = ModelCatalog::default();
-        let first = service
-            .refresh("cursor", Some("/synthetic/never-execute".into()))
-            .unwrap();
-        assert_eq!(first["state"], "unsupported");
-        assert_eq!(first["models"], json!([]));
-        assert_eq!(first["authenticationChecked"], false);
-        for _ in 0..MAX_JOBS {
-            service.refresh("cursor", None).unwrap();
+    fn every_known_provider_is_supported_and_unknown_providers_do_not_launch() {
+        for provider in crate::agent::Provider::supported_names() {
+            assert!(supported(provider), "{provider} must be discoverable");
         }
-        assert!(
-            service
-                .status(first["requestId"].as_str().unwrap())
-                .is_err()
-        );
-        assert_eq!(service.jobs.len(), MAX_JOBS);
+        assert!(!supported("unknown-provider"));
+        let mut service = ModelCatalog::default();
+        assert!(service.refresh("unknown-provider", None).is_err());
+        assert!(service.jobs.is_empty());
+        assert!(service.workers.is_empty());
     }
 
     #[cfg(unix)]

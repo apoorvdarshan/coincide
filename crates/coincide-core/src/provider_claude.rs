@@ -251,6 +251,11 @@ pub(super) fn run(
     events: &Sender<Event>,
 ) -> Result<()> {
     let mut content = Some(images::claude_content(&launch.prompt, &images));
+    let permission_mode = if launch.full_access {
+        "bypassPermissions"
+    } else {
+        "default"
+    };
     drop(images);
     let mut arguments = [
         "--output-format",
@@ -262,7 +267,7 @@ pub(super) fn run(
         "--permission-prompt-tool",
         "stdio",
         "--permission-mode",
-        "default",
+        permission_mode,
         "--setting-sources=user,project,local",
     ]
     .map(str::to_owned)

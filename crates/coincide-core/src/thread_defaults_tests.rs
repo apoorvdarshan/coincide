@@ -107,11 +107,7 @@ fn unsupported_defaults_reject_before_any_row_revision_or_document_write() {
         candidate["selection"][key] = value;
         invalid.push(candidate);
     }
-    for (key, value) in [
-        ("accessMode", json!("fullAccess")),
-        ("interactionMode", json!("plan")),
-        ("future", json!(true)),
-    ] {
+    for (key, value) in [("interactionMode", json!("plan")), ("future", json!(true))] {
         let mut candidate = defaults();
         candidate[key] = value;
         invalid.push(candidate);
@@ -137,7 +133,7 @@ fn unsupported_defaults_reject_before_any_row_revision_or_document_write() {
         .store
         .save_document(
             "settings.json",
-            &json!({"defaultSelection":defaults()["selection"],"defaultAccessMode":"fullAccess"}),
+            &json!({"defaultSelection":{"provider":"claude","modelID":"--flag"},"defaultAccessMode":"approval"}),
         )
         .unwrap();
     let before = rows(&mut engine);

@@ -148,10 +148,8 @@ impl Policy {
             );
         }
         ensure!(
-            provider == "codex"
-                || (provider == "opencode" && interaction == Interaction::Build)
-                || (access == Access::Approval && interaction == Interaction::Build),
-            "Plan/full access policy is not implemented for this provider"
+            provider == "codex" || interaction == Interaction::Build,
+            "Plan mode is not implemented for this provider"
         );
         let model = composer_selection::launch_model(&thread["selection"])?;
         if let Some(proof) = proof {
