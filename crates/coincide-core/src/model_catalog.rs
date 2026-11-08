@@ -416,9 +416,14 @@ impl ModelCatalog {
     }
     /// Reasoning variants for the saved default-account selection, from the
     /// latest ready catalog. Display metadata only; no proof or authority.
-    pub(crate) fn reported_efforts(&self, selection: &Value) -> Option<(Vec<String>, Option<String>)> {
+    pub(crate) fn reported_efforts(
+        &self,
+        selection: &Value,
+    ) -> Option<(Vec<String>, Option<String>)> {
         let provider = selection["provider"].as_str()?;
-        let model = selection["modelID"].as_str().filter(|model| *model != "default")?;
+        let model = selection["modelID"]
+            .as_str()
+            .filter(|model| *model != "default")?;
         let job = self.jobs.values().find(|job| {
             job.named.is_none()
                 && job.response["provider"] == provider
@@ -656,11 +661,13 @@ fn discover(
 /// session, prompt or authentication operation is sent.
 #[cfg(any(unix, windows))]
 fn opencode_models(executable: &std::path::Path, cancelled: &AtomicBool) -> Result<Vec<Value>> {
-    let (rows, _account) = crate::agent::opencode_installation_metadata(
-        executable,
-        &|| !cancelled.load(Ordering::Acquire),
-    )?;
-    ensure!(rows.len() <= MAX_MODELS, "Model catalog exceeds 1000 entries");
+    let (rows, _account) = crate::agent::opencode_installation_metadata(executable, &|| {
+        !cancelled.load(Ordering::Acquire)
+    })?;
+    ensure!(
+        rows.len() <= MAX_MODELS,
+        "Model catalog exceeds 1000 entries"
+    );
     let mut models = Vec::new();
     let mut ids = HashSet::new();
     for mut row in rows {

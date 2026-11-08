@@ -71,7 +71,11 @@ fn context_window(model: &Value) -> Option<u64> {
     model["limit"]["input"]
         .as_u64()
         .filter(|window| *window > 0)
-        .or_else(|| model["limit"]["context"].as_u64().filter(|window| *window > 0))
+        .or_else(|| {
+            model["limit"]["context"]
+                .as_u64()
+                .filter(|window| *window > 0)
+        })
 }
 fn supports_images(model: &Value) -> Option<bool> {
     model["capabilities"]["input"]
@@ -172,10 +176,14 @@ fn rows(models: &Value, providers: &Value) -> Vec<Value> {
                 } else {
                     name
                 };
-                (retired, label.clone(), json!({"id":id,"displayName":label,
+                (
+                    retired,
+                    label.clone(),
+                    json!({"id":id,"displayName":label,
                     "contextWindow":context_window,"reportedEfforts":efforts,
                     "reportedDefaultEffort":default_effort,"reportedSpeeds":[],
-                    "supportsImages":supports_images}))
+                    "supportsImages":supports_images}),
+                )
             },
         )
         .collect::<Vec<_>>();
@@ -314,10 +322,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["anthropic/current", "openai/newer", "openai/older"]
         );
-        let older = rows
-            .iter()
-            .find(|row| row["id"] == "openai/older")
-            .unwrap();
+        let older = rows.iter().find(|row| row["id"] == "openai/older").unwrap();
         assert_eq!(older["contextWindow"], json!(200000));
         assert_eq!(older["reportedEfforts"], json!(["low", "high"]));
         assert_eq!(older["reportedDefaultEffort"], json!("high"));

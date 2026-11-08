@@ -5358,14 +5358,14 @@ fn adopt_login_shell_path() {
     let mut from_shell = None;
     if needs_shell
         && let Ok(mut child) = Command::new(&shell)
-        .args([
-            "-ilc",
-            &format!("printf '%s%s%s' '{START}' \"$PATH\" '{END}'"),
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
+            .args([
+                "-ilc",
+                &format!("printf '%s%s%s' '{START}' \"$PATH\" '{END}'"),
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
     {
         let deadline = Instant::now() + Duration::from_millis(2500);
         loop {

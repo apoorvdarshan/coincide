@@ -1794,8 +1794,7 @@ impl Coincide {
                 .as_array()
                 .is_some_and(|rows| {
                     rows.iter().any(|row| {
-                        row["provider"] == provider
-                            && row["modelDiscovery"]["supported"] == true
+                        row["provider"] == provider && row["modelDiscovery"]["supported"] == true
                     })
                 })
         {
@@ -2380,8 +2379,9 @@ impl Coincide {
         draft.use_custom = true;
         draft.proposed_effort = Value::Null;
         draft.proposed_speed = Value::Null;
-        self.model_input
-            .update(cx, |input, cx| input.set_value(chosen_model.clone(), window, cx));
+        self.model_input.update(cx, |input, cx| {
+            input.set_value(chosen_model.clone(), window, cx)
+        });
         self.apply_selection_draft(cx);
         let applied = self.selected.as_ref().is_some_and(|thread| {
             thread["id"] == thread_id
@@ -2406,9 +2406,7 @@ impl Coincide {
         match models_settings::save(
             &self.engine,
             &[models_settings::Change::Favorite(
-                provider,
-                model,
-                !favorite,
+                provider, model, !favorite,
             )],
         ) {
             Ok(settings) => self.accept_settings(settings, window, cx),
@@ -2639,8 +2637,12 @@ impl Coincide {
             return div().into_any_element();
         };
         let project_id = &thread["projectID"];
-        let project = self.projects.iter().find(|project| &project["id"] == project_id);
-        let chats = project.is_some_and(|project| project["isChats"] == true || project["isBots"] == true)
+        let project = self
+            .projects
+            .iter()
+            .find(|project| &project["id"] == project_id);
+        let chats = project
+            .is_some_and(|project| project["isChats"] == true || project["isBots"] == true)
             || project_id.is_null()
             || project_id.as_str() == Some("00000000-0000-0000-0000-000000000000");
         let headline = if chats {
@@ -3401,8 +3403,7 @@ impl Coincide {
                 let source_id = thread_id.clone();
                 let source_selection = thread["selection"].clone();
                 for effort in efforts {
-                    let selected = thread["selection"]["effort"].as_str()
-                        == Some(effort.as_str())
+                    let selected = thread["selection"]["effort"].as_str() == Some(effort.as_str())
                         || (thread["selection"]["effort"].is_null()
                             && row["reportedDefaultEffort"].as_str() == Some(effort.as_str()));
                     let value = effort.clone();
@@ -3533,7 +3534,6 @@ impl Coincide {
             .bg(self.color(0x1a212b))
             .child(div().min_w_0().child(pane))
             .into_any_element()
-
     }
 }
 
