@@ -1477,3 +1477,17 @@ Still open in section A:
 Section B areas are code-complete and unit-tested (notifications, remote,
 dictation, updater: 15 tests pass); what remains there is real-service
 acceptance, not implementation.
+
+## Real GitHub read acceptance (2026-11-08)
+
+Against `apoorvdarshan/coincide` with the user's existing `gh` credentials:
+
+- `github.pr.availability` resolved the thread's folder and bound the repository.
+- `github.pr.list` returned the open pull requests for the repository.
+- `github.pr.read` for PR #340 returned the full detail with the exact expected
+  head (`6fd9518b…`), state MERGED and its draft flag.
+- `github.repo.merge-methods` returned `merge`, `squash` and `rebase`.
+
+This verifies the GitHub PR workspace's read path, exact-head binding and merge
+method discovery. Writes (reviews, merges) were not exercised because they
+change live GitHub state.
