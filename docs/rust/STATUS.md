@@ -1742,3 +1742,17 @@ cutover; no Swift app or Swift data was removed or modified.
   `cargo test -p coincide-desktop --bin coincide-rust` passed 810 tests
   (26 ignored) with the app stopped. The two updater stopped-target tests fail
   while another `Coincide Rust` process is running; they pass in isolation.
+
+## Forked Swift history refresh (2026-11-09)
+
+- Added `coincide-store import-forked SOURCE NEW_DATABASE`: imports the live
+  Swift history, then replaces every read-only imported thread with a native
+  fork that keeps its full transcript, title, project, bot, draft, pins,
+  archive state and timestamps. Imported originals and their search/index
+  rows are removed from the new database, and the imported selection defaults
+  are cleared.
+- Migrated the installed app: 81 Swift conversations became 81 native forks;
+  `imported_threads` is empty and every conversation is unlocked/selectable
+  (verified `agent.selection.capabilities` reports `locked: false`). Test
+  threads, imported originals, checkpoints and scheduled-task copies from the
+  old Rust store are gone; projects and bots match the Swift app.
