@@ -496,6 +496,7 @@ struct Coincide {
     schedule_status: String,
     _poll: Task<()>,
     terminal_open: bool,
+    terminal_activate_on_show: bool,
     terminal_layout: terminal_layout::State,
     terminal_workspaces:
         std::collections::HashMap<String, Entity<terminal_workspace::TerminalWorkspace>>,
@@ -1623,6 +1624,7 @@ impl Coincide {
             schedule_status: String::new(),
             _poll: poll,
             terminal_open,
+            terminal_activate_on_show: terminal_open,
             terminal_layout,
             terminal_workspaces: Default::default(),
             terminal_visible_thread: None,
@@ -2575,6 +2577,7 @@ impl Coincide {
                 self.restore_inspector_for_selected(cx);
                 if keep_bottom_terminal {
                     self.terminal_open = true;
+                    self.terminal_activate_on_show = true;
                 }
                 self.sync_terminal_workspace(window, cx);
                 self.composer
@@ -5046,6 +5049,7 @@ impl Coincide {
                 }
             }
         }
+        self.terminal_activate_on_show = false;
         self.sync_terminal_workspace(window, cx);
         if self.terminal_open
             && let Some(id) = &self.terminal_visible_thread
@@ -5124,6 +5128,10 @@ impl Coincide {
             };
             debug_assert_eq!(workspace.read(cx).thread_id(), thread);
             workspace.update(cx, |workspace, cx| workspace.set_visible(true, cx));
+            if self.terminal_activate_on_show {
+                self.terminal_activate_on_show = false;
+                workspace.update(cx, |workspace, cx| workspace.activate(window, cx));
+            }
             self.terminal_visible_thread = Some(thread);
         }
     }
@@ -5567,7 +5575,7 @@ impl Render for Coincide {
                                                                 px(chat_layout::composer_height(
                                                                     state.display_map().wrap_row_count(),
                                                                     state.line_height().map(f32::from).unwrap_or(20.),
-                                                                    f32::from(window.viewport_size().height),
+                                                                    self.composer_available_height(window),
                                                                 ))
                                                             }
                                                         })

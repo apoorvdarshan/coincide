@@ -228,6 +228,14 @@ impl Coincide {
                 0.
             }
     }
+    pub(super) fn composer_available_height(&self, window: &Window) -> f32 {
+        let available = f64::from(f32::from(window.viewport_size().height)) - 44.;
+        if self.terminal_open && !self.terminal_on_right() {
+            (available - height(self.terminal_layout.height, available)).max(120.) as f32
+        } else {
+            available.max(120.) as f32
+        }
+    }
     pub(super) fn composer_available_width(&self, window: &Window) -> f32 {
         let available = self.terminal_available_width(window);
         let chat = if self.chat_inspector_panel().is_some() {
@@ -417,7 +425,7 @@ impl Coincide {
                         .h(px(height(self.terminal_layout.height, available) as f32))
                         .min_h(px(120.))
                         .w_full()
-                        .flex_shrink_1()
+                        .flex_shrink_0()
                 })
                 .on_drag_move(
                     cx.listener(|this, event: &DragMoveEvent<ResizeTerminal>, _, cx| {
