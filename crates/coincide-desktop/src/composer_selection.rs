@@ -2230,6 +2230,13 @@ impl Coincide {
         let account_id = default_account_id(&draft.account)
             .unwrap_or("default")
             .to_owned();
+        if self.selection_ui.catalog["state"] != "ready"
+            || self.selection_ui.catalog["provider"] != provider.as_str()
+        {
+            if let Some(cached) = self.cached_catalog(&provider, &draft.account) {
+                self.selection_ui.catalog = cached;
+            }
+        }
         let response = (|| -> Result<Value> {
             let mut engine = try_state(&self.engine)?;
             let id = text(thread, "id");
@@ -2313,6 +2320,12 @@ impl Coincide {
                             directory.join("model-catalog-cache.json"),
                             self.selection_ui.catalog.to_string(),
                         );
+                        if let Some(provider) = self.selection_ui.catalog["provider"].as_str() {
+                            let _ = std::fs::write(
+                                directory.join(format!("model-catalog-cache-{provider}.json")),
+                                self.selection_ui.catalog.to_string(),
+                            );
+                        }
                     }
                     if request.thread_id.is_some() {
                         self.selection_ui.context = None;
@@ -3075,6 +3088,19 @@ impl Coincide {
             );
         }
         chips.into_any_element()
+    }
+    /// The last ready catalog for one provider, used to show its models
+    /// immediately when switching tabs instead of waiting for a cold read.
+    fn cached_catalog(&self, provider: &str, account: &Value) -> Option<Value> {
+        let directory = coincide_core::control::data_directory().ok()?;
+        let text =
+            std::fs::read_to_string(directory.join(format!("model-catalog-cache-{provider}.json")))
+                .ok()?;
+        let cached = serde_json::from_str::<Value>(&text).ok()?;
+        (cached["state"] == "ready"
+            && cached["provider"] == provider
+            && cached["accountID"].as_str()? == default_account_id(account)?)
+        .then_some(cached)
     }
     /// Swift's picker opens as a popover above the control that was clicked,
     /// never as a panel inside the composer. The whole window behind it closes
