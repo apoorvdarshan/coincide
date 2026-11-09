@@ -261,6 +261,9 @@ pub fn import(store: &mut Store, params: &Value) -> Result<Value> {
         "accessMode":"approval","interactionMode":"build","isPinned":false,"isArchived":false,
         "importedSession":{"sourceKey":source_key,"sha256":expected,"provider":provider,
             "sessionID":parsed.session_id.to_string(),"directory":parsed.directory,
+            // The exact file the user chose, so File › Reveal Imported Source
+            // can show it, like Swift's importedSourceURL.
+            "path":Path::new(required(params, "path")?).to_string_lossy().into_owned(),
             "omittedRecords":parsed.omitted_records,"shortenedText":parsed.shortened_text}});
     store.import_cli_session(&document, &source_key, &bytes)?;
     Ok(

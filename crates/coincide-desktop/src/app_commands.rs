@@ -273,6 +273,21 @@ impl Coincide {
                     self.new_thread_in_project(&project, window, cx);
                 }
             }
+            AppAction::RevealImportedSource => {
+                let path = self
+                    .selected
+                    .as_ref()
+                    .and_then(|thread| thread["importedSession"]["path"].as_str())
+                    .map(std::path::PathBuf::from);
+                match path {
+                    Some(path) if path.is_absolute() => self.reveal_in_file_manager(path, cx),
+                    _ => {
+                        self.status =
+                            "This conversation has no imported source file to reveal.".into();
+                        cx.notify();
+                    }
+                }
+            }
             AppAction::ImportSession => {
                 self.session_import_open = true;
                 self.sync_credentials(cx);

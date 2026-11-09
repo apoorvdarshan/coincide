@@ -44,6 +44,12 @@ impl Coincide {
             })
             .collect();
         app_menu::MenuSnapshot {
+            imported_source: self
+                .selected
+                .as_ref()
+                .and_then(|thread| thread["importedSession"]["path"].as_str())
+                .unwrap_or_default()
+                .to_owned(),
             context,
             selection_available,
             keys,
