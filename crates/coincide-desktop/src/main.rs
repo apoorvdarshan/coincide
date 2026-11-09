@@ -399,6 +399,7 @@ struct Coincide {
     follow_up_deliveries: Vec<composer_follow_up_mount::PendingDelivery>,
     pending_inputs: std::collections::HashMap<(String, String, String), Entity<InputState>>,
     pending_choices: std::collections::HashMap<(String, String, String), Vec<String>>,
+    pending_question_step: std::collections::HashMap<String, usize>,
     queued_messages: Vec<Value>,
     queue_enabled: bool,
     queue_error: String,
@@ -1529,6 +1530,7 @@ impl Coincide {
             follow_up_deliveries: Vec::new(),
             pending_inputs: Default::default(),
             pending_choices: Default::default(),
+            pending_question_step: Default::default(),
             queued_messages: Vec::new(),
             queue_enabled: false,
             queue_error: String::new(),
@@ -3869,6 +3871,8 @@ impl Coincide {
             .retain(|(owner, id, _), _| owner != &thread || live.contains(id));
         self.pending_choices
             .retain(|(owner, id, _), _| owner != &thread || live.contains(id));
+        self.pending_question_step
+            .retain(|request_id, _| live.contains(request_id));
         for request in &requests {
             let request_id = text(request, "requestId");
             for question in request["params"]["questions"]
@@ -3972,8 +3976,8 @@ impl Coincide {
         let secondary = self.color(0xe4e9f2).opacity(0.62);
         let tertiary = self.color(0xe4e9f2).opacity(0.4);
         let accent = self.color(0xE9B04E);
-        let surface = self.color(0x202a3a);
-        let border = self.color(0x33405a);
+        let surface = self.color(0x1c2028);
+        let border = self.color(0x30353e);
         let mut cards = Vec::new();
         for request in &self.pending_requests {
             if request["method"] != "item/tool/requestUserInput" {
@@ -3986,6 +3990,12 @@ impl Coincide {
                 .as_array()
                 .cloned()
                 .unwrap_or_default();
+            let step = self
+                .pending_question_step
+                .get(&request_id)
+                .copied()
+                .unwrap_or(0)
+                .min(questions.len().saturating_sub(1));
             let heading = questions
                 .first()
                 .and_then(|question| question["header"].as_str())
@@ -4018,128 +4028,171 @@ impl Coincide {
                             .child(provider.to_owned()),
                     )
                     .when(questions.len() > 1, |row| {
-                        row.child(
-                            div()
-                                .text_xs()
-                                .text_color(tertiary)
-                                .child(format!("{} questions", questions.len())),
-                        )
+                        row.child(div().text_xs().text_color(tertiary).child(format!(
+                            "{} of {}",
+                            step + 1,
+                            questions.len()
+                        )))
                     }),
             );
-            for (index, question) in questions.iter().enumerate() {
-                let key = (thread.clone(), request_id.clone(), text(question, "id"));
-                let prompt = question["question"].as_str().unwrap_or_default();
-                let multiple = question["multiSelect"] == true;
-                let mut section = div()
+            let Some(question) = questions.get(step) else {
+                continue;
+            };
+            let key = (thread.clone(), request_id.clone(), text(question, "id"));
+            let prompt = question["question"].as_str().unwrap_or_default();
+            let multiple = question["multiSelect"] == true;
+            let mut section = div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(div().text_sm().child(prompt.to_owned()));
+            let mut options = div().flex().flex_col().gap_1();
+            for (option_index, option) in question["options"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .enumerate()
+            {
+                let label = text(option, "label");
+                let description = text(option, "description");
+                let chosen = self
+                    .pending_choices
+                    .get(&key)
+                    .is_some_and(|choices| choices.contains(&label));
+                let key = key.clone();
+                let selected_label = label.clone();
+                let option_id =
+                    SharedString::from(format!("answer-{request_id}-{step}-{option_index}"));
+                let mut row = div()
+                    .id(option_id)
                     .flex()
-                    .flex_col()
+                    .items_start()
                     .gap_2()
-                    .when(index > 0, |view| {
-                        view.pt_2().border_t_1().border_color(border)
+                    .px_2()
+                    .py_2()
+                    .rounded(px(9.))
+                    .cursor_pointer()
+                    .when(chosen, |row| row.bg(accent.opacity(0.14)))
+                    .when(!chosen, |row| {
+                        row.hover(|row| row.bg(self.color(0xe4e9f2).opacity(0.05)))
                     })
-                    .child(div().text_sm().child(prompt.to_owned()));
-                let mut options = div().flex().flex_col().gap_1();
-                for (option_index, option) in question["options"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .enumerate()
-                {
-                    let label = text(option, "label");
-                    let description = text(option, "description");
-                    let chosen = self
-                        .pending_choices
-                        .get(&key)
-                        .is_some_and(|choices| choices.contains(&label));
-                    let key = key.clone();
-                    let selected_label = label.clone();
-                    let option_id =
-                        SharedString::from(format!("answer-{request_id}-{index}-{option_index}"));
-                    let mut row = div()
-                        .id(option_id)
-                        .flex()
-                        .items_start()
-                        .gap_2()
-                        .px_2()
-                        .py_2()
-                        .rounded(px(9.))
-                        .cursor_pointer()
-                        .when(chosen, |row| row.bg(accent.opacity(0.14)))
-                        .when(!chosen, |row| {
-                            row.hover(|row| row.bg(self.color(0xe4e9f2).opacity(0.05)))
-                        })
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            let choices = this.pending_choices.entry(key.clone()).or_default();
-                            if multiple {
-                                if choices.contains(&selected_label) {
-                                    choices.retain(|value| value != &selected_label);
-                                } else {
-                                    choices.push(selected_label.clone());
-                                }
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        let choices = this.pending_choices.entry(key.clone()).or_default();
+                        if multiple {
+                            if choices.contains(&selected_label) {
+                                choices.retain(|value| value != &selected_label);
                             } else {
-                                *choices = vec![selected_label.clone()];
+                                choices.push(selected_label.clone());
                             }
-                            if let Some(input) = this.pending_inputs.get(&key) {
-                                input.update(cx, |input, cx| input.set_value("", window, cx));
+                        } else {
+                            *choices = vec![selected_label.clone()];
+                        }
+                        if let Some(input) = this.pending_inputs.get(&key) {
+                            input.update(cx, |input, cx| input.set_value("", window, cx));
+                        }
+                        cx.notify();
+                    }));
+                row = row.child(
+                    div()
+                        .mt(px(2.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .w(px(14.))
+                        .h(px(14.))
+                        .flex_shrink_0()
+                        .rounded(if multiple { px(4.) } else { px(7.) })
+                        .border_1()
+                        .border_color(if chosen { accent } else { tertiary })
+                        .when(chosen, |dot| dot.bg(accent))
+                        .when(chosen, |dot| {
+                            dot.child(
+                                Icon::new(gpui_kit::assets::IconName::Check)
+                                    .xsmall()
+                                    .text_color(self.color(0x11151d)),
+                            )
+                        }),
+                );
+                row = row.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.))
+                        .min_w_0()
+                        .child(div().text_sm().child(label))
+                        .when(!description.is_empty(), |column| {
+                            column.child(div().text_xs().text_color(tertiary).child(description))
+                        }),
+                );
+                options = options.child(row);
+            }
+            section = section.child(options);
+            if question["allowsFreeText"] != false
+                && let Some(input) = self.pending_inputs.get(&key)
+            {
+                section = section
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(tertiary)
+                            .child("Or write your own answer; this replaces the selected option."),
+                    )
+                    .child(Input::new(input));
+            }
+            body = body.child(section);
+            let has_choice = self
+                .pending_choices
+                .get(&key)
+                .is_some_and(|choices| !choices.is_empty());
+            let has_text = self
+                .pending_inputs
+                .get(&key)
+                .is_some_and(|input| !input.read(cx).value().trim().is_empty());
+            let answered = has_choice || has_text;
+            let mut footer = div().flex().justify_end().gap_1();
+            if step > 0 {
+                let request = request_id.clone();
+                footer = footer.child(
+                    Button::new(SharedString::from(format!("back-{request}")))
+                        .label("Back")
+                        .small()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if let Some(step) = this.pending_question_step.get_mut(&request) {
+                                *step = step.saturating_sub(1);
                             }
                             cx.notify();
-                        }));
-                    row = row.child(
-                        div()
-                            .mt(px(2.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .w(px(14.))
-                            .h(px(14.))
-                            .flex_shrink_0()
-                            .rounded(if multiple { px(4.) } else { px(7.) })
-                            .border_1()
-                            .border_color(if chosen { accent } else { tertiary })
-                            .when(chosen, |dot| dot.bg(accent))
-                            .when(chosen, |dot| {
-                                dot.child(
-                                    Icon::new(gpui_kit::assets::IconName::Check)
-                                        .xsmall()
-                                        .text_color(self.color(0x11151d)),
-                                )
-                            }),
-                    );
-                    row = row.child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(2.))
-                            .min_w_0()
-                            .child(div().text_sm().child(label))
-                            .when(!description.is_empty(), |column| {
-                                column
-                                    .child(div().text_xs().text_color(tertiary).child(description))
-                            }),
-                    );
-                    options = options.child(row);
-                }
-                section = section.child(options);
-                if question["allowsFreeText"] != false
-                    && let Some(input) = self.pending_inputs.get(&key)
-                {
-                    section =
-                        section
-                            .child(div().text_xs().text_color(tertiary).child(
-                                "Or write your own answer; this replaces the selected option.",
-                            ))
-                            .child(Input::new(input));
-                }
-                body = body.child(section);
+                        })),
+                );
             }
-            let id = request_id.clone();
-            body = body.child(
-                div().flex().justify_end().child(
+            if step + 1 < questions.len() {
+                let request = request_id.clone();
+                footer = footer.child(
+                    Button::new(SharedString::from(format!("next-{request}")))
+                        .label("Next")
+                        .small()
+                        .disabled(!answered)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            let step = this
+                                .pending_question_step
+                                .entry(request.clone())
+                                .or_insert(0);
+                            *step += 1;
+                            cx.notify();
+                        })),
+                );
+            } else {
+                let id = request_id.clone();
+                footer = footer.child(
                     Button::new(SharedString::from(format!("submit-{request_id}")))
-                        .label("Submit answers")
+                        .label(if questions.len() > 1 {
+                            "Submit Answers"
+                        } else {
+                            "Submit"
+                        })
                         .on_click(cx.listener(move |this, _, _, cx| this.answer_pending(&id, cx))),
-                ),
-            );
+                );
+            }
+            body = body.child(footer);
             cards.push(body);
         }
         if cards.is_empty() {
