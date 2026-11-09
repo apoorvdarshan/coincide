@@ -760,7 +760,13 @@ impl Engine {
                 } else {
                     self.store.patch_thread(id,patch)?
                 };
-                self.revision+=1;Ok(v)
+                // A draft-only patch must not invalidate the transcript view:
+                // the desktop reloads the whole thread (and a 24k-item thread
+                // stalls typing) whenever revision changes.
+                if !compact {
+                    self.revision+=1;
+                }
+                Ok(v)
             }
             "threads.fork" | "threads.edit-branch" => {
                 let id=required(p,"threadId")?;

@@ -3388,12 +3388,7 @@ impl Coincide {
             self.show_snoozed = self.sidebar_preferences.flag("showsSnoozedThreads");
             self.refresh(cx);
         }
-        // A blur or thread switch can land while the engine is busy. Retry the
-        // in-memory draft as soon as the engine is free instead of leaving it
-        // only in the window until the user notices the retry banner.
-        if !self.pending_drafts.is_empty() && self.engine.try_lock().is_ok() {
-            self.flush_pending_drafts();
-        }
+
         let menu_quit = self
             .quit_requested
             .swap(false, std::sync::atomic::Ordering::AcqRel);
