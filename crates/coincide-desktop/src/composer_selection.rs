@@ -1245,6 +1245,23 @@ fn account_problem(provider: &Value, account: &Value, configured: &Value) -> Opt
         _ => Some("Account support is not described by current capabilities.".into()),
     }
 }
+/// Whether a capability read may prefetch the saved provider's catalog so the
+/// composer's chip can show display names. This must never run while the picker
+/// is open: replacing the catalog there swaps the agent tab being browsed back
+/// to the thread's saved provider, so an OpenCode model could not be chosen on
+/// a Codex thread.
+fn prefetches_saved_catalog(
+    picker_open: bool,
+    request_pending: bool,
+    catalog_provider: Option<&str>,
+    saved_provider: &str,
+    discovery_supported: bool,
+) -> bool {
+    !picker_open
+        && !request_pending
+        && catalog_provider != Some(saved_provider)
+        && discovery_supported
+}
 /// Swift's collapse priority: mode, follow-up, access, speed, effort, model.
 fn footer_compaction(widths: [f32; 6], available: f32) -> [bool; 6] {
     let mut result = [false; 6];
@@ -1808,19 +1825,26 @@ impl Coincide {
         self.selection_ui.native_accounts = native_accounts;
         // The composer's chip and picker show provider display names, so read
         // each provider's catalog once per window session. Refresh re-reads it.
+        // This keeps the picker's own tab: while the picker is open it lists the
+        // agent the reader is browsing, and switching it back to the thread's
+        // saved provider here is what made an OpenCode model impossible to pick
+        // on a Codex thread.
         let provider = text(&thread["selection"], "provider");
-        if self.selection_ui.catalog_request.is_none()
-            && self.selection_ui.catalog["provider"].as_str() != Some(provider.as_str())
-            && self.selection_ui.capabilities["providers"]
-                .as_array()
-                .is_some_and(|rows| {
-                    rows.iter().any(|row| {
-                        row["provider"] == provider && row["modelDiscovery"]["supported"] == true
-                    })
+        let discovery_supported = self.selection_ui.capabilities["providers"]
+            .as_array()
+            .is_some_and(|rows| {
+                rows.iter().any(|row| {
+                    row["provider"] == provider && row["modelDiscovery"]["supported"] == true
                 })
-        {
-            self.selection_ui.tab_provider = Some(provider);
-            self.refresh_model_catalog(cx);
+            });
+        if prefetches_saved_catalog(
+            self.selection_ui.expanded,
+            self.selection_ui.catalog_request.is_some(),
+            self.selection_ui.catalog["provider"].as_str(),
+            &provider,
+            discovery_supported,
+        ) {
+            self.refresh_model_catalog(Some(provider), cx);
         }
         // A pending handoff uses the existing tick/next actual UI update.
         // Repeated lock contention must not create a notify/render retry loop.
@@ -2215,9 +2239,9 @@ impl Coincide {
         {
             return;
         }
-        self.refresh_model_catalog(cx);
+        self.refresh_model_catalog(None, cx);
     }
-    fn refresh_model_catalog(&mut self, cx: &mut Context<Self>) {
+    fn refresh_model_catalog(&mut self, provider_override: Option<String>, cx: &mut Context<Self>) {
         if self.selection_ui.catalog_request.is_some() {
             return;
         }
@@ -2228,11 +2252,11 @@ impl Coincide {
             return;
         };
         // Discovery is read-only, so it stays available for an imported or
-        // locked thread whose selection cannot change.
-        let tab_provider = self
-            .selection_ui
-            .tab_provider
-            .clone()
+        // locked thread whose selection cannot change. An explicit provider is
+        // used for the background read behind the composer's chip, which must
+        // not move the picker away from the agent tab being browsed.
+        let tab_provider = provider_override
+            .or_else(|| self.selection_ui.tab_provider.clone())
             .unwrap_or_else(|| draft.provider.clone());
         let Some(provider) = self.selection_ui.capabilities["providers"]
             .as_array()
@@ -2353,6 +2377,15 @@ impl Coincide {
                     if self.selection_ui.catalog["provider"] == "opencode" {
                         self.selection_ui.capability_cache.invalidate();
                         self.refresh_selection_capabilities(cx);
+                    }
+                    // A tab opened while another agent's read was in flight
+                    // waits here instead of staying on an empty list.
+                    let browsed = self.selection_ui.tab_provider.clone();
+                    if self.selection_ui.expanded
+                        && self.selection_ui.catalog_request.is_none()
+                        && browsed.as_deref() != self.selection_ui.catalog["provider"].as_str()
+                    {
+                        self.refresh_model_catalog(browsed, cx);
                     }
                 }
             }
@@ -3699,7 +3732,7 @@ impl Coincide {
                     .compact()
                     .ghost()
                     .disabled(self.selection_ui.catalog_request.is_some())
-                    .on_click(cx.listener(|this, _, _, cx| this.refresh_model_catalog(cx))),
+                    .on_click(cx.listener(|this, _, _, cx| this.refresh_model_catalog(None, cx))),
             )
             .child(
                 Button::new("picker-agent-settings")
@@ -3791,6 +3824,46 @@ mod tests {
     }
 
     use super::*;
+    #[::core::prelude::v1::test]
+    fn capability_reads_never_replace_the_agent_tab_the_picker_shows() {
+        // Browsing OpenCode's models on a Codex thread: the open picker owns
+        // the catalog, so a capability read must not prefetch Codex's list.
+        assert!(!prefetches_saved_catalog(
+            true,
+            false,
+            Some("opencode"),
+            "codex",
+            true
+        ));
+        assert!(!prefetches_saved_catalog(
+            false,
+            true,
+            Some("opencode"),
+            "codex",
+            true
+        ));
+        assert!(prefetches_saved_catalog(
+            false,
+            false,
+            Some("opencode"),
+            "codex",
+            true
+        ));
+        assert!(!prefetches_saved_catalog(
+            false,
+            false,
+            Some("codex"),
+            "codex",
+            true
+        ));
+        assert!(!prefetches_saved_catalog(
+            false,
+            false,
+            Some("opencode"),
+            "grok",
+            false
+        ));
+    }
     #[::core::prelude::v1::test]
     fn picker_preferences_filter_without_inventing_catalog_rows_or_changing_selection() {
         let settings = json!({"favoriteModels":[{"provider":"codex","modelID":"b"},{"provider":"codex","modelID":"not-reported"}],"hiddenModels":[{"provider":"codex","modelID":"a"},{"provider":"claude","modelID":"c"}]});

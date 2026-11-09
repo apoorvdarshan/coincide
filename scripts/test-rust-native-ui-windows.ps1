@@ -68,6 +68,13 @@ public static class NativeUiSmoke {
         EnumWindows((window,data)=>{uint owner;GetWindowThreadProcessId(window,out owner);var text=new StringBuilder(1024);GetWindowText(window,text,text.Capacity);if(owner==process && IsWindowVisible(window) && text.ToString()==title){found=window;return false;}return true;},IntPtr.Zero);
         return found;
     }
+    // The conversation window is titled by its open thread, as Swift's is, so
+    // find the process's largest visible titled window instead of a fixed name.
+    public static IntPtr FindMain(uint process) {
+        IntPtr best=IntPtr.Zero;long bestArea=0;
+        EnumWindows((window,data)=>{uint owner;GetWindowThreadProcessId(window,out owner);if(owner!=process||!IsWindowVisible(window))return true;var text=new StringBuilder(1024);GetWindowText(window,text,text.Capacity);if(text.Length==0)return true;Rect rect;if(!GetClientRect(window,out rect))return true;long area=(long)(rect.right-rect.left)*(rect.bottom-rect.top);if(area>bestArea){bestArea=area;best=window;}return true;},IntPtr.Zero);
+        return best;
+    }
     static void Owned(IntPtr window,uint process) {
         uint owner;GetWindowThreadProcessId(window,out owner);
         if(window==IntPtr.Zero || owner!=process || !IsWindowVisible(window))throw new Exception("Input/capture target is not the retained process's visible window");
@@ -203,7 +210,7 @@ function Start-Owned([string]$Stage) {
         foreach($key in $saved.Keys){[Environment]::SetEnvironmentVariable($key,$saved[$key],'Process')}
     }
     Wait-Condition 'native app and owner-aware control ready' {if($script:OwnedProcess.HasExited){throw 'Owned app exited before ready'};Invoke-Rpc 'app.status'} | Out-Null
-    $window=Wait-Condition 'actual visible Windows GPUI window' {$handle=[NativeUiSmoke]::Find([uint32]$script:OwnedProcess.Id,'Coincide Rust Preview');if($handle -ne [IntPtr]::Zero){$handle}}
+    $window=Wait-Condition 'actual visible Windows GPUI window' {$handle=[NativeUiSmoke]::FindMain([uint32]$script:OwnedProcess.Id);if($handle -ne [IntPtr]::Zero){$handle}}
     $area=[Windows.Forms.Screen]::PrimaryScreen.WorkingArea
     [NativeUiSmoke]::Fit($window,[uint32]$script:OwnedProcess.Id,[Math]::Min(1280,$area.Width-30),[Math]::Min(820,$area.Height-30))
     Wait-Condition 'owned app foreground' {[NativeUiSmoke]::Focus($window,[uint32]$script:OwnedProcess.Id)} | Out-Null

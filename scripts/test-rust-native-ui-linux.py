@@ -88,8 +88,7 @@ def main():
         process = subprocess.Popen([str(binary)], env=env, stdout=log, stderr=subprocess.STDOUT)
         wait_for("live application control", lambda: process.poll() is None and rpc("app.status"))
         window = wait_for("visible Coincide X11 window", lambda: command(
-            "xdotool", "search", "--all", "--onlyvisible", "--pid", str(process.pid),
-            "--name", "^Coincide Rust Preview$", env=env).splitlines()[0])
+            "xdotool", "search", "--all", "--onlyvisible", "--pid", str(process.pid), env=env).splitlines()[0])
         command("xdotool", "windowfocus", "--sync", window, env=env)
         return window
 
