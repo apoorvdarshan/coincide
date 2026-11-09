@@ -691,6 +691,19 @@ fn run_inner(
         while let Some(command) = runtime.next_command() {
             match command {
                 Control::Stop => return Err(Stopped.into()),
+                Control::Steer { text, reply } => {
+                    let result = (|| -> Result<()> {
+                        let id = format!("msg_coincide_{}", uuid::Uuid::new_v4().simple());
+                        runtime.request(
+                            &server.http,
+                            "POST",
+                            format!("{root}/prompt"),
+                            Some(json!({"id":id,"text":text,"delivery":"steer"})),
+                        )?;
+                        Ok(())
+                    })();
+                    let _ = reply.send(result.map_err(|error| error.to_string()));
+                }
                 Control::Reply { id, result } => {
                     let key = id.as_str().unwrap_or("");
                     let response = (|| -> Result<(String, String, Option<Value>)> {

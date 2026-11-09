@@ -6,6 +6,7 @@ mod codex_limits_view;
 #[cfg(test)]
 #[path = "dictation_preview_ui_tests.rs"]
 mod dictation_preview_ui_tests;
+mod draft_saver;
 #[cfg(test)]
 #[path = "../swift_link_options.rs"]
 mod swift_link_options_tests;
@@ -536,6 +537,7 @@ struct Coincide {
     pending_native_selection: Option<Option<String>>,
     startup_selection_pending: bool,
     pending_drafts: std::collections::HashMap<String, PendingDraft>,
+    draft_saver: draft_saver::Saver,
     composer: Entity<TextareaState>,
     model_input: Entity<InputState>,
     model_picker_search: Entity<InputState>,
@@ -1401,6 +1403,7 @@ impl Coincide {
                     }
                     v["draft"] = json!(draft);
                     let id = text(v, "id");
+                    this.draft_saver.record(&id, &draft);
                     this.pending_drafts.insert(
                         id.clone(),
                         PendingDraft {
@@ -1491,6 +1494,7 @@ impl Coincide {
             .try_lock()
             .map(|engine| engine.browser_agent_control_settings())
             .unwrap_or(json!({"agentControlByDefault":false}));
+        let draft_saver = draft_saver::Saver::new(engine.clone());
         let mut this = Self {
             engine,
             quit_requested,
@@ -1656,6 +1660,7 @@ impl Coincide {
             pending_native_selection: None,
             startup_selection_pending: true,
             pending_drafts: Default::default(),
+            draft_saver,
             composer,
             model_input,
             model_picker_search,
@@ -3383,6 +3388,12 @@ impl Coincide {
             self.show_snoozed = self.sidebar_preferences.flag("showsSnoozedThreads");
             self.refresh(cx);
         }
+        // A blur or thread switch can land while the engine is busy. Retry the
+        // in-memory draft as soon as the engine is free instead of leaving it
+        // only in the window until the user notices the retry banner.
+        if !self.pending_drafts.is_empty() && self.engine.try_lock().is_ok() {
+            self.flush_pending_drafts();
+        }
         let menu_quit = self
             .quit_requested
             .swap(false, std::sync::atomic::Ordering::AcqRel);
@@ -4959,8 +4970,15 @@ impl Render for Coincide {
             .map(|v| text(v, "title"))
             .unwrap_or_else(|| "Welcome to Coincide".into());
         let entity = cx.entity();
+        let jump_to_latest = !self.transcript_list.is_following_tail()
+            && self.selected.as_ref().is_some_and(|thread| {
+                thread["items"]
+                    .as_array()
+                    .is_some_and(|items| !items.is_empty())
+            });
         let transcript = div()
             .on_children_prepainted(self.media_layout_observer(cx))
+            .relative()
             .flex_1()
             .min_h(px(120.))
             .on_mouse_down(
@@ -4972,7 +4990,33 @@ impl Render for Coincide {
                     entity.update(cx, |this, cx| this.message(index, window, cx))
                 })
                 .size_full(),
-            );
+            )
+            .when(jump_to_latest, |view| {
+                view.child(
+                    div()
+                        .absolute()
+                        .bottom(px(14.))
+                        .left_0()
+                        .right_0()
+                        .flex()
+                        .justify_center()
+                        .child(
+                            Button::new("jump-to-latest")
+                                .label("Jump to Latest")
+                                .icon(gpui_kit::assets::IconName::ArrowDown)
+                                .compact()
+                                .h(px(28.))
+                                .rounded(px(14.))
+                                .bg(self.color(0x202a3b))
+                                .border_1()
+                                .border_color(self.color(0x29303d))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.transcript_list.scroll_to_end();
+                                    cx.notify();
+                                })),
+                        ),
+                )
+            });
         let conversation_content = if self.session_import_open {
             div()
                 .id("session-import-surface")

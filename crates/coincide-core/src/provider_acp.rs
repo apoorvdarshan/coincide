@@ -204,6 +204,11 @@ fn run_flavored(
                     }
                 }
                 Control::Reply { .. } => {}
+                Control::Steer { reply, .. } => {
+                    let _ = reply.send(Err(
+                        "This provider does not support active-turn steering".into()
+                    ));
+                }
             }
         }
         if completed {
