@@ -2,6 +2,8 @@
 //! Persistence uses Swift's shortcutOverrides IDs/syntax; IDs this version does
 //! not know are retained untouched.
 use super::*;
+use crate::native_menu::AccessibleMenuExt as _;
+use gpui_kit::component::menu::PopupMenuItem;
 
 const MOD: u8 = 1;
 const CTRL: u8 = 2;
@@ -1047,6 +1049,8 @@ impl Coincide {
             .ok()
             .flatten()
             .is_some_and(|map| map.contains_key(id));
+        let owner = cx.entity().downgrade();
+        let removable = current.shortcut.is_some();
         let mut row = div()
             .flex()
             .flex_col()
@@ -1072,6 +1076,8 @@ impl Coincide {
                                     .map(Shortcut::display)
                                     .unwrap_or_else(|| "Record Shortcut".into())
                             })
+                            .compact()
+                            .w(px(130.))
                             .disabled(!writable)
                             .accessibility_label(format!(
                                 "Record shortcut for {title}{}",
@@ -1093,20 +1099,42 @@ impl Coincide {
                             })),
                     )
                     .child(
-                        Button::new(SharedString::from(format!("shortcut-disable-{id}")))
-                            .label("Remove Shortcut")
-                            .disabled(!writable || current.shortcut.is_none())
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.save_shortcut(Change::Set(command, ""), window, cx)
-                            })),
-                    )
-                    .child(
-                        Button::new(SharedString::from(format!("shortcut-reset-{id}")))
-                            .label("Reset to Default")
-                            .disabled(!writable || !overridden)
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.save_shortcut(Change::Reset(command), window, cx)
-                            })),
+                        Button::new(SharedString::from(format!("shortcut-options-{id}")))
+                            .icon(gpui_kit::assets::IconName::Ellipsis)
+                            .accessibility_label(format!("More options for {title}"))
+                            .tooltip("Reset or remove the shortcut")
+                            .ghost()
+                            .compact()
+                            .accessible_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
+                                let reset = owner.clone();
+                                let remove = owner.clone();
+                                menu.item(
+                                    PopupMenuItem::new("Reset to Default")
+                                        .disabled(!writable || !overridden)
+                                        .on_click(move |_, window, cx| {
+                                            let _ = reset.update(cx, |this, cx| {
+                                                this.save_shortcut(
+                                                    Change::Reset(command),
+                                                    window,
+                                                    cx,
+                                                );
+                                            });
+                                        }),
+                                )
+                                .item(
+                                    PopupMenuItem::new("Remove Shortcut")
+                                        .disabled(!writable || !removable)
+                                        .on_click(move |_, window, cx| {
+                                            let _ = remove.update(cx, |this, cx| {
+                                                this.save_shortcut(
+                                                    Change::Set(command, ""),
+                                                    window,
+                                                    cx,
+                                                );
+                                            });
+                                        }),
+                                )
+                            }),
                     ),
             );
         if recording {

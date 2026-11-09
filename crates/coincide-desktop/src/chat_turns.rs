@@ -7,7 +7,7 @@
 use super::*;
 use gpui_kit::assets::IconName;
 use serde_json::Value;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// Swift's `Date` reference (2001-01-01) as Unix seconds.
 const REFERENCE_UNIX: f64 = 978_307_200.0;
@@ -78,13 +78,23 @@ impl Header {
     }
 }
 
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct RowPlan {
     /// Folded away under a header, or not drawn at all (Swift's isVisible).
     pub hidden: bool,
+    /// Only the final visible reply carries the turn signature.
+    pub terminal_reply: bool,
     /// Drawn below this item's own row: it opens the turn, or is the steered
     /// message the folded work follows.
     pub header: Option<Header>,
+    /// Consecutive tool/reasoning items folded into Swift's one-line group.
+    pub group: Option<GroupPlan>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct GroupPlan {
+    pub items: Vec<usize>,
+    pub expanded: bool,
 }
 
 pub(super) struct Turns<'a> {
@@ -123,12 +133,17 @@ impl Turns<'_> {
             return RowPlan::default();
         }
         let (opener, range) = self.turn(index);
-        let (hidden, headers) = self.turn_plan(opener, range);
+        let terminal = range.clone().rev().find(|&i| {
+            self.items[i]["kind"] == "assistant" && visible(&self.items[i], self.show_reasoning)
+        });
+        let (hidden, headers, groups) = self.turn_plan(opener, range);
         RowPlan {
             hidden: hidden.contains(&index),
+            terminal_reply: terminal == Some(index),
             header: headers
                 .into_iter()
                 .find_map(|(anchor, header)| (anchor == index).then_some(header)),
+            group: groups.get(&index).cloned(),
         }
     }
 
@@ -150,11 +165,23 @@ impl Turns<'_> {
     }
 
     /// Swift's appendTurnRows for one turn: the items it folds away and its headers.
+    fn groupable(&self, index: usize) -> bool {
+        let item = &self.items[index];
+        (item["kind"] == "tool" || item["kind"] == "reasoning")
+            && visible(item, self.show_reasoning)
+            && !super::presentation::is_question_tool(item)
+            && !super::presentation::is_duplicate_reasoning_tool(item)
+    }
+
     fn turn_plan(
         &self,
         opener: Option<usize>,
         range: std::ops::Range<usize>,
-    ) -> (HashSet<usize>, Vec<(usize, Header)>) {
+    ) -> (
+        HashSet<usize>,
+        Vec<(usize, Header)>,
+        HashMap<usize, GroupPlan>,
+    ) {
         let items = self.items;
         let kind = |index: usize| items[index]["kind"].as_str().unwrap_or_default();
         let status = |index: usize| items[index]["status"].as_str();
@@ -165,13 +192,44 @@ impl Turns<'_> {
         let mut hidden = (first..range.end)
             .filter(|&index| !visible(&items[index], self.show_reasoning))
             .collect::<HashSet<_>>();
+        // Consecutive tool/reasoning rows fold into Swift's group line. The
+        // first member carries the summary row and the expanded children; the
+        // rest are always hidden to avoid drawing a second copy.
+        let mut groups = HashMap::new();
+        let mut cursor = 0;
+        while cursor < body.len() {
+            if !self.groupable(body[cursor]) {
+                cursor += 1;
+                continue;
+            }
+            let start = cursor;
+            while cursor < body.len() && self.groupable(body[cursor]) {
+                cursor += 1;
+            }
+            if cursor - start < 2 {
+                continue;
+            }
+            let run = body[start..cursor].to_vec();
+            let first = run[0];
+            let expanded = (self.expanded)(self.id(first));
+            groups.insert(
+                first,
+                GroupPlan {
+                    items: run.clone(),
+                    expanded,
+                },
+            );
+            for member in run.into_iter().skip(1) {
+                hidden.insert(member);
+            }
+        }
         let mut headers = Vec::new();
         if let Some(opener) = opener
             && Some(opener) == self.running_opener()
         {
             let started_at = self.time(opener, "createdAt").unwrap_or_default();
             headers.push((opener, Header::Working { started_at }));
-            return (hidden, headers);
+            return (hidden, headers, groups);
         }
 
         let terminal = body.iter().rposition(|&index| kind(index) == "assistant");
@@ -251,7 +309,7 @@ impl Turns<'_> {
             headers.push(header);
         }
         hidden.extend(folded);
-        (hidden, headers)
+        (hidden, headers, groups)
     }
 }
 
@@ -370,11 +428,17 @@ pub(super) fn elapsed(interval: f64) -> String {
 #[derive(Default)]
 pub(super) struct State {
     expanded: HashSet<(String, String)>,
+    // Cleared at the start of each render. A long turn is planned once per
+    // layout pass, not once for every measured virtual row.
+    plans: std::cell::RefCell<HashMap<usize, RowPlan>>,
     tick: Option<(String, String)>,
     pub starting: HashSet<String>,
 }
 
 impl State {
+    pub(super) fn begin_render(&self) {
+        self.plans.borrow_mut().clear();
+    }
     pub(super) fn is_expanded(&self, thread: &str, anchor: &str) -> bool {
         self.expanded
             .contains(&(thread.to_owned(), anchor.to_owned()))
@@ -403,8 +467,36 @@ impl super::Coincide {
     }
 
     pub(super) fn turn_plan(&self, index: usize) -> RowPlan {
-        self.selected_turns(|turns, _| turns.plan(index))
-            .unwrap_or_default()
+        if let Some(plan) = self.chat_turns.plans.borrow().get(&index) {
+            return plan.clone();
+        }
+        self.selected_turns(|turns, _| {
+            if index >= turns.items.len() {
+                return RowPlan::default();
+            }
+            let (opener, range) = turns.turn(index);
+            let terminal = range.clone().rev().find(|&i| {
+                turns.items[i]["kind"] == "assistant"
+                    && visible(&turns.items[i], turns.show_reasoning)
+            });
+            let (hidden, headers, groups) = turns.turn_plan(opener, range.clone());
+            let mut plans = self.chat_turns.plans.borrow_mut();
+            for i in range {
+                plans.insert(
+                    i,
+                    RowPlan {
+                        hidden: hidden.contains(&i),
+                        terminal_reply: terminal == Some(i),
+                        header: headers
+                            .iter()
+                            .find_map(|(anchor, header)| (*anchor == i).then(|| header.clone())),
+                        group: groups.get(&i).cloned(),
+                    },
+                );
+            }
+            plans.get(&index).cloned().unwrap_or_default()
+        })
+        .unwrap_or_default()
     }
 
     /// The live line below the selected thread's last row, with the agent it names.
@@ -510,9 +602,28 @@ impl super::Coincide {
     ) -> AnyElement {
         let last = index + 1 == self.transcript_count;
         let live = last.then(|| self.turn_live()).flatten();
-        if header.is_none() && live.is_none() {
+        if self.turn_plan(index).hidden && header.is_none() && live.is_none() {
             return row;
         }
+        let provider = self
+            .selected
+            .as_ref()
+            .and_then(|thread| thread["items"].as_array())
+            .and_then(|items| {
+                items
+                    .get(index)
+                    .and_then(|item| item["provider"].as_str())
+                    .or_else(|| {
+                        items[..=index.min(items.len().saturating_sub(1))]
+                            .iter()
+                            .rev()
+                            .find_map(|item| item["provider"].as_str())
+                    })
+            })
+            .unwrap_or("")
+            .to_owned();
+        let rail_color = self.provider_ink(&provider);
+        let header_logo = header.is_some();
         let thread = self
             .selected
             .as_ref()
@@ -540,10 +651,24 @@ impl super::Coincide {
                         .min_w_0()
                         .max_w(px(presentation::CONTENT_WIDTH))
                         .pl(px(presentation::RAIL_GUTTER))
+                        .relative()
                         .h(px(height))
                         .text_size(px(font))
                         .text_color(secondary)
-                        .child(child),
+                        .child(child)
+                        .when(header_logo && height == 40., |row| {
+                            row.when_some(chat_layout::provider_logo(&provider), |row, logo| {
+                                row.child(
+                                    div()
+                                        .absolute()
+                                        .left(px(8.))
+                                        .top(px(12.))
+                                        .size(px(16.))
+                                        .bg(self.color(0x10141c))
+                                        .child(img(logo).size_full()),
+                                )
+                            })
+                        }),
                 )
         };
         let header = header.map(|header| {
@@ -590,12 +715,45 @@ impl super::Coincide {
             line(div().pl_1().child(label).into_any_element(), 36.)
         });
         div()
-            .flex()
-            .flex_col()
+            .relative()
             .w_full()
-            .child(row)
-            .children(header)
-            .children(live)
+            // The overlay follows the same centered column as every row. It
+            // has no input handlers; text selection and disclosure clicks keep
+            // reaching the content above it.
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .px(px(presentation::CONTENT_GUTTER))
+                    .flex()
+                    .justify_center()
+                    .child(
+                        div()
+                            .relative()
+                            .w_full()
+                            .max_w(px(presentation::CONTENT_WIDTH))
+                            .h_full()
+                            .child(
+                                div()
+                                    .absolute()
+                                    .left(px(15.))
+                                    .top_0()
+                                    .bottom_0()
+                                    .w(px(1.))
+                                    .bg(rail_color.opacity(0.4)),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    .w_full()
+                    .child(row)
+                    .children(header)
+                    .children(live),
+            )
             .into_any_element()
     }
 }
@@ -633,6 +791,61 @@ mod tests {
     }
 
     #[::core::prelude::v1::test]
+    fn only_last_nonempty_reply_per_turn_has_a_signature() {
+        let items = [
+            item("u1", "user", 0.),
+            item("interim", "assistant", 1.),
+            item("t", "tool", 2.),
+            item("final", "assistant", 3.),
+            json!({"id":"empty", "kind":"assistant", "text":"  "}),
+            item("u2", "user", 4.),
+            item("second", "assistant", 5.),
+        ];
+        let rows = plans(&items, false, &["u1"]);
+        assert_eq!(
+            rows.iter()
+                .enumerate()
+                .filter_map(|(i, p)| p.terminal_reply.then_some(i))
+                .collect::<Vec<_>>(),
+            vec![3, 6]
+        );
+        assert!(
+            !rows[1].hidden,
+            "expanded interim reply stays visible without a duplicate signature"
+        );
+    }
+
+    #[::core::prelude::v1::test]
+    fn consecutive_work_folds_into_one_expandable_group() {
+        let items = [
+            item("u", "user", 0.),
+            item("t1", "tool", 1.),
+            item("t2", "tool", 2.),
+            item("r3", "reasoning", 3.),
+            item("reply", "assistant", 4.),
+        ];
+        let rows = plans(&items, true, &[]);
+        let group = rows[1].group.as_ref().expect("first tool opens the group");
+        assert_eq!(group.items, vec![1, 2, 3]);
+        assert!(!group.expanded);
+        assert_eq!(hidden(&rows), vec![2, 3]);
+        let opened = plans(&items, true, &["t1"]);
+        assert!(opened[1].group.as_ref().unwrap().expanded);
+        assert_eq!(hidden(&opened), vec![2, 3]);
+    }
+
+    #[::core::prelude::v1::test]
+    fn a_single_work_row_never_becomes_a_group() {
+        let items = [
+            item("u", "user", 0.),
+            item("t", "tool", 1.),
+            item("reply", "assistant", 2.),
+        ];
+        let rows = plans(&items, true, &[]);
+        assert!(rows[1].group.is_none());
+    }
+
+    #[::core::prelude::v1::test]
     fn finished_turn_folds_work_and_interim_replies_under_worked_for() {
         let mut tool = item("t", "tool", 2.);
         tool["completedAt"] = json!(30.);
@@ -658,7 +871,10 @@ mod tests {
             "Worked for 2m 13s"
         );
         let opened = plans(&items, false, &["u"]);
-        assert!(hidden(&opened).is_empty());
+        // The reasoning/tool pair stays a collapsed group; opening the turn
+        // reveals the group summary, not its nested members.
+        assert_eq!(hidden(&opened), vec![2]);
+        assert_eq!(opened[1].group.as_ref().unwrap().items, vec![1, 2]);
         assert_eq!(opened[0].header.as_ref().unwrap().expanded(), Some(true));
     }
 

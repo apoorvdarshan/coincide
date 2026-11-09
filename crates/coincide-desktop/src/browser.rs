@@ -7,6 +7,8 @@ mod cookie_actor;
 mod cookie_import;
 #[path = "browser_credentials.rs"]
 mod credential_bridge;
+#[path = "browser_data_clear.rs"]
+mod data_clear;
 #[path = "browser_dialogs.rs"]
 mod dialogs;
 #[cfg(target_os = "linux")]
@@ -232,6 +234,7 @@ pub struct BrowserController {
     credential_targets: Vec<credential_bridge::NativeCredentialTarget>,
     passkeys: passkeys::Passkeys,
     presses: HashMap<String, press::Pending>,
+    data_clear: Option<data_clear::PendingClear>,
     scripts: HashMap<String, PendingScript>,
     waits: HashMap<String, PendingWait>,
     uploads: HashMap<String, PendingUpload>,
@@ -316,6 +319,7 @@ impl BrowserController {
             credential_targets: Vec::new(),
             passkeys,
             presses: HashMap::new(),
+            data_clear: None,
             scripts: HashMap::new(),
             waits: HashMap::new(),
             uploads: HashMap::new(),
@@ -916,6 +920,7 @@ impl BrowserController {
         let load_navigation = navigation.clone();
         let load_closed = self.shutdown.callbacks.closed.clone();
         let passkey_requested = Arc::new(AtomicU64::new(0));
+        self.profiles.pin_selection(thread)?;
         let profile = self.profiles.selected(thread);
         let profile_key = profile.key(thread);
         if let ProfileChoice::Persistent(id) = &profile {
@@ -2212,6 +2217,19 @@ impl BrowserController {
         tab.url = address;
         tab.loading = true;
         Ok(())
+    }
+    pub(super) fn navigation_available(&self, thread: &str, cx: &App) -> (bool, bool) {
+        let Some(id) = self.active.get(thread) else {
+            return (false, false);
+        };
+        let Some(tab) = self
+            .tabs
+            .get(thread)
+            .and_then(|tabs| tabs.iter().find(|tab| &tab.id == id))
+        else {
+            return (false, false);
+        };
+        native_history::availability(tab.view.read(cx).raw())
     }
     pub fn tab_list(&self, thread: &str) -> Value {
         let native_password_manager = credential_bridge::credential_fill_available();

@@ -1727,6 +1727,20 @@ cutover; no Swift app or Swift data was removed or modified.
   (`model-catalog-cache-<provider>.json`). Opening the picker or switching
   provider tabs shows that list instantly instead of the cold
   "Loading models…" state while discovery runs in the background.
+- Completed reasoning parts update the existing reasoning row instead of
+  appending a duplicate tool row containing the provider's JSON payload.
+  Reasoning rows render as Swift's compact "Thought" work rows with a preview
+  and never as message cards.
+- OpenCode tool calls persist Swift-style display metadata (title, category,
+  status, command/detail and output). Older rows are normalized while
+  rendering, so existing transcripts lose "Tool activity" + raw JSON.
+- OpenCode question tool calls are hidden when the form row exists. Questions
+  render as one work-log line with "Answer below" / "Not answered" and the
+  chosen answers underneath; answers are saved on the question item.
+- Pending questions render in a Swift-style banner above the composer with a
+  heading, provider, radio/checkbox options, descriptions, free text and one
+  Submit action. Pending polling runs before revision-gated transcript reads,
+  clears stale panels and clears the transient "App is busy" line.
 - Drafts save with a 1.2-second background debounce: typing only touches
   memory, and one worker writes the latest text, retrying while the Engine is
   busy. This also gives the Linux native smoke a deterministic persistence
@@ -1743,12 +1757,16 @@ cutover; no Swift app or Swift data was removed or modified.
   `ecab1f70-d6db-4f0a-9c33-f4047efa5cc1` for 0.1.24 and
   `d4500768-1ea4-4801-8753-62023772f1f5` for 0.1.25 and
   `2f099dda-942f-44fc-85f3-06c7775c06a1` for 0.1.26,
-  `fc185909-9425-4754-b9b0-383a8e7c103b` for 0.1.27 and
-  `5aec903e-7648-44ca-b36a-bb7f74b8e52f` for 0.1.28, all Accepted), stapled
-  and installed `0.1.28` (build 38); Gatekeeper reports a notarized Developer
-  ID. (0.1.23 was built locally but superseded before installation.)
-- `cargo test -p coincide-core --lib` passed 1159 tests (9 ignored) and
-  `cargo test -p coincide-desktop --bin coincide-rust` passed 810 tests
+  `fc185909-9425-4754-b9b0-383a8e7c103b` for 0.1.27,
+  `5aec903e-7648-44ca-b36a-bb7f74b8e52f` for 0.1.28,
+  `a4da9b5d-9997-4b7d-9221-275ac71778a4` for 0.1.30,
+  `df506561-6c9d-4f23-9e7b-12fa058cdbe3` for 0.1.31 and
+  `f1758202-4521-4cf1-9e5a-2698df7e54aa` for 0.1.32, all Accepted), stapled
+  and installed `0.1.32` (build 42); Gatekeeper reports a notarized Developer
+  ID. (0.1.23 was built locally but superseded before installation; 0.1.29
+  was built from main by the separate packaging thread.)
+- `cargo test -p coincide-core --lib` passed 1164 tests (9 ignored) and
+  `cargo test -p coincide-desktop --bin coincide-rust` passed 812 tests
   (26 ignored) with the app stopped. The two updater stopped-target tests fail
   while another `Coincide Rust` process is running; they pass in isolation.
 

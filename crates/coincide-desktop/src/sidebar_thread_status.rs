@@ -39,6 +39,20 @@ impl RowStatus {
     }
 }
 
+/// Collapsed groups and bot rows expose the most urgent child activity.
+pub(super) fn strongest_status(statuses: impl IntoIterator<Item = RowStatus>) -> Option<RowStatus> {
+    statuses
+        .into_iter()
+        .filter(|status| *status != RowStatus::Idle)
+        .max_by_key(|status| match status {
+            RowStatus::Idle => 0,
+            RowStatus::Completed => 1,
+            RowStatus::Failed => 2,
+            RowStatus::Running { .. } => 3,
+            RowStatus::Approval(_) => 4,
+        })
+}
+
 pub(super) fn row_status(
     approvals: usize,
     running_since: Option<f64>,
@@ -241,6 +255,21 @@ impl Coincide {
 
 #[cfg(test)]
 mod tests {
+    #[::core::prelude::v1::test]
+    fn collapsed_activity_keeps_approvals_ahead_of_running_and_unseen_results() {
+        use super::{RowStatus::*, strongest_status};
+        assert_eq!(strongest_status([Idle]), None);
+        assert_eq!(strongest_status([Completed, Failed]), Some(Failed));
+        assert_eq!(
+            strongest_status([Failed, Running { since: 4. }, Approval(2)]),
+            Some(Approval(2))
+        );
+        assert_eq!(
+            strongest_status([Completed, Running { since: 4. }]),
+            Some(Running { since: 4. })
+        );
+    }
+
     use super::*;
 
     #[::core::prelude::v1::test]

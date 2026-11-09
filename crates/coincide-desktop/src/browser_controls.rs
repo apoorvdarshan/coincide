@@ -87,6 +87,32 @@ impl Coincide {
         self.show_settings_window(cx);
         cx.notify();
     }
+    pub(super) fn browser_agent_control_button(
+        &self,
+        thread: &str,
+        cx: &mut Context<Self>,
+    ) -> Button {
+        let enabled = agent_request_allowed(&self.browser_control, thread, false);
+        let thread = thread.to_owned();
+        Button::new("browser-agent-control")
+            .icon(gpui_kit::assets::IconName::Hand)
+            .accessibility_label(if enabled {
+                "Agent Control: On"
+            } else {
+                "Agent Control: Off"
+            })
+            .tooltip(if enabled {
+                "Turn off Agent Control"
+            } else {
+                "Turn on Agent Control"
+            })
+            .selected(enabled)
+            .ghost()
+            .compact()
+            .xsmall()
+            .h(px(26.))
+            .on_click(cx.listener(move |this, _, _, cx| this.toggle_browser_control(&thread, cx)))
+    }
     pub(super) fn browser_pane_controls(
         &mut self,
         thread: &str,
@@ -110,35 +136,34 @@ impl Coincide {
             .browser_settings_panel
             .read(cx)
             .page_is_bookmarked(&url);
-        let enabled = agent_request_allowed(&self.browser_control, thread, false);
-        let control_thread = thread.to_owned();
         let library_thread = thread.to_owned();
         let bookmark_thread = thread.to_owned();
         let bookmark_tab = active.map(|tab| text(tab, "id"));
         div()
             .flex()
-            .flex_wrap()
+            .items_center()
             .gap_1()
-            .px_2()
-            .pb_2()
-            .child(
-                Button::new("browser-agent-control")
-                    .label(if enabled {
-                        "Agent Control: On"
-                    } else {
-                        "Agent Control: Off"
-                    })
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.toggle_browser_control(&control_thread, cx)
-                    })),
-            )
             .child(
                 Button::new("browser-bookmark-toggle")
-                    .label(if marked {
+                    .icon(if marked {
+                        gpui_kit::assets::IconName::StarFill
+                    } else {
+                        gpui_kit::assets::IconName::Star
+                    })
+                    .accessibility_label(if marked {
                         "Remove bookmark"
                     } else {
-                        "Bookmark page"
+                        "Bookmark this page"
                     })
+                    .tooltip(if marked {
+                        "Remove bookmark"
+                    } else {
+                        "Bookmark this page"
+                    })
+                    .ghost()
+                    .compact()
+                    .xsmall()
+                    .h(px(26.))
                     .disabled(!valid_page || bookmark_busy)
                     .on_click(cx.listener(move |this, _, window, cx| {
                         // Bind the existing settings worker owner to this exact native destination.
@@ -170,7 +195,13 @@ impl Coincide {
             )
             .child(
                 Button::new("browser-bookmark-library")
-                    .label("Bookmark library")
+                    .icon(gpui_kit::assets::IconName::BookOpen)
+                    .accessibility_label("Bookmarks and History")
+                    .tooltip("Bookmarks and History")
+                    .ghost()
+                    .compact()
+                    .xsmall()
+                    .h(px(26.))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         if this.browser_library_visible() {
                             this.browser_library_thread = None;
@@ -186,7 +217,13 @@ impl Coincide {
             )
             .child(
                 Button::new("browser-fill-saved-login")
-                    .label("Fill Saved Login")
+                    .icon(gpui_kit::assets::IconName::Lock)
+                    .accessibility_label("Fill Saved Login")
+                    .tooltip("Fill Saved Login")
+                    .ghost()
+                    .compact()
+                    .xsmall()
+                    .h(px(26.))
                     .disabled(!self.browser.as_ref().is_some_and(|browser| {
                         browser.credential_fill_available()
                             && browser.credential_page(thread, cx).is_some()

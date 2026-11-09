@@ -129,6 +129,7 @@ impl SettingsWindow {
         let WindowBounds::Windowed(bounds) = window.window_bounds() else {
             return;
         };
+        let bounds = Bounds::new(bounds.origin, window_chrome::restorable_window_size(window));
         let frame = Frame::from_bounds(bounds);
         if self.frame == Some(frame) {
             return;

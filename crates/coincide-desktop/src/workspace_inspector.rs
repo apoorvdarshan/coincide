@@ -1,5 +1,7 @@
 //! Retained workspace/GitHub controllers mounted beside the current chat.
 use super::*;
+use crate::native_menu::AccessibleMenuExt as _;
+use gpui_kit::component::menu::PopupMenuItem;
 impl Coincide {
     /// Whether the inspector column shows the GitHub pull requests panel.
     pub(super) fn pull_requests_panel_open(&self) -> bool {
@@ -34,6 +36,84 @@ impl Coincide {
         self.sync_workspace_context(cx);
         cx.notify();
     }
+    fn workspace_switcher(&self, cx: &mut Context<Self>) -> AnyElement {
+        let owner = cx.entity().downgrade();
+        let active = if self.github_threads_open {
+            3
+        } else if self.github_open {
+            2
+        } else if self.git_tools_open {
+            1
+        } else {
+            0
+        };
+        let title = ["Changes", "Local Git", "Pull Requests", "Review comments"][active];
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .h(px(30.))
+            .px_2()
+            .border_b_1()
+            .border_color(self.color(0x29303d))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(self.color(0xe4e9f2).opacity(0.6))
+                    .child(title),
+            )
+            .child(
+                Button::new("workspace-tools")
+                    .icon(gpui_kit::assets::IconName::Ellipsis)
+                    .ghost()
+                    .compact()
+                    .xsmall()
+                    .accessibility_label("Workspace views")
+                    .tooltip("Workspace views")
+                    .accessible_menu_with_anchor(Anchor::TopRight, move |mut menu, _, _| {
+                        for (index, label) in
+                            ["Changes", "Local Git", "Pull Requests", "Review comments"]
+                                .into_iter()
+                                .enumerate()
+                        {
+                            let owner = owner.clone();
+                            menu = menu.item(
+                                PopupMenuItem::new(label).checked(index == active).on_click(
+                                    move |_, window, cx| {
+                                        let _ = owner.update(cx, |this, cx| {
+                                            this.github_open = index == 2;
+                                            this.github_threads_open = index == 3;
+                                            this.git_tools_open = index == 1;
+                                            this.github_threads_scope_stale = false;
+                                            this.remember_current_inspector(cx);
+                                            this.sync_workspace_context(cx);
+                                            if index == 3 {
+                                                let loaded =
+                                                    this.github_panel.read(cx).loaded_pr_scope(cx);
+                                                this.github_threads_seed = loaded.clone();
+                                                if let Some((repository, number, head)) = loaded {
+                                                    this.github_threads_panel.update(
+                                                        cx,
+                                                        |panel, cx| {
+                                                            panel.set_pr(
+                                                                repository, number, head, window,
+                                                                cx,
+                                                            )
+                                                        },
+                                                    );
+                                                }
+                                            }
+                                            cx.notify();
+                                        });
+                                    },
+                                ),
+                            );
+                        }
+                        menu
+                    }),
+            )
+            .into_any_element()
+    }
     pub(super) fn workspace_inspector_body(&mut self, cx: &mut Context<Self>) -> AnyElement {
         // The outer column has a finite window height. A zero flex basis
         // keeps the workspace entity bounded and lets its own body scroll.
@@ -46,65 +126,7 @@ impl Coincide {
                 .overflow_hidden()
                 .flex()
                 .flex_col()
-                .child(
-                    div()
-                        .p_2()
-                        .flex()
-                        .gap_2()
-                        .child(
-                            Button::new("workspace-diff-tab")
-                                .label("Diff")
-                                .selected(self.diff_tab_visible())
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.github_open = false;
-                                    this.github_threads_open = false;
-                                    this.git_tools_open = false;
-                                    this.remember_current_inspector(cx);
-                                    this.sync_github_context(cx);
-                                    cx.notify();
-                                })),
-                        )
-                        .child(
-                            Button::new("workspace-local-tab")
-                                .label("Local Git")
-                                .selected(
-                                    self.git_tools_open
-                                        && !self.github_open
-                                        && !self.github_threads_open,
-                                )
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.github_open = false;
-                                    this.github_threads_open = false;
-                                    this.git_tools_open = true;
-                                    this.remember_current_inspector(cx);
-                                    this.sync_github_context(cx);
-                                    cx.notify();
-                                })),
-                        )
-                        .child(
-                            Button::new("workspace-github-tab")
-                                .label("GitHub pull requests")
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.github_open = true;
-                                    this.github_threads_open = false;
-                                    this.remember_current_inspector(cx);
-                                    this.sync_workspace_context(cx);
-                                    cx.notify();
-                                })),
-                        )
-                        .child(Button::new("workspace-github-threads-tab").label("Inline review threads")
-                            .on_click(cx.listener(|this,_,window,cx|{
-                                this.github_open=false;this.github_threads_open=true;this.github_threads_scope_stale=false;
-                                this.remember_current_inspector(cx);
-                                this.sync_workspace_context(cx);
-                                let loaded=this.github_panel.read(cx).loaded_pr_scope(cx);
-                                this.github_threads_seed=loaded.clone();
-                                if let Some((repository,number,head))=loaded {
-                                    this.github_threads_panel.update(cx,|panel,cx|panel.set_pr(repository,number,head,window,cx));
-                                }
-                                cx.notify();
-                            }))),
-                )
+                .child(self.workspace_switcher(cx))
                 .child(if self.github_threads_open {
                     div().flex_1().flex_basis(px(0.)).min_h_0().min_w_0().overflow_hidden().flex().flex_col()
                         .when(self.github_threads_scope_stale,|view|view.child(div().p_2().text_sm().child("PR detail changed. Reopen Inline review threads to bind the new loaded scope, or return to Local Git.")))

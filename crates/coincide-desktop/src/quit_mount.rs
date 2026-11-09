@@ -276,8 +276,10 @@ impl Coincide {
             && self.navigation_tasks.is_empty();
         let thread_bulk_ready = self.thread_bulk.receipts_drained();
         let composer_files_ready = self.composer_files.receipts_drained();
-        let external = self.quit_frame_seen
-            && drafts_saved
+        // Offscreen/minimized windows may not draw another frame. Completion
+        // depends on saved data and joined owners, never a visual acknowledgement.
+        // Admissions and native input are already closed above.
+        let external = drafts_saved
             && media_ready
             && workflows_ready
             && github_ready
@@ -291,9 +293,6 @@ impl Coincide {
             && thread_bulk_ready
             && composer_files_ready;
         let mut waiting = Vec::new();
-        if !self.quit_frame_seen {
-            waiting.push("quit frame");
-        }
         if !drafts_saved {
             waiting.push("drafts");
         }

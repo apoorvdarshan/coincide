@@ -1,7 +1,8 @@
 //! Shared section controls: real collapse, ordering, sorting and saved filters.
 use super::*;
+use crate::native_menu::AccessibleMenuExt as _;
 use gpui_kit::assets::IconName;
-use gpui_kit::component::menu::{ContextMenuExt, DropdownMenu, PopupMenu, PopupMenuItem};
+use gpui_kit::component::menu::{ContextMenuExt, PopupMenu, PopupMenuItem};
 #[derive(Clone)]
 pub(super) struct SectionDrag(pub String);
 impl Render for SectionDrag {
@@ -18,6 +19,34 @@ impl Coincide {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let collapsed = !searching && self.sidebar_preferences.collapsed(section);
+        let hidden_status = collapsed
+            .then(|| {
+                sidebar_thread_status::strongest_status(
+                    self.sidebar_all_threads
+                        .iter()
+                        .filter(|thread| {
+                            let bot = thread
+                                .navigation
+                                .as_ref()
+                                .and_then(|meta| meta.bot_id.as_ref())
+                                .is_some()
+                                || thread.project_id.eq_ignore_ascii_case(
+                                    coincide_core::bot_runtime::BOTS_PROJECT_ID,
+                                );
+                            let chat = thread.project_id.is_empty()
+                                || thread.project_id == navigation::NO_PROJECT_ID;
+                            match section {
+                                "pinned" => thread.pinned,
+                                "bots" => bot,
+                                "chats" => chat && !thread.pinned,
+                                "projects" => !bot && !chat && !thread.pinned,
+                                _ => false,
+                            }
+                        })
+                        .map(|thread| self.sidebar_thread_status(thread)),
+                )
+            })
+            .flatten();
         let parent = cx.entity().downgrade();
         let preferences = self.sidebar_preferences.clone();
         let options = std::rc::Rc::new(
@@ -191,6 +220,45 @@ impl Coincide {
                         ),
                     ),
             )
+            .when_some(hidden_status, |row, status| {
+                use sidebar_thread_status::RowStatus;
+                let color = match status {
+                    RowStatus::Approval(_) => cx.theme().warning,
+                    RowStatus::Failed => cx.theme().danger,
+                    RowStatus::Completed => cx.theme().success,
+                    _ => cx.theme().foreground,
+                };
+                row.child(
+                    div()
+                        .id(SharedString::from(format!("hidden-status-{section}")))
+                        .role(Role::Label)
+                        .aria_label(status.label().unwrap_or_default())
+                        .size(px(7.))
+                        .rounded_full()
+                        .bg(color),
+                )
+            })
+            .when(section != "pinned", |row| {
+                row.child(
+                    Button::new(SharedString::from(format!("sidebar-options-{section}")))
+                        .child(
+                            div()
+                                .size(px(13.))
+                                .rounded_full()
+                                .border_1()
+                                .border_color(self.color(0xe4e9f2).opacity(0.55))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(Icon::new(IconName::Ellipsis).size(px(10.))),
+                        )
+                        .ghost()
+                        .compact()
+                        .accessibility_label(format!("{label} Options"))
+                        .tooltip(format!("{label} Options"))
+                        .accessible_menu(move |menu, window, cx| options(menu, window, cx)),
+                )
+            })
             .when(section == "projects", |row| {
                 row.child(
                     Button::new("sidebar-add-project")
@@ -228,17 +296,6 @@ impl Coincide {
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.sidebar_edit_bot(None, window, cx)
                         })),
-                )
-            })
-            .when(section != "pinned", |row| {
-                row.child(
-                    Button::new(SharedString::from(format!("sidebar-options-{section}")))
-                        .icon(IconName::Ellipsis)
-                        .ghost()
-                        .compact()
-                        .accessibility_label(format!("{label} Options"))
-                        .tooltip(format!("{label} Options"))
-                        .dropdown_menu(move |menu, window, cx| options(menu, window, cx)),
                 )
             })
             .on_drag(SectionDrag(section.into()), |drag, _, _, cx| {

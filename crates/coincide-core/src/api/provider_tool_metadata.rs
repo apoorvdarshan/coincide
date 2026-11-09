@@ -1,8 +1,137 @@
-//! Descriptive Codex command metadata, never approval or turn-lifecycle authority.
+//! Descriptive provider tool metadata, never approval or turn-lifecycle authority.
 use serde_json::{Value, json};
 
 pub(super) fn apply(row: &mut Value, captured_provider: &str, item: &Value) {
-    if captured_provider != "codex" || item["type"] != "commandExecution" {
+    match captured_provider {
+        "codex" => apply_codex(row, item),
+        "opencode" => apply_opencode(row, item),
+        _ => {}
+    }
+}
+
+/// OpenCode reports tool parts as `toolCall` with a lowercase tool name and a
+/// free-form input object. Persist the same kind of display metadata Swift's
+/// transcript derives (title, category, status) instead of making every row a
+/// generic "Tool activity" JSON payload.
+fn apply_opencode(row: &mut Value, item: &Value) {
+    if item["type"] != "toolCall" {
+        return;
+    }
+    let Some(fields) = row.as_object_mut() else {
+        return;
+    };
+    let name = item["name"].as_str().unwrap_or_default();
+    let category = match name {
+        "shell" | "bash" => "command",
+        "read" | "list" => "read",
+        "grep" | "glob" | "search" => "search",
+        "webfetch" | "websearch" => "web",
+        "edit" | "write" | "patch" | "multiedit" => "fileChange",
+        "task" => "task",
+        "todowrite" | "todoread" => "todo",
+        "question" => "other",
+        value if value.starts_with("mcp") => "mcp",
+        _ => "other",
+    };
+    fields.insert("category".into(), json!(category));
+    let input = &item["input"];
+    // Swift names the action in the work log and keeps the raw command/path in
+    // the expandable detail. A single OpenCode shell row reads "Run command",
+    // never the full command line.
+    let (title, detail) = match name {
+        "shell" | "bash" => (
+            Some("Run command".to_owned()),
+            input["command"].as_str().and_then(bounded_tool_title),
+        ),
+        "read" => (
+            Some("Read file".to_owned()),
+            input["filePath"]
+                .as_str()
+                .or_else(|| input["path"].as_str())
+                .and_then(bounded_tool_title),
+        ),
+        "write" => (
+            Some("Write file".to_owned()),
+            input["filePath"]
+                .as_str()
+                .or_else(|| input["path"].as_str())
+                .and_then(bounded_tool_title),
+        ),
+        "edit" | "patch" | "multiedit" => (
+            Some("Edit file".to_owned()),
+            input["filePath"]
+                .as_str()
+                .or_else(|| input["path"].as_str())
+                .and_then(bounded_tool_title),
+        ),
+        "grep" | "glob" | "search" => (
+            Some("Search".to_owned()),
+            input["pattern"].as_str().and_then(bounded_tool_title),
+        ),
+        "webfetch" | "websearch" => (
+            Some("Web search".to_owned()),
+            input["url"].as_str().and_then(bounded_tool_title),
+        ),
+        "task" => (
+            Some("Subagent".to_owned()),
+            input["description"].as_str().and_then(bounded_tool_title),
+        ),
+        "todowrite" | "todoread" => (Some("Update plan".to_owned()), None),
+        "question" => (
+            Some("Question".to_owned()),
+            input["questions"]
+                .as_array()
+                .and_then(|questions| questions.first())
+                .and_then(|question| question["question"].as_str())
+                .and_then(bounded_tool_title),
+        ),
+        value => (bounded_tool_title(value), None),
+    };
+    if let Some(title) = title {
+        fields.insert("title".into(), json!(title));
+    }
+    if let Some(detail) = detail {
+        fields.insert("detail".into(), json!(detail));
+    }
+    let output = item["content"]
+        .as_array()
+        .map(|content| {
+            content
+                .iter()
+                .filter_map(|part| part["text"].as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .filter(|output| !output.trim().is_empty());
+    if let Some(output) = output {
+        fields.insert("output".into(), json!(output));
+    }
+    if let Some(status) = match item["status"].as_str() {
+        Some("running") => Some("running"),
+        Some("completed") => Some("completed"),
+        Some("failed") => Some("failed"),
+        Some("cancelled" | "canceled" | "declined") => Some("declined"),
+        _ => None,
+    } {
+        fields.insert("status".into(), json!(status));
+    }
+}
+
+fn bounded_tool_title(source: &str) -> Option<String> {
+    let mut chars = source.chars();
+    let head: String = chars.by_ref().take(160).collect();
+    let mut title = head.split_whitespace().collect::<Vec<_>>().join(" ");
+    if title.is_empty() {
+        return None;
+    }
+    if chars.next().is_some() {
+        title.push('…');
+    }
+    Some(title)
+}
+
+fn apply_codex(row: &mut Value, item: &Value) {
+    if item["type"] != "commandExecution" {
         return;
     }
     let Some(fields) = row.as_object_mut() else {
@@ -59,6 +188,55 @@ mod tests {
             apply(&mut row, "codex", &item);
             assert_eq!(row, expected);
             assert_eq!(item, original);
+        }
+    }
+
+    #[test]
+    fn opencode_tool_call_gets_swift_style_title_category_and_status() {
+        let mut shell = json!({"kind":"tool","text":"raw"});
+        apply(
+            &mut shell,
+            "opencode",
+            &json!({"type":"toolCall","name":"shell","status":"running","input":{"command":"  cargo   test\n-p coincide-core "}}),
+        );
+        assert_eq!(shell["category"], "command");
+        assert_eq!(shell["title"], "Run command");
+        assert_eq!(shell["detail"], "cargo test -p coincide-core");
+        assert_eq!(shell["status"], "running");
+        assert_eq!(shell["text"], "raw");
+
+        let mut read = json!({"kind":"tool","text":"raw"});
+        apply(
+            &mut read,
+            "opencode",
+            &json!({"type":"toolCall","name":"read","status":"completed","input":{"filePath":"/tmp/crates/core/src/api.rs"}}),
+        );
+        assert_eq!(read["category"], "read");
+        assert_eq!(read["title"], "Read file");
+        assert_eq!(read["detail"], "/tmp/crates/core/src/api.rs");
+        assert_eq!(read["status"], "completed");
+
+        let mut question = json!({"kind":"tool","text":"raw"});
+        apply(
+            &mut question,
+            "opencode",
+            &json!({"type":"toolCall","name":"question","status":"completed","input":{"questions":[{"question":"Which path?"}]}}),
+        );
+        assert_eq!(question["title"], "Question");
+        assert_eq!(question["detail"], "Which path?");
+        assert_eq!(question["status"], "completed");
+    }
+
+    #[test]
+    fn opencode_non_tool_parts_are_untouched() {
+        let original = json!({"kind":"tool","text":"raw","title":"keep","status":"waiting"});
+        for item in [
+            json!({"type":"reasoning","text":"thought"}),
+            json!({"type":"agentMessage","text":"answer"}),
+        ] {
+            let mut row = original.clone();
+            apply(&mut row, "opencode", &item);
+            assert_eq!(row, original);
         }
     }
 
@@ -195,7 +373,7 @@ sys.stdin.readline()
             .args([
                 "--ignored",
                 "--exact",
-                "api::codex_tool_metadata::tests::command_metadata_fixture_child",
+                "api::provider_tool_metadata::tests::command_metadata_fixture_child",
                 "--nocapture",
             ])
             .env("COINCIDE_COMMAND_METADATA_FIXTURE", root.path())

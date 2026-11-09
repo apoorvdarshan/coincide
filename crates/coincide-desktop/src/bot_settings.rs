@@ -3,6 +3,7 @@
 //! look, name, personality, instructions (bot.persona) and folder; nothing is
 //! saved until Save. The agent, model and modes stay as saved.
 use crate::bot_avatar;
+use crate::native_menu::AccessibleMenuExt as _;
 use crate::worker_owner::{Admission, ShutdownStatus as WorkerOwnerStatus, WorkerOwner};
 use anyhow::{Context as _, Result, ensure};
 use coincide_core::{
@@ -18,7 +19,7 @@ use gpui_kit::{
         ActiveTheme,
         button::*,
         input::{Input, InputEvent, InputState, Textarea, TextareaState},
-        menu::{DropdownMenu, PopupMenuItem},
+        menu::PopupMenuItem,
     },
     *,
 };
@@ -1098,7 +1099,7 @@ impl BotSettingsPanel {
             .compact()
             .disabled(locked)
             .dropdown_caret(true)
-            .dropdown_menu(move |mut menu, _, _| {
+            .accessible_menu(move |mut menu, _, _| {
                 for preset in &PRESETS {
                     let parent = parent.clone();
                     let (name, summary, id) = (preset.name, preset.summary, preset.id);

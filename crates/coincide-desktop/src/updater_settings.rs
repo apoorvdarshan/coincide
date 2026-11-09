@@ -17,7 +17,7 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     Context, FontWeight, InteractiveElement, IntoElement, ParentElement, Render, Styled, Task,
     Window,
-    component::{ActiveTheme, Disableable, button::Button, checkbox::Checkbox},
+    component::{ActiveTheme, Disableable, button::Button, switch::Switch},
     div,
 };
 use serde_json::json;
@@ -473,11 +473,18 @@ impl Render for UpdaterSettingsView {
                     .child("App Updates"),
             )
             .child(
-                Checkbox::new("app-update-daily")
-                    .label("Check for updates daily")
-                    .checked(daily)
-                    .on_click(
-                        cx.listener(|this, checked: &bool, _, cx| this.set_daily(*checked, cx)),
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child("Check for updates daily")
+                    .child(
+                        Switch::new("app-update-daily")
+                            .accessibility_label("Check for updates daily")
+                            .checked(daily)
+                            .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                                this.set_daily(*checked, cx)
+                            })),
                     ),
             )
             .child(

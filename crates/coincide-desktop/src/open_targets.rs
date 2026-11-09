@@ -1,7 +1,8 @@
 //! Native app handoff. Arguments never pass through a shell; discovery and
 //! rendering never launch an app. A user click captures the current folder.
 use super::*;
-use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
+use crate::native_menu::AccessibleMenuExt as _;
+use gpui_kit::component::menu::PopupMenuItem;
 use std::path::{Path, PathBuf};
 #[derive(Clone)]
 pub(super) struct Target {
@@ -568,7 +569,7 @@ impl Coincide {
                             .compact()
                             .accessibility_label("Preferred application for project folders")
                             .dropdown_caret(true)
-                            .dropdown_menu(move |mut menu, _, _| {
+                            .accessible_menu(move |mut menu, _, _| {
                                 let mut previous = None;
                                 for choice in &choices {
                                     if choice.group != previous {

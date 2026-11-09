@@ -1,7 +1,8 @@
 //! Native voice preference edits do not confer capture or executable authority.
 use super::*;
+use crate::native_menu::AccessibleMenuExt as _;
 use coincide_core::voice::{Edit, Engine, Mode, Settings};
-use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
+use gpui_kit::component::menu::PopupMenuItem;
 use gpui_kit::component::switch::Switch;
 
 /// What macOS does when 🌐 is pressed ("Press 🌐 key to"), read from its
@@ -90,7 +91,7 @@ impl Coincide {
     ) -> AnyElement {
         let parent = cx.entity().downgrade();
         let expected = self.settings.get("voice").cloned();
-        Button::new(id).label(label).dropdown_caret(true).dropdown_menu(move|mut menu,_,_|{
+        let control = Button::new(id).label(label).small().w(px(220.)).dropdown_caret(true).accessible_menu(move|mut menu,_,_|{
             for (label,checked,edit) in &choices {
                 let parent=parent.clone();let expected=expected.clone();let edit=edit.clone();
                 menu=menu.item(PopupMenuItem::new(label.clone()).checked(*checked).on_click(move|_,window,cx|{
@@ -100,7 +101,17 @@ impl Coincide {
                     });
                 }));
             }menu
-        }).into_any_element()
+        });
+        let title = match id {
+            "voice-engine-picker" => "Engine",
+            "voice-model-picker" => "Model",
+            "voice-input-picker" => "Microphone",
+            "voice-language-picker" => "Language",
+            "voice-mode-picker" => "Shortcut behavior",
+            "voice-modifier-picker" => "Shortcut key",
+            _ => "Option",
+        };
+        self.labeled_row(title, None, control).into_any_element()
     }
     pub(super) fn voice_preferences(&self, cx: &mut Context<Self>) -> AnyElement {
         let voice = Settings::decode(&self.settings);
@@ -134,7 +145,6 @@ impl Coincide {
                         this.change_voice_setting(Edit::Enabled(*value), window, cx)
                     })),
             ))
-            .child("Engine")
             .child(
                 self.voice_picker(
                     "voice-engine-picker",
@@ -152,7 +162,12 @@ impl Coincide {
                     cx,
                 ),
             );
-        pane=pane.child(match voice.engine {Engine::Whisper=>"Local Whisper uses the executable and model selected below. Selecting an engine does not open the microphone.",Engine::Apple=>if voice_speech::compiled(){"On-device Apple Speech prepares its language assets and authorization only after explicit Dictate. Audio remains on this device. Interim text appears as a preview; final text is inserted after Stop."}else{"Apple Speech is unavailable on this platform/build. Select Local Whisper for equivalent offline dictation."},Engine::OpenAi|Engine::Groq=>"Recordings are sent to this service under your account and its data policies. Explicitly save or load a Voice key below; provider accounts do not supply Voice credentials."});
+        pane = pane.child(div().px_3().text_xs().text_color(self.color(0x98a6ba)).child(match voice.engine {
+            Engine::Whisper => "Transcribes on this device using your selected Whisper model.",
+            Engine::Apple if voice_speech::compiled() => "Transcribes on this device. Speech authorization is requested when you start dictation.",
+            Engine::Apple => "Apple Speech is unavailable on this platform. Choose Local Whisper for offline dictation.",
+            Engine::OpenAi | Engine::Groq => "Sends recordings to this service using your Voice API key.",
+        }));
         let models: &[(&str, &str)] = match voice.engine {
             Engine::OpenAi => &[
                 ("gpt-transcribe", "GPT Transcribe"),
@@ -177,7 +192,7 @@ impl Coincide {
                 .find(|(id, _)| *id == current)
                 .map(|(_, label)| *label)
                 .unwrap_or(current.as_str());
-            pane = pane.child("Model").child(
+            pane = pane.child(
                 self.voice_picker(
                     "voice-model-picker",
                     label.into(),
@@ -232,22 +247,27 @@ impl Coincide {
             }
         }
         pane = pane
-            .child("Microphone")
             .child(self.voice_picker("voice-input-picker", label, device_choices, cx))
             .child(
-                Button::new("voice-input-refresh")
-                    .label(if refreshing {
-                        "Refreshing inputs…"
-                    } else {
-                        "Refresh Input Devices"
-                    })
-                    .disabled(refreshing || !microphone::compiled_backend_available())
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.microphone_panel
-                            .update(cx, |panel, cx| panel.refresh_devices(cx))
-                    })),
+                div().flex().justify_end().child(
+                    Button::new("voice-input-refresh")
+                        .label(if refreshing {
+                            "Refreshing…"
+                        } else {
+                            "Refresh microphones"
+                        })
+                        .small()
+                        .disabled(refreshing || !microphone::compiled_backend_available())
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.microphone_panel
+                                .update(cx, |panel, cx| panel.refresh_devices(cx))
+                        })),
+                ),
             )
-            .child(device_status);
+            .when(
+                devices.is_some() || voice.input_device_uid.is_some(),
+                |view| view.child(div().text_xs().child(device_status)),
+            );
         if voice.input_device_uid.is_some() && devices.is_none() {
             pane=pane.child("Saved microphone has not been checked. Refresh inputs to view its current availability; unavailable input never falls back.");
         } else if voice.input_device_uid.as_ref().is_some_and(|uid| {
@@ -300,7 +320,7 @@ impl Coincide {
             .find(|(code, _)| *code == voice.language)
             .map(|(_, label)| *label)
             .unwrap_or(voice.language.as_str());
-        pane = pane.child("Language").child(
+        pane = pane.child(
             self.voice_picker(
                 "voice-language-picker",
                 language_label.into(),
@@ -343,7 +363,7 @@ impl Coincide {
             (Mode::Hold, "Hold"),
             (Mode::Tap, "Tap"),
         ];
-        pane = pane.child("Shortcut behavior").child(
+        pane = pane.child(
             self.voice_picker(
                 "voice-mode-picker",
                 modes
@@ -434,6 +454,9 @@ impl Coincide {
     pub(super) fn composer_voice_control(&self, cx: &mut Context<Self>) -> AnyElement {
         let voice = Settings::decode(&self.settings);
         let active = self.microphone_panel.read(cx).dictation_active();
+        if !voice.enabled && !active {
+            return div().into_any_element();
+        }
         div()
             .flex()
             .gap_2()

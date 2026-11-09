@@ -1,5 +1,6 @@
 use super::*;
-use gpui_kit::component::switch::Switch;
+use crate::native_menu::AccessibleMenuExt as _;
+use gpui_kit::component::{menu::PopupMenuItem, switch::Switch};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum SettingsSection {
@@ -374,7 +375,7 @@ fn link_routing_caption(default_browser: bool) -> &'static str {
 pub(super) fn reply_font() -> &'static str {
     #[cfg(target_os = "macos")]
     {
-        "New York"
+        ".AppleSystemUIFontSerif"
     }
     #[cfg(target_os = "windows")]
     {
@@ -527,6 +528,7 @@ impl Coincide {
             Some(caption.into()),
             Switch::new(id)
                 .accessibility_label(label)
+                .color(self.color(0xe4e9f2))
                 .checked(checked)
                 .on_click(cx.listener(move |this, value: &bool, window, cx| {
                     this.change_setting(key, json!(*value), window, cx)
@@ -543,34 +545,59 @@ impl Coincide {
         choices: Vec<(&'static str, Value)>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        div()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .p_3()
-            .border_b_1()
-            .border_color(self.color(0x29303d))
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(label))
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap_2()
-                    .children(
-                        choices
-                            .into_iter()
-                            .enumerate()
-                            .map(|(index, (label, value))| {
-                                Button::new(SharedString::from(format!("setting-{key}-{index}")))
-                                    .label(label)
-                                    .when(value == current, |button| button.primary())
-                                    .on_click(cx.listener(move |this, _, window, cx| {
+        let selected = choices
+            .iter()
+            .find(|(_, value)| *value == current)
+            .map(|(label, _)| *label)
+            .unwrap_or("Choose…");
+        let owner = cx.entity().downgrade();
+        let caption = match key {
+            "numberFormat" => Some("System follows your region. International uses 1,234,567.89."),
+            "replyTypeface" => Some("The typeface of agents’ replies in the conversation."),
+            "userMessageSide" => Some(
+                "Where your messages sit in the conversation. Agents’ replies stay by the agent rail.",
+            ),
+            "sendOnReturn" => {
+                Some("Shift-Return inserts a new line when Return sends the message.")
+            }
+            "followUpBehavior" => Some(
+                "New threads start with this; each thread keeps its own choice in its composer.",
+            ),
+            _ => None,
+        };
+        self.labeled_row(
+            label,
+            caption.map(SharedString::from),
+            Button::new(SharedString::from(format!("setting-{key}")))
+                .label(selected)
+                .accessibility_label(label)
+                .ghost()
+                .compact()
+                .h(px(26.))
+                .px_2()
+                .bg(self.color(0x181d28))
+                .border_1()
+                .border_color(self.color(0x29303d))
+                .rounded(px(6.))
+                .dropdown_caret(true)
+                .accessible_menu_with_anchor(Anchor::TopRight, move |mut menu, _, _| {
+                    for (label, value) in &choices {
+                        let owner = owner.clone();
+                        let value = value.clone();
+                        menu = menu.item(
+                            PopupMenuItem::new(*label)
+                                .checked(value == current)
+                                .on_click(move |_, window, cx| {
+                                    let _ = owner.update(cx, |this, cx| {
                                         this.change_setting(key, value.clone(), window, cx)
-                                    }))
-                            }),
-                    ),
-            )
-            .into_any_element()
+                                    });
+                                }),
+                        );
+                    }
+                    menu
+                }),
+        )
+        .into_any_element()
     }
 
     pub(super) fn refresh_awake_status(&mut self, cx: &mut Context<Self>) {
@@ -705,6 +732,28 @@ impl Coincide {
                             .into_any_element()
                     })
                     .into_any_element()
+        } else if self.settings_section == SettingsSection::Instructions {
+            div()
+                .flex_1()
+                .min_h_0()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .overflow_hidden()
+                .child(self.settings_subpage_header(
+                    "Instructions",
+                    "instructions-settings-done",
+                    cx,
+                ))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .child(self.instructions_panel.clone()),
+                )
+                .into_any_element()
         } else if self.settings_section == SettingsSection::Appshots {
             self.appshots_settings_panel(cx)
         } else if self.computer_use_settings_visible() {
@@ -907,7 +956,17 @@ impl Coincide {
                     "Reply font",
                     "replyTypeface",
                     json!("newYork"),
-                    vec![("Serif", json!("newYork")), ("System", json!("system"))],
+                    vec![
+                        (
+                            if cfg!(target_os = "macos") {
+                                "New York"
+                            } else {
+                                "Serif"
+                            },
+                            json!("newYork"),
+                        ),
+                        ("System", json!("system")),
+                    ],
                 ),
                 (
                     S::Conversation,

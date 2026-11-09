@@ -228,6 +228,26 @@ impl Coincide {
                 0.
             }
     }
+    pub(super) fn composer_available_height(&self, window: &Window) -> f32 {
+        let available = f64::from(f32::from(window.viewport_size().height)) - 44.;
+        if self.terminal_open && !self.terminal_on_right() {
+            (available - height(self.terminal_layout.height, available)).max(120.) as f32
+        } else {
+            available.max(120.) as f32
+        }
+    }
+    pub(super) fn composer_available_width(&self, window: &Window) -> f32 {
+        let available = self.terminal_available_width(window);
+        let chat = if self.chat_inspector_panel().is_some() {
+            available
+                - inspector_width(self.terminal_layout.share, available)
+                - f64::from(DIVIDER_HIT_WIDTH)
+        } else {
+            available
+        };
+        ((chat as f32 - presentation::CONTENT_GUTTER * 2.).min(presentation::CONTENT_WIDTH) - 24.)
+            .max(0.)
+    }
     pub(super) fn ensure_terminal_space(&self, window: &mut Window) {
         if self.terminal_on_right() {
             self.ensure_inspector_space(window);
@@ -251,10 +271,12 @@ impl Coincide {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let id = self.terminal_visible_thread.as_ref()?;
-        if self.terminal_on_right() != right {
+        if !self.terminal_open || !self.chat_visible() || self.terminal_on_right() != right {
             return None;
         }
+        // Activity gates terminal input/polling, not its layout. Keep the cached
+        // pane on screen when another app or the Settings window takes focus.
+        let id = self.selected.as_ref()?.get("id")?.as_str()?;
         let workspace = self.terminal_workspaces.get(id)?.clone();
         let appearance = self.terminal_appearance();
         workspace.update(cx, |workspace, cx| workspace.set_appearance(appearance, cx));
@@ -403,7 +425,7 @@ impl Coincide {
                         .h(px(height(self.terminal_layout.height, available) as f32))
                         .min_h(px(120.))
                         .w_full()
-                        .flex_shrink_1()
+                        .flex_shrink_0()
                 })
                 .on_drag_move(
                     cx.listener(|this, event: &DragMoveEvent<ResizeTerminal>, _, cx| {

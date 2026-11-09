@@ -69,7 +69,7 @@ impl Coincide {
     fn composer_send_visible(&self) -> bool {
         self.chat_visible() && !self.composer_files.opened
     }
-    pub(super) fn follow_up_button(&self, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn follow_up_button(&self, compact: bool, cx: &mut Context<Self>) -> AnyElement {
         let Some(thread) = self.selected.as_ref() else {
             return div().into_any_element();
         };
@@ -81,9 +81,10 @@ impl Coincide {
             ),
         );
         Button::new("selection-follow-up-disclosure")
-            .label(behavior.label())
+            .when(!compact, |button| button.label(behavior.label()))
+            .when(compact, |button| button.w(px(28.)).p_0())
             .icon(behavior_icon(behavior))
-            .dropdown_caret(true)
+            .dropdown_caret(!compact)
             .accessibility_label(format!("While the agent works: {}", behavior.label()))
             .tooltip("Choose what Send does while the agent works")
             .ghost()

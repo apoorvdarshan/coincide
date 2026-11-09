@@ -10,7 +10,9 @@ name = "coincide-rust"
 path = "src/main.rs"
 
 [features]
-default = []
+# A normal desktop build includes its native integrations. Minimal test builds
+# can opt out explicitly with --no-default-features.
+default = ["native-notifications", "native-microphone", "native-computer-use"]
 native-notifications = ["dep:objc2-user-notifications"]
 native-microphone = ["dep:cpal"]
 native-computer-use = []

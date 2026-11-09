@@ -4,7 +4,7 @@
 //! them. Native UI only: agents and pages can't click these.
 use super::*;
 use browser::passkeys::Preferences;
-use gpui_kit::component::checkbox::Checkbox;
+use gpui_kit::component::switch::Switch;
 impl Coincide {
     pub(super) fn browser_passkey_banner(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let thread = self.selected.as_ref().map(|thread| text(thread, "id"))?;
@@ -159,29 +159,59 @@ impl Coincide {
                 }))
                 .into_any_element();
         }
-        section = section
-            .child(
-                Checkbox::new("passkeys-use-bitwarden")
-                    .label("Use passkeys from Bitwarden")
-                    .checked(preferences.uses_bitwarden)
-                    .on_click(cx.listener(|this, checked, window, cx| {
-                        this.change_setting(Preferences::USES_BITWARDEN, json!(*checked), window, cx)
-                    })),
-            )
-            .child(div().text_sm().child("When a site asks for a passkey you saved in Bitwarden, Coincide offers to sign in with it, and you confirm each sign-in. Coincide reads the passkey with Bitwarden’s tool on this computer, only to answer the site, and never sends it anywhere else. Bitwarden must be unlocked in the session Coincide started from (BW_SESSION)."));
+        section = section.child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap_3()
+                .child(div().flex_1().min_w_0().child("Use passkeys from Bitwarden").child(
+                    div().text_xs().whitespace_normal().child(
+                        "Confirm each sign-in using a passkey in your unlocked Bitwarden account.",
+                    ),
+                ))
+                .child(
+                    Switch::new("passkeys-use-bitwarden")
+                        .color(gpui_kit::rgb(0xe4e9f2))
+                        .checked(preferences.uses_bitwarden)
+                        .on_click(cx.listener(|this, checked, window, cx| {
+                            this.change_setting(
+                                Preferences::USES_BITWARDEN,
+                                json!(*checked),
+                                window,
+                                cx,
+                            )
+                        })),
+                ),
+        );
         if preferences.uses_bitwarden {
             section = section.child(
-                Checkbox::new("passkeys-confirm-touch-id")
-                    .label("Confirm passkey sign-ins with Touch ID")
-                    .checked(preferences.always_verifies)
-                    .on_click(cx.listener(|this, checked, window, cx| {
-                        this.change_setting(
-                            Preferences::ALWAYS_VERIFIES,
-                            json!(*checked),
-                            window,
-                            cx,
-                        )
-                    })),
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex_1()
+                            .child("Confirm passkey sign-ins with Touch ID")
+                            .child(div().text_xs().whitespace_normal().child(
+                                "Require Touch ID or your Mac password after you choose Sign In.",
+                            )),
+                    )
+                    .child(
+                        Switch::new("passkeys-confirm-touch-id")
+                            .color(gpui_kit::rgb(0xe4e9f2))
+                            .checked(preferences.always_verifies)
+                            .on_click(cx.listener(|this, checked, window, cx| {
+                                this.change_setting(
+                                    Preferences::ALWAYS_VERIFIES,
+                                    json!(*checked),
+                                    window,
+                                    cx,
+                                )
+                            })),
+                    ),
             );
         }
         section.into_any_element()

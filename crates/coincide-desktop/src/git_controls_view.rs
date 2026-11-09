@@ -1,14 +1,12 @@
 //! Rendering for the git action bar, its result banner and commit sheet, the
 //! default-branch question, and the branch toolbar with its branch picker.
 use super::*;
+use crate::native_menu::AccessibleMenuExt as _;
 use coincide_core::git_actions::{QuickKind, StackedAction};
 use gpui_kit::{
     assets::IconName,
     component::{
-        checkbox::Checkbox,
-        menu::{DropdownMenu, PopupMenuItem},
-        popover::Popover,
-        spinner::Spinner,
+        checkbox::Checkbox, menu::PopupMenuItem, popover::Popover, spinner::Spinner,
         tooltip::Tooltip,
     },
 };
@@ -254,7 +252,7 @@ impl Coincide {
                         .tooltip("More Git actions")
                         .small()
                         .ghost()
-                        .dropdown_menu(move |mut menu, _, _| {
+                        .accessible_menu(move |mut menu, _, _| {
                             let item = |title: String, icon: IconName, enabled: bool| {
                                 PopupMenuItem::new(title).icon(icon).disabled(!enabled)
                             };
@@ -766,7 +764,7 @@ impl Coincide {
             let has_base = new_base.is_some();
             workspace
                 .dropdown_caret(true)
-                .dropdown_menu(move |mut menu, _, _| {
+                .accessible_menu(move |mut menu, _, _| {
                     if !started {
                         let target = parent.clone();
                         menu = menu.item(

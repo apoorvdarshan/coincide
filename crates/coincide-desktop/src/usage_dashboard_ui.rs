@@ -3,6 +3,7 @@
 //! account's plan limits, Activity in Coincide and the notes. Tokens come from
 //! saved turns whose agent reported them; plan limits are read on Refresh.
 use super::*;
+use crate::native_menu::AccessibleMenuExt as _;
 use crate::usage_dashboard::{Account, LimitState};
 use chrono::{Local, NaiveDate, Utc};
 use coincide_core::{
@@ -11,6 +12,7 @@ use coincide_core::{
     usage_presentation::{self as format, Level, Row},
     usage_report::{self as report, Event, PROVIDERS, Report, Totals},
 };
+use gpui_kit::component::menu::PopupMenuItem;
 
 const PERIODS: [u32; 3] = [7, 30, 90];
 
@@ -293,17 +295,20 @@ impl Coincide {
             .items_center()
             .justify_between()
             .gap_3()
-            .child(div().flex_1().min_w_0().child(label.to_owned()).when_some(
-                detail,
-                |view, detail| {
-                    view.child(
-                        div()
-                            .text_xs()
-                            .text_color(self.usage_muted(cx))
-                            .child(detail.to_owned()),
-                    )
-                },
-            ))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(80.))
+                    .child(label.to_owned())
+                    .when_some(detail, |view, detail| {
+                        view.child(
+                            div()
+                                .text_xs()
+                                .text_color(self.usage_muted(cx))
+                                .child(detail.to_owned()),
+                        )
+                    }),
+            )
             .child(control)
             .into_any_element()
     }
@@ -1070,30 +1075,28 @@ impl Coincide {
             );
 
         // Filters.
-        let mut providers = div().flex().flex_wrap().gap_1().child(self.usage_chip(
-            "usage-show-all".into(),
-            filter_provider.is_none(),
-            div().child("All agents").into_any_element(),
-            |this, _| this.usage_history.dashboard.select_provider(None),
-            cx,
-        ));
-        for provider in PROVIDERS {
-            providers = providers.child(
-                self.usage_chip(
-                    SharedString::from(format!("usage-show-{provider}")),
-                    filter_provider == Some(provider),
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_1()
-                        .child(self.usage_logo(provider, 14.))
-                        .child(provider_name(provider))
-                        .into_any_element(),
-                    move |this, _| this.usage_history.dashboard.select_provider(Some(provider)),
-                    cx,
-                ),
-            );
-        }
+        let owner = cx.entity().downgrade();
+        let providers = Button::new("usage-provider-filter")
+            .label(filter_provider.map(provider_name).unwrap_or("All agents"))
+            .accessibility_label("Show usage for agent")
+            .compact()
+            .dropdown_caret(true)
+            .accessible_menu_with_anchor(Anchor::TopRight, move |mut menu, _, _| {
+                for provider in std::iter::once(None).chain(PROVIDERS.into_iter().map(Some)) {
+                    let owner = owner.clone();
+                    menu = menu.item(
+                        PopupMenuItem::new(provider.map(provider_name).unwrap_or("All agents"))
+                            .checked(filter_provider == provider)
+                            .on_click(move |_, _, cx| {
+                                let _ = owner.update(cx, |this, cx| {
+                                    this.usage_history.dashboard.select_provider(provider);
+                                    cx.notify();
+                                });
+                            }),
+                    );
+                }
+                menu
+            });
         let mut filters = vec![self.usage_labeled("Show", None, providers.into_any_element(), cx)];
         if !account_choices.is_empty() {
             let mut accounts = div().flex().flex_wrap().gap_1().child(self.usage_chip(
@@ -1115,19 +1118,30 @@ impl Coincide {
             }
             filters.push(self.usage_labeled("Account", None, accounts.into_any_element(), cx));
         }
-        let mut periods = div().flex().gap_1();
-        for days in PERIODS {
-            periods = periods.child(self.usage_chip(
-                SharedString::from(format!("usage-period-{days}")),
-                dashboard.days == days,
-                div().child(format!("Last {days} days")).into_any_element(),
-                move |this, _| {
-                    this.usage_history.dashboard.days = days;
-                    this.usage_history.dashboard.hovered = None;
-                },
-                cx,
-            ));
-        }
+        let owner = cx.entity().downgrade();
+        let selected_days = dashboard.days;
+        let periods = Button::new("usage-period-filter")
+            .label(format!("Last {selected_days} days"))
+            .accessibility_label("Usage period")
+            .compact()
+            .dropdown_caret(true)
+            .accessible_menu_with_anchor(Anchor::TopRight, move |mut menu, _, _| {
+                for days in PERIODS {
+                    let owner = owner.clone();
+                    menu = menu.item(
+                        PopupMenuItem::new(format!("Last {days} days"))
+                            .checked(selected_days == days)
+                            .on_click(move |_, _, cx| {
+                                let _ = owner.update(cx, |this, cx| {
+                                    this.usage_history.dashboard.days = days;
+                                    this.usage_history.dashboard.hovered = None;
+                                    cx.notify();
+                                });
+                            }),
+                    );
+                }
+                menu
+            });
         filters.push(self.usage_labeled(
             "Period",
             Some("For the chart, the split and the lists below."),

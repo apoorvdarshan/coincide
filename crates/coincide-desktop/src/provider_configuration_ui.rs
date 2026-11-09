@@ -812,6 +812,7 @@ impl Panel {
                             .child(
                                 Button::new("provider-check-again")
                                     .label("Check Again")
+                                    .small()
                                     .disabled(
                                         !loaded || !self.enabled || busy || dirty || needs_approval,
                                     )
@@ -842,6 +843,8 @@ impl Panel {
                         .child(
                             Button::new("provider-reveal-executable")
                                 .label("Show in File Manager")
+                                .small()
+                                .ghost()
                                 .on_click(move |_, _, cx| cx.reveal_path(&location)),
                         )
                         .when_some(report.status_note.as_ref(), |pane, note| {
@@ -869,10 +872,18 @@ impl Panel {
                             )
                         }))
                     })
-                    .child(div().text_sm().child(editor.notice.clone()))
+                    .when(
+                        !matches!(
+                            editor.notice.as_str(),
+                            "Saved settings loaded." | "Check finished." | ""
+                        ),
+                        |pane| pane.child(div().text_xs().child(editor.notice.clone())),
+                    )
                     .child(
                         Button::new("provider-config-reload")
                             .label("Reload Saved Settings")
+                            .small()
+                            .ghost()
                             .disabled(busy || dirty)
                             .tooltip(if dirty {
                                 "Discard changes before reloading saved settings"
@@ -891,16 +902,21 @@ impl Panel {
                 let key = provider.clone();
                 pane = pane
                     .child(div().font_weight(FontWeight::SEMIBOLD).child("Executable"))
-                    .child("Leave empty to find the command-line tool on your PATH.")
+                    .child(
+                        div()
+                            .text_xs()
+                            .child("Leave empty to find the command-line tool automatically."),
+                    )
                     .child(
                         div()
                             .flex()
                             .items_center()
                             .gap_2()
-                            .child(Input::new(&editor.path).flex_1())
+                            .child(Input::new(&editor.path).small().flex_1())
                             .child(
                                 Button::new("provider-choose-executable")
                                     .label("Choose…")
+                                    .small()
                                     .disabled(busy)
                                     .on_click(cx.listener(move |this, _, window, cx| {
                                         this.choose(&key, window, cx)

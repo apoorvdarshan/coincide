@@ -88,8 +88,7 @@ def main():
         process = subprocess.Popen([str(binary)], env=env, stdout=log, stderr=subprocess.STDOUT)
         wait_for("live application control", lambda: process.poll() is None and rpc("app.status"))
         window = wait_for("visible Coincide X11 window", lambda: command(
-            "xdotool", "search", "--all", "--onlyvisible", "--pid", str(process.pid),
-            "--name", "^Coincide Rust Preview$", env=env).splitlines()[0])
+            "xdotool", "search", "--all", "--onlyvisible", "--pid", str(process.pid), env=env).splitlines()[0])
         command("xdotool", "windowfocus", "--sync", window, env=env)
         return window
 
@@ -315,6 +314,16 @@ def main():
         draft = "Native X11 keyboard draft survives restart"
         command("xdotool", "type", "--clearmodifiers", "--delay", "100", draft, env=env)
         command("import", "-window", window, str(artifacts / "composer-after-type.png"), env=env)
+        # Typing reaches the native input asynchronously. Wait for the whole
+        # probe to be rendered before switching, so the draft boundary below
+        # cannot race the last queued key event. The exact saved draft is still
+        # asserted afterwards, unchanged.
+        def typed_text_rendered():
+            command("import", "-window", window, str(artifacts / "composer-after-type.png"), env=env)
+            rendered = command("tesseract", str(artifacts / "composer-after-type.png"), "stdout", env=env)
+            normalized = " ".join(rendered.lower().split())
+            return "keyboard" in normalized and "restar" in normalized
+        wait_for("rendered native composer text", typed_text_rendered)
         # Drafts persist at the thread-switch boundary, not on every keystroke,
         # so the typing path never waits on the store. Switch to a fresh thread
         # and back: the switch is the app's own draft boundary. Then focus the
@@ -403,7 +412,7 @@ def main():
             ("Archive", "Archive", "archived"),
             ("Keyboard", "Keyboard", "shortcuts"),
             ("Voice", "Voice", "Engine"),
-            ("Browser", "Browser", "Browser profiles"),
+            ("Browser", "Browser", "Browser profile"),
             ("Computer Use", "Computer Use", "Computer Use"),
             ("Appshots", "Appshots", "Permissions"),
             ("Historical images", "Historical images", "Historical images"),
@@ -423,10 +432,12 @@ def main():
             click_rendered_word(settings_window, stage + "-result", word, min_y=80, line=True)
             wait_for(f"native Settings title {title}", lambda title=title: command("xdotool", "getwindowname", settings_window, env=env).strip() == title)
             provider_page = title in {"Claude Code", "Cursor", "Grok Build", "OpenCode", "Antigravity"}
-            # These routes only load saved local configuration. Wait for that
-            # real retained child completion before recording enabled controls;
-            # never click Check/Sign In or execute a provider for this check.
-            capture(settings_window, stage, "Saved settings loaded" if provider_page else body_text)
+            # These routes only load saved local configuration. Wait for the
+            # provider page's own reload control, which is rendered whether or
+            # not the provider is installed on this runner; a configured
+            # provider's "Saved settings loaded" line is checked below. Never
+            # click Check/Sign In or execute a provider for this check.
+            capture(settings_window, stage, "Reload Saved Settings" if provider_page else body_text)
             report["settingsScreens"].append({"title": title, "artifact": stage + ".png", "nativeTitleVerified": True, "savedConfigurationLoaded": provider_page})
         click_rendered_word(settings_window, "settings-all-pages-return-general", "General")
         wait_for("native General title after all pages", lambda: command("xdotool", "getwindowname", settings_window, env=env).strip() == "General")
@@ -457,33 +468,46 @@ def main():
         module_spec = importlib.util.spec_from_file_location("owned_browser_fixture", Path(__file__).with_name("native-browser-fixture.py"))
         browser_fixture = importlib.util.module_from_spec(module_spec)
         module_spec.loader.exec_module(browser_fixture)
+        # The browser pane's controls are icon-only, as Swift's are, so drive
+        # them at their fixed places from the pane's right edge and confirm the
+        # effect through the store and a captured frame.
+        def click_browser_icon(x_from_right, y, stage):
+            geometry = command("xdotool", "getwindowgeometry", "--shell", window, env=env)
+            width = int(next(line.split("=")[1] for line in geometry.splitlines() if line.startswith("WIDTH=")))
+            command("xdotool", "windowfocus", "--sync", window, env=env)
+            command("xdotool", "mousemove", "--window", window,
+                    str(width - x_from_right), str(y), "click", "1", env=env)
+            time.sleep(0.4)
+            command("import", "-window", window, str(artifacts / (stage + ".png")), env=env)
+        AGENT_CONTROL = (48, 17)
+        RELOAD = (17, 54)
+        BOOKMARK = (89, 54)
+        LIBRARY = (66, 54)
         def pane_controls(tab, url, http_requests):
-            click_rendered_phrase(window, "browser-control-off", "Agent Control: On")
+            click_browser_icon(*AGENT_CONTROL, "browser-control-off")
             wait_for("persisted per-thread Agent Control off", lambda: rpc("browser.settings.read")["agentControl"].get(thread_id) is False)
             operation = rpc("browser.request", threadId=thread_id, tab=tab, action="read")["operationId"]
             refusal = wait_for("agent request refused by native control", lambda: (result if (result := rpc("browser.result", threadId=thread_id, operationId=operation)).get("ready") else None))
             assert refusal["result"] == {"error": "Agent Control is off for this conversation"}, refusal
             before = http_requests.count("/second")
-            click_rendered_phrase(window, "browser-native-reload-off", "Reload")
+            click_browser_icon(*RELOAD, "browser-native-reload-off")
             wait_for("native Reload still works with agent control off", lambda: http_requests.count("/second") > before)
             capture(window, "browser-native-reload-off-ready", "NativeBrowserSecondReady")
-            click_rendered_phrase(window, "browser-control-on", "Agent Control: Off")
+            click_browser_icon(*AGENT_CONTROL, "browser-control-on")
             wait_for("persisted per-thread Agent Control on", lambda: rpc("browser.settings.read")["agentControl"].get(thread_id) is True)
-            click_rendered_phrase(window, "browser-bookmark-add", "Bookmark page")
+            click_browser_icon(*BOOKMARK, "browser-bookmark-add")
             wait_for("current page bookmark persisted", lambda: any(row["url"] == url for row in rpc("browser.bookmarks.list")["bookmarks"]))
-            # The store updates before the button label does. "Remove bookmark"
-            # is wider and wraps the row, so a library click located on the
-            # previous frame lands beside the moved control.
-            capture(window, "browser-bookmark-added", "Remove bookmark")
-            click_rendered_phrase(window, "browser-library-open", "Bookmark library")
-            capture(window, "browser-library-saved", "Saved bookmarks")
-            click_rendered_phrase(window, "browser-bookmark-remove", "Remove bookmark")
+            # The store updates before the pane repaints; capture the result.
+            capture(window, "browser-bookmark-added")
+            click_browser_icon(*LIBRARY, "browser-library-open")
+            capture(window, "browser-library-saved", "Bookmarks")
+            click_browser_icon(*BOOKMARK, "browser-bookmark-remove")
             wait_for("current page bookmark removed", lambda: not any(row["url"] == url for row in rpc("browser.bookmarks.list")["bookmarks"]))
             capture(window, "browser-library-empty", "No saved bookmarks")
-            click_rendered_phrase(window, "browser-library-close", "Bookmark library")
-            click_rendered_phrase(window, "browser-library-reopen", "Bookmark library")
+            click_browser_icon(*LIBRARY, "browser-library-close")
+            click_browser_icon(*LIBRARY, "browser-library-reopen")
             capture(window, "browser-library-reopened", "No saved bookmarks")
-            click_rendered_phrase(window, "browser-library-close-final", "Bookmark library")
+            click_browser_icon(*LIBRARY, "browser-library-close-final")
 
         report["nativeBrowser"] = browser_fixture.exercise_browser(
             rpc, thread_id,

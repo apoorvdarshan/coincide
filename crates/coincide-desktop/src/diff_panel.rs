@@ -2,6 +2,7 @@
 //! conversation's folder, uncommitted or on the branch, as a file list over a
 //! line-numbered diff. One worker owns each load's Git and Engine calls; the diff
 //! follows the agent's edits while a turn runs, at most every live-refresh floor.
+use crate::native_menu::AccessibleMenuExt as _;
 #[path = "diff_document.rs"]
 mod document;
 
@@ -19,7 +20,7 @@ use gpui_kit::{
     component::{
         ActiveTheme as _, Icon, Sizable as _,
         button::*,
-        menu::{DropdownMenu, PopupMenu, PopupMenuItem},
+        menu::{PopupMenu, PopupMenuItem},
         spinner::Spinner,
         tooltip::Tooltip,
     },
@@ -889,7 +890,7 @@ impl DiffPanel {
                     .dropdown_caret(true)
                     .disabled(!has_thread)
                     .accessibility_label("Changes to show")
-                    .dropdown_menu(scope_menu),
+                    .accessible_menu(scope_menu),
             )
             .children(summary)
             .child(div().flex_1())
@@ -910,7 +911,7 @@ impl DiffPanel {
                     .compact()
                     .tooltip("Diff options")
                     .accessibility_label("Diff options")
-                    .dropdown_menu_with_anchor(Anchor::TopRight, options_menu),
+                    .accessible_menu_with_anchor(Anchor::TopRight, options_menu),
             )
     }
 

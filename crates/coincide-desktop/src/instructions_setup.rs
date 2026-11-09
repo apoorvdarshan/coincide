@@ -1,6 +1,7 @@
 //! Native setup controls. Persisted configuration is display-only until an
 //! explicit native action adopts it; no control API can invoke these callbacks.
 use super::*;
+use crate::native_menu::AccessibleMenuExt as _;
 use crate::{
     instructions_config::{Choice, Metadata},
     instructions_scope::{DiscoveredFile, NativeReviewPlan, NativeScope},
@@ -679,6 +680,114 @@ impl InstructionsPanel {
         };
         cx.notify();
     }
+    pub(super) fn instructions_sidebar(&self, cx: &mut Context<Self>) -> AnyElement {
+        use gpui_kit::component::menu::PopupMenuItem;
+        let pending = self.setup.picker_pending
+            || self.setup.review.is_some()
+            || self.setup.has_copy_review()
+            || self.setup.git_busy();
+        let project_name = self
+            .setup
+            .project
+            .as_ref()
+            .and_then(|id| {
+                self.setup
+                    .projects
+                    .iter()
+                    .find(|project| project["id"] == *id)
+            })
+            .and_then(|project| project["name"].as_str())
+            .unwrap_or("Global");
+        let mut choices = vec![(None, "Global".to_owned())];
+        choices.extend(self.setup.projects.iter().filter_map(|project| {
+            Some((
+                Some(project["id"].as_str()?.to_owned()),
+                project["name"].as_str().unwrap_or("Project").to_owned(),
+            ))
+        }));
+        let selected = self.setup.project.clone();
+        let owner = cx.entity().downgrade();
+        let current = self.source.as_ref().map(|source| source.path());
+        let mut sidebar = div().id("instructions-sidebar").w(px(210.)).flex_shrink_0().min_h_0().overflow_y_scroll().p_3().flex().flex_col().gap_3()
+            .bg(cx.theme().muted).border_r_1().border_color(cx.theme().border)
+            .child(Button::new("instructions-scope").label(project_name.to_owned()).disabled(pending).dropdown_caret(true)
+                .accessible_menu(move|mut menu,_,_|{for (id,label) in &choices {let owner=owner.clone();let id=id.clone();menu=menu.item(PopupMenuItem::new(label.clone()).checked(id==selected).on_click(move|_,window,cx|{let _=owner.update(cx,|this,cx|this.setup_switch_scope(id.clone(),window,cx));}));}menu}))
+            .child(div().flex().flex_col().gap_2().p_2().rounded_md().bg(cx.theme().background)
+                .child(div().text_sm().font_semibold().child("Shared instructions"))
+                .child(div().text_xs().text_color(cx.theme().muted_foreground).child("Use one master file across your agents. Review changes before linking existing files."))
+                .child(Button::new("instructions-manage").label(if self.setup_open {"Hide setup and sync"} else {"Setup and sync…"}).compact().ghost()
+                    .on_click(cx.listener(|this,_,_,cx|{this.setup_open=!this.setup_open;cx.notify();}))));
+        if let Some(scope) = &self.setup.scope {
+            let path = scope.master_path();
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "Master file".into());
+            sidebar = sidebar.child(
+                Button::new("instructions-master-file")
+                    .accessibility_label(name.clone())
+                    .child(div().w_full().text_left().truncate().child(name))
+                    .w_full()
+                    .compact()
+                    .selected(current == Some(path))
+                    .disabled(pending)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        if !this.setup_clean(cx) {
+                            return;
+                        }
+                        if let Some(scope) = this.setup.scope.clone() {
+                            if let Err(error) = this.bind_native_source(&scope, window, cx) {
+                                this.status = error.to_string();
+                            }
+                            cx.notify();
+                        }
+                    })),
+            );
+        }
+        sidebar = sidebar.child(
+            div()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child("Agent files"),
+        );
+        for (index, file) in self
+            .setup
+            .files
+            .iter()
+            .enumerate()
+            .filter(|(_, file)| file.exists)
+        {
+            sidebar = sidebar.child(
+                Button::new(SharedString::from(format!("instructions-source-{index}")))
+                    .accessibility_label(file.name.clone())
+                    .child(
+                        div()
+                            .w_full()
+                            .text_left()
+                            .truncate()
+                            .child(file.name.clone()),
+                    )
+                    .w_full()
+                    .compact()
+                    .selected(current == Some(file.path.as_path()))
+                    .disabled(pending || !file.readable)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.setup_open_file(index, window, cx)
+                    })),
+            );
+        }
+        sidebar
+            .when(self.setup_open, |view| view.child(self.setup_controls(cx)))
+            .when(!self.setup.visible_status().is_empty(), |view| {
+                view.child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(self.setup.visible_status()),
+                )
+            })
+            .into_any_element()
+    }
     pub(super) fn setup_controls(&self, cx: &mut Context<Self>) -> AnyElement {
         let pending = self.setup.picker_pending
             || self.setup.review.is_some()
@@ -808,10 +917,8 @@ impl InstructionsPanel {
         }
         div()
             .id("instruction-setup-controls")
-            .h(px(180.))
-            .min_h(px(180.))
-            .flex_shrink_0()
-            .overflow_y_scroll()
+            .w_full()
+            .min_w_0()
             .child(
                 pane.child(files)
                     .child(self.copy_controls(cx))

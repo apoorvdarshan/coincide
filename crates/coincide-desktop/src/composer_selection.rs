@@ -1193,24 +1193,26 @@ fn footer_summary(
         (false, true) => Some("Saved selection changed".into()),
         (false, false) => None,
     };
-    if let Some(lock) = lock {
-        let reason = format!(
+    // Swift dims the chips while a turn runs; it does not add a visible
+    // "Locked: …" sentence under the composer. Keep the reason in the
+    // accessibility label only.
+    let lock_reason = lock.map(|lock| {
+        format!(
             "Locked: {}",
             footer_value(&json!(lock), "Selection is locked")
-        );
-        annotation =
-            Some(annotation.map_or_else(|| reason.clone(), |value| format!("{value} · {reason}")));
-    }
+        )
+    });
     let action = if expanded {
         "Hide selection options"
     } else {
         "Edit selection options"
     };
-    let mut accessible = format!(
-        "{action}. Saved: {saved}. Automatic/default means no stored override; runtime support and authentication are not verified."
-    );
+    let mut accessible = format!("{action}. Saved: {saved}.");
     if let Some(annotation) = &annotation {
         accessible.push_str(&format!(" {annotation}."));
+    }
+    if let Some(lock) = &lock_reason {
+        accessible.push_str(&format!(" {lock}."));
     }
     if pending {
         accessible.push_str(" Pending edits are not applied.");
@@ -1243,6 +1245,40 @@ fn account_problem(provider: &Value, account: &Value, configured: &Value) -> Opt
         _ => Some("Account support is not described by current capabilities.".into()),
     }
 }
+/// Whether a capability read may prefetch the saved provider's catalog so the
+/// composer's chip can show display names. This must never run while the picker
+/// is open: replacing the catalog there swaps the agent tab being browsed back
+/// to the thread's saved provider, so an OpenCode model could not be chosen on
+/// a Codex thread.
+fn prefetches_saved_catalog(
+    picker_open: bool,
+    request_pending: bool,
+    catalog_provider: Option<&str>,
+    saved_provider: &str,
+    discovery_supported: bool,
+) -> bool {
+    !picker_open
+        && !request_pending
+        && catalog_provider != Some(saved_provider)
+        && discovery_supported
+}
+/// Swift's collapse priority: mode, follow-up, access, speed, effort, model.
+fn footer_compaction(widths: [f32; 6], available: f32) -> [bool; 6] {
+    let mut result = [false; 6];
+    let mut total = widths.iter().sum::<f32>()
+        + widths.iter().filter(|w| **w > 0.).count().saturating_sub(1) as f32 * 2.;
+    for i in [5, 4, 3, 2, 1, 0] {
+        if total <= available {
+            break;
+        }
+        if widths[i] > 28. {
+            total -= widths[i] - 28.;
+            result[i] = true;
+        }
+    }
+    result
+}
+
 impl Coincide {
     pub(super) fn selected_account_wait_status(&self) -> &'static str {
         if self.selection_ui.capabilities["namedModels"]["accountCatalogReady"] == true
@@ -1789,19 +1825,26 @@ impl Coincide {
         self.selection_ui.native_accounts = native_accounts;
         // The composer's chip and picker show provider display names, so read
         // each provider's catalog once per window session. Refresh re-reads it.
+        // This keeps the picker's own tab: while the picker is open it lists the
+        // agent the reader is browsing, and switching it back to the thread's
+        // saved provider here is what made an OpenCode model impossible to pick
+        // on a Codex thread.
         let provider = text(&thread["selection"], "provider");
-        if self.selection_ui.catalog_request.is_none()
-            && self.selection_ui.catalog["provider"].as_str() != Some(provider.as_str())
-            && self.selection_ui.capabilities["providers"]
-                .as_array()
-                .is_some_and(|rows| {
-                    rows.iter().any(|row| {
-                        row["provider"] == provider && row["modelDiscovery"]["supported"] == true
-                    })
+        let discovery_supported = self.selection_ui.capabilities["providers"]
+            .as_array()
+            .is_some_and(|rows| {
+                rows.iter().any(|row| {
+                    row["provider"] == provider && row["modelDiscovery"]["supported"] == true
                 })
-        {
-            self.selection_ui.tab_provider = Some(provider);
-            self.refresh_model_catalog(cx);
+            });
+        if prefetches_saved_catalog(
+            self.selection_ui.expanded,
+            self.selection_ui.catalog_request.is_some(),
+            self.selection_ui.catalog["provider"].as_str(),
+            &provider,
+            discovery_supported,
+        ) {
+            self.refresh_model_catalog(Some(provider), cx);
         }
         // A pending handoff uses the existing tick/next actual UI update.
         // Repeated lock contention must not create a notify/render retry loop.
@@ -2196,12 +2239,9 @@ impl Coincide {
         {
             return;
         }
-        self.refresh_model_catalog(cx);
+        self.refresh_model_catalog(None, cx);
     }
-    fn refresh_model_catalog(&mut self, cx: &mut Context<Self>) {
-        if self.selection_ui.catalog_request.is_some() {
-            return;
-        }
+    fn refresh_model_catalog(&mut self, provider_override: Option<String>, cx: &mut Context<Self>) {
         let Some(thread) = self.selected.as_ref() else {
             return;
         };
@@ -2209,12 +2249,24 @@ impl Coincide {
             return;
         };
         // Discovery is read-only, so it stays available for an imported or
-        // locked thread whose selection cannot change.
-        let tab_provider = self
-            .selection_ui
-            .tab_provider
-            .clone()
+        // locked thread whose selection cannot change. An explicit provider is
+        // used for the background read behind the composer's chip, which must
+        // not move the picker away from the agent tab being browsed.
+        let tab_provider = provider_override
+            .or_else(|| self.selection_ui.tab_provider.clone())
             .unwrap_or_else(|| draft.provider.clone());
+        if let Some(pending) = self.selection_ui.catalog_request.as_ref() {
+            if pending.provider == tab_provider {
+                return;
+            }
+            // The reader moved to another agent while this provider's first
+            // read was still running. Abandon the old poll instead of dropping
+            // the new tab's request, which left OpenCode's list permanently
+            // empty on a Codex thread. The abandoned job is never reported as
+            // this provider's catalog: every status read carries its request ID.
+            self.selection_ui.catalog_request = None;
+            self.selection_ui.catalog_last_poll = None;
+        }
         let Some(provider) = self.selection_ui.capabilities["providers"]
             .as_array()
             .and_then(|providers| providers.iter().find(|p| p["provider"] == tab_provider))
@@ -2335,6 +2387,15 @@ impl Coincide {
                         self.selection_ui.capability_cache.invalidate();
                         self.refresh_selection_capabilities(cx);
                     }
+                    // A tab opened while another agent's read was in flight
+                    // waits here instead of staying on an empty list.
+                    let browsed = self.selection_ui.tab_provider.clone();
+                    if self.selection_ui.expanded
+                        && self.selection_ui.catalog_request.is_none()
+                        && browsed.as_deref() != self.selection_ui.catalog["provider"].as_str()
+                    {
+                        self.refresh_model_catalog(browsed, cx);
+                    }
                 }
             }
             Ok(_) => {
@@ -2445,7 +2506,11 @@ impl Coincide {
             }
         }
     }
-    pub(super) fn composer_selection_footer(&self, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn composer_selection_footer(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let Some(thread) = &self.selected else {
             return div().into_any_element();
         };
@@ -2520,7 +2585,52 @@ impl Coincide {
                         .as_array()
                         .is_some_and(|choices| !choices.is_empty())
             });
-        let mut controls = div().flex().flex_wrap().items_center().gap_1().gap(px(2.));
+        let available = self.composer_available_width(window);
+        let measure = |label: &str| {
+            let run = TextRun {
+                len: label.len(),
+                font: font("system-ui"),
+                color: self.color(0xe4e9f2).into(),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+            f32::from(
+                window
+                    .text_system()
+                    .shape_line(label.into(), px(13.), &[run], None)
+                    .width,
+            )
+        };
+        let follow = coincide_core::composer_follow_up::selected(thread, &self.settings);
+        let widths = [
+            (measure(&model) + 35.).min(240.),
+            measure(&effort) + 36.,
+            if speed_supported {
+                measure(&speed) + 36.
+            } else {
+                0.
+            },
+            measure(access) + 36.,
+            measure(follow.label()) + 36.,
+            measure(mode) + 28.,
+        ];
+        // Attach, voice, send and optional usage/context meters keep their space.
+        let trailing = 76.
+            + self.composer_meter_width(cx)
+            + if coincide_core::voice::Settings::decode(&self.settings).enabled {
+                30.
+            } else {
+                0.
+            }
+            + if self.running.contains(&text(thread, "id")) {
+                30.
+            } else {
+                0.
+            };
+        let compact = footer_compaction(widths, (available - trailing).max(0.));
+        let mut controls = div().flex().items_center().gap(px(2.));
+
         let facets = [
             (
                 PickerFacet::Model,
@@ -2557,9 +2667,16 @@ impl Coincide {
             .into_iter()
             .filter(|(facet, ..)| *facet != PickerFacet::Speed || speed_supported)
         {
+            let small = compact[match facet {
+                PickerFacet::Model => 0,
+                PickerFacet::Effort => 1,
+                PickerFacet::Speed => 2,
+                PickerFacet::Access => 3,
+                PickerFacet::Mode => 5,
+            }];
             controls = controls.child(
                 Button::new(id)
-                    .when(facet != PickerFacet::Model, |button| {
+                    .when(facet != PickerFacet::Model && !small, |button| {
                         button.label(label.clone())
                     })
                     .accessibility_label(help.clone())
@@ -2567,12 +2684,22 @@ impl Coincide {
                     .h(px(28.))
                     .rounded(px(8.))
                     .when(facet == PickerFacet::Model, |button| {
-                        button.max_w(px(240.)).child(chat_layout::provider_label(
-                            &text(selection, "provider"),
-                            label.clone(),
-                        ))
+                        if small {
+                            button.w(px(28.)).p_0().child(chat_layout::provider_label(
+                                &text(selection, "provider"),
+                                String::new(),
+                            ))
+                        } else {
+                            button.max_w(px(240.)).child(chat_layout::provider_label(
+                                &text(selection, "provider"),
+                                label.clone(),
+                            ))
+                        }
                     })
-                    .when(facet != PickerFacet::Mode, |button| {
+                    .when(small && facet != PickerFacet::Model, |button| {
+                        button.w(px(28.)).p_0()
+                    })
+                    .when(facet != PickerFacet::Mode && !small, |button| {
                         button.dropdown_caret(true)
                     })
                     .when(facet != PickerFacet::Model, |button| {
@@ -2620,7 +2747,7 @@ impl Coincide {
                     ),
             );
             if facet == PickerFacet::Access {
-                controls = controls.child(self.follow_up_button(cx));
+                controls = controls.child(self.follow_up_button(compact[4], cx));
             }
         }
         div()
@@ -2718,13 +2845,16 @@ impl Coincide {
         div()
             .flex()
             .flex_col()
+            .flex_1()
+            .min_h_0()
+            .justify_center()
             .items_center()
             .gap_2()
             .px(px(24.))
             .pb_5()
             .child(
                 div()
-                    .font_family("New York")
+                    .font_family(crate::settings::reply_font())
                     .text_3xl()
                     .text_center()
                     .child(headline),
@@ -3130,6 +3260,10 @@ impl Coincide {
         content: AnyElement,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let width = width
+            .min(f32::from(window.viewport_size().width) - 24.)
+            .max(160.);
+        let height = (f32::from(window.viewport_size().height) - 24.).clamp(160., 540.);
         let anchor = self
             .selection_ui
             .popover_anchor
@@ -3161,7 +3295,7 @@ impl Coincide {
                         div()
                             .id("composer-popover-card")
                             .w(px(width))
-                            .max_h(px(540.))
+                            .max_h(px(height))
                             .overflow_y_scroll()
                             .rounded(px(14.))
                             .bg(self.color(0x181d28))
@@ -3607,7 +3741,7 @@ impl Coincide {
                     .compact()
                     .ghost()
                     .disabled(self.selection_ui.catalog_request.is_some())
-                    .on_click(cx.listener(|this, _, _, cx| this.refresh_model_catalog(cx))),
+                    .on_click(cx.listener(|this, _, _, cx| this.refresh_model_catalog(None, cx))),
             )
             .child(
                 Button::new("picker-agent-settings")
@@ -3680,7 +3814,65 @@ impl Coincide {
 
 #[cfg(test)]
 mod tests {
+    #[::core::prelude::v1::test]
+    fn footer_labels_collapse_in_swifts_order_without_spending_space_on_absent_speed() {
+        let widths = [180., 75., 0., 110., 80., 65.];
+        assert_eq!(super::footer_compaction(widths, 600.), [false; 6]);
+        assert_eq!(
+            super::footer_compaction(widths, 485.),
+            [false, false, false, false, false, true]
+        );
+        assert_eq!(
+            super::footer_compaction(widths, 350.),
+            [false, false, false, true, true, true]
+        );
+        assert_eq!(
+            super::footer_compaction(widths, 140.),
+            [true, true, false, true, true, true]
+        );
+    }
+
     use super::*;
+    #[::core::prelude::v1::test]
+    fn capability_reads_never_replace_the_agent_tab_the_picker_shows() {
+        // Browsing OpenCode's models on a Codex thread: the open picker owns
+        // the catalog, so a capability read must not prefetch Codex's list.
+        assert!(!prefetches_saved_catalog(
+            true,
+            false,
+            Some("opencode"),
+            "codex",
+            true
+        ));
+        assert!(!prefetches_saved_catalog(
+            false,
+            true,
+            Some("opencode"),
+            "codex",
+            true
+        ));
+        assert!(prefetches_saved_catalog(
+            false,
+            false,
+            Some("opencode"),
+            "codex",
+            true
+        ));
+        assert!(!prefetches_saved_catalog(
+            false,
+            false,
+            Some("codex"),
+            "codex",
+            true
+        ));
+        assert!(!prefetches_saved_catalog(
+            false,
+            false,
+            Some("opencode"),
+            "grok",
+            false
+        ));
+    }
     #[::core::prelude::v1::test]
     fn picker_preferences_filter_without_inventing_catalog_rows_or_changing_selection() {
         let settings = json!({"favoriteModels":[{"provider":"codex","modelID":"b"},{"provider":"codex","modelID":"not-reported"}],"hiddenModels":[{"provider":"codex","modelID":"a"},{"provider":"claude","modelID":"c"}]});
@@ -3785,11 +3977,7 @@ mod tests {
                 .accessible
                 .starts_with("Hide selection options. Saved:")
         );
-        assert!(
-            summary
-                .accessible
-                .contains("runtime support and authentication are not verified")
-        );
+        assert!(!summary.accessible.contains("authentication"));
         assert!(summary.annotation.is_none());
     }
     #[::core::prelude::v1::test]
@@ -3814,9 +4002,15 @@ mod tests {
                 .contains("Access future-access · Interaction future-mode")
         );
         assert!(summary.saved.contains("Account Unsupported array value"));
-        assert!(summary.annotation.unwrap().contains(
-            "Edits pending · saved selection changed · Locked: Refresh capabilities before editing"
-        ));
+        assert_eq!(
+            summary.annotation.as_deref(),
+            Some("Edits pending · saved selection changed")
+        );
+        assert!(
+            summary
+                .accessible
+                .contains("Locked: Refresh capabilities before editing")
+        );
         let label = footer_value(&json!(format!("{}\nend", "é".repeat(600))), "not set");
         assert!(label.chars().count() <= 513);
         assert!(label.ends_with('…'));

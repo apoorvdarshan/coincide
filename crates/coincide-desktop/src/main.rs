@@ -3,10 +3,12 @@ mod appshots_platform;
 mod appshots_settings;
 mod codex_limits_mount;
 mod codex_limits_view;
+mod composer_meters;
 #[cfg(test)]
 #[path = "dictation_preview_ui_tests.rs"]
 mod dictation_preview_ui_tests;
 mod draft_saver;
+mod native_menu;
 #[cfg(test)]
 #[path = "../swift_link_options.rs"]
 mod swift_link_options_tests;
@@ -374,7 +376,6 @@ struct Coincide {
     control_owner: Arc<Mutex<control::Server>>,
     quit_runtime: Option<shutdown_runtime::Runtime>,
     quit_runtime_error: Option<String>,
-    quit_frame_seen: bool,
     native_quit: Option<native_quit::NativeQuit>,
     native_quit_observed: bool,
     quit_issued: bool,
@@ -398,6 +399,7 @@ struct Coincide {
     follow_up_deliveries: Vec<composer_follow_up_mount::PendingDelivery>,
     pending_inputs: std::collections::HashMap<(String, String, String), Entity<InputState>>,
     pending_choices: std::collections::HashMap<(String, String, String), Vec<String>>,
+    pending_question_step: std::collections::HashMap<String, usize>,
     queued_messages: Vec<Value>,
     queue_enabled: bool,
     queue_error: String,
@@ -494,6 +496,7 @@ struct Coincide {
     schedule_status: String,
     _poll: Task<()>,
     terminal_open: bool,
+    terminal_activate_on_show: bool,
     terminal_layout: terminal_layout::State,
     terminal_workspaces:
         std::collections::HashMap<String, Entity<terminal_workspace::TerminalWorkspace>>,
@@ -1430,7 +1433,7 @@ impl Coincide {
         subscriptions.extend(archive_settings.subscriptions(cx));
         subscriptions.extend(general_settings.subscriptions(window, cx));
         subscriptions.extend(project_scripts.subscriptions(cx));
-        subscriptions.extend(schedule_editor.subscriptions(cx));
+        subscriptions.extend(schedule_editor.subscriptions(window, cx));
         subscriptions.extend(provider_settings.subscriptions(cx));
         let sidebar_preferences = sidebar_preferences::Preferences::load(&engine);
         let sidebar_schedules = call(&engine, "schedules.list", json!({}))
@@ -1484,6 +1487,9 @@ impl Coincide {
         let sidebar_resize = navigation_resize::State::load(&engine);
         let keyboard = keyboard_settings::State::new(cx);
         let terminal_layout = terminal_layout::State::load(&engine);
+        let terminal_open = terminal_layout::placement(&settings)
+            == terminal_layout::Placement::Bottom
+            && window_chrome::terminal_bottom_open(&engine);
         let thread_list_open = window_chrome::sidebar_open(&engine);
         let window_chrome = window_chrome::State::new(
             try_state(&engine)
@@ -1501,7 +1507,6 @@ impl Coincide {
             control_owner,
             quit_runtime: None,
             quit_runtime_error: None,
-            quit_frame_seen: false,
             native_quit,
             native_quit_observed: false,
             quit_issued: false,
@@ -1525,6 +1530,7 @@ impl Coincide {
             follow_up_deliveries: Vec::new(),
             pending_inputs: Default::default(),
             pending_choices: Default::default(),
+            pending_question_step: Default::default(),
             queued_messages: Vec::new(),
             queue_enabled: false,
             queue_error: String::new(),
@@ -1617,7 +1623,8 @@ impl Coincide {
             schedule_editor,
             schedule_status: String::new(),
             _poll: poll,
-            terminal_open: false,
+            terminal_open,
+            terminal_activate_on_show: terminal_open,
             terminal_layout,
             terminal_workspaces: Default::default(),
             terminal_visible_thread: None,
@@ -1875,6 +1882,9 @@ impl Coincide {
         }
         match call(&self.engine, "browser.request", params) {
             Ok(result) => {
+                if self.status.starts_with("Browser:") {
+                    self.status.clear();
+                }
                 self.browser_ui_operations
                     .insert(text(&result, "operationId"), thread);
             }
@@ -2084,6 +2094,8 @@ impl Coincide {
                     self.browser_ui_operations.remove(&id);
                     if let Some(error) = result["result"]["error"].as_str() {
                         self.status = format!("Browser: {error}");
+                    } else if self.status.starts_with("Browser:") {
+                        self.status.clear();
                     }
                     changed = true;
                 }
@@ -2145,6 +2157,7 @@ impl Coincide {
             return None;
         }
         let tabs = browser.tab_list(&thread);
+        let (can_go_back, can_go_forward) = browser.navigation_available(&thread, cx);
         let webview = browser.active_view(&thread);
         let active = tabs["tabs"]
             .as_array()
@@ -2154,130 +2167,217 @@ impl Coincide {
             .as_ref()
             .map(|tab| text(tab, "url"))
             .unwrap_or_default();
+        let loading = active.as_ref().is_some_and(|tab| tab["loading"] == true);
         let tab_buttons = tabs["tabs"]
             .as_array()
             .into_iter()
             .flatten()
             .map(|tab| {
                 let id = text(tab, "id");
-                let title: String = text(tab, "title").chars().take(24).collect();
-                Button::new(SharedString::from(format!("browser-tab-{id}")))
-                    .label(title)
+                let select_id = id.clone();
+                let close_id = id.clone();
+                let title = text(tab, "title");
+                let title = if title.trim().is_empty() || title == "about:blank" {
+                    "New tab".to_owned()
+                } else {
+                    title
+                };
+                let selected = tab["active"] == true;
+                div()
+                    .id(SharedString::from(format!("browser-tab-{id}")))
+                    .role(Role::Button)
+                    .aria_label(format!("Select tab: {title}"))
+                    .flex()
+                    .items_center()
+                    .flex_shrink_0()
+                    .min_w(px(76.))
+                    .max_w(px(200.))
+                    .h(px(28.))
+                    .px_2()
+                    .gap_1()
+                    .rounded(px(6.))
+                    .bg(self.color(if selected { 0x181d28 } else { 0x10141c }))
+                    .cursor_pointer()
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.browser_action(BrowserAction::SelectTab, Some(id.clone()), cx)
+                        this.browser_action(BrowserAction::SelectTab, Some(select_id.clone()), cx)
                     }))
+                    .child(
+                        div()
+                            .min_w_0()
+                            .flex_1()
+                            .truncate()
+                            .text_xs()
+                            .child(title.clone()),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!("browser-tab-close-{id}")))
+                            .icon(gpui_kit::assets::IconName::Close)
+                            .ghost()
+                            .compact()
+                            .xsmall()
+                            .accessibility_label(format!("Close tab: {title}"))
+                            .tooltip("Close tab")
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.browser_action(
+                                    BrowserAction::CloseTab,
+                                    Some(close_id.clone()),
+                                    cx,
+                                );
+                            })),
+                    )
+                    .into_any_element()
             })
             .collect::<Vec<_>>();
-        let active_id = active.as_ref().map(|tab| text(tab, "id"));
-        let pane_controls = self.browser_pane_controls(&thread, active.as_ref(), cx);
+        let controls = self.browser_pane_controls(&thread, active.as_ref(), cx);
+        let agent_control = self.browser_agent_control_button(&thread, cx);
         let library_popup = self
             .browser_library_visible()
             .then(|| self.browser_settings_panel.clone());
         let dialog_banner = self.browser_dialog_banner(cx);
         let user_turn_banner = self.browser_user_turn_banner(cx);
-        let page = self.browser_page(&thread, webview, cx);
         let passkey_banner = self.browser_passkey_banner(cx);
+        let page = self.browser_page(&thread, webview, cx);
+        let icon = |id, name, label: &'static str| {
+            Button::new(id)
+                .icon(name)
+                .accessibility_label(label)
+                .tooltip(label)
+                .ghost()
+                .compact()
+                .xsmall()
+                .h(px(26.))
+        };
         Some(
             div()
+                .id("browser-preview")
                 .track_focus(&self.browser_focus)
                 .flex()
                 .flex_col()
                 .flex_1()
                 .min_w_0()
+                .min_h_0()
                 .h_full()
                 .border_l_1()
                 .border_color(self.color(0x29303d))
                 .child(
                     div()
                         .flex()
-                        .flex_wrap()
+                        .items_center()
                         .flex_shrink_0()
+                        .h(px(36.))
+                        .px_2()
                         .gap_1()
-                        .p_2()
-                        .child(Button::new("browser-back").label("←").on_click(cx.listener(
-                            |this, _, _, cx| this.browser_action(BrowserAction::Back, None, cx),
-                        )))
                         .child(
-                            Button::new("browser-forward")
-                                .label("→")
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.browser_action(BrowserAction::Forward, None, cx)
-                                })),
+                            div()
+                                .id("browser-tabs")
+                                .flex()
+                                .items_center()
+                                .flex_1()
+                                .min_w_0()
+                                .overflow_x_scroll()
+                                .gap_1()
+                                .children(tab_buttons),
                         )
                         .child(
-                            Button::new("browser-reload")
-                                .label("Reload")
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.browser_action(BrowserAction::Reload, None, cx)
-                                })),
+                            icon(
+                                "browser-new-tab",
+                                gpui_kit::assets::IconName::Plus,
+                                "New tab",
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.browser_action(BrowserAction::NewTab { url: None }, None, cx)
+                            })),
                         )
+                        .child(agent_control)
                         .child(
-                            Button::new("browser-new-tab")
-                                .label("+")
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.browser_action(
-                                        BrowserAction::NewTab { url: None },
-                                        None,
-                                        cx,
-                                    )
-                                })),
-                        )
-                        .child(
-                            Button::new("browser-close-tab")
-                                .label("Close tab")
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    if let Some(id) = active_id.clone() {
-                                        this.browser_action(BrowserAction::CloseTab, Some(id), cx);
-                                    }
-                                })),
-                        )
-                        .child(
-                            Button::new("browser-hide")
-                                .label("Hide")
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.browser_action(BrowserAction::Hide, None, cx)
-                                })),
+                            icon(
+                                "browser-hide",
+                                gpui_kit::assets::IconName::Close,
+                                "Close Browser",
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.browser_action(BrowserAction::Hide, None, cx)
+                            })),
                         ),
                 )
                 .child(
                     div()
-                        .id("browser-tabs")
                         .flex()
-                        .gap_1()
+                        .items_center()
+                        .flex_shrink_0()
+                        .h(px(36.))
                         .px_2()
-                        .overflow_x_scroll()
-                        .children(tab_buttons),
-                )
-                .child(
-                    div()
-                        .flex()
                         .gap_1()
-                        .p_2()
+                        .child(
+                            icon(
+                                "browser-back",
+                                gpui_kit::assets::IconName::ChevronLeft,
+                                "Back",
+                            )
+                            .disabled(!can_go_back)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.browser_action(BrowserAction::Back, None, cx)
+                            })),
+                        )
+                        .child(
+                            icon(
+                                "browser-forward",
+                                gpui_kit::assets::IconName::ChevronRight,
+                                "Forward",
+                            )
+                            .disabled(!can_go_forward)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.browser_action(BrowserAction::Forward, None, cx)
+                            })),
+                        )
                         .child(
                             div()
                                 .flex_1()
                                 .min_w_0()
-                                .child(Input::new(&self.browser_address)),
+                                .child(Input::new(&self.browser_address).small()),
                         )
-                        .child(Button::new("browser-go").label("Go").on_click(
-                            cx.listener(|this, _, window, cx| this.browser_go(window, cx)),
-                        )),
+                        .child(controls)
+                        .child(
+                            icon(
+                                "browser-reload",
+                                if loading {
+                                    gpui_kit::assets::IconName::LoaderCircle
+                                } else {
+                                    gpui_kit::assets::IconName::RefreshCw
+                                },
+                                "Reload Preview",
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.browser_action(BrowserAction::Reload, None, cx)
+                            })),
+                        ),
                 )
-                .child(
-                    div()
-                        .px_2()
-                        .pb_2()
-                        .min_w_0()
-                        .truncate()
-                        .text_xs()
-                        .child(url),
-                )
-                .child(pane_controls)
-                .children(library_popup)
+                .when(!url.is_empty() && url != "about:blank", |view| {
+                    view.child(
+                        div()
+                            .px_2()
+                            .pb_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_xs()
+                            .text_color(self.color(0xe4e9f2).opacity(0.55))
+                            .child(url),
+                    )
+                })
+                .when_some(library_popup, |view, library| {
+                    view.child(
+                        div()
+                            .max_h(px(300.))
+                            .min_h_0()
+                            .overflow_hidden()
+                            .child(library),
+                    )
+                })
                 .children(dialog_banner)
                 .children(user_turn_banner)
-                .child(page)
                 .children(passkey_banner)
+                .child(page)
                 .into_any_element(),
         )
     }
@@ -2358,6 +2458,10 @@ impl Coincide {
             .update(cx, |panel, cx| panel.cancel(cx));
         match call(&self.engine, "threads.read", json!({"threadId":id})) {
             Ok(mut v) => {
+                if self.global_schedules_route() {
+                    self.close_schedule_surface();
+                }
+                self.session_import_open = false;
                 if self
                     .selected
                     .as_ref()
@@ -2468,8 +2572,13 @@ impl Coincide {
                     cx.activate(true);
                     window.activate_window();
                 }
+                let keep_bottom_terminal = self.terminal_open && !self.terminal_on_right();
                 self.terminal_open = false;
                 self.restore_inspector_for_selected(cx);
+                if keep_bottom_terminal {
+                    self.terminal_open = true;
+                    self.terminal_activate_on_show = true;
+                }
                 self.sync_terminal_workspace(window, cx);
                 self.composer
                     .update(cx, |input, cx| input.set_value(draft, window, cx));
@@ -3117,6 +3226,10 @@ impl Coincide {
             (settings_visible || pane_visible) && !self.command_palette.read(cx).is_open();
         let selected_thread = self.selected.as_ref().map(|thread| text(thread, "id"));
         for request in self.browser_profile_requests.try_iter().take(8) {
+            let clearing = matches!(
+                &request.operation,
+                browser_settings::ProfileOperation::ClearData { .. }
+            );
             let result = if settings_visible {
                 selected_thread
                     .as_deref()
@@ -3126,16 +3239,34 @@ impl Coincide {
                             .as_mut()
                             .ok_or_else(|| "Browser unavailable".to_owned())
                             .and_then(|browser| {
-                                browser
-                                    .apply_profile_request(thread, request)
-                                    .map_err(|error| error.to_string())
+                                if clearing {
+                                    browser.begin_data_clear(thread, &request, &self.engine)
+                                } else {
+                                    browser.apply_profile_request(thread, request)
+                                }
+                                .map_err(|error| error.to_string())
                             })
                     })
             } else {
                 Err("Browser settings closed; profile request cancelled".into())
             };
+            if clearing {
+                if let Err(error) = result {
+                    self.browser_settings_panel
+                        .update(cx, |panel, cx| panel.set_clear_result("", Err(error), cx));
+                }
+            } else {
+                self.browser_settings_panel
+                    .update(cx, |panel, cx| panel.set_result(result, cx));
+            }
+        }
+        if let Some((thread, result)) = self
+            .browser
+            .as_mut()
+            .and_then(|browser| browser.poll_data_clear(cx))
+        {
             self.browser_settings_panel
-                .update(cx, |panel, cx| panel.set_result(result, cx));
+                .update(cx, |panel, cx| panel.set_clear_result(&thread, result, cx));
         }
         let snapshot = if visible {
             selected_thread.as_deref().and_then(|thread| {
@@ -3147,7 +3278,7 @@ impl Coincide {
             None
         };
         let engine = self.engine.clone();
-        let history_binding = if settings_visible {
+        let history_binding = if settings_visible || pane_library {
             selected_thread.as_deref().and_then(|thread| {
                 self.browser
                     .as_ref()
@@ -3608,6 +3739,12 @@ impl Coincide {
             self.usage_history.load_dashboard();
             cx.notify();
         }
+        let usage_running = self
+            .selected
+            .as_ref()
+            .is_some_and(|thread| self.running.contains(&text(thread, "id")));
+        self.usage_history
+            .observe_context(self.selected.as_ref(), usage_running);
         if self.usage_history.poll(cx) {
             cx.notify();
         }
@@ -3627,6 +3764,10 @@ impl Coincide {
         self.sync_github_context(cx);
         self.sync_credentials(cx);
         self.sync_terminal_workspace(window, cx);
+        // Questions and approvals are independent of the transcript revision.
+        // Poll them before any revision-gated read can return early; otherwise
+        // an answered question can stay visible while a turn keeps running.
+        self.refresh_pending(window, cx);
         if let Ok(status) = call(&self.engine, "app.status", json!({})) {
             self.window_chrome.observe_status(&status);
             let selected_thread = self.selected.as_ref().map(|thread| text(thread, "id"));
@@ -3695,7 +3836,6 @@ impl Coincide {
             }
             self.tick_turn_clock(cx);
         }
-        self.refresh_pending(window, cx);
         self.poll_transcription(window, cx);
         self.sync_media_context(cx);
         self.sync_find(window, cx);
@@ -3719,12 +3859,20 @@ impl Coincide {
         } else {
             Vec::new()
         };
+        // A successful poll clears the transient busy line; otherwise the UI
+        // keeps accusing the app of being busy long after the lock is free.
+        if self.status.starts_with("Unable to load agent requests:") {
+            self.status.clear();
+            cx.notify();
+        }
         let live: std::collections::HashSet<_> =
             requests.iter().map(|r| text(r, "requestId")).collect();
         self.pending_inputs
             .retain(|(owner, id, _), _| owner != &thread || live.contains(id));
         self.pending_choices
             .retain(|(owner, id, _), _| owner != &thread || live.contains(id));
+        self.pending_question_step
+            .retain(|request_id, _| live.contains(request_id));
         for request in &requests {
             let request_id = text(request, "requestId");
             for question in request["params"]["questions"]
@@ -3825,130 +3973,255 @@ impl Coincide {
         let thread = self.selected.as_ref().map(|v| text(v, "id"))?;
         // Approvals show one at a time in Swift's banner; questions keep their cards.
         let banner = self.approval_banner(window, cx);
+        let secondary = self.color(0xe4e9f2).opacity(0.62);
+        let tertiary = self.color(0xe4e9f2).opacity(0.4);
+        let accent = self.color(0xE9B04E);
+        let surface = self.color(0x1c2028);
+        let border = self.color(0x30353e);
         let mut cards = Vec::new();
         for request in &self.pending_requests {
             if request["method"] != "item/tool/requestUserInput" {
                 continue;
             }
             let request_id = text(request, "requestId");
-            let card = div()
-                .flex()
-                .flex_col()
-                .h(px(260.))
-                .flex_shrink_0()
-                .gap_2()
-                .p_3()
-                .rounded_md()
-                .bg(self.color(0x253046));
+            let provider = text(request, "provider");
+            let provider = presentation::provider_name(&provider);
+            let questions = request["params"]["questions"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            let step = self
+                .pending_question_step
+                .get(&request_id)
+                .copied()
+                .unwrap_or(0)
+                .min(questions.len().saturating_sub(1));
+            let heading = questions
+                .first()
+                .and_then(|question| question["header"].as_str())
+                .filter(|header| !header.trim().is_empty())
+                .unwrap_or("Question");
             let mut body = div()
-                .id(SharedString::from(format!("pending-body-{request_id}")))
                 .flex()
                 .flex_col()
-                .flex_1()
-                .min_h_0()
-                .gap_2()
-                .overflow_y_scroll();
-            let actions = {
-                body = body.child(div().font_semibold().child("The agent needs your answer"));
-                for (index, question) in request["params"]["questions"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .enumerate()
-                {
-                    let key = (thread.clone(), request_id.clone(), text(question, "id"));
-                    body = body
-                        .child(div().text_sm().child(text(question, "header")))
-                        .child(div().child(text(question, "question")));
-                    let multiple = question["multiSelect"] == true;
-                    let mut options = div().flex().flex_col().gap_1();
-                    for (option_index, option) in question["options"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .enumerate()
-                    {
-                        let label = text(option, "label");
-                        let chosen = self
-                            .pending_choices
-                            .get(&key)
-                            .is_some_and(|choices| choices.contains(&label));
-                        let key = key.clone();
-                        let button_label = format!("{}{}", if chosen { "✓ " } else { "" }, label);
-                        options =
-                            options
-                                .child(
-                                    Button::new(SharedString::from(format!(
-                                        "answer-{request_id}-{index}-{option_index}"
-                                    )))
-                                    .label(button_label)
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        let choices =
-                                            this.pending_choices.entry(key.clone()).or_default();
-                                        if multiple {
-                                            if choices.contains(&label) {
-                                                choices.retain(|v| v != &label);
-                                            } else {
-                                                choices.push(label.clone());
-                                            }
-                                        } else {
-                                            *choices = vec![label.clone()];
-                                        }
-                                        if let Some(input) = this.pending_inputs.get(&key) {
-                                            input.update(cx, |input, cx| {
-                                                input.set_value("", window, cx)
-                                            });
-                                        }
-                                        cx.notify();
-                                    })),
-                                )
-                                .child(div().text_sm().child(text(option, "description")));
-                    }
-                    body = body.child(options);
-                    if let Some(input) = self.pending_inputs.get(&key) {
-                        body = body
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .child("Or write an answer; this replaces selected options."),
-                            )
-                            .child(Input::new(input));
-                    }
-                }
-                let id = request_id.clone();
-                div().flex_shrink_0().child(
-                    Button::new(SharedString::from(format!("submit-{request_id}")))
-                        .label("Submit answers")
-                        .on_click(cx.listener(move |this, _, _, cx| this.answer_pending(&id, cx))),
-                )
-            };
-            // Only the request details scroll. Decisions stay in a separate
-            // footer, reachable even when questions/options exceed the pane.
-            cards.push(card.child(body).child(actions));
-        }
-        let questions = (!cards.is_empty()).then(|| {
-            div()
-                .id("pending-agent-requests")
-                .flex()
-                .flex_col()
-                .gap_2()
-                .max_h(px(340.))
-                .flex_shrink_0()
-                .overflow_y_scroll()
+                .gap_3()
                 .p_3()
-                .child(div().text_sm().child(format!(
-                    "{} pending request(s)",
-                    self.pending_requests.len()
-                )))
-                .children(cards)
-        });
+                .rounded(px(16.))
+                .bg(surface)
+                .border_1()
+                .border_color(border);
+            body = body.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        Icon::new(gpui_kit::assets::IconName::MessageCircleQuestionMark)
+                            .small()
+                            .text_color(accent),
+                    )
+                    .child(div().font_semibold().child(heading.to_owned()))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(secondary)
+                            .child(provider.to_owned()),
+                    )
+                    .when(questions.len() > 1, |row| {
+                        row.child(div().text_xs().text_color(tertiary).child(format!(
+                            "{} of {}",
+                            step + 1,
+                            questions.len()
+                        )))
+                    }),
+            );
+            let Some(question) = questions.get(step) else {
+                continue;
+            };
+            let key = (thread.clone(), request_id.clone(), text(question, "id"));
+            let prompt = question["question"].as_str().unwrap_or_default();
+            let multiple = question["multiSelect"] == true;
+            let mut section = div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(div().text_sm().child(prompt.to_owned()));
+            let mut options = div().flex().flex_col().gap_1();
+            for (option_index, option) in question["options"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .enumerate()
+            {
+                let label = text(option, "label");
+                let description = text(option, "description");
+                let chosen = self
+                    .pending_choices
+                    .get(&key)
+                    .is_some_and(|choices| choices.contains(&label));
+                let key = key.clone();
+                let selected_label = label.clone();
+                let option_id =
+                    SharedString::from(format!("answer-{request_id}-{step}-{option_index}"));
+                let mut row = div()
+                    .id(option_id)
+                    .flex()
+                    .items_start()
+                    .gap_2()
+                    .px_2()
+                    .py_2()
+                    .rounded(px(9.))
+                    .cursor_pointer()
+                    .when(chosen, |row| row.bg(accent.opacity(0.14)))
+                    .when(!chosen, |row| {
+                        row.hover(|row| row.bg(self.color(0xe4e9f2).opacity(0.05)))
+                    })
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        let choices = this.pending_choices.entry(key.clone()).or_default();
+                        if multiple {
+                            if choices.contains(&selected_label) {
+                                choices.retain(|value| value != &selected_label);
+                            } else {
+                                choices.push(selected_label.clone());
+                            }
+                        } else {
+                            *choices = vec![selected_label.clone()];
+                        }
+                        if let Some(input) = this.pending_inputs.get(&key) {
+                            input.update(cx, |input, cx| input.set_value("", window, cx));
+                        }
+                        cx.notify();
+                    }));
+                row = row.child(
+                    div()
+                        .mt(px(2.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .w(px(14.))
+                        .h(px(14.))
+                        .flex_shrink_0()
+                        .rounded(if multiple { px(4.) } else { px(7.) })
+                        .border_1()
+                        .border_color(if chosen { accent } else { tertiary })
+                        .when(chosen, |dot| dot.bg(accent))
+                        .when(chosen, |dot| {
+                            dot.child(
+                                Icon::new(gpui_kit::assets::IconName::Check)
+                                    .xsmall()
+                                    .text_color(self.color(0x11151d)),
+                            )
+                        }),
+                );
+                row = row.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.))
+                        .min_w_0()
+                        .child(div().text_sm().child(label))
+                        .when(!description.is_empty(), |column| {
+                            column.child(div().text_xs().text_color(tertiary).child(description))
+                        }),
+                );
+                options = options.child(row);
+            }
+            section = section.child(options);
+            if question["allowsFreeText"] != false
+                && let Some(input) = self.pending_inputs.get(&key)
+            {
+                section = section
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(tertiary)
+                            .child("Or write your own answer; this replaces the selected option."),
+                    )
+                    .child(Input::new(input));
+            }
+            body = body.child(section);
+            let has_choice = self
+                .pending_choices
+                .get(&key)
+                .is_some_and(|choices| !choices.is_empty());
+            let has_text = self
+                .pending_inputs
+                .get(&key)
+                .is_some_and(|input| !input.read(cx).value().trim().is_empty());
+            let answered = has_choice || has_text;
+            let mut footer = div().flex().justify_end().gap_1();
+            if step > 0 {
+                let request = request_id.clone();
+                footer = footer.child(
+                    Button::new(SharedString::from(format!("back-{request}")))
+                        .label("Back")
+                        .small()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if let Some(step) = this.pending_question_step.get_mut(&request) {
+                                *step = step.saturating_sub(1);
+                            }
+                            cx.notify();
+                        })),
+                );
+            }
+            if step + 1 < questions.len() {
+                let request = request_id.clone();
+                footer = footer.child(
+                    Button::new(SharedString::from(format!("next-{request}")))
+                        .label("Next")
+                        .small()
+                        .disabled(!answered)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            let step = this
+                                .pending_question_step
+                                .entry(request.clone())
+                                .or_insert(0);
+                            *step += 1;
+                            cx.notify();
+                        })),
+                );
+            } else {
+                let id = request_id.clone();
+                footer = footer.child(
+                    Button::new(SharedString::from(format!("submit-{request_id}")))
+                        .label(if questions.len() > 1 {
+                            "Submit Answers"
+                        } else {
+                            "Submit"
+                        })
+                        .on_click(cx.listener(move |this, _, _, cx| this.answer_pending(&id, cx))),
+                );
+            }
+            body = body.child(footer);
+            cards.push(body);
+        }
+        if cards.is_empty() {
+            return banner.map(|banner| {
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_shrink_0()
+                    .child(banner)
+                    .into_any_element()
+            });
+        }
         Some(
             div()
                 .flex()
                 .flex_col()
                 .flex_shrink_0()
+                .gap_2()
                 .children(banner)
-                .children(questions)
+                .child(
+                    div()
+                        .id("pending-agent-requests")
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .max_h(px(440.))
+                        .overflow_y_scroll()
+                        .children(cards),
+                )
                 .into_any_element(),
         )
     }
@@ -4253,6 +4526,51 @@ impl Coincide {
         }
         cx.notify();
     }
+    /// One tool/reasoning row after Swift-style normalization. None means the
+    /// provider emitted a duplicate row that Swift never draws.
+    fn work_row(
+        &mut self,
+        source: &str,
+        index: usize,
+        item: &Value,
+        expanded: bool,
+        nested: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let mut item = item.clone();
+        presentation::normalize_opencode_tool(&mut item);
+        presentation::normalize_legacy_reasoning(&mut item);
+        if presentation::is_question_tool(&item) || presentation::is_duplicate_reasoning_tool(&item)
+        {
+            return None;
+        }
+        let item_id = text(&item, "id");
+        let row = self.tool_row(source, &item_id, &item, expanded, window, cx);
+        Some(if nested {
+            div()
+                .w_full()
+                .pl(px(presentation::RAIL_GUTTER))
+                .child(row)
+                .into_any_element()
+        } else {
+            row
+        })
+    }
+
+    fn toggle_work_group(
+        &mut self,
+        source: &str,
+        anchor: &str,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        self.chat_turns.toggle(source, anchor);
+        if index < self.transcript_count {
+            self.transcript_list.splice(index..index + 1, 1);
+        }
+        cx.notify();
+    }
     fn toggle_item_expanded(&mut self, source: &str, item: &str, cx: &mut Context<Self>) {
         let Some(thread) = self.selected.as_ref().filter(|v| v["id"] == source) else {
             return;
@@ -4324,11 +4642,76 @@ impl Coincide {
             let row = self.notice_row(&source_id, &item_id, body, window, cx);
             return self.turn_decorated(index, row, plan.header, cx);
         }
-        if kind == "tool" && !find_revealed {
+        if kind == "question" && !find_revealed {
             let item = item.clone();
-            let expanded = self.expanded.contains(&index);
-            let row = self.tool_row(&source_id, &item_id, &item, expanded, window, cx);
+            let row = self.question_row(&source_id, &item_id, &item, window, cx);
             return self.turn_decorated(index, row, plan.header, cx);
+        }
+        if let Some(group) = plan.group.clone()
+            && group.items.first().copied() == Some(index)
+        {
+            let items = self
+                .selected
+                .as_ref()
+                .and_then(|thread| thread["items"].as_array())
+                .map(|items| {
+                    group
+                        .items
+                        .iter()
+                        .filter_map(|index| items.get(*index).cloned())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let normalized = items
+                .iter()
+                .map(|item| {
+                    let mut item = item.clone();
+                    presentation::normalize_opencode_tool(&mut item);
+                    presentation::normalize_legacy_reasoning(&mut item);
+                    item
+                })
+                .collect::<Vec<_>>();
+            let summary = self.group_row(
+                &source_id,
+                &item_id,
+                index,
+                &normalized,
+                group.expanded,
+                window,
+                cx,
+            );
+            let mut column = div().flex().flex_col().child(summary);
+            if group.expanded {
+                for (child_index, child) in group.items.iter().zip(items.iter()) {
+                    if let Some(row) = self.work_row(
+                        &source_id,
+                        *child_index,
+                        child,
+                        self.expanded.contains(child_index),
+                        true,
+                        window,
+                        cx,
+                    ) {
+                        column = column.child(row);
+                    }
+                }
+            }
+            return self.turn_decorated(index, column.into_any_element(), plan.header, cx);
+        }
+        if (kind == "tool" || kind == "reasoning") && !find_revealed {
+            let item = item.clone();
+            if let Some(row) = self.work_row(
+                &source_id,
+                index,
+                &item,
+                self.expanded.contains(&index),
+                false,
+                window,
+                cx,
+            ) {
+                return self.turn_decorated(index, row, plan.header, cx);
+            }
+            return self.turn_decorated(index, div().into_any_element(), plan.header, cx);
         }
         let copy_empty = body.is_empty();
         let collapsible = kind != "user" && kind != "assistant";
@@ -4344,6 +4727,20 @@ impl Coincide {
             .or_else(|| item["model"].as_str())
             .unwrap_or_default()
             .to_owned();
+        let reply_time = {
+            use chrono::TimeZone;
+            let stamp = item
+                .get("completedAt")
+                .filter(|value| !value.is_null())
+                .unwrap_or(&item["createdAt"]);
+            chat_turns::seconds(stamp)
+                .and_then(|seconds| {
+                    chrono::Local
+                        .timestamp_opt((seconds + 978_307_200.) as i64, 0)
+                        .single()
+                })
+                .map(|time| time.format("%-I:%M %p").to_string())
+        };
         let work_header = presentation::work_header(item);
         let work_status = work_header.as_ref().and_then(|header| header.status);
         let label = match kind.as_str() {
@@ -4401,10 +4798,7 @@ impl Coincide {
                 "copy-message-{source_id}-{item_id}"
             )))
             .accessibility_label("Copy message")
-            .when(kind == "user", |button| {
-                button.icon(gpui_kit::assets::IconName::Copy)
-            })
-            .when(kind != "user", |button| button.label("Copy message"))
+            .icon(gpui_kit::assets::IconName::Copy)
             .ghost()
             .compact()
             .when(kind == "assistant" || kind == "user", |button| {
@@ -4452,12 +4846,10 @@ impl Coincide {
             .flex()
             .flex_wrap()
             .items_center()
-            .justify_between()
-            .gap_2()
+            .gap_1()
             .child(
                 div()
                     .min_w_0()
-                    .flex_1()
                     .flex()
                     .flex_wrap()
                     .items_center()
@@ -4492,7 +4884,8 @@ impl Coincide {
                     .accessibility_id(SharedString::from(format!(
                         "quote-message-{source_id}-{item_id}"
                     )))
-                    .label("Quote message")
+                    .icon(gpui_kit::assets::IconName::MessagesSquare)
+                    .accessibility_label("Quote message")
                     .ghost()
                     .compact()
                     .xsmall()
@@ -4517,7 +4910,7 @@ impl Coincide {
                     .accessibility_label(SharedString::from(format!(
                         "Fork through response: {action_excerpt}"
                     )))
-                    .label("Fork through this turn")
+                    .icon(gpui_kit::assets::IconName::GitBranch)
                     .ghost()
                     .compact()
                     .xsmall()
@@ -4527,9 +4920,22 @@ impl Coincide {
                     })),
                 )
             })
+            .when(kind == "assistant", |footer| {
+                footer.when_some(reply_time, |footer, time| {
+                    footer.child(
+                        div()
+                            .text_xs()
+                            .text_color(self.color(0xe4e9f2).opacity(0.4))
+                            .child(time),
+                    )
+                })
+            })
             .when_some(work_disclosure, |header, control| header.child(control));
         let (header, footer) = if kind == "assistant" {
-            (None, Some(metadata.into_any_element()))
+            (
+                None,
+                plan.terminal_reply.then(|| metadata.into_any_element()),
+            )
         } else if kind == "user" {
             (None, None)
         } else {
@@ -4691,7 +5097,13 @@ impl Coincide {
         if self.selected.is_none() {
             return;
         }
-        self.terminal_open = !self.terminal_open;
+        let revealing = self.global_schedules_route() || self.session_import_open;
+        if self.global_schedules_route() {
+            self.close_schedule_surface();
+        }
+        self.session_import_open = false;
+        self.terminal_open = revealing || !self.terminal_open;
+        self.remember_terminal_visibility();
         if self.terminal_open && self.terminal_on_right() {
             self.workspace_open = false;
             self.close_schedule_surface();
@@ -4710,6 +5122,9 @@ impl Coincide {
                 }
             }
         }
+        // Accessibility and menu actions can arrive before this window becomes
+        // active. Keep a plain-shell request until its workspace is mounted.
+        self.terminal_activate_on_show = self.terminal_open && script.is_none();
         self.sync_terminal_workspace(window, cx);
         if self.terminal_open
             && let Some(id) = &self.terminal_visible_thread
@@ -4788,6 +5203,10 @@ impl Coincide {
             };
             debug_assert_eq!(workspace.read(cx).thread_id(), thread);
             workspace.update(cx, |workspace, cx| workspace.set_visible(true, cx));
+            if self.terminal_activate_on_show {
+                self.terminal_activate_on_show = false;
+                workspace.update(cx, |workspace, cx| workspace.activate(window, cx));
+            }
             self.terminal_visible_thread = Some(thread);
         }
     }
@@ -4847,6 +5266,7 @@ impl Coincide {
 }
 impl Render for Coincide {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.chat_turns.begin_render();
         // Swift's palette floats about a sixth of the way down the window.
         let palette_top = (f32::from(window.viewport_size().height) * 0.16).max(64.);
         self.sync_context_details();
@@ -4868,7 +5288,6 @@ impl Render for Coincide {
                 && self.media_shutdown_ready(cx)
                 && self.computer_use_shutdown_ready())
         {
-            self.quit_frame_seen = true;
             return div()
                 .flex()
                 .flex_col()
@@ -5064,6 +5483,12 @@ impl Render for Coincide {
         let implement_button = self.implement_button(cx);
         let historical_image = self.historical_image_overlay(cx);
         let terminal_bottom = self.terminal_surface(false, window, cx);
+        let empty_conversation = show_composer
+            && self.selected.as_ref().is_some_and(|thread| {
+                thread["items"]
+                    .as_array()
+                    .is_some_and(|items| items.is_empty())
+            });
 
         let chat_column = div()
                     .flex()
@@ -5115,18 +5540,8 @@ impl Render for Coincide {
                             )
                         },
                     )
-                    .child(conversation_content)
-                    .when_some(pending_pane, |view, pane| view.child(pane))
-                    .when_some(terminal_bottom,|view,pane|view.child(pane))
-                    .when(
-                        show_composer
-                            && self.selected.as_ref().is_some_and(|thread| {
-                                thread["items"]
-                                    .as_array()
-                                    .is_some_and(|items| items.is_empty())
-                            }),
-                        |view| view.child(self.chat_welcome(cx)),
-                    )
+                    .when(!empty_conversation, |view| view.child(conversation_content))
+                    .when(empty_conversation, |view| view.child(self.chat_welcome(cx)))
                     .when(show_composer, |view| {
                         view.child(
                             div()
@@ -5141,6 +5556,15 @@ impl Render for Coincide {
                                 .overflow_hidden()
                                 .px(px(presentation::CONTENT_GUTTER))
                                 .py_3()
+                                .when_some(pending_pane, |view, pane| {
+                                    view.child(
+                                        div()
+                                            .w_full()
+                                            .max_w(px(presentation::CONTENT_WIDTH))
+                                            .mb_2()
+                                            .child(pane),
+                                    )
+                                })
                                 .child(
                                     self.composer_file_key_scope(div(), cx)
                                         .w_full()
@@ -5225,7 +5649,7 @@ impl Render for Coincide {
                                                                 px(chat_layout::composer_height(
                                                                     state.display_map().wrap_row_count(),
                                                                     state.line_height().map(f32::from).unwrap_or(20.),
-                                                                    f32::from(window.viewport_size().height),
+                                                                    self.composer_available_height(window),
                                                                 ))
                                                             }
                                                         })
@@ -5243,13 +5667,12 @@ impl Render for Coincide {
                                                 .id("composer-actions")
                                                 .flex()
                                                 .flex_shrink_0()
-                                                .flex_wrap()
                                                 .items_center()
                                                 .min_w_0()
                                                 .gap_1()
                                                 .gap(px(6.))
                                                 .mt_2()
-                                                .when(!self.composer_files.opened, |view| view.child(self.composer_selection_footer(cx)))
+                                                .when(!self.composer_files.opened, |view| view.child(self.composer_selection_footer(window, cx)))
                                                 .child(
                                                     Button::new("attach-images")
                                                         .icon(gpui_kit::assets::IconName::Paperclip)
@@ -5267,6 +5690,7 @@ impl Render for Coincide {
                                                         })),
                                                 )
                                                 .child(self.composer_voice_control(cx))
+                                                .child(self.composer_meters(cx))
                                                 .when(self.running.contains(&selected_id), |view| view.child(self.composer_stop_button(cx)))
                                                 .when(implement_button.is_none(), |view| view.child(
                                                     Button::new("send")
@@ -5301,7 +5725,9 @@ impl Render for Coincide {
                                 )
                                 .when_some(self.branch_toolbar(cx), |view, toolbar| view.child(toolbar)),
                         )
-                    }).into_any_element();
+                    })
+                    .when_some(terminal_bottom, |view, pane| view.child(pane))
+                    .into_any_element();
         div()
             .relative()
             .capture_key_up(
@@ -5347,6 +5773,9 @@ impl Render for Coincide {
                 view.child(form)
             })
             .when_some(self.git_modal(cx), |view, modal| view.child(modal))
+            .when_some(self.schedule_editor_overlay(cx), |view, editor| {
+                view.child(editor)
+            })
             .when_some(self.context_details_overlay(cx), |view, details| {
                 view.child(details)
             })
@@ -5540,6 +5969,23 @@ fn main() -> Result<()> {
     application.on_reopen(reopen_main_window);
     application.run(move |cx| {
         gpui_kit::init(cx);
+        // New York is a hidden macOS system family. Register its installed
+        // bytes with GPUI's font database so it resolves like AppKit's serif
+        // descriptor instead of silently falling back to the UI sans font.
+        #[cfg(target_os = "macos")]
+        {
+            let fonts = [
+                "/System/Library/Fonts/NewYork.ttf",
+                "/System/Library/Fonts/NewYorkItalic.ttf",
+            ]
+            .into_iter()
+            .filter_map(|path| std::fs::read(path).ok())
+            .map(std::borrow::Cow::Owned)
+            .collect::<Vec<_>>();
+            if let Err(error) = cx.text_system().add_fonts(fonts) {
+                eprintln!("Unable to load system serif font: {error}");
+            }
+        }
         composer_file_picker::init(cx);
         sidebar_keys::init(cx);
         composer_follow_up_mount::init(cx);
@@ -5589,11 +6035,17 @@ fn open_main_window(cx: &mut App) -> Result<()> {
             window_bounds: Some(bounds),
             display_id,
             window_min_size: Some(size(px(820.), px(520.))),
+            titlebar: Some(TitlebarOptions {
+                appears_transparent: cfg!(target_os = "macos"),
+                traffic_light_position: cfg!(target_os = "macos").then(|| point(px(18.), px(16.))),
+                ..Default::default()
+            }),
+            app_owns_titlebar_drag: cfg!(target_os = "macos"),
             ..Default::default()
         },
         cx,
         |window, cx| {
-            window.set_window_title("Coincide Rust Preview");
+            window.set_window_title("Coincide");
             cx.new(|cx| {
                 Coincide::new(
                     launch.engine,
