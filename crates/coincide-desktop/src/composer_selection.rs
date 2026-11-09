@@ -1193,14 +1193,15 @@ fn footer_summary(
         (false, true) => Some("Saved selection changed".into()),
         (false, false) => None,
     };
-    if let Some(lock) = lock {
-        let reason = format!(
+    // Swift dims the chips while a turn runs; it does not add a visible
+    // "Locked: …" sentence under the composer. Keep the reason in the
+    // accessibility label only.
+    let lock_reason = lock.map(|lock| {
+        format!(
             "Locked: {}",
             footer_value(&json!(lock), "Selection is locked")
-        );
-        annotation =
-            Some(annotation.map_or_else(|| reason.clone(), |value| format!("{value} · {reason}")));
-    }
+        )
+    });
     let action = if expanded {
         "Hide selection options"
     } else {
@@ -1209,6 +1210,9 @@ fn footer_summary(
     let mut accessible = format!("{action}. Saved: {saved}.");
     if let Some(annotation) = &annotation {
         accessible.push_str(&format!(" {annotation}."));
+    }
+    if let Some(lock) = &lock_reason {
+        accessible.push_str(&format!(" {lock}."));
     }
     if pending {
         accessible.push_str(" Pending edits are not applied.");
@@ -3916,9 +3920,15 @@ mod tests {
                 .contains("Access future-access · Interaction future-mode")
         );
         assert!(summary.saved.contains("Account Unsupported array value"));
-        assert!(summary.annotation.unwrap().contains(
-            "Edits pending · saved selection changed · Locked: Refresh capabilities before editing"
-        ));
+        assert_eq!(
+            summary.annotation.as_deref(),
+            Some("Edits pending · saved selection changed")
+        );
+        assert!(
+            summary
+                .accessible
+                .contains("Locked: Refresh capabilities before editing")
+        );
         let label = footer_value(&json!(format!("{}\nend", "é".repeat(600))), "not set");
         assert!(label.chars().count() <= 513);
         assert!(label.ends_with('…'));

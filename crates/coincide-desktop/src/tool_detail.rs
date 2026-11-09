@@ -697,14 +697,11 @@ impl super::Coincide {
             .unwrap_or(Value::Null);
         let questions = payload["questions"].as_array().cloned().unwrap_or_default();
         let first = questions.first();
+        // Swift's work row names the request by its title, else the first
+        // question prompt; the banner heading uses the shorter header.
         let title = payload["title"]
             .as_str()
             .filter(|title| !title.trim().is_empty())
-            .or_else(|| {
-                first
-                    .and_then(|question| question["header"].as_str())
-                    .filter(|header| !header.trim().is_empty())
-            })
             .or_else(|| first.and_then(|question| question["question"].as_str()))
             .unwrap_or("Question")
             .to_owned();
