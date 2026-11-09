@@ -1723,6 +1723,10 @@ cutover; no Swift app or Swift data was removed or modified.
 - A draft-only patch no longer bumps the global revision, so the desktop
   never reloads a 24k-item transcript on a draft save. The earlier per-tick
   retry that saved on the next frame was removed.
+- Every provider's last ready model catalog is cached separately
+  (`model-catalog-cache-<provider>.json`). Opening the picker or switching
+  provider tabs shows that list instantly instead of the cold
+  "Loading models…" state while discovery runs in the background.
 - Drafts save with a 1.2-second background debounce: typing only touches
   memory, and one worker writes the latest text, retrying while the Engine is
   busy. This also gives the Linux native smoke a deterministic persistence
@@ -1738,9 +1742,10 @@ cutover; no Swift app or Swift data was removed or modified.
   `ae8cb572-094c-4b27-8ee4-4a1b691783b5` for 0.1.22 and
   `ecab1f70-d6db-4f0a-9c33-f4047efa5cc1` for 0.1.24 and
   `d4500768-1ea4-4801-8753-62023772f1f5` for 0.1.25 and
-  `2f099dda-942f-44fc-85f3-06c7775c06a1` for 0.1.26 and
-  `fc185909-9425-4754-b9b0-383a8e7c103b` for 0.1.27, all Accepted), stapled
-  and installed `0.1.27` (build 37); Gatekeeper reports a notarized Developer
+  `2f099dda-942f-44fc-85f3-06c7775c06a1` for 0.1.26,
+  `fc185909-9425-4754-b9b0-383a8e7c103b` for 0.1.27 and
+  `5aec903e-7648-44ca-b36a-bb7f74b8e52f` for 0.1.28, all Accepted), stapled
+  and installed `0.1.28` (build 38); Gatekeeper reports a notarized Developer
   ID. (0.1.23 was built locally but superseded before installation.)
 - `cargo test -p coincide-core --lib` passed 1159 tests (9 ignored) and
   `cargo test -p coincide-desktop --bin coincide-rust` passed 810 tests
