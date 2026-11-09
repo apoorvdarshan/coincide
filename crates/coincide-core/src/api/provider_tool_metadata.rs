@@ -35,26 +35,63 @@ fn apply_opencode(row: &mut Value, item: &Value) {
     };
     fields.insert("category".into(), json!(category));
     let input = &item["input"];
-    let title = match name {
-        "shell" | "bash" => input["command"].as_str().and_then(bounded_tool_title),
-        "read" | "write" | "edit" | "patch" | "multiedit" => input["filePath"]
-            .as_str()
-            .or_else(|| input["path"].as_str())
-            .and_then(bounded_tool_title),
-        "grep" | "glob" | "search" => input["pattern"].as_str().and_then(bounded_tool_title),
-        "webfetch" => input["url"].as_str().and_then(bounded_tool_title),
-        "task" => input["description"].as_str().and_then(bounded_tool_title),
-        "question" => input["questions"]
-            .as_array()
-            .and_then(|questions| questions.first())
-            .and_then(|question| question["question"].as_str())
-            .and_then(bounded_tool_title)
-            .or_else(|| Some("Question".into())),
-        _ => bounded_tool_title(name),
+    // Swift names the action in the work log and keeps the raw command/path in
+    // the expandable detail. A single OpenCode shell row reads "Run command",
+    // never the full command line.
+    let (title, detail) = match name {
+        "shell" | "bash" => (
+            Some("Run command".to_owned()),
+            input["command"].as_str().and_then(bounded_tool_title),
+        ),
+        "read" => (
+            Some("Read file".to_owned()),
+            input["filePath"]
+                .as_str()
+                .or_else(|| input["path"].as_str())
+                .and_then(bounded_tool_title),
+        ),
+        "write" => (
+            Some("Write file".to_owned()),
+            input["filePath"]
+                .as_str()
+                .or_else(|| input["path"].as_str())
+                .and_then(bounded_tool_title),
+        ),
+        "edit" | "patch" | "multiedit" => (
+            Some("Edit file".to_owned()),
+            input["filePath"]
+                .as_str()
+                .or_else(|| input["path"].as_str())
+                .and_then(bounded_tool_title),
+        ),
+        "grep" | "glob" | "search" => (
+            Some("Search".to_owned()),
+            input["pattern"].as_str().and_then(bounded_tool_title),
+        ),
+        "webfetch" | "websearch" => (
+            Some("Web search".to_owned()),
+            input["url"].as_str().and_then(bounded_tool_title),
+        ),
+        "task" => (
+            Some("Subagent".to_owned()),
+            input["description"].as_str().and_then(bounded_tool_title),
+        ),
+        "todowrite" | "todoread" => (Some("Update plan".to_owned()), None),
+        "question" => (
+            Some("Question".to_owned()),
+            input["questions"]
+                .as_array()
+                .and_then(|questions| questions.first())
+                .and_then(|question| question["question"].as_str())
+                .and_then(bounded_tool_title),
+        ),
+        value => (bounded_tool_title(value), None),
     };
     if let Some(title) = title {
-        fields.insert("detail".into(), json!(title));
         fields.insert("title".into(), json!(title));
+    }
+    if let Some(detail) = detail {
+        fields.insert("detail".into(), json!(detail));
     }
     let output = item["content"]
         .as_array()
@@ -163,7 +200,8 @@ mod tests {
             &json!({"type":"toolCall","name":"shell","status":"running","input":{"command":"  cargo   test\n-p coincide-core "}}),
         );
         assert_eq!(shell["category"], "command");
-        assert_eq!(shell["title"], "cargo test -p coincide-core");
+        assert_eq!(shell["title"], "Run command");
+        assert_eq!(shell["detail"], "cargo test -p coincide-core");
         assert_eq!(shell["status"], "running");
         assert_eq!(shell["text"], "raw");
 
@@ -174,7 +212,8 @@ mod tests {
             &json!({"type":"toolCall","name":"read","status":"completed","input":{"filePath":"/tmp/crates/core/src/api.rs"}}),
         );
         assert_eq!(read["category"], "read");
-        assert_eq!(read["title"], "/tmp/crates/core/src/api.rs");
+        assert_eq!(read["title"], "Read file");
+        assert_eq!(read["detail"], "/tmp/crates/core/src/api.rs");
         assert_eq!(read["status"], "completed");
 
         let mut question = json!({"kind":"tool","text":"raw"});
@@ -183,7 +222,8 @@ mod tests {
             "opencode",
             &json!({"type":"toolCall","name":"question","status":"completed","input":{"questions":[{"question":"Which path?"}]}}),
         );
-        assert_eq!(question["title"], "Which path?");
+        assert_eq!(question["title"], "Question");
+        assert_eq!(question["detail"], "Which path?");
         assert_eq!(question["status"], "completed");
     }
 

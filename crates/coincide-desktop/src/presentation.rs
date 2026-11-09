@@ -276,29 +276,63 @@ pub(super) fn normalize_opencode_tool(item: &mut Value) {
         _ => "other",
     };
     let input = &payload["input"];
-    let title = match name {
-        "shell" | "bash" => input["command"].as_str().and_then(bounded_title),
-        "read" | "write" | "edit" | "patch" | "multiedit" => input["filePath"]
-            .as_str()
-            .or_else(|| input["path"].as_str())
-            .and_then(bounded_title),
-        "grep" | "glob" | "search" => input["pattern"].as_str().and_then(bounded_title),
-        "webfetch" => input["url"].as_str().and_then(bounded_title),
-        "task" => input["description"].as_str().and_then(bounded_title),
-        "question" => input["questions"]
-            .as_array()
-            .and_then(|questions| questions.first())
-            .and_then(|question| question["question"].as_str())
-            .and_then(bounded_title)
-            .or_else(|| Some("Question".into())),
-        _ => bounded_title(name),
+    let (title, detail) = match name {
+        "shell" | "bash" => (
+            Some("Run command".to_owned()),
+            input["command"].as_str().and_then(bounded_title),
+        ),
+        "read" => (
+            Some("Read file".to_owned()),
+            input["filePath"]
+                .as_str()
+                .or_else(|| input["path"].as_str())
+                .and_then(bounded_title),
+        ),
+        "write" => (
+            Some("Write file".to_owned()),
+            input["filePath"]
+                .as_str()
+                .or_else(|| input["path"].as_str())
+                .and_then(bounded_title),
+        ),
+        "edit" | "patch" | "multiedit" => (
+            Some("Edit file".to_owned()),
+            input["filePath"]
+                .as_str()
+                .or_else(|| input["path"].as_str())
+                .and_then(bounded_title),
+        ),
+        "grep" | "glob" | "search" => (
+            Some("Search".to_owned()),
+            input["pattern"].as_str().and_then(bounded_title),
+        ),
+        "webfetch" | "websearch" => (
+            Some("Web search".to_owned()),
+            input["url"].as_str().and_then(bounded_title),
+        ),
+        "task" => (
+            Some("Subagent".to_owned()),
+            input["description"].as_str().and_then(bounded_title),
+        ),
+        "todowrite" | "todoread" => (Some("Update plan".to_owned()), None),
+        "question" => (
+            Some("Question".to_owned()),
+            input["questions"]
+                .as_array()
+                .and_then(|questions| questions.first())
+                .and_then(|question| question["question"].as_str())
+                .and_then(bounded_title),
+        ),
+        value => (bounded_title(value), None),
     };
     if let Some(title) = title.filter(|title| !title.is_empty()) {
         if item.get("title").is_null_or_empty() {
             item["title"] = json!(title);
         }
+    }
+    if let Some(detail) = detail.filter(|detail| !detail.is_empty()) {
         if item.get("detail").is_null_or_empty() {
-            item["detail"] = json!(title);
+            item["detail"] = json!(detail);
         }
     }
     if item.get("category").is_none() {
@@ -502,7 +536,8 @@ mod work_header_tests {
             "content":[{"type":"text","text":"ok"}]
         }).to_string()});
         normalize_opencode_tool(&mut shell);
-        assert_eq!(shell["title"], "cargo test -p coincide-core");
+        assert_eq!(shell["title"], "Run command");
+        assert_eq!(shell["detail"], "cargo test -p coincide-core");
         assert_eq!(shell["category"], "command");
         assert_eq!(shell["status"], "completed");
         assert_eq!(shell["output"], "ok");
