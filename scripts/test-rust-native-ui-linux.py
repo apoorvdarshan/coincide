@@ -304,7 +304,7 @@ def main():
         command("xdotool", "windowfocus", "--sync", window, env=env)
         assert int(command("xdotool", "getwindowfocus", env=env)) == int(window), "Composer input must target the observed owned X11 window"
         command("xdotool", "mousemove", "--window", window,
-                str((left + right) // 2), str((top + bottom) // 2), "click", "1", env=env)
+                str((left + right) // 2), str(max(top - 12, 0)), "click", "1", env=env)
         command("import", "-window", window, str(artifacts / "composer-after-click.png"), env=env)
         draft = "Native X11 keyboard draft survives restart"
         command("xdotool", "type", "--clearmodifiers", "--delay", "15", draft, env=env)
@@ -339,7 +339,7 @@ def main():
                 report["composerFailureEvidenceError"] = type(diagnostic_error).__name__
             raise
         command("xdotool", "mousemove", "--window", window,
-                str((left + right) // 2), str((top + bottom) // 2), "click", "1", env=env)
+                str((left + right) // 2), str(max(top - 12, 0)), "click", "1", env=env)
         capture(window, "typed-draft", "keyboard draft")
         report["checks"].append("visible rendered native window and X11 keyboard draft persisted")
         # Real X11 typing of a `/` word opens the production suggestion list

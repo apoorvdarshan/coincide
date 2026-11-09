@@ -4970,7 +4970,12 @@ impl Render for Coincide {
             .map(|v| text(v, "title"))
             .unwrap_or_else(|| "Welcome to Coincide".into());
         let entity = cx.entity();
-        let jump_to_latest = !self.transcript_list.is_following_tail();
+        let jump_to_latest = !self.transcript_list.is_following_tail()
+            && self.selected.as_ref().is_some_and(|thread| {
+                thread["items"]
+                    .as_array()
+                    .is_some_and(|items| !items.is_empty())
+            });
         let transcript = div()
             .on_children_prepainted(self.media_layout_observer(cx))
             .relative()
