@@ -3627,6 +3627,10 @@ impl Coincide {
         self.sync_github_context(cx);
         self.sync_credentials(cx);
         self.sync_terminal_workspace(window, cx);
+        // Questions and approvals are independent of the transcript revision.
+        // Poll them before any revision-gated read can return early; otherwise
+        // an answered question can stay visible while a turn keeps running.
+        self.refresh_pending(window, cx);
         if let Ok(status) = call(&self.engine, "app.status", json!({})) {
             self.window_chrome.observe_status(&status);
             let selected_thread = self.selected.as_ref().map(|thread| text(thread, "id"));
@@ -3695,7 +3699,6 @@ impl Coincide {
             }
             self.tick_turn_clock(cx);
         }
-        self.refresh_pending(window, cx);
         self.poll_transcription(window, cx);
         self.sync_media_context(cx);
         self.sync_find(window, cx);
@@ -3719,6 +3722,12 @@ impl Coincide {
         } else {
             Vec::new()
         };
+        // A successful poll clears the transient busy line; otherwise the UI
+        // keeps accusing the app of being busy long after the lock is free.
+        if self.status.starts_with("Unable to load agent requests:") {
+            self.status.clear();
+            cx.notify();
+        }
         let live: std::collections::HashSet<_> =
             requests.iter().map(|r| text(r, "requestId")).collect();
         self.pending_inputs
@@ -3825,130 +3834,206 @@ impl Coincide {
         let thread = self.selected.as_ref().map(|v| text(v, "id"))?;
         // Approvals show one at a time in Swift's banner; questions keep their cards.
         let banner = self.approval_banner(window, cx);
+        let secondary = self.color(0xe4e9f2).opacity(0.62);
+        let tertiary = self.color(0xe4e9f2).opacity(0.4);
+        let accent = self.color(0xE9B04E);
+        let surface = self.color(0x202a3a);
+        let border = self.color(0x33405a);
         let mut cards = Vec::new();
         for request in &self.pending_requests {
             if request["method"] != "item/tool/requestUserInput" {
                 continue;
             }
             let request_id = text(request, "requestId");
-            let card = div()
-                .flex()
-                .flex_col()
-                .h(px(260.))
-                .flex_shrink_0()
-                .gap_2()
-                .p_3()
-                .rounded_md()
-                .bg(self.color(0x253046));
+            let provider = text(request, "provider");
+            let provider = presentation::provider_name(&provider);
+            let questions = request["params"]["questions"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            let heading = questions
+                .first()
+                .and_then(|question| question["header"].as_str())
+                .filter(|header| !header.trim().is_empty())
+                .unwrap_or("Question");
             let mut body = div()
-                .id(SharedString::from(format!("pending-body-{request_id}")))
                 .flex()
                 .flex_col()
-                .flex_1()
-                .min_h_0()
-                .gap_2()
-                .overflow_y_scroll();
-            let actions = {
-                body = body.child(div().font_semibold().child("The agent needs your answer"));
-                for (index, question) in request["params"]["questions"]
+                .gap_3()
+                .p_3()
+                .rounded(px(16.))
+                .bg(surface)
+                .border_1()
+                .border_color(border);
+            body = body.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        Icon::new(gpui_kit::assets::IconName::MessageCircleQuestionMark)
+                            .small()
+                            .text_color(accent),
+                    )
+                    .child(div().font_semibold().child(heading.to_owned()))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(secondary)
+                            .child(provider.to_owned()),
+                    )
+                    .when(questions.len() > 1, |row| {
+                        row.child(
+                            div()
+                                .text_xs()
+                                .text_color(tertiary)
+                                .child(format!("{} questions", questions.len())),
+                        )
+                    }),
+            );
+            for (index, question) in questions.iter().enumerate() {
+                let key = (thread.clone(), request_id.clone(), text(question, "id"));
+                let prompt = question["question"].as_str().unwrap_or_default();
+                let multiple = question["multiSelect"] == true;
+                let mut section = div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .when(index > 0, |view| {
+                        view.pt_2().border_t_1().border_color(border)
+                    })
+                    .child(div().text_sm().child(prompt.to_owned()));
+                let mut options = div().flex().flex_col().gap_1();
+                for (option_index, option) in question["options"]
                     .as_array()
                     .into_iter()
                     .flatten()
                     .enumerate()
                 {
-                    let key = (thread.clone(), request_id.clone(), text(question, "id"));
-                    body = body
-                        .child(div().text_sm().child(text(question, "header")))
-                        .child(div().child(text(question, "question")));
-                    let multiple = question["multiSelect"] == true;
-                    let mut options = div().flex().flex_col().gap_1();
-                    for (option_index, option) in question["options"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .enumerate()
-                    {
-                        let label = text(option, "label");
-                        let chosen = self
-                            .pending_choices
-                            .get(&key)
-                            .is_some_and(|choices| choices.contains(&label));
-                        let key = key.clone();
-                        let button_label = format!("{}{}", if chosen { "✓ " } else { "" }, label);
-                        options =
-                            options
-                                .child(
-                                    Button::new(SharedString::from(format!(
-                                        "answer-{request_id}-{index}-{option_index}"
-                                    )))
-                                    .label(button_label)
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        let choices =
-                                            this.pending_choices.entry(key.clone()).or_default();
-                                        if multiple {
-                                            if choices.contains(&label) {
-                                                choices.retain(|v| v != &label);
-                                            } else {
-                                                choices.push(label.clone());
-                                            }
-                                        } else {
-                                            *choices = vec![label.clone()];
-                                        }
-                                        if let Some(input) = this.pending_inputs.get(&key) {
-                                            input.update(cx, |input, cx| {
-                                                input.set_value("", window, cx)
-                                            });
-                                        }
-                                        cx.notify();
-                                    })),
+                    let label = text(option, "label");
+                    let description = text(option, "description");
+                    let chosen = self
+                        .pending_choices
+                        .get(&key)
+                        .is_some_and(|choices| choices.contains(&label));
+                    let key = key.clone();
+                    let selected_label = label.clone();
+                    let option_id =
+                        SharedString::from(format!("answer-{request_id}-{index}-{option_index}"));
+                    let mut row = div()
+                        .id(option_id)
+                        .flex()
+                        .items_start()
+                        .gap_2()
+                        .px_2()
+                        .py_2()
+                        .rounded(px(9.))
+                        .cursor_pointer()
+                        .when(chosen, |row| row.bg(accent.opacity(0.14)))
+                        .when(!chosen, |row| {
+                            row.hover(|row| row.bg(self.color(0xe4e9f2).opacity(0.05)))
+                        })
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            let choices = this.pending_choices.entry(key.clone()).or_default();
+                            if multiple {
+                                if choices.contains(&selected_label) {
+                                    choices.retain(|value| value != &selected_label);
+                                } else {
+                                    choices.push(selected_label.clone());
+                                }
+                            } else {
+                                *choices = vec![selected_label.clone()];
+                            }
+                            if let Some(input) = this.pending_inputs.get(&key) {
+                                input.update(cx, |input, cx| input.set_value("", window, cx));
+                            }
+                            cx.notify();
+                        }));
+                    row = row.child(
+                        div()
+                            .mt(px(2.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .w(px(14.))
+                            .h(px(14.))
+                            .flex_shrink_0()
+                            .rounded(if multiple { px(4.) } else { px(7.) })
+                            .border_1()
+                            .border_color(if chosen { accent } else { tertiary })
+                            .when(chosen, |dot| dot.bg(accent))
+                            .when(chosen, |dot| {
+                                dot.child(
+                                    Icon::new(gpui_kit::assets::IconName::Check)
+                                        .xsmall()
+                                        .text_color(self.color(0x11151d)),
                                 )
-                                .child(div().text_sm().child(text(option, "description")));
-                    }
-                    body = body.child(options);
-                    if let Some(input) = self.pending_inputs.get(&key) {
-                        body = body
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .child("Or write an answer; this replaces selected options."),
-                            )
-                            .child(Input::new(input));
-                    }
+                            }),
+                    );
+                    row = row.child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.))
+                            .min_w_0()
+                            .child(div().text_sm().child(label))
+                            .when(!description.is_empty(), |column| {
+                                column
+                                    .child(div().text_xs().text_color(tertiary).child(description))
+                            }),
+                    );
+                    options = options.child(row);
                 }
-                let id = request_id.clone();
-                div().flex_shrink_0().child(
+                section = section.child(options);
+                if question["allowsFreeText"] != false
+                    && let Some(input) = self.pending_inputs.get(&key)
+                {
+                    section =
+                        section
+                            .child(div().text_xs().text_color(tertiary).child(
+                                "Or write your own answer; this replaces the selected option.",
+                            ))
+                            .child(Input::new(input));
+                }
+                body = body.child(section);
+            }
+            let id = request_id.clone();
+            body = body.child(
+                div().flex().justify_end().child(
                     Button::new(SharedString::from(format!("submit-{request_id}")))
                         .label("Submit answers")
                         .on_click(cx.listener(move |this, _, _, cx| this.answer_pending(&id, cx))),
-                )
-            };
-            // Only the request details scroll. Decisions stay in a separate
-            // footer, reachable even when questions/options exceed the pane.
-            cards.push(card.child(body).child(actions));
+                ),
+            );
+            cards.push(body);
         }
-        let questions = (!cards.is_empty()).then(|| {
-            div()
-                .id("pending-agent-requests")
-                .flex()
-                .flex_col()
-                .gap_2()
-                .max_h(px(340.))
-                .flex_shrink_0()
-                .overflow_y_scroll()
-                .p_3()
-                .child(div().text_sm().child(format!(
-                    "{} pending request(s)",
-                    self.pending_requests.len()
-                )))
-                .children(cards)
-        });
+        if cards.is_empty() {
+            return banner.map(|banner| {
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_shrink_0()
+                    .child(banner)
+                    .into_any_element()
+            });
+        }
         Some(
             div()
                 .flex()
                 .flex_col()
                 .flex_shrink_0()
+                .gap_2()
                 .children(banner)
-                .children(questions)
+                .child(
+                    div()
+                        .id("pending-agent-requests")
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .max_h(px(440.))
+                        .overflow_y_scroll()
+                        .children(cards),
+                )
                 .into_any_element(),
         )
     }
@@ -4324,8 +4409,23 @@ impl Coincide {
             let row = self.notice_row(&source_id, &item_id, body, window, cx);
             return self.turn_decorated(index, row, plan.header, cx);
         }
-        if kind == "tool" && !find_revealed {
+        if kind == "question" && !find_revealed {
             let item = item.clone();
+            let row = self.question_row(&source_id, &item_id, &item, window, cx);
+            return self.turn_decorated(index, row, plan.header, cx);
+        }
+        if (kind == "tool" || kind == "reasoning") && !find_revealed {
+            let mut item = item.clone();
+            presentation::normalize_opencode_tool(&mut item);
+            presentation::normalize_legacy_reasoning(&mut item);
+            // OpenCode reports the question tool call and the form as two
+            // items, and repeats reasoning parts as raw tool JSON. Swift shows
+            // only the form row and the normalized reasoning row.
+            if (kind == "tool" && presentation::is_question_tool(&item))
+                || (kind == "tool" && presentation::is_duplicate_reasoning_tool(&item))
+            {
+                return self.turn_decorated(index, div().into_any_element(), plan.header, cx);
+            }
             let expanded = self.expanded.contains(&index);
             let row = self.tool_row(&source_id, &item_id, &item, expanded, window, cx);
             return self.turn_decorated(index, row, plan.header, cx);
@@ -5116,7 +5216,6 @@ impl Render for Coincide {
                         },
                     )
                     .child(conversation_content)
-                    .when_some(pending_pane, |view, pane| view.child(pane))
                     .when_some(terminal_bottom,|view,pane|view.child(pane))
                     .when(
                         show_composer
@@ -5141,6 +5240,15 @@ impl Render for Coincide {
                                 .overflow_hidden()
                                 .px(px(presentation::CONTENT_GUTTER))
                                 .py_3()
+                                .when_some(pending_pane, |view, pane| {
+                                    view.child(
+                                        div()
+                                            .w_full()
+                                            .max_w(px(presentation::CONTENT_WIDTH))
+                                            .mb_2()
+                                            .child(pane),
+                                    )
+                                })
                                 .child(
                                     self.composer_file_key_scope(div(), cx)
                                         .w_full()

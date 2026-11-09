@@ -9,7 +9,7 @@ pub(super) struct Form {
 struct Field {
     key: String,
     kind: String,
-    options: Vec<(String, String)>,
+    options: Vec<(String, String, Option<String>)>,
     custom: bool,
 }
 impl Form {
@@ -54,17 +54,36 @@ impl Form {
                     .filter(|v| !v.is_empty())
                     .unwrap_or(value);
                 ensure!(
-                    !options.iter().any(|(old, _)| old == label),
+                    !options.iter().any(|(old, _, _)| old == label),
                     "OpenCode form has ambiguous option labels"
                 );
-                options.push((label.to_owned(), value.to_owned()));
+                let description = option["description"]
+                    .as_str()
+                    .filter(|v| !v.trim().is_empty())
+                    .map(str::to_owned);
+                options.push((label.to_owned(), value.to_owned(), description));
             }
             if kind == "boolean" {
-                options = vec![("Yes".into(), "true".into()), ("No".into(), "false".into())];
+                options = vec![
+                    ("Yes".into(), "true".into(), None),
+                    ("No".into(), "false".into(), None),
+                ];
             }
             let custom = field["custom"] == true || options.is_empty();
-            questions.push(json!({"id":key,"question":field["description"].as_str().or_else(||field["title"].as_str()).unwrap_or(key),
-                "options":options.iter().map(|(label,_)|json!({"label":label})).collect::<Vec<_>>(),"multiSelect":kind=="multiselect","allowsFreeText":custom}));
+            let mut option_rows = Vec::new();
+            for (label, _, description) in &options {
+                let mut row = json!({"label":label});
+                if let Some(description) = description {
+                    row["description"] = json!(description);
+                }
+                option_rows.push(row);
+            }
+            let mut question = json!({"id":key,"question":field["description"].as_str().or_else(||field["title"].as_str()).unwrap_or(key),
+                "options":option_rows,"multiSelect":kind=="multiselect","allowsFreeText":custom});
+            if let Some(header) = field["title"].as_str().filter(|v| !v.trim().is_empty()) {
+                question["header"] = json!(header);
+            }
+            questions.push(question);
             parsed.push(Field {
                 key: key.into(),
                 kind: kind.into(),
@@ -95,12 +114,13 @@ impl Form {
                         .map(str::trim)
                         .filter(|v| !v.is_empty())
                         .context("OpenCode answer must contain text")?;
-                    if let Some((_, value)) = field.options.iter().find(|(label, _)| label == text)
+                    if let Some((_, value, _)) =
+                        field.options.iter().find(|(label, _, _)| label == text)
                     {
                         return Ok(value.clone());
                     }
                     ensure!(
-                        field.custom || field.options.iter().any(|(_, value)| value == text),
+                        field.custom || field.options.iter().any(|(_, value, _)| value == text),
                         "Choose one of the OpenCode question options"
                     );
                     Ok(text.to_owned())
@@ -158,6 +178,17 @@ mod tests {
         invalid["answers"]["choice"]["answers"] = json!(["arbitrary"]);
         assert!(form.answer(&invalid).is_err());
     }
+    #[test]
+    fn choice_descriptions_and_titles_reach_the_question_banner() {
+        let form = Form::parse(&json!({"fields":[{"key":"color","title":"Color choice","description":"Which color?","type":"string","options":[{"label":"Red","value":"red","description":"Choose red."}]}]})).unwrap();
+        assert_eq!(form.questions[0]["header"], "Color choice");
+        assert_eq!(form.questions[0]["question"], "Which color?");
+        assert_eq!(
+            form.questions[0]["options"][0]["description"],
+            "Choose red."
+        );
+    }
+
     #[test]
     fn unsupported_forms_are_never_guessed() {
         for field in [

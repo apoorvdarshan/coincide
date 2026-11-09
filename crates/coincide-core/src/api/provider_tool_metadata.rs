@@ -1,8 +1,100 @@
-//! Descriptive Codex command metadata, never approval or turn-lifecycle authority.
+//! Descriptive provider tool metadata, never approval or turn-lifecycle authority.
 use serde_json::{Value, json};
 
 pub(super) fn apply(row: &mut Value, captured_provider: &str, item: &Value) {
-    if captured_provider != "codex" || item["type"] != "commandExecution" {
+    match captured_provider {
+        "codex" => apply_codex(row, item),
+        "opencode" => apply_opencode(row, item),
+        _ => {}
+    }
+}
+
+/// OpenCode reports tool parts as `toolCall` with a lowercase tool name and a
+/// free-form input object. Persist the same kind of display metadata Swift's
+/// transcript derives (title, category, status) instead of making every row a
+/// generic "Tool activity" JSON payload.
+fn apply_opencode(row: &mut Value, item: &Value) {
+    if item["type"] != "toolCall" {
+        return;
+    }
+    let Some(fields) = row.as_object_mut() else {
+        return;
+    };
+    let name = item["name"].as_str().unwrap_or_default();
+    let category = match name {
+        "shell" | "bash" => "command",
+        "read" | "list" => "read",
+        "grep" | "glob" | "search" => "search",
+        "webfetch" | "websearch" => "web",
+        "edit" | "write" | "patch" | "multiedit" => "fileChange",
+        "task" => "task",
+        "todowrite" | "todoread" => "todo",
+        "question" => "other",
+        value if value.starts_with("mcp") => "mcp",
+        _ => "other",
+    };
+    fields.insert("category".into(), json!(category));
+    let input = &item["input"];
+    let title = match name {
+        "shell" | "bash" => input["command"].as_str().and_then(bounded_tool_title),
+        "read" | "write" | "edit" | "patch" | "multiedit" => input["filePath"]
+            .as_str()
+            .or_else(|| input["path"].as_str())
+            .and_then(bounded_tool_title),
+        "grep" | "glob" | "search" => input["pattern"].as_str().and_then(bounded_tool_title),
+        "webfetch" => input["url"].as_str().and_then(bounded_tool_title),
+        "task" => input["description"].as_str().and_then(bounded_tool_title),
+        "question" => input["questions"]
+            .as_array()
+            .and_then(|questions| questions.first())
+            .and_then(|question| question["question"].as_str())
+            .and_then(bounded_tool_title)
+            .or_else(|| Some("Question".into())),
+        _ => bounded_tool_title(name),
+    };
+    if let Some(title) = title {
+        fields.insert("detail".into(), json!(title));
+        fields.insert("title".into(), json!(title));
+    }
+    let output = item["content"]
+        .as_array()
+        .map(|content| {
+            content
+                .iter()
+                .filter_map(|part| part["text"].as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .filter(|output| !output.trim().is_empty());
+    if let Some(output) = output {
+        fields.insert("output".into(), json!(output));
+    }
+    if let Some(status) = match item["status"].as_str() {
+        Some("running") => Some("running"),
+        Some("completed") => Some("completed"),
+        Some("failed") => Some("failed"),
+        Some("cancelled" | "canceled" | "declined") => Some("declined"),
+        _ => None,
+    } {
+        fields.insert("status".into(), json!(status));
+    }
+}
+
+fn bounded_tool_title(source: &str) -> Option<String> {
+    let mut chars = source.chars();
+    let head: String = chars.by_ref().take(160).collect();
+    let mut title = head.split_whitespace().collect::<Vec<_>>().join(" ");
+    if title.is_empty() {
+        return None;
+    }
+    if chars.next().is_some() {
+        title.push('…');
+    }
+    Some(title)
+}
+
+fn apply_codex(row: &mut Value, item: &Value) {
+    if item["type"] != "commandExecution" {
         return;
     }
     let Some(fields) = row.as_object_mut() else {
@@ -59,6 +151,52 @@ mod tests {
             apply(&mut row, "codex", &item);
             assert_eq!(row, expected);
             assert_eq!(item, original);
+        }
+    }
+
+    #[test]
+    fn opencode_tool_call_gets_swift_style_title_category_and_status() {
+        let mut shell = json!({"kind":"tool","text":"raw"});
+        apply(
+            &mut shell,
+            "opencode",
+            &json!({"type":"toolCall","name":"shell","status":"running","input":{"command":"  cargo   test\n-p coincide-core "}}),
+        );
+        assert_eq!(shell["category"], "command");
+        assert_eq!(shell["title"], "cargo test -p coincide-core");
+        assert_eq!(shell["status"], "running");
+        assert_eq!(shell["text"], "raw");
+
+        let mut read = json!({"kind":"tool","text":"raw"});
+        apply(
+            &mut read,
+            "opencode",
+            &json!({"type":"toolCall","name":"read","status":"completed","input":{"filePath":"/tmp/crates/core/src/api.rs"}}),
+        );
+        assert_eq!(read["category"], "read");
+        assert_eq!(read["title"], "/tmp/crates/core/src/api.rs");
+        assert_eq!(read["status"], "completed");
+
+        let mut question = json!({"kind":"tool","text":"raw"});
+        apply(
+            &mut question,
+            "opencode",
+            &json!({"type":"toolCall","name":"question","status":"completed","input":{"questions":[{"question":"Which path?"}]}}),
+        );
+        assert_eq!(question["title"], "Which path?");
+        assert_eq!(question["status"], "completed");
+    }
+
+    #[test]
+    fn opencode_non_tool_parts_are_untouched() {
+        let original = json!({"kind":"tool","text":"raw","title":"keep","status":"waiting"});
+        for item in [
+            json!({"type":"reasoning","text":"thought"}),
+            json!({"type":"agentMessage","text":"answer"}),
+        ] {
+            let mut row = original.clone();
+            apply(&mut row, "opencode", &item);
+            assert_eq!(row, original);
         }
     }
 
@@ -195,7 +333,7 @@ sys.stdin.readline()
             .args([
                 "--ignored",
                 "--exact",
-                "api::codex_tool_metadata::tests::command_metadata_fixture_child",
+                "api::provider_tool_metadata::tests::command_metadata_fixture_child",
                 "--nocapture",
             ])
             .env("COINCIDE_COMMAND_METADATA_FIXTURE", root.path())

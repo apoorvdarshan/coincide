@@ -78,8 +78,6 @@ mod codex_profile_limits_api;
 mod codex_profile_login_api;
 #[path = "codex_profile_models_api.rs"]
 mod codex_profile_models_api;
-#[path = "codex_tool_metadata.rs"]
-mod codex_tool_metadata;
 #[path = "composer_choices_api.rs"]
 mod composer_choices_api;
 #[path = "project_management_api.rs"]
@@ -90,6 +88,7 @@ mod project_scripts_api;
 mod provider_restore_api;
 #[path = "provider_switch_api.rs"]
 mod provider_switch_api;
+mod provider_tool_metadata;
 pub use browser_bookmarks_api::{PreparedBookmarkOpen, QueuedBookmarkOpen};
 #[cfg(test)]
 #[path = "browser_bookmarks_api_tests.rs"]
@@ -980,20 +979,38 @@ impl Engine {
                 Ok(json!(self.runs.get(required(p,"threadId")?).map(|run|run.pending.iter().map(|(id,frame)|json!({"requestId":id,"method":frame["method"],"params":frame["params"],"provider":run.provider})).collect::<Vec<_>>()).unwrap_or_default()))
             }
             "agent.answer" => {
-                let run = self.runs.get_mut(required(p,"threadId")?).context("Thread is not running")?;
+                let thread = required(p,"threadId")?;
                 let key = required(p,"requestId")?;
-                let frame = run.pending.get(key).context("Question is no longer pending")?;
-                ensure!(frame["method"]=="item/tool/requestUserInput", "Request is not a user question");
-                let answers = p["answers"].as_object().context("Missing answers object")?;
-                let questions = frame["params"]["questions"].as_array().context("Malformed provider questions")?;
-                for question in questions {
-                    let id = question["id"].as_str().context("Question has no identifier")?;
-                    let values = answers.get(id).and_then(|a|a["answers"].as_array()).context("Every question requires an answers array")?;
-                    ensure!(!values.is_empty() && values.iter().all(|v|v.as_str().is_some_and(|s| !s.trim().is_empty() && s.len()<=65536)), "Provide nonempty text answers");
+                let (frame_id, answers) = {
+                    let run = self.runs.get(thread).context("Thread is not running")?;
+                    let frame = run.pending.get(key).context("Question is no longer pending")?;
+                    ensure!(frame["method"]=="item/tool/requestUserInput", "Request is not a user question");
+                    let answers = p["answers"].as_object().context("Missing answers object")?;
+                    let questions = frame["params"]["questions"].as_array().context("Malformed provider questions")?;
+                    for question in questions {
+                        let id = question["id"].as_str().context("Question has no identifier")?;
+                        let values = answers.get(id).and_then(|a|a["answers"].as_array()).context("Every question requires an answers array")?;
+                        ensure!(!values.is_empty() && values.iter().all(|v|v.as_str().is_some_and(|s| !s.trim().is_empty() && s.len()<=65536)), "Provide nonempty text answers");
+                    }
+                    (frame["id"].clone(), json!(answers))
+                };
+                self.runs.get_mut(thread).unwrap().session.reply(frame_id,json!({"answers":answers.clone()}))?;
+                self.runs.get_mut(thread).unwrap().pending.remove(key);
+                // Swift keeps the answer on the question row so the transcript
+                // says "answered" instead of dumping the original request JSON
+                // or leaving a waiting question behind.
+                let mut v = self.store.thread(thread)?;
+                if let Some(item) = v["items"]
+                    .as_array_mut()
+                    .and_then(|items| items.iter_mut().rev().find(|item| {
+                        item["kind"] == "question" && item["externalID"] == key
+                    }))
+                {
+                    item["status"] = json!("completed");
+                    item["answers"] = answers.clone();
                 }
-                run.session.reply(frame["id"].clone(),json!({"answers":answers}))?;
-                run.pending.remove(key);
-                self.notification_events.cancel_request(required(p,"threadId")?,key);
+                self.store.save(&v)?;
+                self.notification_events.cancel_request(thread,key);
                 self.revision += 1;
                 Ok(json!({"answered":true}))
             }
@@ -2155,6 +2172,10 @@ impl Engine {
                                         p["delta"].as_str().unwrap_or(""),
                                         Some(external),
                                     );
+                                    if kind == "reasoning" {
+                                        v["items"].as_array_mut().unwrap().last_mut().unwrap()["status"] =
+                                            json!("running");
+                                    }
                                 }
                             }
                             "item/commandExecution/requestApproval"
@@ -2202,13 +2223,18 @@ impl Engine {
                                     .skip(transcript_start)
                                     .rev()
                                 {
-                                    if item["externalID"] == key
-                                        && (item["kind"] == "approval"
-                                            || item["kind"] == "question")
-                                    {
-                                        item["kind"] = json!("notice");
-                                        item["text"] = json!("Provider cancelled this request");
-                                        break;
+                                    if item["externalID"] == key {
+                                        if item["kind"] == "question" {
+                                            // Keep the question row so it can say
+                                            // "Not answered" like Swift.
+                                            item["status"] = json!("declined");
+                                            break;
+                                        }
+                                        if item["kind"] == "approval" {
+                                            item["kind"] = json!("notice");
+                                            item["text"] = json!("Provider cancelled this request");
+                                            break;
+                                        }
                                     }
                                 }
                             }
@@ -2245,7 +2271,7 @@ impl Engine {
                             }
                             "item/started" | "item/completed" => {
                                 let item = &p["item"];
-                                if item["type"] == "agentMessage" && method == "item/completed" {
+                                if let Some(kind) = completed_message_kind(item, method) {
                                     let external = text(item, "id");
                                     let items = v["items"].as_array_mut().unwrap();
                                     if let Some(existing) = items
@@ -2255,16 +2281,27 @@ impl Engine {
                                         .find(|it| it["externalID"] == external)
                                     {
                                         existing["text"] = item["text"].clone();
+                                        if kind == "reasoning" {
+                                            existing["status"] = json!("completed");
+                                        }
                                     } else {
                                         append(
                                             &mut v,
-                                            "assistant",
+                                            kind,
                                             item["text"].as_str().unwrap_or(""),
-                                            Some(&external),
+                                            (!external.is_empty()).then_some(external.as_str()),
                                         );
+                                        if kind == "reasoning" {
+                                            v["items"]
+                                                .as_array_mut()
+                                                .unwrap()
+                                                .last_mut()
+                                                .unwrap()["status"] = json!("completed");
+                                        }
                                     }
                                 } else if item["type"] != "userMessage"
                                     && item["type"] != "agentMessage"
+                                    && item["type"] != "reasoning"
                                 {
                                     let external = format!(
                                         "tool:{}",
@@ -2282,7 +2319,7 @@ impl Engine {
                                         .find(|it| it["externalID"] == external)
                                     {
                                         existing["text"] = json!(item.to_string());
-                                        codex_tool_metadata::apply(
+                                        provider_tool_metadata::apply(
                                             existing,
                                             &self.runs[&id].provider,
                                             item,
@@ -2292,7 +2329,7 @@ impl Engine {
                                         append(&mut v, "tool", &item.to_string(), Some(&external));
                                         let row =
                                             v["items"].as_array_mut().unwrap().last_mut().unwrap();
-                                        codex_tool_metadata::apply(
+                                        provider_tool_metadata::apply(
                                             row,
                                             &self.runs[&id].provider,
                                             item,
@@ -2477,6 +2514,19 @@ fn import_attachment(
 fn required<'a>(p: &'a Value, key: &str) -> Result<&'a str> {
     p[key].as_str().with_context(|| format!("Missing {key}"))
 }
+/// Completed assistant text and reasoning both stream as message items. A
+/// reasoning completion must update the existing reasoning row, never append a
+/// duplicate tool row containing the provider's JSON payload.
+fn completed_message_kind(item: &Value, method: &str) -> Option<&'static str> {
+    if method != "item/completed" {
+        return None;
+    }
+    match item["type"].as_str()? {
+        "agentMessage" => Some("assistant"),
+        "reasoning" => Some("reasoning"),
+        _ => None,
+    }
+}
 /// When the provider first reported a tool call finished, for its duration.
 /// Display metadata only, like createdAt; it never settles the call or a turn.
 fn mark_completed(row: &mut Value, method: &str) {
@@ -2507,6 +2557,34 @@ pub fn call(engine: &SharedEngine, method: &str, params: Value) -> Result<Value>
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn completed_reasoning_is_a_reasoning_row_not_a_tool_payload() {
+        assert_eq!(
+            completed_message_kind(
+                &json!({"type":"reasoning","id":"m:reasoning:0","text":"thought"}),
+                "item/completed"
+            ),
+            Some("reasoning")
+        );
+        assert_eq!(
+            completed_message_kind(
+                &json!({"type":"agentMessage","id":"m:text:0","text":"answer"}),
+                "item/completed"
+            ),
+            Some("assistant")
+        );
+        assert_eq!(
+            completed_message_kind(&json!({"type":"toolCall","id":"t"}), "item/completed"),
+            None
+        );
+        assert_eq!(
+            completed_message_kind(
+                &json!({"type":"reasoning","id":"m:reasoning:0"}),
+                "item/started"
+            ),
+            None
+        );
+    }
     #[test]
     fn browser_results_are_scoped_and_abandoned_requests_are_reclaimed() {
         let dir = tempfile::tempdir().unwrap();

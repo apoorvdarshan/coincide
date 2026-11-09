@@ -30,6 +30,7 @@ pub(super) fn icon(category: &str) -> IconName {
         "mcp" => IconName::Puzzle,
         "task" => IconName::Users,
         "todo" => IconName::ListChecks,
+        "reasoning" => IconName::Brain,
         _ => IconName::Wrench,
     }
 }
@@ -45,6 +46,9 @@ fn trimmed<'a>(item: &'a Value, key: &str) -> Option<&'a str> {
 pub(super) fn has_detail(item: &Value) -> bool {
     let detail = trimmed(item, "detail");
     detail.is_some_and(|detail| Some(detail) != item["title"].as_str())
+        || item["output"]
+            .as_str()
+            .is_some_and(|text| !text.trim().is_empty())
         || item["text"]
             .as_str()
             .is_some_and(|text| !text.trim().is_empty())
@@ -197,8 +201,9 @@ pub(super) fn render(item: &Value) -> Detail {
     let title = item["title"].as_str().map(str::trim);
     let input = trimmed(item, "detail").map(normalized);
     let input = input.as_deref();
-    let result = item["text"]
+    let result = item["output"]
         .as_str()
+        .or_else(|| item["text"].as_str())
         .and_then(clean_output)
         .map(|result| normalized(&result));
     match category(item) {
@@ -545,6 +550,171 @@ pub(super) fn fenced(text: &str) -> String {
 impl super::Coincide {
     /// A tool call's row: TranscriptToolCell's one-line header and, while
     /// expanded, its detail panel capped at Swift's 320-point height.
+    /// Swift's TranscriptQuestionCell: one work-log line for the request, with
+    /// its answers underneath once resolved. The request itself is answered in
+    /// the composer banner, never by dumping the provider payload here.
+    pub(super) fn question_row(
+        &mut self,
+        source: &str,
+        item_id: &str,
+        item: &Value,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let payload = serde_json::from_str::<Value>(item["text"].as_str().unwrap_or(""))
+            .unwrap_or(Value::Null);
+        let questions = payload["questions"].as_array().cloned().unwrap_or_default();
+        let first = questions.first();
+        let title = payload["title"]
+            .as_str()
+            .filter(|title| !title.trim().is_empty())
+            .or_else(|| {
+                first
+                    .and_then(|question| question["header"].as_str())
+                    .filter(|header| !header.trim().is_empty())
+            })
+            .or_else(|| first.and_then(|question| question["question"].as_str()))
+            .unwrap_or("Question")
+            .to_owned();
+        let external = item["externalID"].as_str().unwrap_or_default();
+        let waiting = self.pending_requests.iter().any(|request| {
+            request["requestId"].as_str() == Some(external)
+                && request["method"] == "item/tool/requestUserInput"
+        });
+        let declined = item["status"].as_str() == Some("declined");
+        let answered = item["answers"]
+            .as_object()
+            .is_some_and(|answers| !answers.is_empty());
+        let secondary = self.color(0xe4e9f2).opacity(0.6);
+        let tertiary = self.color(0xe4e9f2).opacity(0.42);
+        let warning = rgb(if self.appearance_dark {
+            0xFF9F0A
+        } else {
+            0xFF9500
+        });
+        let icon_color = if waiting {
+            Hsla::from(warning)
+        } else {
+            Hsla::from(secondary)
+        };
+        let detail = if waiting {
+            "Answer below"
+        } else if declined {
+            "Not answered"
+        } else if answered {
+            ""
+        } else {
+            "Resolved by the agent"
+        };
+        let status_icon = if waiting {
+            Some((IconName::Clock, Hsla::from(warning)))
+        } else if declined {
+            Some((IconName::Ban, Hsla::from(warning)))
+        } else {
+            Some((IconName::Check, Hsla::from(tertiary)))
+        };
+        let mut answers = Vec::new();
+        if let Some(saved) = item["answers"].as_object() {
+            for question in &questions {
+                let id = question["id"].as_str().unwrap_or_default();
+                let values = saved
+                    .get(id)
+                    .and_then(|value| value.as_array().or_else(|| value["answers"].as_array()))
+                    .map(|values| {
+                        values
+                            .iter()
+                            .filter_map(|value| value.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    })
+                    .unwrap_or_default();
+                if values.is_empty() {
+                    continue;
+                }
+                let label = question["header"]
+                    .as_str()
+                    .filter(|header| !header.trim().is_empty())
+                    .or_else(|| question["question"].as_str())
+                    .unwrap_or("Answer");
+                answers.push((label.to_owned(), values));
+            }
+        }
+        div()
+            .flex()
+            .w_full()
+            .px(px(super::presentation::CONTENT_GUTTER))
+            .justify_center()
+            .child(
+                div()
+                    .id(SharedString::from(format!(
+                        "message-row-{source}-{item_id}"
+                    )))
+                    .flex()
+                    .flex_col()
+                    .w_full()
+                    .min_w_0()
+                    .max_w(px(super::presentation::CONTENT_WIDTH))
+                    .pl(px(super::presentation::RAIL_GUTTER))
+                    .mb(px(4.))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .h(px(26.))
+                            .min_w_0()
+                            .w_full()
+                            .text_size(px((self.conversation_font_size() - 1.).max(10.)))
+                            .child(
+                                Icon::new(IconName::MessageCircleQuestionMark)
+                                    .xsmall()
+                                    .text_color(icon_color),
+                            )
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .flex_shrink_1()
+                                    .truncate()
+                                    .text_color(secondary)
+                                    .child(title),
+                            )
+                            .when(!detail.is_empty(), |row| {
+                                row.child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .text_xs()
+                                        .text_color(tertiary)
+                                        .child(detail),
+                                )
+                            })
+                            .when_some(status_icon, |row, (icon, color)| {
+                                row.child(Icon::new(icon).xsmall().text_color(color))
+                            }),
+                    )
+                    .children(answers.into_iter().map(|(question, answer)| {
+                        div()
+                            .flex()
+                            .gap_1()
+                            .pl(px(22.))
+                            .text_size(px((self.conversation_font_size() - 2.).max(10.)))
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .text_color(tertiary)
+                                    .child(format!("{question}  ")),
+                            )
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_color(secondary)
+                                    .child(answer),
+                            )
+                    })),
+            )
+            .into_any_element()
+    }
+
     pub(super) fn tool_row(
         &mut self,
         source: &str,
@@ -562,6 +732,12 @@ impl super::Coincide {
         let status = item["status"].as_str().unwrap_or_default();
         let expandable = has_detail(item);
         let expanded = expandable && expanded;
+        let reasoning = item["kind"] == "reasoning";
+        let preview = if reasoning && !expanded {
+            thought_preview(item["text"].as_str().unwrap_or(""))
+        } else {
+            String::new()
+        };
         let secondary = self.color(0xe4e9f2).opacity(0.6);
         let tertiary = self.color(0xe4e9f2).opacity(0.42);
         let failure = rgb(if self.appearance_dark {
@@ -595,19 +771,6 @@ impl super::Coincide {
                 this.toggle_item_expanded(&source, &item, cx)
             }
         };
-        let copy = {
-            let (source, item) = (source.to_owned(), item_id.to_owned());
-            Button::new(SharedString::from(format!("copy-message-{source}-{item}")))
-                .accessibility_id(SharedString::from(format!("copy-message-{source}-{item}")))
-                .accessibility_label("Copy message")
-                .icon(IconName::Copy)
-                .ghost()
-                .compact()
-                .xsmall()
-                .disabled(item_text_empty(item_id, self))
-                .tooltip("Copy the complete message text, including collapsed content")
-                .on_click(cx.listener(move |this, _, _, cx| this.copy_message(&source, &item, cx)))
-        };
         let header_row = div()
             .flex()
             .items_center()
@@ -617,19 +780,24 @@ impl super::Coincide {
             .w_full()
             .text_size(px((self.conversation_font_size() - 1.).max(10.)))
             .child(
-                Icon::new(icon(category(item)))
-                    .xsmall()
-                    .text_color(if status == "failed" {
-                        Hsla::from(failure)
-                    } else {
-                        Hsla::from(secondary)
-                    }),
+                Icon::new(icon(if item["kind"] == "reasoning" {
+                    "reasoning"
+                } else {
+                    category(item)
+                }))
+                .xsmall()
+                .text_color(if status == "failed" {
+                    Hsla::from(failure)
+                } else {
+                    Hsla::from(secondary)
+                }),
             )
             .child(
                 div()
                     .id(SharedString::from(format!("tool-title-{source}-{item_id}")))
                     .min_w_0()
-                    .flex_1()
+                    .when(reasoning, |title| title.flex_shrink_0())
+                    .when(!reasoning, |title| title.flex_1())
                     .truncate()
                     .aria_label(SharedString::from(spoken.clone()))
                     .when(expandable, |title| {
@@ -640,6 +808,16 @@ impl super::Coincide {
                     })
                     .child(title_text),
             )
+            .when(!preview.is_empty(), |row| {
+                row.child(
+                    div()
+                        .min_w_0()
+                        .flex_1()
+                        .truncate()
+                        .text_color(tertiary)
+                        .child(format!("  {preview}")),
+                )
+            })
             .when_some(duration_text(item), |row, duration| {
                 row.child(
                     div()
@@ -652,7 +830,6 @@ impl super::Coincide {
             .when_some(status_icon, |row, (icon, color)| {
                 row.child(Icon::new(icon).xsmall().text_color(color))
             })
-            .child(copy)
             .when(expandable, |row| {
                 let id = SharedString::from(format!("expand-{source}-{item_id}"));
                 row.child(
@@ -727,6 +904,37 @@ impl super::Coincide {
             )
             .into_any_element()
     }
+}
+
+/// Swift's collapsed reasoning line previews the first sentence in tertiary
+/// text, like TranscriptLabels.thoughtPreview.
+fn thought_preview(markdown: &str) -> String {
+    let start = markdown.trim_start();
+    let head: String = start.chars().take(200).collect();
+    let trimmed = head.trim();
+    let mut flat = trimmed
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .trim_start_matches("**")
+        .trim_end_matches("**")
+        .to_owned();
+    if flat.is_empty() {
+        flat = trimmed
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .chars()
+            .take(140)
+            .collect();
+    }
+    if let Some(end) = flat.find(['.', '!', '?'])
+        && end + 1 < flat.len()
+    {
+        flat.truncate(end + 1);
+    }
+    flat
 }
 
 /// `text` with its `code` byte ranges in the theme's code font on a faint
