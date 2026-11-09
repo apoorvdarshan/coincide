@@ -181,6 +181,46 @@ impl Outbox {
     }
 }
 
+/// Swift's notification body: the reply that just arrived, the failure text,
+/// or the approval/question title. Bounded like the desktop alerts.
+fn alert_body(thread: &Value, key: &EventKey) -> Option<String> {
+    let item = thread["items"]
+        .as_array()?
+        .iter()
+        .find(|item| Uuid::parse_str(text(item, "id").as_str()).ok() == Some(key.item));
+    let item = item?;
+    let excerpt = |value: &str| {
+        let value = value.trim();
+        if value.is_empty() {
+            return None;
+        }
+        let mut text: String = value.chars().take(180).collect();
+        if value.chars().count() > 180 {
+            text.push('…');
+        }
+        Some(text)
+    };
+    match key.kind {
+        AlertKind::Completed | AlertKind::Failed => excerpt(text(item, "text").as_str()),
+        AlertKind::Approval | AlertKind::Question => {
+            let payload = serde_json::from_str::<Value>(text(item, "text").as_str()).ok()?;
+            [
+                payload["title"].as_str(),
+                payload["toolCall"]["name"].as_str(),
+                payload["command"].as_array().and_then(|_| None),
+                payload["command"].as_str(),
+                payload["questions"][0]["question"].as_str(),
+                payload["questions"][0]["header"].as_str(),
+                payload["path"].as_str(),
+            ]
+            .into_iter()
+            .flatten()
+            .find(|value| !value.trim().is_empty())
+            .and_then(excerpt)
+        }
+        AlertKind::SlowStart => None,
+    }
+}
 impl Engine {
     /// Trusted native-user action only, deliberately absent from agent JSON APIs.
     /// This opt-in does not request OS authorization or send any notifications.
@@ -250,7 +290,7 @@ impl Engine {
                         AlertKind::SlowStart => "Coincide is waiting",
                     }
                     .into(),
-                    body: None,
+                    body: alert_body(&thread, key),
                 },
             });
         }
