@@ -536,7 +536,8 @@ mod work_header_tests {
     fn reasoning_never_infers_running_or_completion_from_other_fields() {
         for (saved, title) in [
             (json!("running"), "Thinking"),
-            (json!("completed"), "Thought"),
+            // A completed reasoning row reports its own elapsed time, as Swift does.
+            (json!("completed"), "Thought for 30s"),
             (Value::Null, "Reasoning"),
             (json!("unknown"), "Reasoning"),
             (json!("failed"), "Reasoning"),
