@@ -5049,7 +5049,9 @@ impl Coincide {
                 }
             }
         }
-        self.terminal_activate_on_show = false;
+        // Accessibility and menu actions can arrive before this window becomes
+        // active. Keep a plain-shell request until its workspace is mounted.
+        self.terminal_activate_on_show = self.terminal_open && script.is_none();
         self.sync_terminal_workspace(window, cx);
         if self.terminal_open
             && let Some(id) = &self.terminal_visible_thread
