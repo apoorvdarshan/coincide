@@ -218,7 +218,7 @@ impl Coincide {
                     (
                         if archived { "Restore" } else { "Archive" },
                         selected,
-                        |this, _, cx| this.request_archive(cx),
+                        |this, window, cx| this.request_archive(window, cx),
                     ),
                     ("Import CLI session…", true, |this, _, cx| {
                         this.session_import_open = true;

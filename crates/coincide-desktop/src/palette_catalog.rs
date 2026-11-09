@@ -4,6 +4,7 @@
 //! nested lists New Thread in…, Go to File… and Search in Project…. Also runs
 //! the folder searches the palette asks for, off the UI thread.
 use super::*;
+use crate::app_menu::AppAction;
 use coincide_core::project_search;
 use command_palette::{
     MenuContent, PaletteCommand as C, PaletteEntry as E, PaletteGroup as G, PaletteIcon,
@@ -269,6 +270,106 @@ impl Coincide {
         });
         entries.push(open_settings);
         entries.extend(self.palette_threads());
+        // Swift's palette also lists the open conversation's own actions.
+        if self.selected.is_some() {
+            let running = self
+                .selected
+                .as_ref()
+                .map(|thread| text(thread, "id"))
+                .is_some_and(|id| self.running.iter().any(|running| running == &id));
+            let archived = self
+                .selected
+                .as_ref()
+                .is_some_and(|thread| thread["isArchived"] == true);
+            let pinned = self
+                .selected
+                .as_ref()
+                .is_some_and(|thread| thread["isPinned"] == true);
+            let mut thread_entries = vec![
+                E::new(
+                    C::Action {
+                        id: "thread:find".into(),
+                    },
+                    "Find in Thread",
+                    G::Actions,
+                )
+                .keywords(&["find", "search", "transcript", "text"])
+                .icon(IconName::Search),
+                E::new(
+                    C::Action {
+                        id: "thread:rename".into(),
+                    },
+                    "Rename Thread…",
+                    G::Actions,
+                )
+                .keywords(&["rename", "title", "name"])
+                .icon(IconName::Pencil),
+                E::new(
+                    C::Action {
+                        id: "thread:pin".into(),
+                    },
+                    if pinned { "Unpin Thread" } else { "Pin Thread" },
+                    G::Actions,
+                )
+                .keywords(&["pin", "unpin", "top"])
+                .icon(IconName::Pin),
+                E::new(
+                    C::Action {
+                        id: "thread:archive".into(),
+                    },
+                    if archived {
+                        "Unarchive Thread"
+                    } else {
+                        "Archive Thread"
+                    },
+                    G::Actions,
+                )
+                .keywords(&["archive", "restore", "hide", "done"])
+                .icon(IconName::Archive),
+                E::new(
+                    C::Action {
+                        id: "action:pull-requests".into(),
+                    },
+                    "Pull Requests",
+                    G::Actions,
+                )
+                .keywords(&["pr", "review", "github", "merge"])
+                .icon(IconName::GitPullRequest),
+                E::new(
+                    C::Action {
+                        id: "action:edit-instructions".into(),
+                    },
+                    "Edit Instructions",
+                    G::Actions,
+                )
+                .keywords(&["agents.md", "rules", "memory", "instructions"])
+                .icon(IconName::BookOpen),
+                E::new(
+                    C::Action {
+                        id: "action:new-bot".into(),
+                    },
+                    "New Bot…",
+                    G::Actions,
+                )
+                .keywords(&["bot", "agent", "assistant", "create"])
+                .icon(IconName::Bot),
+            ];
+            if running {
+                thread_entries.insert(
+                    0,
+                    E::new(
+                        C::Action {
+                            id: "thread:stop".into(),
+                        },
+                        "Stop",
+                        G::Actions,
+                    )
+                    .keywords(&["stop", "cancel", "interrupt", "halt"])
+                    .icon(IconName::Square),
+                );
+            }
+            entries.extend(thread_entries);
+        }
         entries.push(
             E::new(
                 C::SelectProject { project_id: None },
@@ -440,6 +541,26 @@ impl Coincide {
         if let Some((_, _, _, section, _)) = SETTINGS.iter().find(|setting| setting.0 == id) {
             self.open_settings_panel(window, cx);
             self.navigate_settings_section(*section, window, cx);
+            return;
+        }
+        match id {
+            "thread:find" => self.open_find(window, cx),
+            "thread:rename" => self.begin_rename(window, cx),
+            "thread:pin" => self.toggle("isPinned", cx),
+            "thread:archive" => self.request_archive(window, cx),
+            "action:pull-requests" => self.run_app_action(AppAction::PullRequests, window, cx),
+            "action:edit-instructions" => {
+                self.run_app_action(AppAction::EditInstructions, window, cx)
+            }
+            "action:new-bot" => self.run_app_action(AppAction::NewBot, window, cx),
+            "thread:stop" => {
+                if let Some(id) = self.selected_id()
+                    && let Err(error) = call(&self.engine, "agent.stop", json!({"threadId":id}))
+                {
+                    self.status = error.to_string();
+                }
+            }
+            _ => {}
         }
     }
 }

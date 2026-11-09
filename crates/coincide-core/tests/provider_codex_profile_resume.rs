@@ -252,12 +252,14 @@ fn send(e: &mut Engine, id: &str, prompt: &str) {
     call(e, "agent.send", json!({"threadId":id,"text":prompt}));
     settle(e);
     let t = e.store.thread(id).unwrap();
+    // Swift stores no synthetic "turn ended" notice; `settle` already proved
+    // the turn finished, so verify the prompt became the last real item.
     assert!(
         t["items"]
             .as_array()
             .unwrap()
             .last()
-            .is_some_and(|item| item["kind"] == "notice"),
+            .is_some_and(|item| item["kind"] == "user" && item["text"] == prompt),
         "{t}"
     );
 }
