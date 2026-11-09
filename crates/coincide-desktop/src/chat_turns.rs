@@ -752,9 +752,59 @@ impl super::Coincide {
                     .w_full()
                     .child(row)
                     .children(header)
-                    .children(live),
+                    .children(live)
+                    .children(self.fork_divider(&anchor, cx)),
             )
             .into_any_element()
+    }
+
+    /// T3's fork divider, on the fork side: after the copied history, a capsule
+    /// naming the source conversation that opens it.
+    fn fork_divider(&self, item: &str, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let thread = self.selected.as_ref()?;
+        let history = &thread["rustHistory"];
+        if history["forkItemID"].as_str() != Some(item) {
+            return None;
+        }
+        let parent = history["parentThreadID"].as_str()?.to_owned();
+        let title = history["parentTitle"]
+            .as_str()
+            .filter(|title| !title.trim().is_empty())
+            .unwrap_or("conversation")
+            .to_owned();
+        let label: String = title.chars().take(60).collect();
+        let id = SharedString::from(format!("fork-divider-{parent}-{item}"));
+        Some(
+            div()
+                .flex()
+                .w_full()
+                .px(px(presentation::CONTENT_GUTTER))
+                .justify_center()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .w_full()
+                        .max_w(px(presentation::CONTENT_WIDTH))
+                        .pl(px(presentation::RAIL_GUTTER))
+                        .h(px(26.))
+                        .child(
+                            Button::new(id.clone())
+                                .accessibility_id(id)
+                                .accessibility_label(format!("Forked from conversation, {title}"))
+                                .tooltip("Open source conversation")
+                                .label(format!("Forked from conversation · {label}"))
+                                .ghost()
+                                .compact()
+                                .xsmall()
+                                .text_color(self.color(0xe4e9f2).opacity(0.6))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.select(&parent, window, cx);
+                                })),
+                        ),
+                )
+                .into_any_element(),
+        )
     }
 }
 

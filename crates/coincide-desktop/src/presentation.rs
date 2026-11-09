@@ -392,6 +392,48 @@ impl NullOrEmpty for Option<&Value> {
 
 // Read only explicit Swift-compatible item metadata. Live provider JSON stored
 // in item.text is body content, never a substitute for these persisted fields.
+/// Swift's `TranscriptLabels.duration(_:)`: tenths under ten seconds, whole
+/// seconds under a minute, then hours, minutes and seconds.
+pub(super) fn duration_label(interval: f64) -> String {
+    if !interval.is_finite() || interval < 0. {
+        return "0s".into();
+    }
+    if interval < 10. {
+        let tenths = (interval * 10.).round() / 10.;
+        return format!("{:.1}s", tenths.clamp(0.1, 9.9));
+    }
+    let total = interval.round() as i64;
+    if total < 60 {
+        return format!("{total}s");
+    }
+    let hours = total / 3600;
+    let minutes = total % 3600 / 60;
+    let seconds = total % 60;
+    let mut parts = Vec::new();
+    if hours > 0 {
+        parts.push(format!("{hours}h"));
+    }
+    if minutes > 0 {
+        parts.push(format!("{minutes}m"));
+    }
+    if seconds > 0 {
+        parts.push(format!("{seconds}s"));
+    }
+    parts.join(" ")
+}
+
+/// "Thought for 4s" needs a completed stamp and at least a whole second,
+/// exactly like Swift's reasoning row.
+fn thought_duration(item: &Value) -> Option<String> {
+    if item["status"].as_str() == Some("running") {
+        return None;
+    }
+    let start = item["createdAt"].as_f64()?;
+    let end = item["completedAt"].as_f64()?;
+    let interval = end - start;
+    (interval >= 1.).then(|| duration_label(interval))
+}
+
 pub(super) fn work_header(item: &Value) -> Option<WorkHeader> {
     let status = match item["status"].as_str() {
         Some("running") => Some("Running"),
@@ -404,7 +446,10 @@ pub(super) fn work_header(item: &Value) -> Option<WorkHeader> {
     let title = match item["kind"].as_str()? {
         "reasoning" => match item["status"].as_str() {
             Some("running") => "Thinking".to_owned(),
-            Some("completed") => "Thought".to_owned(),
+            Some("completed") => match thought_duration(item) {
+                Some(duration) => format!("Thought for {duration}"),
+                None => "Thought".to_owned(),
+            },
             _ => "Reasoning".to_owned(),
         },
         "tool" => {
@@ -675,6 +720,22 @@ mod card_tests {
         let plan = "# Plan\n- [x] read the code\n- [ ] write the fix\n  - [X] nested done\n1. [ ] ordered open\n- ordinary item";
         assert_eq!(plan_progress(plan), (2, 4));
         assert_eq!(plan_progress("no tasks here"), (0, 0));
+    }
+
+    #[::core::prelude::v1::test]
+    fn thought_duration_matches_swift_labels() {
+        assert_eq!(duration_label(0.4), "0.4s");
+        assert_eq!(duration_label(4.2), "4.2s");
+        assert_eq!(duration_label(9.96), "9.9s");
+        assert_eq!(duration_label(42.4), "42s");
+        assert_eq!(duration_label(65.), "1m 5s");
+        assert_eq!(duration_label(3725.), "1h 2m 5s");
+        let reasoning =
+            json!({"kind":"reasoning","status":"completed","createdAt":100.0,"completedAt":104.3});
+        assert_eq!(work_header(&reasoning).unwrap().title, "Thought for 4.3s");
+        let quick =
+            json!({"kind":"reasoning","status":"completed","createdAt":100.0,"completedAt":100.4});
+        assert_eq!(work_header(&quick).unwrap().title, "Thought");
     }
 
     #[::core::prelude::v1::test]
