@@ -17,7 +17,10 @@ impl Coincide {
         match event {
             TerminalContextEvent::LastClosed => {
                 let id = workspace.read(cx).thread_id().to_owned();
-                if self.terminal_visible_thread.as_deref() == Some(id.as_str())
+                if self
+                    .selected
+                    .as_ref()
+                    .is_some_and(|thread| thread["id"] == id)
                     && self
                         .terminal_workspaces
                         .get(&id)
@@ -39,7 +42,10 @@ impl Coincide {
             TerminalContextEvent::HideRequested => {
                 let id = workspace.read(cx).thread_id().to_owned();
                 if self.terminal_open
-                    && self.terminal_visible_thread.as_deref() == Some(id.as_str())
+                    && self
+                        .selected
+                        .as_ref()
+                        .is_some_and(|thread| thread["id"] == id)
                 {
                     self.terminal(window, cx);
                     // Focus in the hidden terminal returns to the composer.
