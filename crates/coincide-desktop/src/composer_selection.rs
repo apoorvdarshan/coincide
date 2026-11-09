@@ -2242,9 +2242,6 @@ impl Coincide {
         self.refresh_model_catalog(None, cx);
     }
     fn refresh_model_catalog(&mut self, provider_override: Option<String>, cx: &mut Context<Self>) {
-        if self.selection_ui.catalog_request.is_some() {
-            return;
-        }
         let Some(thread) = self.selected.as_ref() else {
             return;
         };
@@ -2258,6 +2255,18 @@ impl Coincide {
         let tab_provider = provider_override
             .or_else(|| self.selection_ui.tab_provider.clone())
             .unwrap_or_else(|| draft.provider.clone());
+        if let Some(pending) = self.selection_ui.catalog_request.as_ref() {
+            if pending.provider == tab_provider {
+                return;
+            }
+            // The reader moved to another agent while this provider's first
+            // read was still running. Abandon the old poll instead of dropping
+            // the new tab's request, which left OpenCode's list permanently
+            // empty on a Codex thread. The abandoned job is never reported as
+            // this provider's catalog: every status read carries its request ID.
+            self.selection_ui.catalog_request = None;
+            self.selection_ui.catalog_last_poll = None;
+        }
         let Some(provider) = self.selection_ui.capabilities["providers"]
             .as_array()
             .and_then(|providers| providers.iter().find(|p| p["provider"] == tab_provider))
