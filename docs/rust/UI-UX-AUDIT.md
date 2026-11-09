@@ -361,3 +361,14 @@ partial native callback is reported instead of claiming success. Store,
 profile-scope, revision, bookmark-preservation and API tests pass. The
 site-data callback path has not been run against a disposable real profile;
 Windows/Linux native acceptance remains open.
+
+### Installed 0.1.36 checkpoint
+
+Version 0.1.36 (build 46), from `109392c3`, was signed with Developer ID,
+accepted by Apple notarization (`d9836882-df31-41a3-90dd-9d31e1adc741`),
+stapled and installed. The browser's Browsing data row, history count and
+confirmation prompt were verified in the installed app. The group work-log
+line was verified in the transcript: "Ran 1 command" while collapsed, with
+nested Thought/command/Thought rows after expanding, and the live "Working for"
+and "Thinking…" rows while a turn runs. No browsing data was deleted during the
+check; the destructive confirmation was dismissed.
