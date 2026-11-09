@@ -314,6 +314,16 @@ def main():
         draft = "Native X11 keyboard draft survives restart"
         command("xdotool", "type", "--clearmodifiers", "--delay", "100", draft, env=env)
         command("import", "-window", window, str(artifacts / "composer-after-type.png"), env=env)
+        # Typing reaches the native input asynchronously. Wait for the whole
+        # probe to be rendered before switching, so the draft boundary below
+        # cannot race the last queued key event. The exact saved draft is still
+        # asserted afterwards, unchanged.
+        def typed_text_rendered():
+            command("import", "-window", window, str(artifacts / "composer-after-type.png"), env=env)
+            rendered = command("tesseract", str(artifacts / "composer-after-type.png"), "stdout", env=env)
+            normalized = " ".join(rendered.lower().split())
+            return "keyboard" in normalized and "restar" in normalized
+        wait_for("rendered native composer text", typed_text_rendered)
         # Drafts persist at the thread-switch boundary, not on every keystroke,
         # so the typing path never waits on the store. Switch to a fresh thread
         # and back: the switch is the app's own draft boundary. Then focus the
