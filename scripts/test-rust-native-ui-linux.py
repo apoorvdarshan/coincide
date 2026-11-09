@@ -468,33 +468,46 @@ def main():
         module_spec = importlib.util.spec_from_file_location("owned_browser_fixture", Path(__file__).with_name("native-browser-fixture.py"))
         browser_fixture = importlib.util.module_from_spec(module_spec)
         module_spec.loader.exec_module(browser_fixture)
+        # The browser pane's controls are icon-only, as Swift's are, so drive
+        # them at their fixed places from the pane's right edge and confirm the
+        # effect through the store and a captured frame.
+        def click_browser_icon(x_from_right, y, stage):
+            geometry = command("xdotool", "getwindowgeometry", "--shell", window, env=env)
+            width = int(next(line.split("=")[1] for line in geometry.splitlines() if line.startswith("WIDTH=")))
+            command("xdotool", "windowfocus", "--sync", window, env=env)
+            command("xdotool", "mousemove", "--window", window,
+                    str(width - x_from_right), str(y), "click", "1", env=env)
+            time.sleep(0.4)
+            command("import", "-window", window, str(artifacts / (stage + ".png")), env=env)
+        AGENT_CONTROL = (48, 17)
+        RELOAD = (17, 54)
+        BOOKMARK = (89, 54)
+        LIBRARY = (66, 54)
         def pane_controls(tab, url, http_requests):
-            click_rendered_phrase(window, "browser-control-off", "Agent Control: On")
+            click_browser_icon(*AGENT_CONTROL, "browser-control-off")
             wait_for("persisted per-thread Agent Control off", lambda: rpc("browser.settings.read")["agentControl"].get(thread_id) is False)
             operation = rpc("browser.request", threadId=thread_id, tab=tab, action="read")["operationId"]
             refusal = wait_for("agent request refused by native control", lambda: (result if (result := rpc("browser.result", threadId=thread_id, operationId=operation)).get("ready") else None))
             assert refusal["result"] == {"error": "Agent Control is off for this conversation"}, refusal
             before = http_requests.count("/second")
-            click_rendered_phrase(window, "browser-native-reload-off", "Reload")
+            click_browser_icon(*RELOAD, "browser-native-reload-off")
             wait_for("native Reload still works with agent control off", lambda: http_requests.count("/second") > before)
             capture(window, "browser-native-reload-off-ready", "NativeBrowserSecondReady")
-            click_rendered_phrase(window, "browser-control-on", "Agent Control: Off")
+            click_browser_icon(*AGENT_CONTROL, "browser-control-on")
             wait_for("persisted per-thread Agent Control on", lambda: rpc("browser.settings.read")["agentControl"].get(thread_id) is True)
-            click_rendered_phrase(window, "browser-bookmark-add", "Bookmark page")
+            click_browser_icon(*BOOKMARK, "browser-bookmark-add")
             wait_for("current page bookmark persisted", lambda: any(row["url"] == url for row in rpc("browser.bookmarks.list")["bookmarks"]))
-            # The store updates before the button label does. "Remove bookmark"
-            # is wider and wraps the row, so a library click located on the
-            # previous frame lands beside the moved control.
-            capture(window, "browser-bookmark-added", "Remove bookmark")
-            click_rendered_phrase(window, "browser-library-open", "Bookmark library")
-            capture(window, "browser-library-saved", "Saved bookmarks")
-            click_rendered_phrase(window, "browser-bookmark-remove", "Remove bookmark")
+            # The store updates before the pane repaints; capture the result.
+            capture(window, "browser-bookmark-added")
+            click_browser_icon(*LIBRARY, "browser-library-open")
+            capture(window, "browser-library-saved", "Bookmarks")
+            click_browser_icon(*BOOKMARK, "browser-bookmark-remove")
             wait_for("current page bookmark removed", lambda: not any(row["url"] == url for row in rpc("browser.bookmarks.list")["bookmarks"]))
             capture(window, "browser-library-empty", "No saved bookmarks")
-            click_rendered_phrase(window, "browser-library-close", "Bookmark library")
-            click_rendered_phrase(window, "browser-library-reopen", "Bookmark library")
+            click_browser_icon(*LIBRARY, "browser-library-close")
+            click_browser_icon(*LIBRARY, "browser-library-reopen")
             capture(window, "browser-library-reopened", "No saved bookmarks")
-            click_rendered_phrase(window, "browser-library-close-final", "Bookmark library")
+            click_browser_icon(*LIBRARY, "browser-library-close-final")
 
         report["nativeBrowser"] = browser_fixture.exercise_browser(
             rpc, thread_id,
