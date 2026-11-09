@@ -257,6 +257,11 @@ impl Coincide {
                     .update(cx, |panel, cx| panel.cancel(cx));
                 self.open_settings_panel(window, cx);
             }
+            AppAction::CheckForUpdates => {
+                self.updater_settings
+                    .update(cx, |view, cx| view.check_now(cx));
+                self.open_settings_section(settings::SettingsSection::About, window, cx);
+            }
             AppAction::Hide => cx.hide(),
             AppAction::HideOthers => cx.hide_other_apps(),
             AppAction::ShowAll => cx.unhide_other_apps(),

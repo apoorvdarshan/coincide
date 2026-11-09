@@ -4714,7 +4714,9 @@ impl Coincide {
             return self.turn_decorated(index, div().into_any_element(), plan.header, cx);
         }
         let copy_empty = body.is_empty();
-        let collapsible = kind != "user" && kind != "assistant";
+        // Swift shows a failed turn's full message in its own red card; only
+        // tool/tool-like rows collapse behind an Expand action.
+        let collapsible = !matches!(kind.as_str(), "user" | "assistant" | "error");
         let expanded = self.expanded.contains(&index) || find_revealed;
         let shown = if collapsible && !expanded {
             body.chars().take(180).collect()
@@ -4854,6 +4856,13 @@ impl Coincide {
                     .flex_wrap()
                     .items_center()
                     .gap_2()
+                    .when(kind == "error", |label| {
+                        label.child(
+                            div()
+                                .text_color(self.color(0xe5645c))
+                                .child(gpui_kit::assets::IconName::CircleAlert),
+                        )
+                    })
                     .child(label)
                     .when_some(work_status, |label, status| {
                         label.child(
@@ -4964,6 +4973,11 @@ impl Coincide {
                 card.bg(self.color(0x181d28))
                     .border_1()
                     .border_color(self.color(0x29303d))
+            })
+            .when(kind == "error", |card| {
+                card.bg(self.color(0xe5645c).opacity(0.07))
+                    .border_1()
+                    .border_color(self.color(0xe5645c).opacity(0.3))
             })
             .when_some(header, |view, header| view.child(header))
             .when_some(context_pane, |view, context| view.child(context))

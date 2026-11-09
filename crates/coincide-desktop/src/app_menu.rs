@@ -56,6 +56,7 @@ pub enum EditContext {
 pub enum AppAction {
     About,
     Settings,
+    CheckForUpdates,
     Hide,
     HideOthers,
     ShowAll,
@@ -227,6 +228,7 @@ fn menus(s: &MenuSnapshot) -> Vec<Menu> {
         app("About Coincide Rust", AppAction::About, true),
         MenuItem::separator(),
         app("Settings…", AppAction::Settings, true),
+        app("Check for Updates…", AppAction::CheckForUpdates, true),
         MenuItem::separator(),
     ];
     if cfg!(target_os = "macos") {
