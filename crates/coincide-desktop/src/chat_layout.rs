@@ -264,3 +264,221 @@ mod tests {
         assert_eq!(composer_height(100, 18., 100.), 60.);
     }
 }
+
+impl Coincide {
+    /// Swift's approval card: what the agent wants to do, and once answered,
+    /// the answer. The choices themselves stay in the banner above the composer.
+    pub(super) fn approval_transcript_card(
+        &mut self,
+        thread: &str,
+        item: &str,
+        value: &Value,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let payload = serde_json::from_str::<Value>(value["text"].as_str().unwrap_or(""))
+            .unwrap_or(Value::Null);
+        let status = value["status"].as_str();
+        let waiting = !matches!(status, Some("completed" | "declined"));
+        let declined = status == Some("declined");
+        let warning = rgb(if self.appearance_dark {
+            0xFF9F0A
+        } else {
+            0xFF9500
+        });
+        let success = rgb(0x34C759);
+        let failure = rgb(0xE5645C);
+        let secondary = self.color(0xe4e9f2).opacity(0.6);
+        let tertiary = self.color(0xe4e9f2).opacity(0.42);
+        let (kind_label, title) = presentation::approval_summary(&payload);
+        let resolution = value["approval"]["resolution"]
+            .as_str()
+            .map(str::to_owned)
+            .unwrap_or_else(|| {
+                if declined {
+                    "Declined".into()
+                } else {
+                    "Approved".into()
+                }
+            });
+        let reply = value["approval"]["responseText"]
+            .as_str()
+            .map(str::trim)
+            .filter(|reply| !reply.is_empty());
+        let status_text = if waiting {
+            "Waiting for your answer below".to_owned()
+        } else if let Some(reply) = reply {
+            format!("{resolution}: “{reply}”")
+        } else {
+            resolution
+        };
+        let status_color = if waiting {
+            Hsla::from(warning)
+        } else if declined {
+            Hsla::from(failure)
+        } else {
+            Hsla::from(success)
+        };
+        let status_icon = if waiting {
+            gpui_kit::assets::IconName::Hourglass
+        } else if declined {
+            gpui_kit::assets::IconName::CircleX
+        } else {
+            gpui_kit::assets::IconName::CircleCheck
+        };
+        div()
+            .id(SharedString::from(format!("message-row-{thread}-{item}")))
+            .w_full()
+            .px(px(presentation::CONTENT_GUTTER))
+            .my_3()
+            .flex()
+            .justify_center()
+            .child(
+                div()
+                    .w_full()
+                    .max_w(px(presentation::CONTENT_WIDTH))
+                    .pl(px(presentation::RAIL_GUTTER))
+                    .p_3()
+                    .rounded(px(12.))
+                    .bg(self.color(0x181d28))
+                    .border_1()
+                    .border_color(if waiting {
+                        Hsla::from(warning).opacity(0.3)
+                    } else {
+                        Hsla::from(self.color(0x29303d))
+                    })
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                Icon::new(if waiting {
+                                    gpui_kit::assets::IconName::Hourglass
+                                } else {
+                                    gpui_kit::assets::IconName::ShieldCheck
+                                })
+                                .xsmall()
+                                .text_color(if waiting {
+                                    Hsla::from(warning)
+                                } else {
+                                    Hsla::from(secondary)
+                                }),
+                            )
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .text_size(px((self.conversation_font_size() - 2.).max(10.)))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(if waiting {
+                                        Hsla::from(warning)
+                                    } else {
+                                        Hsla::from(secondary)
+                                    })
+                                    .child(kind_label),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_size(px((self.conversation_font_size() - 1.).max(10.)))
+                            .child(title),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .text_size(px((self.conversation_font_size() - 2.).max(10.)))
+                            .child(Icon::new(status_icon).xsmall().text_color(status_color))
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_color(if waiting {
+                                        Hsla::from(warning)
+                                    } else {
+                                        Hsla::from(tertiary)
+                                    })
+                                    .child(status_text),
+                            ),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    /// Swift's plan card: the checklist an agent wrote, with its progress.
+    pub(super) fn plan_transcript_card(
+        &mut self,
+        thread: &str,
+        item: &str,
+        value: &Value,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let body = text(value, "text");
+        let (done, total) = presentation::plan_progress(&body);
+        let progress = (total > 0).then(|| format!("{done} of {total} done"));
+        let secondary = self.color(0xe4e9f2).opacity(0.6);
+        let tertiary = self.color(0xe4e9f2).opacity(0.42);
+        let native = self.find_body(thread, item, body, true, window, cx);
+        div()
+            .id(SharedString::from(format!("message-row-{thread}-{item}")))
+            .w_full()
+            .px(px(presentation::CONTENT_GUTTER))
+            .my_3()
+            .flex()
+            .justify_center()
+            .child(
+                div()
+                    .w_full()
+                    .max_w(px(presentation::CONTENT_WIDTH))
+                    .pl(px(presentation::RAIL_GUTTER))
+                    .p_3()
+                    .rounded(px(12.))
+                    .bg(self.color(0x181d28))
+                    .border_1()
+                    .border_color(self.color(0x29303d))
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                Icon::new(gpui_kit::assets::IconName::ListChecks)
+                                    .xsmall()
+                                    .text_color(Hsla::from(secondary)),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .text_size(px((self.conversation_font_size() - 1.).max(10.)))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child("Plan"),
+                            )
+                            .when_some(progress, |row, progress| {
+                                row.child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .text_size(
+                                            px((self.conversation_font_size() - 2.).max(10.)),
+                                        )
+                                        .text_color(Hsla::from(tertiary))
+                                        .child(progress),
+                                )
+                            }),
+                    )
+                    .child(transcript::preserve_selected_copy(
+                        thread,
+                        item,
+                        native.text_size(px(self.conversation_font_size())),
+                    )),
+            )
+            .into_any_element()
+    }
+}

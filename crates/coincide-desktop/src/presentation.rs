@@ -584,3 +584,116 @@ mod work_header_tests {
         }
     }
 }
+
+/// Swift's approval card kind, from the request the provider sent.
+pub(super) fn approval_summary(payload: &Value) -> (String, String) {
+    let command = payload["command"]
+        .as_array()
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(|part| part.as_str())
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .or_else(|| {
+            payload["command"]
+                .as_str()
+                .map(|command| command.to_owned())
+        });
+    let tool = payload["toolCall"]["name"]
+        .as_str()
+        .or_else(|| payload["toolName"].as_str())
+        .map(str::to_owned);
+    let path = payload["path"]
+        .as_str()
+        .or_else(|| payload["file"].as_str())
+        .or_else(|| payload["toolCall"]["args"]["path"].as_str())
+        .map(str::to_owned);
+    let (kind, title) = if payload.get("availableDecisions").is_some() || tool.is_some() {
+        ("Tool approval", tool.or(command).or(path))
+    } else if command.is_some() {
+        ("Command approval", command)
+    } else if payload.get("changes").is_some() || payload.get("patch").is_some() {
+        ("File change approval", path)
+    } else if path.is_some() {
+        ("File read approval", path)
+    } else if payload.get("url").is_some() || payload.get("query").is_some() {
+        (
+            "Web access approval",
+            payload["url"]
+                .as_str()
+                .or_else(|| payload["query"].as_str())
+                .map(str::to_owned),
+        )
+    } else {
+        ("Approval needed", None)
+    };
+    let title = title
+        .map(|title| title.chars().take(400).collect::<String>())
+        .unwrap_or_else(|| kind.to_owned());
+    (kind.to_owned(), title)
+}
+
+/// Counts Markdown task items, including nested and ordered ones.
+pub(super) fn plan_progress(markdown: &str) -> (usize, usize) {
+    let mut done = 0;
+    let mut total = 0;
+    for line in markdown.lines() {
+        let line = line.trim_start();
+        let rest = line.strip_prefix("- ").or_else(|| {
+            line.strip_prefix("* ")
+                .or_else(|| line.strip_prefix("+ "))
+                .or_else(|| {
+                    let digits = line.chars().take_while(|ch| ch.is_ascii_digit()).count();
+                    line.get(digits..).and_then(|rest| rest.strip_prefix(". "))
+                })
+        });
+        if let Some(rest) = rest
+            && let Some(checked) = rest.trim_start().strip_prefix('[')
+            && let Some(checked) = checked
+                .strip_prefix(' ')
+                .or_else(|| checked.strip_prefix('x'))
+                .or_else(|| checked.strip_prefix('X'))
+            && checked.starts_with(']')
+        {
+            total += 1;
+            if !rest.trim_start().starts_with("[ ") {
+                done += 1;
+            }
+        }
+    }
+    (done, total)
+}
+
+#[cfg(test)]
+mod card_tests {
+    use super::*;
+
+    #[::core::prelude::v1::test]
+    fn plan_progress_counts_nested_and_ordered_task_items() {
+        let plan = "# Plan\n- [x] read the code\n- [ ] write the fix\n  - [X] nested done\n1. [ ] ordered open\n- ordinary item";
+        assert_eq!(plan_progress(plan), (2, 4));
+        assert_eq!(plan_progress("no tasks here"), (0, 0));
+    }
+
+    #[::core::prelude::v1::test]
+    fn approval_summary_names_the_request_like_swift() {
+        let command = json!({"command":["npm","test"],"cwd":"/tmp"});
+        assert_eq!(
+            approval_summary(&command),
+            ("Command approval".into(), "npm test".into())
+        );
+        let tool = json!({"availableDecisions":["accept"],"toolCall":{"name":"Bash","args":{"path":"a.rs"}}});
+        assert_eq!(
+            approval_summary(&tool),
+            ("Tool approval".into(), "Bash".into())
+        );
+        let change = json!({"changes":[{"path":"a.rs"}]});
+        assert_eq!(
+            approval_summary(&change).0,
+            "File change approval".to_owned()
+        );
+        assert_eq!(approval_summary(&json!({})).1, "Approval needed".to_owned());
+    }
+}

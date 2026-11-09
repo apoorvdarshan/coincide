@@ -1049,6 +1049,7 @@ impl Engine {
                 // Only Claude Code reads a note with its answer (what to do
                 // instead of a denied call); never drop one silently elsewhere.
                 let mut answer = json!({"decision":decision});
+                let answer_text = p.get("text").and_then(Value::as_str).map(str::to_owned);
                 if let Some(note) = p.get("text").filter(|note| !note.is_null()) {
                     let note = note.as_str().context("Reply text must be a string")?;
                     ensure!(note.len() <= 65536, "Reply text must fit within 64 KiB");
@@ -1063,6 +1064,27 @@ impl Engine {
                 running.session.reply(frame["id"].clone(), answer)?;
                 running.pending.remove(key);
                 self.notification_events.cancel_request(required(p,"threadId")?,key);
+                // Swift resolves the transcript card, so it stops saying
+                // "waiting" once the answer is in.
+                let thread = required(p, "threadId")?;
+                let mut v = self.store.thread(thread)?;
+                if let Some(item) = v["items"]
+                    .as_array_mut()
+                    .and_then(|items| items.iter_mut().rev().find(|item| {
+                        item["kind"] == "approval" && item["externalID"] == key
+                    }))
+                {
+                    item["status"] = json!(if decision == "accept" { "completed" } else { "declined" });
+                    item["approval"] = json!({
+                        "resolution": match decision {
+                            "accept" => "Approved",
+                            "decline" => "Declined",
+                            _ => "Cancelled",
+                        },
+                        "responseText": answer_text,
+                    });
+                }
+                self.store.save(&v)?;
                 self.revision += 1;
                 Ok(json!({"answered":true}))
             }
