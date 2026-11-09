@@ -6,6 +6,7 @@ mod codex_limits_view;
 #[cfg(test)]
 #[path = "dictation_preview_ui_tests.rs"]
 mod dictation_preview_ui_tests;
+mod draft_saver;
 #[cfg(test)]
 #[path = "../swift_link_options.rs"]
 mod swift_link_options_tests;
@@ -536,6 +537,7 @@ struct Coincide {
     pending_native_selection: Option<Option<String>>,
     startup_selection_pending: bool,
     pending_drafts: std::collections::HashMap<String, PendingDraft>,
+    draft_saver: draft_saver::Saver,
     composer: Entity<TextareaState>,
     model_input: Entity<InputState>,
     model_picker_search: Entity<InputState>,
@@ -1401,6 +1403,7 @@ impl Coincide {
                     }
                     v["draft"] = json!(draft);
                     let id = text(v, "id");
+                    this.draft_saver.record(&id, &draft);
                     this.pending_drafts.insert(
                         id.clone(),
                         PendingDraft {
@@ -1491,6 +1494,7 @@ impl Coincide {
             .try_lock()
             .map(|engine| engine.browser_agent_control_settings())
             .unwrap_or(json!({"agentControlByDefault":false}));
+        let draft_saver = draft_saver::Saver::new(engine.clone());
         let mut this = Self {
             engine,
             quit_requested,
@@ -1656,6 +1660,7 @@ impl Coincide {
             pending_native_selection: None,
             startup_selection_pending: true,
             pending_drafts: Default::default(),
+            draft_saver,
             composer,
             model_input,
             model_picker_search,
