@@ -376,7 +376,6 @@ struct Coincide {
     control_owner: Arc<Mutex<control::Server>>,
     quit_runtime: Option<shutdown_runtime::Runtime>,
     quit_runtime_error: Option<String>,
-    quit_frame_seen: bool,
     native_quit: Option<native_quit::NativeQuit>,
     native_quit_observed: bool,
     quit_issued: bool,
@@ -1507,7 +1506,6 @@ impl Coincide {
             control_owner,
             quit_runtime: None,
             quit_runtime_error: None,
-            quit_frame_seen: false,
             native_quit,
             native_quit_observed: false,
             quit_issued: false,
@@ -5215,7 +5213,6 @@ impl Render for Coincide {
                 && self.media_shutdown_ready(cx)
                 && self.computer_use_shutdown_ready())
         {
-            self.quit_frame_seen = true;
             return div()
                 .flex()
                 .flex_col()
