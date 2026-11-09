@@ -49,6 +49,13 @@ fn run(engine: &mut Engine, id: &str) -> mpsc::Sender<Event> {
     );
     sender
 }
+/// Swift stores no synthetic "turn ended" item, so a finished turn's alert is
+/// anchored to the reply it produced. Give these fixtures that reply first.
+fn seed_reply(engine: &mut Engine, id: &str) {
+    let mut thread = engine.store.thread(id).unwrap();
+    append(&mut thread, "assistant", "Fixture reply", None);
+    engine.store.save(&thread).unwrap();
+}
 fn approval(id: u64) -> Event {
     Event::Frame(
         json!({"id":id,"method":"item/commandExecution/requestApproval","params":{"command":"private fixture text must not be exposed"}}),
@@ -98,6 +105,7 @@ fn imported_opt_in_and_transcripts_do_not_enable_or_replay() {
 fn persisted_completion_has_exact_uuid_private_body_and_no_inflight_replay() {
     let (_directory, mut engine, id) = fixture();
     engine.configure_native_notifications(true).unwrap();
+    seed_reply(&mut engine, &id);
     let sender = run(&mut engine, &id);
     sender.send(Event::Finished).unwrap();
     engine.poll();
@@ -198,6 +206,7 @@ fn question_and_failure_are_distinct_and_interrupted_turn_is_silent() {
 fn definite_unavailable_needs_explicit_bounded_retry_and_new_attempt_id() {
     let (_directory, mut engine, id) = fixture();
     engine.configure_native_notifications(true).unwrap();
+    seed_reply(&mut engine, &id);
     let sender = run(&mut engine, &id);
     sender.send(Event::Finished).unwrap();
     engine.poll();
@@ -233,6 +242,7 @@ fn definite_unavailable_needs_explicit_bounded_retry_and_new_attempt_id() {
 fn persistence_failure_defers_alert_and_retry_promotes_original_uuid_once() {
     let (directory, mut engine, id) = fixture();
     engine.configure_native_notifications(true).unwrap();
+    seed_reply(&mut engine, &id);
     let connection = rusqlite::Connection::open(directory.path().join("data.sqlite")).unwrap();
     connection.execute_batch("CREATE TRIGGER fail_notification_save BEFORE UPDATE ON threads BEGIN SELECT RAISE(ABORT,'fixture write unavailable'); END;").unwrap();
     let sender = run(&mut engine, &id);

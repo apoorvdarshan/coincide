@@ -26,6 +26,7 @@ pub(super) enum Row {
     ConfirmArchive,
     Notifications,
     KeepAwake,
+    Remote,
     CommandLine,
 }
 
@@ -191,6 +192,18 @@ pub(super) fn entries() -> Vec<Entry> {
             "Keep awake during work",
             general(Row::KeepAwake),
             &["Keep Awake", "Sleep", "Display", "Power", "Battery"],
+        ),
+        Entry::new(
+            "Remote",
+            Pane(S::Automation, Some(Row::Remote)),
+            &[
+                "Coincide Remote",
+                "iPhone",
+                "iPad",
+                "Pairing",
+                "Tailscale",
+                "Network",
+            ],
         ),
         Entry::new(
             "Command-line control",

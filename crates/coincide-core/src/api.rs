@@ -2113,7 +2113,6 @@ impl Engine {
                     }
                     Event::Finished => {
                         finished = true;
-                        append(&mut v, "notice", "Turn ended", None);
                         if completion_alert.is_none() {
                             completion_alert = v["items"]
                                 .as_array()

@@ -1194,6 +1194,13 @@ impl Coincide {
         }
         if matches(
             S::Automation,
+            "remote iphone ipad device pairing tailscale network phone tablet",
+        ) {
+            count += 1;
+            content = content.child(self.revealable(R::Remote, self.remote_panel.clone()));
+        }
+        if matches(
+            S::Automation,
             "command line control coincide-rs terminal cli automation",
         ) {
             count += 1;

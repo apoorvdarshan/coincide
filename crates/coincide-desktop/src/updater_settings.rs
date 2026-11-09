@@ -350,6 +350,11 @@ impl UpdaterSettingsView {
         self.checking = result.is_ok();
         self.model.record(result);
     }
+    /// The app menu's "Check for Updates…": same check the settings button runs.
+    pub(super) fn check_now(&mut self, cx: &mut Context<Self>) {
+        self.check();
+        cx.notify();
+    }
     pub fn tick(&mut self, cx: &mut Context<Self>) {
         let before = (self.model.state(), self.model.lifecycle().cloned());
         self.model.tick();

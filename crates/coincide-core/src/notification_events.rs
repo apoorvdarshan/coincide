@@ -132,7 +132,12 @@ impl Outbox {
                         && match key.kind {
                             AlertKind::Approval => item["kind"] == "approval",
                             AlertKind::Question => item["kind"] == "question",
-                            AlertKind::Completed => item["kind"] == "notice",
+                            // Swift stores no synthetic "turn ended" notice: a
+                            // completed alert anchors to the reply it produced.
+                            // Older threads keep their stored notice anchor.
+                            AlertKind::Completed => {
+                                matches!(item["kind"].as_str(), Some("assistant" | "notice"))
+                            }
                             AlertKind::Failed => item["kind"] == "error",
                             AlertKind::SlowStart => false,
                         }
