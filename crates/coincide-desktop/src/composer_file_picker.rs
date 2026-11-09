@@ -817,6 +817,21 @@ impl Coincide {
             scope.count = self.composer_files.files.len();
         }
         let decision = self.composer_files.keys.decide(key, &scope);
+        if matches!(decision, keys::Decision::Pass)
+            && key == keys::Key::Tab
+            && modified
+            && focused
+            && editable
+            && !ime
+            && !browser
+            && !terminal
+        {
+            // Swift's Shift-Tab flips Plan/Build without opening the picker.
+            self.toggle_plan_mode(window, cx);
+            window.prevent_default();
+            cx.stop_propagation();
+            return;
+        }
         match decision {
             // The `/`, `$` and `#` list gets keys the file picker declines, with the same owner.
             keys::Decision::Pass
