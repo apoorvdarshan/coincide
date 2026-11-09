@@ -70,7 +70,7 @@ fn import_forked(source: &str, destination: &str) -> Result<Value> {
         settings["defaultSelection"] = Value::Null;
         settings["defaultAccessMode"] = Value::Null;
         if let Some(entries) = settings["providers"].as_array_mut() {
-            for pair in entries.chunks_exact_mut(2) {
+            for pair in entries.as_chunks_mut::<2>().0 {
                 let Some(id) = pair[0].as_str() else { continue };
                 if matches!(id, "codex" | "claude" | "cursor" | "grok" | "opencode") {
                     pair[1]["isEnabled"] = json!(true);
