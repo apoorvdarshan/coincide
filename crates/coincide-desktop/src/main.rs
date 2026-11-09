@@ -4650,6 +4650,16 @@ impl Coincide {
             let row = self.question_row(&source_id, &item_id, &item, window, cx);
             return self.turn_decorated(index, row, plan.header, cx);
         }
+        if kind == "approval" && !find_revealed {
+            let item = item.clone();
+            let row = self.approval_transcript_card(&source_id, &item_id, &item, window, cx);
+            return self.turn_decorated(index, row, plan.header, cx);
+        }
+        if kind == "plan" && !find_revealed {
+            let item = item.clone();
+            let row = self.plan_transcript_card(&source_id, &item_id, &item, window, cx);
+            return self.turn_decorated(index, row, plan.header, cx);
+        }
         if let Some(group) = plan.group.clone()
             && group.items.first().copied() == Some(index)
         {
