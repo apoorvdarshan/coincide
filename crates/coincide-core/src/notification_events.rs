@@ -207,7 +207,6 @@ fn alert_body(thread: &Value, key: &EventKey) -> Option<String> {
             [
                 payload["title"].as_str(),
                 payload["toolCall"]["name"].as_str(),
-                payload["command"].as_array().and_then(|_| None),
                 payload["command"].as_str(),
                 payload["questions"][0]["question"].as_str(),
                 payload["questions"][0]["header"].as_str(),
