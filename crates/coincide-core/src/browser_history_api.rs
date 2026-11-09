@@ -19,6 +19,23 @@ impl AdmittedHistoryOpen {
     }
 }
 impl Engine {
+    pub fn clear_browser_history(
+        &mut self,
+        thread: &str,
+        profile: Uuid,
+        expected: u64,
+    ) -> Result<Library> {
+        self.require_admissions()?;
+        ensure!(
+            self.ui_available && self.active_thread() == Some(thread),
+            "Selected conversation changed; history was not cleared"
+        );
+        let result = self.store.clear_browser_history(profile, expected)?;
+        if result.revision != expected {
+            self.revision += 1;
+        }
+        Ok(result)
+    }
     pub fn saved_browser_history(&self, profile: Uuid) -> Result<Library> {
         self.require_admissions()?;
         self.store.saved_browser_history(profile)

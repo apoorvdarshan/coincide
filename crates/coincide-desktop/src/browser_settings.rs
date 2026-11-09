@@ -129,6 +129,24 @@ pub enum ProfileOperation {
     Select(ProfileChoice),
     CreateFresh(String),
     SetPrivateDefault(bool),
+    ClearData {
+        kind: ClearDataKind,
+        history_revision: Option<u64>,
+    },
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClearDataKind {
+    Everything,
+    SiteData,
+    History,
+}
+impl ClearDataKind {
+    pub fn history(self) -> bool {
+        matches!(self, Self::Everything | Self::History)
+    }
+    pub fn site_data(self) -> bool {
+        matches!(self, Self::Everything | Self::SiteData)
+    }
 }
 pub struct ProfileRequest {
     pub thread: String,
@@ -285,6 +303,9 @@ impl ProfileCatalog {
         let old_selections = self.selections.clone();
         let old_default = self.private_by_default;
         match request.operation {
+            ProfileOperation::ClearData { .. } => {
+                anyhow::bail!("Browsing data must be cleared by its native owner")
+            }
             ProfileOperation::SetPrivateDefault(enabled) => self.private_by_default = enabled,
             ProfileOperation::Select(choice) => {
                 ensure!(
@@ -759,6 +780,7 @@ pub struct BrowserSettings {
     preview: Option<ImportPreview>,
     import_busy: bool,
     profile_pending: bool,
+    clear_prompt_open: bool,
     generation: u64,
     imports: Receiver<LibraryCompletion>,
     import_sender: SyncSender<LibraryCompletion>,
@@ -839,6 +861,7 @@ impl BrowserSettings {
                 preview: None,
                 import_busy: false,
                 profile_pending: false,
+                clear_prompt_open: false,
                 generation: 0,
                 imports,
                 import_sender,
@@ -1200,6 +1223,64 @@ impl BrowserSettings {
         });
         cx.notify();
     }
+    pub fn set_clear_result(
+        &mut self,
+        thread: &str,
+        result: Result<(), String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.profile_pending = false;
+        if self
+            .snapshot
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.thread == thread)
+        {
+            self.history.invalidate_library();
+            self.status = result
+                .err()
+                .unwrap_or_else(|| "Browsing data cleared. Bookmarks were kept.".into());
+        }
+        cx.notify();
+    }
+    fn confirm_clear_data(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.clear_prompt_open || self.profile_pending || self.import_busy {
+            return;
+        }
+        let Some(snapshot) = self.snapshot.clone() else {
+            return;
+        };
+        let revision = self.history.clear_revision();
+        self.clear_prompt_open = true;
+        let prompt = window.prompt(gpui_kit::PromptLevel::Warning, "Clear browsing data?", Some("Cookies and site data include sign-ins in this browser profile. Its open pages reload. Bookmarks are kept."), &["Clear Everything", "Clear Cookies and Site Data", "Clear History", "Cancel"], cx);
+        cx.spawn(async move |this, cx| {
+            let answer = prompt.await;
+            let _ = this.update(cx, |this, cx| {
+                this.clear_prompt_open = false;
+                if this.snapshot.as_ref() != Some(&snapshot) || this.workers.closed() {
+                    cx.notify();
+                    return;
+                }
+                let kind = match answer {
+                    Ok(0) => ClearDataKind::Everything,
+                    Ok(1) => ClearDataKind::SiteData,
+                    Ok(2) => ClearDataKind::History,
+                    _ => {
+                        cx.notify();
+                        return;
+                    }
+                };
+                this.request(
+                    ProfileOperation::ClearData {
+                        kind,
+                        history_revision: revision,
+                    },
+                    cx,
+                );
+            });
+        })
+        .detach();
+        cx.notify();
+    }
     pub fn poll(&mut self, cx: &mut Context<Self>) {
         self.poll_history(cx);
         self.cookie_flow.poll();
@@ -1383,8 +1464,37 @@ impl BrowserSettings {
             .gap_3()
             .p_4()
             .child(self.search_engine_row(cx));
-        let busy = self.import_busy || self.profile_pending || self.workers.closed();
+        let busy = self.import_busy
+            || self.profile_pending
+            || self.clear_prompt_open
+            || self.workers.closed();
         if let Some(snapshot) = self.snapshot.clone() {
+            let history_count = self.history.history_count().unwrap_or(0);
+            view = view.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .child(div().flex_1().min_w_0().child("Browsing data").child(
+                        div().text_xs().whitespace_normal().child(format!(
+                            "History items: {history_count}. Bookmarks are kept."
+                        )),
+                    ))
+                    .child(
+                        Button::new("browser-clear-data")
+                            .label(if self.profile_pending {
+                                "Clearing…"
+                            } else {
+                                "Clear Browsing Data…"
+                            })
+                            .small()
+                            .disabled(busy)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.confirm_clear_data(window, cx)
+                            })),
+                    ),
+            );
             view = view.child(div().flex().items_center().justify_between().gap_3()
                 .child(div().flex_1().min_w_0().child("Use private sessions").child(div().text_xs().whitespace_normal().child("New browser sessions use temporary storage, cleared when Coincide quits. Existing conversations keep their selected profile.")))
                 .child(Switch::new("browser-private-default").color(gpui_kit::rgb(0xe4e9f2))

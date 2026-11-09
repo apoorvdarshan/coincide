@@ -14,6 +14,30 @@ fn read(db: &Connection, name: &str) -> Result<Option<Value>> {
     .transpose()
 }
 impl Store {
+    /// Clear only this Rust profile's history. The revision check protects a
+    /// confirmation prepared before a navigation/import changed the library.
+    pub fn clear_browser_history(&mut self, profile: Uuid, expected: u64) -> Result<Library> {
+        let name = browser_history::document_name(profile);
+        let tx = self
+            .connection_mut()?
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let mut library = Library::from_document(profile, read(&tx, &name)?)?;
+        ensure!(
+            library.revision == expected,
+            "Browsing history changed; review Clear Browsing Data again"
+        );
+        if !library.history.is_empty() || !library.imports.is_empty() {
+            library.history.clear();
+            library.imports.clear();
+            library.revision = library
+                .revision
+                .checked_add(1)
+                .context("History revision exhausted")?;
+            tx.execute("INSERT INTO documents(name,document) VALUES (?1,?2) ON CONFLICT(name) DO UPDATE SET document=excluded.document", params![name, serde_json::to_string(&library)?])?;
+        }
+        tx.commit()?;
+        Ok(library)
+    }
     pub fn saved_browser_history(&self, profile: Uuid) -> Result<Library> {
         Library::from_document(
             profile,
@@ -47,6 +71,41 @@ mod tests {
     use super::*;
     fn plan() -> Plan {
         browser_history::preview(r#"{"history":[{"url":"https://example.test/","title":"Saved café","visitCount":3,"lastVisit":0,"future":{"keep":true}}],"futureExport":42}"#.as_bytes()).unwrap()
+    }
+    #[test]
+    fn clear_history_is_profile_scoped_revision_checked_and_keeps_bookmarks() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("state.sqlite");
+        let mut store = Store::open(&db).unwrap();
+        let profile = Uuid::new_v4();
+        let other = Uuid::new_v4();
+        let bookmarks = serde_json::json!({"bookmarks":[{"url":"https://saved.example/"}]});
+        store
+            .save_document("browser-bookmarks.json", &bookmarks)
+            .unwrap();
+        let saved = store
+            .import_browser_history(profile, 0, &plan())
+            .unwrap()
+            .library;
+        let other_saved = store
+            .import_browser_history(other, 0, &plan())
+            .unwrap()
+            .library;
+        assert!(store.clear_browser_history(profile, 0).is_err());
+        assert_eq!(store.saved_browser_history(profile).unwrap(), saved);
+        let cleared = store
+            .clear_browser_history(profile, saved.revision)
+            .unwrap();
+        assert!(cleared.history.is_empty() && cleared.imports.is_empty());
+        assert!(cleared.revision > saved.revision);
+        assert_eq!(store.saved_browser_history(other).unwrap(), other_saved);
+        drop(store);
+        let store = Store::open(&db).unwrap();
+        assert_eq!(store.saved_browser_history(profile).unwrap(), cleared);
+        assert_eq!(
+            store.document("browser-bookmarks.json").unwrap(),
+            Some(bookmarks)
+        );
     }
     #[test]
     fn history_import_is_profile_scoped_restart_safe_and_source_preserving() {

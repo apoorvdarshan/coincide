@@ -286,6 +286,16 @@ impl Default for State {
     }
 }
 impl State {
+    pub(super) fn clear_revision(&self) -> Option<u64> {
+        self.library.as_ref().map(|library| library.revision)
+    }
+    pub(super) fn history_count(&self) -> Option<usize> {
+        self.library.as_ref().map(|library| library.rows.len())
+    }
+    pub(super) fn invalidate_library(&mut self) {
+        self.library = None;
+        self.reload = true;
+    }
     pub fn busy(&self) -> bool {
         self.pending
     }

@@ -3224,6 +3224,10 @@ impl Coincide {
             (settings_visible || pane_visible) && !self.command_palette.read(cx).is_open();
         let selected_thread = self.selected.as_ref().map(|thread| text(thread, "id"));
         for request in self.browser_profile_requests.try_iter().take(8) {
+            let clearing = matches!(
+                &request.operation,
+                browser_settings::ProfileOperation::ClearData { .. }
+            );
             let result = if settings_visible {
                 selected_thread
                     .as_deref()
@@ -3233,16 +3237,34 @@ impl Coincide {
                             .as_mut()
                             .ok_or_else(|| "Browser unavailable".to_owned())
                             .and_then(|browser| {
-                                browser
-                                    .apply_profile_request(thread, request)
-                                    .map_err(|error| error.to_string())
+                                if clearing {
+                                    browser.begin_data_clear(thread, &request, &self.engine)
+                                } else {
+                                    browser.apply_profile_request(thread, request)
+                                }
+                                .map_err(|error| error.to_string())
                             })
                     })
             } else {
                 Err("Browser settings closed; profile request cancelled".into())
             };
+            if clearing {
+                if let Err(error) = result {
+                    self.browser_settings_panel
+                        .update(cx, |panel, cx| panel.set_clear_result("", Err(error), cx));
+                }
+            } else {
+                self.browser_settings_panel
+                    .update(cx, |panel, cx| panel.set_result(result, cx));
+            }
+        }
+        if let Some((thread, result)) = self
+            .browser
+            .as_mut()
+            .and_then(|browser| browser.poll_data_clear(cx))
+        {
             self.browser_settings_panel
-                .update(cx, |panel, cx| panel.set_result(result, cx));
+                .update(cx, |panel, cx| panel.set_clear_result(&thread, result, cx));
         }
         let snapshot = if visible {
             selected_thread.as_deref().and_then(|thread| {

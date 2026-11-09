@@ -326,9 +326,11 @@ verified absent from the visible screen, and then exited through the API in
 after scrolling its sidebar item into view. The synthetic usage record was
 removed from the isolated review database after visual verification.
 
-The wider matrix above remains open, including browser data clearing and the
-remaining import/password-manager capabilities, exhaustive transcript and media
-states, provider-specific end-to-end runs, and native Windows/Linux acceptance.
+The broader matrix remains open, including the remaining import and
+password-manager capabilities, exhaustive transcript and media states,
+provider-specific end-to-end runs, and native Windows/Linux acceptance. The
+browser Clear Browsing Data flow is implemented; its native site-data callbacks
+still need Windows and Linux acceptance and a real-profile run.
 A production bundle does not turn those unchecked rows into completed parity.
 
 
@@ -345,3 +347,17 @@ turns. The previous 0.1.34 bundle remains at
 
 This is a verified checkpoint of the 50-file continuation, not closure of the
 full parity matrix.
+
+### Browsing data clearing
+
+Settings › Browser now matches Swift's "Browsing data" row: it reports the
+history item count, keeps bookmarks, and confirms before clearing. The
+confirmation offers Clear Everything, Clear Cookies and Site Data, Clear
+History, and Cancel with the same warning as Swift. The request is bound to the
+current thread and profile revision; history uses an immediate SQLite
+transaction with a stale-revision check, and site data is removed through the
+native WebKit/WebView2/WebKitGTK owner before open pages reload. A failed or
+partial native callback is reported instead of claiming success. Store,
+profile-scope, revision, bookmark-preservation and API tests pass. The
+site-data callback path has not been run against a disposable real profile;
+Windows/Linux native acceptance remains open.
