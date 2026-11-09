@@ -377,6 +377,14 @@ fn menus(s: &MenuSnapshot) -> Vec<Menu> {
         command(s, "Copy Path", Command::CopyPath),
         app("Schedule…", AppAction::Schedule, s.thread),
         MenuItem::separator(),
+        MenuItem::submenu(
+            Menu::new("Go to Thread").items(
+                (1..=9u8)
+                    .map(|index| command(s, &format!("Thread {index}"), Command::Jump(index)))
+                    .collect::<Vec<_>>(),
+            ),
+        ),
+        MenuItem::separator(),
         command(s, "Delete Thread…", Command::Delete),
     ];
     let window = vec![
@@ -717,6 +725,8 @@ mod tests {
                 "Archive Thread",
                 "Copy Path",
                 "Schedule…",
+                "-",
+                "Go to Thread ▸",
                 "-",
                 "Delete Thread…",
             ]
