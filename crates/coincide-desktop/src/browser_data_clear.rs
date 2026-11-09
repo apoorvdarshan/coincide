@@ -220,10 +220,11 @@ impl BrowserController {
                         .Profile()?
                         .cast::<ICoreWebView2Profile2>()?
                 };
+                let callback_ack = ack.clone();
                 let handler = ClearBrowsingDataCompletedHandler::create(Box::new(move |result| {
                     let _held = &lease;
                     let _ = sender.try_send(result.map_err(|error| error.to_string()));
-                    ack.ack();
+                    callback_ack.ack();
                     Ok(())
                 }));
                 if let Err(error) = unsafe { profile.ClearBrowsingDataAll(&handler) } {
