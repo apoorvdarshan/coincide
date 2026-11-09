@@ -372,3 +372,113 @@ line was verified in the transcript: "Ran 1 command" while collapsed, with
 nested Thought/command/Thought rows after expanding, and the live "Working for"
 and "Thinking…" rows while a turn runs. No browsing data was deleted during the
 check; the destructive confirmation was dismissed.
+
+## Full Swift → Rust UI pass — 2026-11-09 (0.1.40)
+
+A second complete pass walked every Swift UI area against its Rust counterpart
+at `0779a890`, area by area. This is a code-level comparison; screen and
+interaction acceptance still has to be recorded per item, and Windows/Linux
+native acceptance remains open. Items below are what is still missing or
+simpler in Rust; everything not listed matched in code.
+
+### Composer
+
+- Non-image paste/drop and file attachment cards are absent; the attach picker
+  is images-only (`composer_attachments.rs`).
+- Placeholder states beyond default and plan text are missing (no thread,
+  provider unavailable, missing worktree, pending approval/question).
+- Attachment strip has no preview/QuickLook and no "this model cannot read
+  images" warning.
+- Send is not blocked for a preparing worktree or missing folder, and a pending
+  approval is not declined before sending.
+- Usage-limit warning banner and "Resume at reset" are absent; limits are
+  menu-only (`composer_meters.rs`).
+- No agent-switch handoff banner, no question "Dismiss/Skip", no history recall
+  with Up/Down, no Shift-Tab Plan toggle, no inline mention tint.
+- Mode facet requires an Apply inside the popover; Swift toggles Plan directly.
+
+### Transcript
+
+- Approval and plan rows fall through to the generic message card (labelled
+  `approval`/`plan` with a 180-character excerpt) instead of Swift's kind,
+  warning accent, resolution and checklist progress.
+- Errors collapse at 180 characters instead of a full red card.
+- No fork dividers ("Forked from conversation" / "Conversation fork").
+- Agent rail is a flat 1px line: no per-agent gradient, message rings or live
+  dot; bot conversations show a generic glyph rather than the bot avatar.
+- User messages lose Steer/Scheduled marks, long-message folding and the
+  hover-only edit/copy/time row.
+- No "Thought for 4s", no animated spinner/shimmer for running groups.
+- Media is images-only: no video, audio or sandboxed interactive HTML; no
+  per-code-block copy buttons.
+- Every finished turn gets a "Turn ended" notice row (Swift shows only
+  "Interrupted"), and background-task lines are missing from the live row.
+- Welcome/empty state is a headline plus "Using X": no agent chips, setup
+  hints, "Check Again", "Agent Settings" or "Locate Folder".
+
+### Window, sidebar, navigation
+
+- No macOS unified/customizable toolbar: no Show/Customize Toolbar, and the
+  thread actions are a fixed strip inside the chat column.
+- Archiving, snoozing or deleting the open thread leaves it open; Swift opens a
+  neighbour.
+- Only one-shot Undo: no Redo for archive/settle/move/delete, and review flows
+  are inline panes rather than sheets.
+- Bot and Chats conversations have no proxy icon/Open In/Reveal/Copy Path.
+- Empty Chats header and "No chats yet"/"Only pinned threads" notes missing; a
+  Rust-only project filter row changes the header layout.
+- Bot/project drag reorders even when the sidebar is sorted by Name/Activity.
+- Frame restore uses a separate key without native window/Space restoration.
+
+### Settings and About
+
+- General lost default model/effort, resume-after-limit, agent thread titles,
+  schedule approval, idle timeout, background agents, checkpoints and branch
+  prefix; Keep Awake is a stub, not the 24/7/lid/battery/display controls.
+- Coincide Remote panel exists but is not mounted, so pairing is unreachable.
+- Usage lacks display mode, refresh interval, outside-CoA usage, menu-bar usage
+  and browser sign-in controls.
+- Keyboard settings lack search, conflict summary, unusable-shortcut cleanup and
+  the fixed-shortcut reference groups.
+- Passwords lack saved-login management, CSV import and per-site agent grants.
+- Computer Use lacks show-agent-cursor, driver version and Restart/Stop; its
+  permission rows have no System Settings buttons.
+- Provider pages use Save/Discard instead of immediate writes and simplify the
+  Cursor usage, Codex and Antigravity panes.
+- About has no build number, and App Updates has no app-menu "Check for
+  Updates…" or standard About panel.
+- Settings search exposes 19 reveal rows against Swift's ~40.
+
+### Panels and tools
+
+- Browser import is largely missing: no Safari/Chrome/Firefox cookies, history
+  or bookmarks, and no password CSV; only a Firefox cookie snapshot and JSON
+  bookmark export.
+- Browser page-load failures, per-tab loading state and the private-profile /
+  "agent used this browser" status line are absent.
+- Diff panel has no turn scopes and no "Comment on Selected Lines" → composer
+  context.
+- Terminal has no ⌘F find and no ⇧⌘[ / ⇧⌘] tab cycling.
+- Saved-login fill detours through Settings instead of listing matching logins
+  and one-time codes in place.
+- Schedule approvals lost Swift's in-thread approval card.
+- Browser keeps up to 128 tabs without Swift's memory-budget unloading.
+
+### Menus, palette, bots, import
+
+- Palette is missing bots/New Bot, Stop, Find in Thread, Pull Requests,
+  Pin/Rename/Archive, appearance, Refresh Agents, Help links, and the model/
+  effort/access/plan submenus.
+- Bot editor cannot change an existing bot's agent, model, access mode or
+  Plan/Build mode (rendered read-only).
+- Menus lack Check for Updates, Reveal Imported Source, Paste and Match Style,
+  Delete, all spelling/substitution/transformation/speech items, Dictate, Show/
+  Customize Toolbar and the Go to Thread 1–9 items.
+- Notifications use generic titles instead of the thread title and excerpt, and
+  have no Remote/CloudKit routing.
+
+### Known non-UI follow-ups from this pass
+
+- Native Windows and Linux interaction acceptance still needs new runs.
+- The macOS Linux/Windows smoke scripts now find the conversation window by its
+  process instead of the old fixed title, matching Swift's thread-title window.
