@@ -726,6 +726,8 @@ mod tests {
                 "Copy Path",
                 "Schedule…",
                 "-",
+                "Go to Thread ▸",
+                "-",
                 "Delete Thread…",
             ]
         );
