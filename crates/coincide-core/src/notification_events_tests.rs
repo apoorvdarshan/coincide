@@ -122,7 +122,8 @@ fn persisted_completion_has_exact_uuid_private_body_and_no_inflight_replay() {
     );
     assert_eq!(claim.alert.key.thread, Uuid::parse_str(&id).unwrap());
     assert_eq!(claim.alert.key.kind, AlertKind::Completed);
-    assert!(claim.alert.body.is_none());
+    // Swift shows the reply that arrived, not an empty body.
+    assert_eq!(claim.alert.body.as_deref(), Some("Fixture reply"));
     assert!(engine.claim_notification_events(16).is_empty());
     assert!(
         engine
@@ -177,6 +178,7 @@ fn question_and_failure_are_distinct_and_interrupted_turn_is_silent() {
     engine.poll();
     let claim = engine.claim_notification_events(1).pop().unwrap();
     assert_eq!(claim.alert.key.kind, AlertKind::Question);
+    // This fixture asks no questions, so there is nothing to show.
     assert!(claim.alert.body.is_none());
     engine
         .ack_notification_event(claim.claim_id, claim.alert.key, NotificationAck::Suppressed)
