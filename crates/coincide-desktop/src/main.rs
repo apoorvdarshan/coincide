@@ -4936,7 +4936,12 @@ impl Render for Coincide {
         }
         if let Some(v) = self.selected.as_ref() {
             let draft = text(v, "draft");
-            if self.committed_composer_draft(cx) != draft {
+            // Never overwrite a composer the user is typing in from an
+            // asynchronous snapshot: a draft save or a slow tick can otherwise
+            // replace the live text and move the caret to the start mid-word.
+            // Thread switches assign the new draft explicitly in `select`.
+            let focused = self.composer.read(cx).focus_handle(cx).is_focused(window);
+            if !focused && self.committed_composer_draft(cx) != draft {
                 self.composer
                     .update(cx, |input, cx| input.set_value(draft, window, cx));
             }
