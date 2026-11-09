@@ -57,6 +57,7 @@ pub enum AppAction {
     About,
     Settings,
     CheckForUpdates,
+    RevealImportedSource,
     Hide,
     HideOthers,
     ShowAll,
@@ -145,6 +146,8 @@ pub const HELP_LINKS: [&[(&str, &str, Option<Command>)]; 3] = [
 /// Everything the menu bar shows, so it is rebuilt only when this changes.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MenuSnapshot {
+    /// The open conversation's imported CLI session file, when it has one.
+    pub imported_source: String,
     pub context: EditContext,
     pub selection_available: bool,
     /// Native key equivalents as GPUI keystroke text, for commands that run.
@@ -267,6 +270,11 @@ fn menus(s: &MenuSnapshot) -> Vec<Menu> {
         MenuItem::submenu(Menu::new("New Thread in Project").items(new_in)),
         command(s, "Add Project…", Command::AddProject),
         app("Import CLI Session…", AppAction::ImportSession, true),
+        app(
+            "Reveal Imported Source",
+            AppAction::RevealImportedSource,
+            !s.imported_source.is_empty(),
+        ),
         MenuItem::separator(),
         command(s, "Open in Editor", Command::OpenInEditor),
         MenuItem::submenu(
@@ -568,6 +576,7 @@ mod tests {
     use super::*;
     fn snapshot() -> MenuSnapshot {
         MenuSnapshot {
+            imported_source: String::new(),
             context: EditContext::StandardResponder,
             selection_available: true,
             enabled: Command::ALL.to_vec(),
@@ -697,6 +706,7 @@ mod tests {
                 "New Thread in Project ▸",
                 "Add Project…",
                 "Import CLI Session…",
+                "Reveal Imported Source",
                 "-",
                 "Open in Editor",
                 "Open In ▸",
