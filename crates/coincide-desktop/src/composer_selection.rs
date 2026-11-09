@@ -1924,6 +1924,32 @@ impl Coincide {
             }
         }
     }
+    /// Swift's Shift-Tab: flip the open conversation between Plan and Build.
+    pub(super) fn toggle_plan_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(thread) = self.selected.as_ref() else {
+            return;
+        };
+        let provider = text(&thread["selection"], "provider");
+        let offers_plan = self.selection_ui.capabilities["providers"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|row| row["provider"] == provider.as_str())
+            .and_then(|row| row["interactionModes"].as_array())
+            .is_some_and(|modes| modes.iter().any(|mode| mode == "plan"));
+        if !offers_plan {
+            self.status = "This agent has no Plan mode.".into();
+            cx.notify();
+            return;
+        }
+        let plan = thread["interactionMode"] == "plan";
+        self.edit_selection_immediately(
+            |draft| draft.proposed_interaction = json!(if plan { "build" } else { "plan" }),
+            cx,
+        );
+        let _ = window;
+    }
+
     fn edit_selection_immediately(
         &mut self,
         edit: impl FnOnce(&mut SelectionDraft),
