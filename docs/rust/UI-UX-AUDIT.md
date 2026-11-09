@@ -184,3 +184,21 @@ Final regression run: 820 passed, 26 ignored, zero failed. The build and final
 native check are recorded in the scratch reports alongside this audit. These
 results accept this batch's tested macOS surfaces; they do not close the broader
 acceptance matrix or claim native Windows/Linux verification.
+
+## Installed result
+
+Rust 0.1.34 (build 44) was signed, accepted by Apple notarization, stapled,
+verified by Gatekeeper, and installed in `~/Applications/Coincide Rust.app`.
+The restarted app responds on its original control socket. Its executable
+matches the signed artifact byte for byte. The previous 0.1.33 bundle is retained
+as `~/Applications/.Coincide-Rust-0.1.33-rollback-4e3281b6`. The original data store
+was retained; native UI experiments used the separate review snapshot.
+
+The final native build exposed selectable browser tabs and PR rows to
+accessibility; selecting #360 through its accessibility action opened details.
+Creating and closing a tab was verified. Invalid HTTPS input displayed its error,
+and a subsequent successful navigation cleared that error from the composer.
+The compact bookmark refresh button and library were inspected again.
+
+The wider acceptance matrix remains open. No claim of complete Swift parity,
+native Windows/Linux acceptance, or end-to-end testing of every provider is made.
