@@ -6,6 +6,7 @@
 //! one background worker, never GPUI render; only the saved filter touches the
 //! Engine here, with try_lock, when the panel opens and when the user picks one.
 //! Check Out in New Thread emits CheckoutOpened for the parent to select.
+use crate::native_menu::AccessibleMenuExt as _;
 use crate::worker_owner::{Admission, ShutdownStatus as ReadShutdownStatus, WorkerOwner};
 use anyhow::{Context as _, Result, ensure};
 use coincide_core::{
@@ -19,7 +20,7 @@ use gpui_kit::{
         ActiveTheme, Icon, Sizable, StyledExt,
         button::*,
         input::{Enter, Escape, Input, InputEvent, InputState, Textarea, TextareaState},
-        menu::{DropdownMenu, PopupMenuItem},
+        menu::PopupMenuItem,
         spinner::Spinner,
         text::TextView,
         tooltip::Tooltip,
@@ -1618,7 +1619,7 @@ impl GitHubReviewPanel {
                     .dropdown_caret(true)
                     .accessibility_label("Pull requests to show")
                     .disabled(disabled)
-                    .dropdown_menu(move |mut menu, _, _| {
+                    .accessible_menu(move |mut menu, _, _| {
                         for option in Involvement::ALL {
                             let parent = parent.clone();
                             let state = state.clone();
@@ -2075,7 +2076,7 @@ impl GitHubReviewPanel {
                     .primary()
                     .small()
                     .disabled(!idle || !ready || !can_merge || methods.is_empty())
-                    .dropdown_menu(move |mut menu, _, _| {
+                    .accessible_menu(move |mut menu, _, _| {
                         for method in &methods {
                             let parent = parent.clone();
                             let method = *method;
@@ -2228,7 +2229,7 @@ impl GitHubReviewPanel {
                     .dropdown_caret(true)
                     .accessibility_label("Review outcome")
                     .disabled(sheet.submitting)
-                    .dropdown_menu(move |mut menu, _, _| {
+                    .accessible_menu(move |mut menu, _, _| {
                         for event in ReviewEvent::ALL {
                             let parent = parent.clone();
                             menu = menu.item(

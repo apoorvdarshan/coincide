@@ -1,6 +1,7 @@
 //! Native setup controls. Persisted configuration is display-only until an
 //! explicit native action adopts it; no control API can invoke these callbacks.
 use super::*;
+use crate::native_menu::AccessibleMenuExt as _;
 use crate::{
     instructions_config::{Choice, Metadata},
     instructions_scope::{DiscoveredFile, NativeReviewPlan, NativeScope},
@@ -680,7 +681,7 @@ impl InstructionsPanel {
         cx.notify();
     }
     pub(super) fn instructions_sidebar(&self, cx: &mut Context<Self>) -> AnyElement {
-        use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
+        use gpui_kit::component::menu::PopupMenuItem;
         let pending = self.setup.picker_pending
             || self.setup.review.is_some()
             || self.setup.has_copy_review()
@@ -710,7 +711,7 @@ impl InstructionsPanel {
         let mut sidebar = div().id("instructions-sidebar").w(px(210.)).flex_shrink_0().min_h_0().overflow_y_scroll().p_3().flex().flex_col().gap_3()
             .bg(cx.theme().muted).border_r_1().border_color(cx.theme().border)
             .child(Button::new("instructions-scope").label(project_name.to_owned()).disabled(pending).dropdown_caret(true)
-                .dropdown_menu(move|mut menu,_,_|{for (id,label) in &choices {let owner=owner.clone();let id=id.clone();menu=menu.item(PopupMenuItem::new(label.clone()).checked(id==selected).on_click(move|_,window,cx|{let _=owner.update(cx,|this,cx|this.setup_switch_scope(id.clone(),window,cx));}));}menu}))
+                .accessible_menu(move|mut menu,_,_|{for (id,label) in &choices {let owner=owner.clone();let id=id.clone();menu=menu.item(PopupMenuItem::new(label.clone()).checked(id==selected).on_click(move|_,window,cx|{let _=owner.update(cx,|this,cx|this.setup_switch_scope(id.clone(),window,cx));}));}menu}))
             .child(div().flex().flex_col().gap_2().p_2().rounded_md().bg(cx.theme().background)
                 .child(div().text_sm().font_semibold().child("Shared instructions"))
                 .child(div().text_xs().text_color(cx.theme().muted_foreground).child("Use one master file across your agents. Review changes before linking existing files."))

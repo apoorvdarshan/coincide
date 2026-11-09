@@ -1,6 +1,7 @@
 //! Retained workspace/GitHub controllers mounted beside the current chat.
 use super::*;
-use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
+use crate::native_menu::AccessibleMenuExt as _;
+use gpui_kit::component::menu::PopupMenuItem;
 impl Coincide {
     /// Whether the inspector column shows the GitHub pull requests panel.
     pub(super) fn pull_requests_panel_open(&self) -> bool {
@@ -69,7 +70,7 @@ impl Coincide {
                     .xsmall()
                     .accessibility_label("Workspace views")
                     .tooltip("Workspace views")
-                    .dropdown_menu_with_anchor(Anchor::TopRight, move |mut menu, _, _| {
+                    .accessible_menu_with_anchor(Anchor::TopRight, move |mut menu, _, _| {
                         for (index, label) in
                             ["Changes", "Local Git", "Pull Requests", "Review comments"]
                                 .into_iter()

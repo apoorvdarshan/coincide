@@ -34,14 +34,19 @@ impl SavedFrame {
             x: number("x")?,
             y: number("y")?,
             width: number("width")?,
-            height: number("height")?,
+            height: number("height")?
+                + if cfg!(target_os = "macos") && frame["unifiedTitlebar"] != true {
+                    32.
+                } else {
+                    0.
+                },
             maximized: frame["maximized"] == true,
         };
         (saved.width >= f64::from(MIN_SIZE.0) && saved.height >= f64::from(MIN_SIZE.1))
             .then_some(saved)
     }
     fn encode(&self) -> Value {
-        json!({"display":self.display,"x":self.x,"y":self.y,"width":self.width,"height":self.height,"maximized":self.maximized})
+        json!({"display":self.display,"x":self.x,"y":self.y,"width":self.width,"height":self.height,"maximized":self.maximized,"unifiedTitlebar":cfg!(target_os = "macos")})
     }
     fn bounds(&self) -> Bounds<Pixels> {
         Bounds::new(
@@ -70,6 +75,13 @@ pub(super) fn sidebar_open(engine: &SharedEngine) -> bool {
         .ok()
         .and_then(|engine| interface_state(&engine.store))
         .is_none_or(|state| state[SIDEBAR_KEY] != true)
+}
+
+pub(super) fn terminal_bottom_open(engine: &SharedEngine) -> bool {
+    try_state(engine)
+        .ok()
+        .and_then(|engine| interface_state(&engine.store))
+        .is_some_and(|state| state["rustTerminalBottomOpen"] == true)
 }
 
 /// Where the main window opens: its saved frame on the display it was on,
@@ -203,6 +215,7 @@ pub(super) struct State {
     frame_changed: Option<Instant>,
     saved_frame: Option<SavedFrame>,
     document_path: Option<Option<std::path::PathBuf>>,
+    title: Option<String>,
     run_clocks: HashMap<String, RunClock>,
     /// The second the run status last showed, so it redraws once a second.
     shown_second: Option<u64>,
@@ -211,11 +224,37 @@ pub(super) struct State {
 /// macOS opens NSWindow with a content rect, but reports the outer frame.
 /// Persisting that outer size as the next content size adds the titlebar on
 /// every reopen. Other platforms' constructors use their reported bounds.
-pub(super) fn restorable_size(outer: gpui_kit::Size<Pixels>, content: gpui_kit::Size<Pixels>) -> gpui_kit::Size<Pixels> {
+pub(super) fn restorable_size(
+    outer: gpui_kit::Size<Pixels>,
+    content: gpui_kit::Size<Pixels>,
+) -> gpui_kit::Size<Pixels> {
     if cfg!(target_os = "macos") {
         content
     } else {
         outer
+    }
+}
+
+/// Use AppKit's content rect rather than the drawable view: the view can have
+/// border insets and must not make a saved window shrink on every reopen.
+pub(super) fn restorable_window_size(window: &Window) -> gpui_kit::Size<Pixels> {
+    #[cfg(target_os = "macos")]
+    {
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        if let Ok(handle) = HasWindowHandle::window_handle(window)
+            && let RawWindowHandle::AppKit(handle) = handle.as_raw()
+        {
+            let view = unsafe { &*handle.ns_view.as_ptr().cast::<objc2_app_kit::NSView>() };
+            if let Some(native) = view.window() {
+                let content = native.contentRectForFrameRect(native.frame()).size;
+                return size(px(content.width as f32), px(content.height as f32));
+            }
+        }
+    }
+    match window.window_bounds() {
+        WindowBounds::Windowed(bounds)
+        | WindowBounds::Maximized(bounds)
+        | WindowBounds::Fullscreen(bounds) => restorable_size(bounds.size, window.viewport_size()),
     }
 }
 
@@ -258,6 +297,17 @@ impl Coincide {
             self.status = format!("Thread list visibility could not be saved: {error}");
         }
     }
+    pub(super) fn remember_terminal_visibility(&mut self) {
+        if !self.terminal_on_right() {
+            if let Err(error) = patch_interface_state(
+                &self.engine,
+                "rustTerminalBottomOpen",
+                json!(self.terminal_open),
+            ) {
+                self.status = format!("Terminal visibility could not be saved: {error}");
+            }
+        }
+    }
     /// Saves the window's frame once moving or resizing has stopped. Full
     /// screen is not a frame to come back to, as in Swift.
     fn save_window_frame(&mut self, window: &Window, cx: &App) {
@@ -273,7 +323,7 @@ impl Coincide {
             WindowBounds::Maximized(bounds) => (bounds, true),
             WindowBounds::Fullscreen(_) => return,
         };
-        let restored_size = restorable_size(bounds.size, window.viewport_size());
+        let restored_size = restorable_window_size(window);
         let frame = SavedFrame {
             display: window
                 .display(cx)
@@ -294,7 +344,17 @@ impl Coincide {
         }
     }
     /// The open thread's working folder, the title bar's proxy icon on macOS.
-    fn sync_document_path(&mut self, window: &Window) {
+    fn sync_document_path(&mut self, window: &mut Window) {
+        let title = self
+            .selected
+            .as_ref()
+            .and_then(|thread| thread["title"].as_str())
+            .filter(|title| !title.trim().is_empty())
+            .unwrap_or("Coincide");
+        if self.window_chrome.title.as_deref() != Some(title) {
+            window.set_window_title(title);
+            self.window_chrome.title = Some(title.to_owned());
+        }
         let folder = self.selected.as_ref().and_then(|thread| {
             thread["worktreePath"]
                 .as_str()
@@ -349,6 +409,14 @@ impl Coincide {
     }
 }
 
+pub(super) fn titlebar_mouse_down(event: &MouseDownEvent, window: &mut Window, _: &mut App) {
+    if event.click_count == 2 {
+        window.titlebar_double_click();
+    } else {
+        window.start_window_move();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -374,6 +442,22 @@ mod tests {
         ] {
             assert!(SavedFrame::decode(&broken).is_none(), "{broken}");
         }
+    }
+
+    #[::core::prelude::v1::test]
+    fn legacy_content_frame_migrates_once_to_the_unified_window() {
+        let legacy = json!({FRAME_KEY:{"x":0,"y":0,"width":1280,"height":788}});
+        let migrated = SavedFrame::decode(&legacy).unwrap();
+        assert_eq!(
+            migrated.height,
+            if cfg!(target_os = "macos") {
+                820.
+            } else {
+                788.
+            }
+        );
+        let reopened = SavedFrame::decode(&json!({FRAME_KEY:migrated.encode()})).unwrap();
+        assert_eq!(reopened, migrated);
     }
 
     #[::core::prelude::v1::test]

@@ -1,6 +1,7 @@
 use super::*;
+use crate::native_menu::AccessibleMenuExt as _;
 use coincide_core::appshots::{self, Settings};
-use gpui_kit::component::switch::Switch;
+use gpui_kit::component::{menu::PopupMenuItem, switch::Switch};
 impl Coincide {
     fn change_appshot_setting(
         &mut self,
@@ -123,14 +124,59 @@ impl Coincide {
     }
     pub(super) fn appshots_settings_panel(&self, cx: &mut Context<Self>) -> AnyElement {
         let settings = Settings::read(&self.settings);
+        let owner = cx.entity().downgrade();
+        let trigger = Button::new("appshots-trigger")
+            .label(if settings.custom {
+                "Custom shortcut"
+            } else if cfg!(target_os = "macos") {
+                "Both ⌘ keys"
+            } else {
+                "Both primary modifier keys"
+            })
+            .small()
+            .dropdown_caret(true)
+            .accessibility_label("Take an appshot with")
+            .accessible_menu(move |menu, _, _| {
+                let custom = owner.clone();
+                let both = owner.clone();
+                menu.item(
+                    PopupMenuItem::new(if cfg!(target_os = "macos") {
+                        "Both ⌘ keys"
+                    } else {
+                        "Both primary modifier keys"
+                    })
+                    .checked(!settings.custom)
+                    .on_click(move |_, window, cx| {
+                        let _ = both.update(cx, |this, cx| {
+                            this.change_appshot_setting(
+                                "trigger",
+                                json!("bothCommandKeys"),
+                                window,
+                                cx,
+                            )
+                        });
+                    }),
+                )
+                .item(
+                    PopupMenuItem::new("Custom shortcut")
+                        .checked(settings.custom)
+                        .on_click(move |_, window, cx| {
+                            let _ = custom.update(cx, |this, cx| {
+                                this.change_appshot_setting(
+                                    "trigger",
+                                    json!("shortcut"),
+                                    window,
+                                    cx,
+                                )
+                            });
+                        }),
+                )
+            });
         let mut pane=div().id("appshots-settings").flex_1().min_w_0().min_h_0().overflow_y_scroll().p_5().flex().flex_col().gap_4()
             .child("Capture the window you’re working in and ask an agent about it.")
             .child(self.labeled_row("Turn on Appshots", None, Switch::new("appshots-enabled").accessibility_label("Turn on Appshots").color(self.color(0xe4e9f2)).checked(settings.enabled).on_click(cx.listener(move|this,checked:&bool,window,cx|this.change_appshot_setting("enabled",json!(*checked),window,cx)))))
-            .child("Capture the frontmost window of the app you’re using and attach it to a chat, ready for your question.")
-            .child("Take an appshot with")
-            .child(div().flex().gap_2()
-                .child(Button::new("appshots-both").label(if cfg!(target_os="macos"){"Both ⌘ keys"}else{"Both primary modifier keys"}).selected(!settings.custom).on_click(cx.listener(|this,_,window,cx|this.change_appshot_setting("trigger",json!("bothCommandKeys"),window,cx))))
-                .child(Button::new("appshots-custom").label("Custom shortcut").selected(settings.custom).on_click(cx.listener(|this,_,window,cx|this.change_appshot_setting("trigger",json!("shortcut"),window,cx)))));
+            .child(div().text_xs().child("Capture the frontmost window of the app you’re using and attach it to a chat, ready for your question."))
+            .child(self.labeled_row("Take an appshot with", None, trigger));
         if settings.custom {
             pane = pane
                 .child(
@@ -170,14 +216,31 @@ impl Coincide {
                 continue;
             }
             pane = pane.child(
-                Button::new(("appshots-permission", action as usize))
-                    .label(label)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.appshots.permissions = appshots_platform::permissions(action);
-                        this.appshots.invalidate();
-                        this.appshots.sync(&this.settings);
-                        cx.notify();
-                    })),
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(match action {
+                        0 => "Permissions",
+                        1 => "Screen Recording",
+                        _ => "Accessibility",
+                    })
+                    .child(
+                        Button::new(("appshots-permission", action as usize))
+                            .label(if action == 0 {
+                                "Refresh"
+                            } else {
+                                "Grant Access"
+                            })
+                            .small()
+                            .accessibility_label(label)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.appshots.permissions = appshots_platform::permissions(action);
+                                this.appshots.invalidate();
+                                this.appshots.sync(&this.settings);
+                                cx.notify();
+                            })),
+                    ),
             );
         }
         #[cfg(target_os = "macos")]
@@ -185,13 +248,13 @@ impl Coincide {
             ("Privacy_ScreenCapture", "Open Screen Recording settings"),
             ("Privacy_Accessibility", "Open Accessibility settings"),
         ] {
-            pane = pane.child(Button::new(anchor).label(label).on_click(cx.listener(
-                move |_, _, _, cx| {
+            pane = pane.child(Button::new(anchor).label(label).small().ghost().on_click(
+                cx.listener(move |_, _, _, cx| {
                     cx.open_url(&format!(
                         "x-apple.systempreferences:com.apple.preference.security?{anchor}"
                     ))
-                },
-            )));
+                }),
+            ));
         }
         div().id("appshots-settings-surface").flex_1().min_h_0().min_w_0().flex().flex_col()
             .child(self.settings_subpage_header("Appshots", "appshots-settings-done", cx))

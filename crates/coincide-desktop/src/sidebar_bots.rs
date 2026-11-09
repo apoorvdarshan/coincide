@@ -249,32 +249,19 @@ impl Coincide {
             let preview = latest
                 .and_then(|thread| thread.navigation.as_ref()?.preview.clone())
                 .unwrap_or_else(|| "Say hello".into());
-            let running = conversations
-                .iter()
-                .any(|thread| self.running.contains(&thread.id));
-            // The most pressing unseen result among its conversations: a
-            // failure shows as a badge, a finished reply as the green dot.
-            let unseen = conversations
-                .iter()
-                .filter_map(|thread| {
-                    self.sidebar_preferences.document["unseen"][&thread.id].as_str()
-                })
-                .fold(None, |strongest, kind| match strongest {
-                    Some("failed") => strongest,
-                    _ => Some(kind),
-                })
-                .filter(|_| !running);
-            let failed = unseen == Some("failed");
-            let completed = unseen.is_some() && !failed;
-            let status = if running {
-                Some("Working")
-            } else if failed {
-                Some("Failed")
-            } else if completed {
-                Some("Completed")
-            } else {
-                None
-            };
+            use sidebar_thread_status::RowStatus;
+            let activity = sidebar_thread_status::strongest_status(
+                conversations
+                    .iter()
+                    .map(|thread| self.sidebar_thread_status(thread)),
+            )
+            .unwrap_or(RowStatus::Idle);
+            let running = matches!(activity, RowStatus::Running { .. });
+            let approval = matches!(activity, RowStatus::Approval(_));
+            let failed = activity == RowStatus::Failed;
+            let completed = activity == RowStatus::Completed;
+            let unseen = activity.unseen().then_some("unseen");
+            let status = activity.label();
             let selection = &bot["selection"];
             let model_id = text(selection, "modelID");
             let model = project_defaults_ui::catalog_model(
@@ -296,10 +283,14 @@ impl Coincide {
                 status,
                 home.as_deref(),
             );
-            let age = navigation::sidebar_age(
-                latest.and_then(|thread| thread.navigation.as_ref()?.updated_at),
-                coincide_core::store::swift_timestamp(),
-            );
+            let age = if let RowStatus::Running { since } = activity {
+                sidebar_thread_status::elapsed(coincide_core::store::swift_timestamp() - since)
+            } else {
+                navigation::sidebar_age(
+                    latest.and_then(|thread| thread.navigation.as_ref()?.updated_at),
+                    coincide_core::store::swift_timestamp(),
+                )
+            };
             let active_schedules = self
                 .sidebar_schedules
                 .iter()
@@ -422,6 +413,8 @@ impl Coincide {
                                                             .flex_shrink_0()
                                                             .items_center()
                                                             .gap_1()
+                                                            .when(running, |row| row.child(gpui_kit::component::spinner::Spinner::new().xsmall()))
+                                                            .when(approval, |row| row.child(div().px_1().rounded_sm().text_size(px(10.)).text_color(theme.warning).child("Approval")))
                                                             .when(failed, |row| {
                                                                 row.child(
                                                                     div()
@@ -444,7 +437,7 @@ impl Coincide {
                                                                         .bg(success),
                                                                 )
                                                             })
-                                                            .when(!failed, |row| {
+                                                            .when(!failed && !approval, |row| {
                                                                 row.child(
                                                                     div()
                                                                         .text_size(px(11.))

@@ -1,8 +1,6 @@
 use super::*;
-use gpui_kit::component::{
-    menu::{DropdownMenu, PopupMenuItem},
-    switch::Switch,
-};
+use crate::native_menu::AccessibleMenuExt as _;
+use gpui_kit::component::{menu::PopupMenuItem, switch::Switch};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum SettingsSection {
@@ -582,7 +580,7 @@ impl Coincide {
                 .border_color(self.color(0x29303d))
                 .rounded(px(6.))
                 .dropdown_caret(true)
-                .dropdown_menu_with_anchor(Anchor::TopRight, move |mut menu, _, _| {
+                .accessible_menu_with_anchor(Anchor::TopRight, move |mut menu, _, _| {
                     for (label, value) in &choices {
                         let owner = owner.clone();
                         let value = value.clone();

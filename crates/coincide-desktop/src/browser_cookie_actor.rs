@@ -421,6 +421,7 @@ mod tests {
             selected: ProfileChoice::Private,
             open_tabs: 0,
             persistent_profiles_available: true,
+            private_by_default: false,
         }
     }
     #[::core::prelude::v1::test]

@@ -202,3 +202,105 @@ The compact bookmark refresh button and library were inspected again.
 
 The wider acceptance matrix remains open. No claim of complete Swift parity,
 native Windows/Linux acceptance, or end-to-end testing of every provider is made.
+
+## Full-app continuation — 2026-11-09
+
+Further source comparison and native inspection found functional gaps beyond
+cosmetic spacing. This continuation implements:
+
+- Unified macOS main-window chrome, correct titlebar frame migration, and native
+  drag/double-click behavior. The reopened main window measured 1470 × 837.
+- Sidebar heading action order and status precedence: pending approvals remain
+  visible on bots and collapsed sections, ahead of ordinary running activity.
+- A centered, scrollable schedule editor with native calendar/time controls,
+  target selection, recurrence menus, focus handling, and a pinned action row.
+  The Add menu offers current-thread and new-thread-per-run tasks. Schedule
+  deletion now asks for confirmation; project rows without a past run open Edit.
+- Visible provider account management, compact switches and pickers in Models,
+  Voice, Browser, Computer Use, Appshots, provider pages and update settings.
+  Models now support row keyboard selection and contextual preference actions.
+- Browser private-session defaults that survive relaunch, retain explicit
+  thread choices, and pin active native views to their actual profile. Browser
+  settings can edit the default Agent Control setting without changing explicit
+  per-thread overrides. Saved bookmarks can be removed from Settings.
+- Browser metadata reads wait through brief engine contention and observe
+  cancellation while waiting; opening Settings no longer turns a transient
+  snapshot lock into an immediate permanent refresh error.
+- Shared dropdown triggers expose native accessibility activation and keyboard
+  focus. The prior component's mouse-down-only trigger had no AXPress action.
+- Scrollable terminal tabs and a route fix for opening a bottom terminal from
+  the global Scheduled screen. Selecting a conversation leaves that global view.
+
+The native schedule fixture was saved through the editor, read back through the
+isolated instance's API, and deleted through the row menu. Readback confirmed
+`threadID: null`, the selected project, and `awaitingApproval: true`; it never ran.
+This run exposed the absent delete confirmation and hidden terminal route above,
+which were then fixed. Updated screenshots also exposed caption overflow in
+Browser and the Models filter occupying two rows; both layouts were corrected.
+
+Review binaries use the separate snapshot recorded in the scratch reports.
+One intermediate launch omitted the snapshot environment and opened the normal
+Rust data directory; it was closed without exercising any controls. Subsequent
+launches explicitly bind `COINCIDE_RUST_DATA_DIR` and verify the opened SQLite
+path before interaction. Do not describe that launch as an isolated-data run.
+
+This record does not equate implemented controls or passing unit tests with
+complete Swift parity. In particular, browser data clearing, all password-manager
+capabilities, every transcript/media state, and native Windows/Linux acceptance
+still require separate verification or implementation. Final results for this
+continuation are recorded below after the reviewed binary is exercised.
+
+### Native interaction checks from the updated review build
+
+- All 18 Settings pages opened and were captured. Provider pages now actually
+  show the existing account controls. Browser captions wrap without pushing
+  switches outside the window; its bookmark/history reads complete normally.
+- AXPress opened the Models provider picker and the schedule Add/target menus.
+  Selecting OpenCode changed the model filter. A model row's context menu showed
+  its copy/default/favorite/hide actions. No provider authentication was changed.
+- Schedule deletion displayed the native confirmation sheet. Cancel retained the
+  fixture; confirming Delete removed it. Creating a project task from a
+  projectless conversation exposed an invalid default target; the default and
+  Save enablement were corrected.
+- Terminal opened from Scheduled, started in the isolated fixture checkout, and
+  executed a `printf` marker, confirmed from the actual grid screenshot. This
+  exposed the old diagnostic footer, incorrect placement above the composer,
+  and disappearance when the app became inactive. Those were replaced with a
+  compact actions menu, a true bottom drawer, and retained inactive presentation.
+- The isolated Git fixture loaded `sample.txt` as modified with two additions
+  and one removal. No commit or remote operation was performed through the UI.
+- Reopening revealed a smaller, separate window-frame bug: the drawable view's
+  insets were being persisted. Frame saving now reads the actual AppKit content
+  rectangle. The native AppKit probe confirmed ordinary and unified windows use
+  different frame/content relationships; final repeated-open validation follows.
+
+The composer comparison also found that Rust had neither the context ring nor
+plan-limit bars. They now render from already-reported data: the latest request
+snapshot for the current conversation/provider/account, and the currently scoped
+Codex or default Claude limits. Selection changes and turn completion trigger an
+owned background saved-usage read; streaming deltas do not rescan history. The
+popover shows reported input/output/cache/cost values and every limit window.
+Missing data stays absent, and billed turn totals are never used as a context
+snapshot. A synthetic 50% snapshot is used only in the isolated review database
+for visual verification; it is not a measurement of actual usage.
+
+### Latest verification
+
+- Desktop suite: 827 passed, 26 ignored. Core suite, with native process-guard
+  tests run without a GUI instance and serially: 1,165 passed, 9 ignored.
+  The zombie-process fixture now waits for SIGKILL to take effect before asking
+  the installer guard to prove the process stopped; live-process checks remain.
+- Native Settings was resized, allowed to settle, closed and reopened twice.
+  All three observations were 900 × 702 at (200, 80), with no size drift.
+- The isolated 50% context ring appeared. AXPress opened its details showing
+  100.0k/200.0k input/context, 200 output tokens, 5.0k cached input and $0.0123.
+  Those numbers are synthetic fixture values, not real spend or usage.
+- The bottom terminal now renders below the composer with its compact header;
+  the large history/copy diagnostic footer is gone. The same snapshot showed
+  the fixture's tracked and untracked file diffs correctly.
+- Composer labels now follow Swift's compaction order instead of wrapping the
+  controls into extra rows. The empty-chat layout uses the available chat area,
+  the registered reply font, and no microphone when dictation is disabled.
+
+The last layout and persistence changes still require the final native run
+before an updated installed bundle is recorded here.

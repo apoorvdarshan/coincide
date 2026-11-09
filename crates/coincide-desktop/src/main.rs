@@ -3,10 +3,12 @@ mod appshots_platform;
 mod appshots_settings;
 mod codex_limits_mount;
 mod codex_limits_view;
+mod composer_meters;
 #[cfg(test)]
 #[path = "dictation_preview_ui_tests.rs"]
 mod dictation_preview_ui_tests;
 mod draft_saver;
+mod native_menu;
 #[cfg(test)]
 #[path = "../swift_link_options.rs"]
 mod swift_link_options_tests;
@@ -1430,7 +1432,7 @@ impl Coincide {
         subscriptions.extend(archive_settings.subscriptions(cx));
         subscriptions.extend(general_settings.subscriptions(window, cx));
         subscriptions.extend(project_scripts.subscriptions(cx));
-        subscriptions.extend(schedule_editor.subscriptions(cx));
+        subscriptions.extend(schedule_editor.subscriptions(window, cx));
         subscriptions.extend(provider_settings.subscriptions(cx));
         let sidebar_preferences = sidebar_preferences::Preferences::load(&engine);
         let sidebar_schedules = call(&engine, "schedules.list", json!({}))
@@ -1484,6 +1486,9 @@ impl Coincide {
         let sidebar_resize = navigation_resize::State::load(&engine);
         let keyboard = keyboard_settings::State::new(cx);
         let terminal_layout = terminal_layout::State::load(&engine);
+        let terminal_open = terminal_layout::placement(&settings)
+            == terminal_layout::Placement::Bottom
+            && window_chrome::terminal_bottom_open(&engine);
         let thread_list_open = window_chrome::sidebar_open(&engine);
         let window_chrome = window_chrome::State::new(
             try_state(&engine)
@@ -1617,7 +1622,7 @@ impl Coincide {
             schedule_editor,
             schedule_status: String::new(),
             _poll: poll,
-            terminal_open: false,
+            terminal_open,
             terminal_layout,
             terminal_workspaces: Default::default(),
             terminal_visible_thread: None,
@@ -2141,67 +2146,238 @@ impl Coincide {
         }
     }
     fn browser_pane(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.historical_image_is_open() { return None; }
+        if self.historical_image_is_open() {
+            return None;
+        }
         let thread = self.selected.as_ref().map(|v| text(v, "id"))?;
         let browser = self.browser.as_ref()?;
-        if !browser.is_visible(&thread) { return None; }
+        if !browser.is_visible(&thread) {
+            return None;
+        }
         let tabs = browser.tab_list(&thread);
         let (can_go_back, can_go_forward) = browser.navigation_available(&thread, cx);
         let webview = browser.active_view(&thread);
-        let active = tabs["tabs"].as_array().and_then(|tabs| tabs.iter().find(|t| t["active"] == true)).cloned();
-        let url = active.as_ref().map(|tab| text(tab, "url")).unwrap_or_default();
+        let active = tabs["tabs"]
+            .as_array()
+            .and_then(|tabs| tabs.iter().find(|t| t["active"] == true))
+            .cloned();
+        let url = active
+            .as_ref()
+            .map(|tab| text(tab, "url"))
+            .unwrap_or_default();
         let loading = active.as_ref().is_some_and(|tab| tab["loading"] == true);
-        let tab_buttons = tabs["tabs"].as_array().into_iter().flatten().map(|tab| {
-            let id = text(tab, "id");
-            let select_id = id.clone();
-            let close_id = id.clone();
-            let title = text(tab, "title");
-            let title = if title.trim().is_empty() || title == "about:blank" { "New tab".to_owned() } else { title };
-            let selected = tab["active"] == true;
-            div().id(SharedString::from(format!("browser-tab-{id}")))
-                .role(Role::Button)
-                .aria_label(format!("Select tab: {title}"))
-                .flex().items_center().flex_shrink_0().min_w(px(76.)).max_w(px(200.))
-                .h(px(28.)).px_2().gap_1().rounded(px(6.))
-                .bg(self.color(if selected { 0x181d28 } else { 0x10141c }))
-                .cursor_pointer()
-                .on_click(cx.listener(move |this, _, _, cx| this.browser_action(BrowserAction::SelectTab, Some(select_id.clone()), cx)))
-                .child(div().min_w_0().flex_1().truncate().text_xs().child(title.clone()))
-                .child(Button::new(SharedString::from(format!("browser-tab-close-{id}")))
-                    .icon(gpui_kit::assets::IconName::Close).ghost().compact().xsmall()
-                    .accessibility_label(format!("Close tab: {title}"))
-                    .tooltip("Close tab")
+        let tab_buttons = tabs["tabs"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|tab| {
+                let id = text(tab, "id");
+                let select_id = id.clone();
+                let close_id = id.clone();
+                let title = text(tab, "title");
+                let title = if title.trim().is_empty() || title == "about:blank" {
+                    "New tab".to_owned()
+                } else {
+                    title
+                };
+                let selected = tab["active"] == true;
+                div()
+                    .id(SharedString::from(format!("browser-tab-{id}")))
+                    .role(Role::Button)
+                    .aria_label(format!("Select tab: {title}"))
+                    .flex()
+                    .items_center()
+                    .flex_shrink_0()
+                    .min_w(px(76.))
+                    .max_w(px(200.))
+                    .h(px(28.))
+                    .px_2()
+                    .gap_1()
+                    .rounded(px(6.))
+                    .bg(self.color(if selected { 0x181d28 } else { 0x10141c }))
+                    .cursor_pointer()
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.browser_action(BrowserAction::CloseTab, Some(close_id.clone()), cx);
-                    }))).into_any_element()
-        }).collect::<Vec<_>>();
+                        this.browser_action(BrowserAction::SelectTab, Some(select_id.clone()), cx)
+                    }))
+                    .child(
+                        div()
+                            .min_w_0()
+                            .flex_1()
+                            .truncate()
+                            .text_xs()
+                            .child(title.clone()),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!("browser-tab-close-{id}")))
+                            .icon(gpui_kit::assets::IconName::Close)
+                            .ghost()
+                            .compact()
+                            .xsmall()
+                            .accessibility_label(format!("Close tab: {title}"))
+                            .tooltip("Close tab")
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.browser_action(
+                                    BrowserAction::CloseTab,
+                                    Some(close_id.clone()),
+                                    cx,
+                                );
+                            })),
+                    )
+                    .into_any_element()
+            })
+            .collect::<Vec<_>>();
         let controls = self.browser_pane_controls(&thread, active.as_ref(), cx);
         let agent_control = self.browser_agent_control_button(&thread, cx);
-        let library_popup = self.browser_library_visible().then(|| self.browser_settings_panel.clone());
+        let library_popup = self
+            .browser_library_visible()
+            .then(|| self.browser_settings_panel.clone());
         let dialog_banner = self.browser_dialog_banner(cx);
         let user_turn_banner = self.browser_user_turn_banner(cx);
         let passkey_banner = self.browser_passkey_banner(cx);
         let page = self.browser_page(&thread, webview, cx);
-        let icon = |id, name, label: &'static str| Button::new(id).icon(name).accessibility_label(label).tooltip(label).ghost().compact().xsmall().h(px(26.));
-        Some(div().id("browser-preview").track_focus(&self.browser_focus)
-            .flex().flex_col().flex_1().min_w_0().min_h_0().h_full()
-            .border_l_1().border_color(self.color(0x29303d))
-            .child(div().flex().items_center().flex_shrink_0().h(px(36.)).px_2().gap_1()
-                .child(div().id("browser-tabs").flex().items_center().flex_1().min_w_0().overflow_x_scroll().gap_1().children(tab_buttons))
-                .child(icon("browser-new-tab", gpui_kit::assets::IconName::Plus, "New tab").on_click(cx.listener(|this, _, _, cx| this.browser_action(BrowserAction::NewTab { url: None }, None, cx))))
-                .child(agent_control)
-                .child(icon("browser-hide", gpui_kit::assets::IconName::Close, "Close Browser").on_click(cx.listener(|this, _, _, cx| this.browser_action(BrowserAction::Hide, None, cx)))))
-            .child(div().flex().items_center().flex_shrink_0().h(px(36.)).px_2().gap_1()
-                .child(icon("browser-back", gpui_kit::assets::IconName::ChevronLeft, "Back").disabled(!can_go_back).on_click(cx.listener(|this, _, _, cx| this.browser_action(BrowserAction::Back, None, cx))))
-                .child(icon("browser-forward", gpui_kit::assets::IconName::ChevronRight, "Forward").disabled(!can_go_forward).on_click(cx.listener(|this, _, _, cx| this.browser_action(BrowserAction::Forward, None, cx))))
-                .child(div().flex_1().min_w_0().child(Input::new(&self.browser_address).small()))
-                .child(controls)
-                .child(icon("browser-reload", if loading { gpui_kit::assets::IconName::LoaderCircle } else { gpui_kit::assets::IconName::RefreshCw }, "Reload Preview").on_click(cx.listener(|this, _, _, cx| this.browser_action(BrowserAction::Reload, None, cx)))))
-            .when(!url.is_empty() && url != "about:blank", |view| view.child(div().px_2().pb_1().min_w_0().truncate().text_xs().text_color(self.color(0xe4e9f2).opacity(0.55)).child(url)))
-            .when_some(library_popup, |view, library| view.child(div().max_h(px(300.)).min_h_0().overflow_hidden().child(library)))
-            .children(dialog_banner).children(user_turn_banner).children(passkey_banner)
-            .child(page).into_any_element())
+        let icon = |id, name, label: &'static str| {
+            Button::new(id)
+                .icon(name)
+                .accessibility_label(label)
+                .tooltip(label)
+                .ghost()
+                .compact()
+                .xsmall()
+                .h(px(26.))
+        };
+        Some(
+            div()
+                .id("browser-preview")
+                .track_focus(&self.browser_focus)
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_w_0()
+                .min_h_0()
+                .h_full()
+                .border_l_1()
+                .border_color(self.color(0x29303d))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .flex_shrink_0()
+                        .h(px(36.))
+                        .px_2()
+                        .gap_1()
+                        .child(
+                            div()
+                                .id("browser-tabs")
+                                .flex()
+                                .items_center()
+                                .flex_1()
+                                .min_w_0()
+                                .overflow_x_scroll()
+                                .gap_1()
+                                .children(tab_buttons),
+                        )
+                        .child(
+                            icon(
+                                "browser-new-tab",
+                                gpui_kit::assets::IconName::Plus,
+                                "New tab",
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.browser_action(BrowserAction::NewTab { url: None }, None, cx)
+                            })),
+                        )
+                        .child(agent_control)
+                        .child(
+                            icon(
+                                "browser-hide",
+                                gpui_kit::assets::IconName::Close,
+                                "Close Browser",
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.browser_action(BrowserAction::Hide, None, cx)
+                            })),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .flex_shrink_0()
+                        .h(px(36.))
+                        .px_2()
+                        .gap_1()
+                        .child(
+                            icon(
+                                "browser-back",
+                                gpui_kit::assets::IconName::ChevronLeft,
+                                "Back",
+                            )
+                            .disabled(!can_go_back)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.browser_action(BrowserAction::Back, None, cx)
+                            })),
+                        )
+                        .child(
+                            icon(
+                                "browser-forward",
+                                gpui_kit::assets::IconName::ChevronRight,
+                                "Forward",
+                            )
+                            .disabled(!can_go_forward)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.browser_action(BrowserAction::Forward, None, cx)
+                            })),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .child(Input::new(&self.browser_address).small()),
+                        )
+                        .child(controls)
+                        .child(
+                            icon(
+                                "browser-reload",
+                                if loading {
+                                    gpui_kit::assets::IconName::LoaderCircle
+                                } else {
+                                    gpui_kit::assets::IconName::RefreshCw
+                                },
+                                "Reload Preview",
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.browser_action(BrowserAction::Reload, None, cx)
+                            })),
+                        ),
+                )
+                .when(!url.is_empty() && url != "about:blank", |view| {
+                    view.child(
+                        div()
+                            .px_2()
+                            .pb_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_xs()
+                            .text_color(self.color(0xe4e9f2).opacity(0.55))
+                            .child(url),
+                    )
+                })
+                .when_some(library_popup, |view, library| {
+                    view.child(
+                        div()
+                            .max_h(px(300.))
+                            .min_h_0()
+                            .overflow_hidden()
+                            .child(library),
+                    )
+                })
+                .children(dialog_banner)
+                .children(user_turn_banner)
+                .children(passkey_banner)
+                .child(page)
+                .into_any_element(),
+        )
     }
     fn refresh(&mut self, cx: &mut Context<Self>) -> bool {
         if let Ok(engine) = self.engine.try_lock() {
@@ -2280,6 +2456,10 @@ impl Coincide {
             .update(cx, |panel, cx| panel.cancel(cx));
         match call(&self.engine, "threads.read", json!({"threadId":id})) {
             Ok(mut v) => {
+                if self.global_schedules_route() {
+                    self.close_schedule_surface();
+                }
+                self.session_import_open = false;
                 if self
                     .selected
                     .as_ref()
@@ -2390,8 +2570,12 @@ impl Coincide {
                     cx.activate(true);
                     window.activate_window();
                 }
+                let keep_bottom_terminal = self.terminal_open && !self.terminal_on_right();
                 self.terminal_open = false;
                 self.restore_inspector_for_selected(cx);
+                if keep_bottom_terminal {
+                    self.terminal_open = true;
+                }
                 self.sync_terminal_workspace(window, cx);
                 self.composer
                     .update(cx, |input, cx| input.set_value(draft, window, cx));
@@ -3530,6 +3714,12 @@ impl Coincide {
             self.usage_history.load_dashboard();
             cx.notify();
         }
+        let usage_running = self
+            .selected
+            .as_ref()
+            .is_some_and(|thread| self.running.contains(&text(thread, "id")));
+        self.usage_history
+            .observe_context(self.selected.as_ref(), usage_running);
         if self.usage_history.poll(cx) {
             cx.notify();
         }
@@ -4831,7 +5021,13 @@ impl Coincide {
         if self.selected.is_none() {
             return;
         }
-        self.terminal_open = !self.terminal_open;
+        let revealing = self.global_schedules_route() || self.session_import_open;
+        if self.global_schedules_route() {
+            self.close_schedule_surface();
+        }
+        self.session_import_open = false;
+        self.terminal_open = revealing || !self.terminal_open;
+        self.remember_terminal_visibility();
         if self.terminal_open && self.terminal_on_right() {
             self.workspace_open = false;
             self.close_schedule_surface();
@@ -5205,6 +5401,12 @@ impl Render for Coincide {
         let implement_button = self.implement_button(cx);
         let historical_image = self.historical_image_overlay(cx);
         let terminal_bottom = self.terminal_surface(false, window, cx);
+        let empty_conversation = show_composer
+            && self.selected.as_ref().is_some_and(|thread| {
+                thread["items"]
+                    .as_array()
+                    .is_some_and(|items| items.is_empty())
+            });
 
         let chat_column = div()
                     .flex()
@@ -5256,17 +5458,8 @@ impl Render for Coincide {
                             )
                         },
                     )
-                    .child(conversation_content)
-                    .when_some(terminal_bottom,|view,pane|view.child(pane))
-                    .when(
-                        show_composer
-                            && self.selected.as_ref().is_some_and(|thread| {
-                                thread["items"]
-                                    .as_array()
-                                    .is_some_and(|items| items.is_empty())
-                            }),
-                        |view| view.child(self.chat_welcome(cx)),
-                    )
+                    .when(!empty_conversation, |view| view.child(conversation_content))
+                    .when(empty_conversation, |view| view.child(self.chat_welcome(cx)))
                     .when(show_composer, |view| {
                         view.child(
                             div()
@@ -5392,13 +5585,12 @@ impl Render for Coincide {
                                                 .id("composer-actions")
                                                 .flex()
                                                 .flex_shrink_0()
-                                                .flex_wrap()
                                                 .items_center()
                                                 .min_w_0()
                                                 .gap_1()
                                                 .gap(px(6.))
                                                 .mt_2()
-                                                .when(!self.composer_files.opened, |view| view.child(self.composer_selection_footer(cx)))
+                                                .when(!self.composer_files.opened, |view| view.child(self.composer_selection_footer(window, cx)))
                                                 .child(
                                                     Button::new("attach-images")
                                                         .icon(gpui_kit::assets::IconName::Paperclip)
@@ -5416,6 +5608,7 @@ impl Render for Coincide {
                                                         })),
                                                 )
                                                 .child(self.composer_voice_control(cx))
+                                                .child(self.composer_meters(cx))
                                                 .when(self.running.contains(&selected_id), |view| view.child(self.composer_stop_button(cx)))
                                                 .when(implement_button.is_none(), |view| view.child(
                                                     Button::new("send")
@@ -5450,7 +5643,9 @@ impl Render for Coincide {
                                 )
                                 .when_some(self.branch_toolbar(cx), |view, toolbar| view.child(toolbar)),
                         )
-                    }).into_any_element();
+                    })
+                    .when_some(terminal_bottom, |view, pane| view.child(pane))
+                    .into_any_element();
         div()
             .relative()
             .capture_key_up(
@@ -5496,6 +5691,9 @@ impl Render for Coincide {
                 view.child(form)
             })
             .when_some(self.git_modal(cx), |view, modal| view.child(modal))
+            .when_some(self.schedule_editor_overlay(cx), |view, editor| {
+                view.child(editor)
+            })
             .when_some(self.context_details_overlay(cx), |view, details| {
                 view.child(details)
             })
@@ -5755,11 +5953,17 @@ fn open_main_window(cx: &mut App) -> Result<()> {
             window_bounds: Some(bounds),
             display_id,
             window_min_size: Some(size(px(820.), px(520.))),
+            titlebar: Some(TitlebarOptions {
+                appears_transparent: cfg!(target_os = "macos"),
+                traffic_light_position: cfg!(target_os = "macos").then(|| point(px(18.), px(16.))),
+                ..Default::default()
+            }),
+            app_owns_titlebar_drag: cfg!(target_os = "macos"),
             ..Default::default()
         },
         cx,
         |window, cx| {
-            window.set_window_title("Coincide Rust Preview");
+            window.set_window_title("Coincide");
             cx.new(|cx| {
                 Coincide::new(
                     launch.engine,

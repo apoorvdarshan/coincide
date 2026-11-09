@@ -1,12 +1,10 @@
 //! Compact conversation chrome. All actions retain their existing controllers;
 //! expanding secondary actions changes presentation only.
 use super::*;
+use crate::native_menu::AccessibleMenuExt as _;
 use gpui_kit::{
     assets::IconName,
-    component::{
-        menu::{DropdownMenu, PopupMenuItem},
-        tooltip::Tooltip,
-    },
+    component::{menu::PopupMenuItem, tooltip::Tooltip},
 };
 
 // Read only the selected conversation's persisted metadata. The independent
@@ -97,6 +95,15 @@ impl Coincide {
             .flex()
             .flex_col()
             .justify_center()
+            .when(cfg!(target_os = "macos"), |heading| {
+                heading.on_mouse_down(MouseButton::Left, |event, window, _| {
+                    if event.click_count == 2 {
+                        window.titlebar_double_click();
+                    } else {
+                        window.start_window_move();
+                    }
+                })
+            })
             .when(bot.is_some(), |heading| {
                 heading.pl(px(26.)).relative().child(
                     div()
@@ -191,7 +198,7 @@ impl Coincide {
             .tooltip("More conversation actions")
             .ghost()
             .compact()
-            .dropdown_menu_with_anchor(Anchor::TopRight, move |mut menu, _, _| {
+            .accessible_menu_with_anchor(Anchor::TopRight, move |mut menu, _, _| {
                 type Action = fn(&mut Coincide, &mut Window, &mut Context<Coincide>);
                 let actions: [(&str, bool, Action); 7] = [
                     ("Rename…", selected, |this, window, cx| {

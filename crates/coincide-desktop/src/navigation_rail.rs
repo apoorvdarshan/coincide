@@ -32,6 +32,7 @@ impl Coincide {
         };
         div()
             .id("navigation-rail")
+            .relative()
             .track_focus(&self.navigation_focus)
             .flex()
             .flex_col()
@@ -39,12 +40,23 @@ impl Coincide {
             .w(px(60.))
             .flex_shrink_0()
             .h_full()
-            .pt(px(6.))
+            .pt(px(if cfg!(target_os = "macos") { 56. } else { 6. }))
             .pb(px(12.))
             .gap(px(6.))
             .bg(self.color(0x151922))
             .border_r_1()
             .border_color(self.color(0x29303d))
+            .when(cfg!(target_os = "macos"), |view| {
+                view.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .h(px(44.))
+                        .on_mouse_down(MouseButton::Left, window_chrome::titlebar_mouse_down),
+                )
+            })
             .child(
                 button("navigation-threads", IconName::PanelLeft, "Threads")
                     .tooltip(if self.thread_list_open {

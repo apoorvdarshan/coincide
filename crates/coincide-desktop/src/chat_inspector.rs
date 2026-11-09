@@ -163,14 +163,24 @@ impl Coincide {
                 .min_h_0()
                 .h_full()
                 .child(
-                    div().flex().items_center().justify_end().h(px(28.)).px_1().child(
-                        Button::new("close-chat-inspector")
-                            .icon(gpui_kit::assets::IconName::Close)
-                            .ghost().compact().xsmall()
-                            .accessibility_label("Close panel")
-                            .tooltip("Close panel")
-                            .on_click(cx.listener(|this, _, _, cx| this.close_chat_inspector(cx))),
-                    ),
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_end()
+                        .h(px(28.))
+                        .px_1()
+                        .child(
+                            Button::new("close-chat-inspector")
+                                .icon(gpui_kit::assets::IconName::Close)
+                                .ghost()
+                                .compact()
+                                .xsmall()
+                                .accessibility_label("Close panel")
+                                .tooltip("Close panel")
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.close_chat_inspector(cx)),
+                                ),
+                        ),
                 )
                 .child(body)
                 .into_any_element()

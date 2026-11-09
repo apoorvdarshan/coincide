@@ -3,6 +3,7 @@
 //! account's plan limits, Activity in Coincide and the notes. Tokens come from
 //! saved turns whose agent reported them; plan limits are read on Refresh.
 use super::*;
+use crate::native_menu::AccessibleMenuExt as _;
 use crate::usage_dashboard::{Account, LimitState};
 use chrono::{Local, NaiveDate, Utc};
 use coincide_core::{
@@ -11,7 +12,7 @@ use coincide_core::{
     usage_presentation::{self as format, Level, Row},
     usage_report::{self as report, Event, PROVIDERS, Report, Totals},
 };
-use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
+use gpui_kit::component::menu::PopupMenuItem;
 
 const PERIODS: [u32; 3] = [7, 30, 90];
 
@@ -1080,7 +1081,7 @@ impl Coincide {
             .accessibility_label("Show usage for agent")
             .compact()
             .dropdown_caret(true)
-            .dropdown_menu_with_anchor(Anchor::TopRight, move |mut menu, _, _| {
+            .accessible_menu_with_anchor(Anchor::TopRight, move |mut menu, _, _| {
                 for provider in std::iter::once(None).chain(PROVIDERS.into_iter().map(Some)) {
                     let owner = owner.clone();
                     menu = menu.item(
@@ -1124,7 +1125,7 @@ impl Coincide {
             .accessibility_label("Usage period")
             .compact()
             .dropdown_caret(true)
-            .dropdown_menu_with_anchor(Anchor::TopRight, move |mut menu, _, _| {
+            .accessible_menu_with_anchor(Anchor::TopRight, move |mut menu, _, _| {
                 for days in PERIODS {
                     let owner = owner.clone();
                     menu = menu.item(

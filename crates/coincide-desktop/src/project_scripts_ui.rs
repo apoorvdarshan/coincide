@@ -3,16 +3,14 @@
 //! every script) and the sheet that adds or edits one. Every edit is checked
 //! against the project the menu showed; runs go to the thread's terminal.
 use super::*;
+use crate::native_menu::AccessibleMenuExt as _;
 use coincide_core::{
     project_scripts::{self, ProjectScript, ScriptDraft, ScriptIcon},
     store::ScriptEdit,
 };
 use gpui_kit::{
     assets::IconName,
-    component::{
-        checkbox::Checkbox,
-        menu::{DropdownMenu, PopupMenuItem},
-    },
+    component::{checkbox::Checkbox, menu::PopupMenuItem},
 };
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -335,7 +333,7 @@ impl Coincide {
             .when(primary.is_none(), |button| {
                 button.icon(IconName::SquarePlay).dropdown_caret(true)
             })
-            .dropdown_menu(move |mut menu, window, cx| {
+            .accessible_menu(move |mut menu, window, cx| {
                 for script in &menu_scripts {
                     let parent = parent.clone();
                     let id = script.uuid();

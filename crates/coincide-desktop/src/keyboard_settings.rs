@@ -2,7 +2,8 @@
 //! Persistence uses Swift's shortcutOverrides IDs/syntax; IDs this version does
 //! not know are retained untouched.
 use super::*;
-use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
+use crate::native_menu::AccessibleMenuExt as _;
+use gpui_kit::component::menu::PopupMenuItem;
 
 const MOD: u8 = 1;
 const CTRL: u8 = 2;
@@ -1104,7 +1105,7 @@ impl Coincide {
                             .tooltip("Reset or remove the shortcut")
                             .ghost()
                             .compact()
-                            .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
+                            .accessible_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
                                 let reset = owner.clone();
                                 let remove = owner.clone();
                                 menu.item(

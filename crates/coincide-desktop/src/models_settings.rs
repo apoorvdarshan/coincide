@@ -1,7 +1,11 @@
 //! Model picker preferences use Swift's persisted schema. Catalog rows are
 //! display metadata only: this pane never selects a model or grants authority.
 use super::*;
-use gpui_kit::component::tooltip::Tooltip;
+use crate::native_menu::AccessibleMenuExt as _;
+use gpui_kit::component::{
+    menu::{ContextMenuExt, PopupMenuItem},
+    tooltip::Tooltip,
+};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -21,6 +25,9 @@ pub(super) struct ModelsSettings {
     selected: BTreeSet<(String, String)>,
     adding: bool,
     add_error: Option<String>,
+    focus: FocusHandle,
+    scroll: ScrollHandle,
+    cursor: Option<(String, String)>,
 }
 impl ModelsSettings {
     pub(super) fn focus_provider(&mut self, provider: Option<String>) {
@@ -41,6 +48,9 @@ impl ModelsSettings {
             selected: BTreeSet::new(),
             adding: false,
             add_error: None,
+            focus: cx.focus_handle().tab_index(0),
+            scroll: ScrollHandle::new(),
+            cursor: None,
         }
     }
     pub(super) fn subscriptions(
@@ -565,6 +575,7 @@ impl Coincide {
         }
     }
     fn click_model_row(&mut self, key: (String, String), add: bool, cx: &mut Context<Self>) {
+        self.models_settings.cursor = Some(key.clone());
         let selected = &mut self.models_settings.selected;
         if add {
             if !selected.remove(&key) {
@@ -574,6 +585,59 @@ impl Coincide {
             selected.clear();
             selected.insert(key);
         }
+        cx.notify();
+    }
+    fn model_table_key(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.models_settings.focus.is_focused(window) {
+            return;
+        }
+        let catalogs = self.model_catalogs(cx);
+        let query = self.models_settings.search.read(cx).value().to_string();
+        let mut rows = model_rows(
+            &self.settings,
+            &catalogs,
+            self.models_settings.provider.as_deref(),
+            &query,
+        );
+        sort_rows(&mut rows, self.models_settings.sort);
+        let keys = rows
+            .iter()
+            .map(|r| (r.provider.clone(), r.model.clone()))
+            .collect::<Vec<_>>();
+        if keys.is_empty() {
+            return;
+        }
+        let key = event.keystroke.key.as_str();
+        if event.keystroke.modifiers.platform && key == "a" {
+            self.models_settings.selected = keys.into_iter().collect();
+        } else if key == "escape" {
+            self.models_settings.selected.clear();
+        } else {
+            let current = self
+                .models_settings
+                .cursor
+                .as_ref()
+                .and_then(|key| keys.iter().position(|k| k == key));
+            let next = match key {
+                "up" => current.map_or(0, |i| i.saturating_sub(1)),
+                "down" => current.map_or(0, |i| (i + 1).min(keys.len() - 1)),
+                "home" => 0,
+                "end" => keys.len() - 1,
+                _ => return,
+            };
+            self.models_settings.cursor = Some(keys[next].clone());
+            if !event.keystroke.modifiers.shift {
+                self.models_settings.selected.clear();
+            }
+            self.models_settings.selected.insert(keys[next].clone());
+            self.models_settings.scroll.scroll_to_item(next + 1);
+        }
+        cx.stop_propagation();
         cx.notify();
     }
     pub(super) fn models_settings_panel(
@@ -592,64 +656,103 @@ impl Coincide {
             self.settings_section,
             settings::SettingsSection::Provider(_)
         );
-        let mut filters = div().flex().flex_wrap().items_center().gap_1().child(
-            Button::new("models-all")
-                .label("All Providers")
-                .when(state.provider.is_none(), |b| b.primary())
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.models_settings.provider = None;
-                    this.models_settings.selected.clear();
-                    cx.notify();
-                })),
-        );
-        for (id, name) in providers() {
-            if provider_value(&self.settings, &id)["isEnabled"] == false {
-                continue;
-            }
-            let selected = state.provider.as_deref() == Some(&id);
-            filters = filters.child(
-                Button::new(SharedString::from(format!("models-filter-{id}")))
-                    .label(name)
-                    .when(selected, |b| b.primary())
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.models_settings.provider = Some(id.clone());
-                        this.models_settings.selected.clear();
-                        cx.notify();
-                    })),
-            );
-        }
+        let selected_provider = state.provider.clone();
+        let visible_providers = providers()
+            .into_iter()
+            .filter(|(id, _)| provider_value(&self.settings, id)["isEnabled"] != false)
+            .collect::<Vec<_>>();
+        let parent = cx.entity().downgrade();
+        let filters = Button::new("models-provider-filter")
+            .label(
+                selected_provider
+                    .as_deref()
+                    .map(provider_display_name)
+                    .unwrap_or_else(|| "All Providers".into()),
+            )
+            .small()
+            .dropdown_caret(true)
+            .accessibility_label("Filter models by provider")
+            .accessible_menu(move |mut menu, _, _| {
+                let all = parent.clone();
+                menu = menu.item(
+                    PopupMenuItem::new("All Providers")
+                        .checked(selected_provider.is_none())
+                        .on_click(move |_, _, cx| {
+                            let _ = all.update(cx, |this, cx| {
+                                this.models_settings.provider = None;
+                                this.models_settings.selected.clear();
+                                cx.notify();
+                            });
+                        }),
+                );
+                for (id, label) in &visible_providers {
+                    let parent = parent.clone();
+                    let id = id.clone();
+                    menu = menu.item(
+                        PopupMenuItem::new(label.clone())
+                            .checked(selected_provider.as_ref() == Some(&id))
+                            .on_click(move |_, _, cx| {
+                                let _ = parent.update(cx, |this, cx| {
+                                    this.models_settings.provider = Some(id.clone());
+                                    this.models_settings.selected.clear();
+                                    cx.notify();
+                                });
+                            }),
+                    );
+                }
+                menu
+            });
+        let sort = state.sort;
+        let parent = cx.entity().downgrade();
         let toolbar = div()
             .flex()
-            .flex_wrap()
             .items_center()
             .gap_2()
-            .child(div().w(px(260.)).child(Input::new(&state.search)))
-            .child(div().text_sm().child("Sort by"))
-            .children(
-                [
-                    (ModelSort::Provider, "Provider"),
-                    (ModelSort::Name, "Model"),
-                ]
-                .map(|(sort, label)| {
-                    Button::new(SharedString::from(format!("models-sort-{label}")))
-                        .label(label)
-                        .compact()
-                        .when(state.sort == sort, |b| b.primary())
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.models_settings.sort = sort;
-                            cx.notify();
-                        }))
-                }),
+            .when(!in_provider_page, |bar| {
+                bar.child(div().flex_shrink_0().child(filters))
+            })
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(Input::new(&state.search).small()),
             )
-            .child(div().flex_1())
+            .child(
+                Button::new("models-sort")
+                    .label(match sort {
+                        ModelSort::Provider => "Provider",
+                        ModelSort::Name => "Model",
+                    })
+                    .small()
+                    .dropdown_caret(true)
+                    .accessibility_label("Sort models")
+                    .accessible_menu(move |mut menu, _, _| {
+                        for (value, label) in [
+                            (ModelSort::Provider, "Provider"),
+                            (ModelSort::Name, "Model"),
+                        ] {
+                            let parent = parent.clone();
+                            menu = menu.item(
+                                PopupMenuItem::new(label).checked(sort == value).on_click(
+                                    move |_, _, cx| {
+                                        let _ = parent.update(cx, |this, cx| {
+                                            this.models_settings.sort = value;
+                                            cx.notify();
+                                        });
+                                    },
+                                ),
+                            );
+                        }
+                        menu
+                    }),
+            )
             .child(
                 Button::new("models-reload")
-                    .label(if checking {
-                        "Reloading Models…"
-                    } else {
-                        "Reload Models"
-                    })
-                    .tooltip("Ask every provider for its models again")
+                    .icon(gpui_kit::assets::IconName::RefreshCw)
+                    .small()
+                    .ghost()
+                    .accessibility_label("Reload Models")
+                    .tooltip("Reload Models")
                     .disabled(checking)
                     .on_click(cx.listener(|this, _, window, cx| this.reload_models(window, cx))),
             );
@@ -658,6 +761,9 @@ impl Coincide {
             |text: SharedString, width: f32| div().w(px(width)).flex_none().truncate().child(text);
         let mut list = div()
             .id("models-settings-list")
+            .track_focus(&state.focus)
+            .track_scroll(&state.scroll)
+            .on_key_down(cx.listener(Self::model_table_key))
             .max_h(px(420.))
             .overflow_y_scroll()
             .flex()
@@ -728,7 +834,7 @@ impl Coincide {
                 .flex()
                 .items_center()
                 .gap_1()
-                .child(div().truncate().child(provider))
+                .child(div().truncate().child(provider.clone()))
                 .when(row.provider == "antigravity", |cell| {
                     cell.child(
                         div()
@@ -742,12 +848,17 @@ impl Coincide {
                     )
                 });
             let model_id = row.model.clone();
+            let menu_row = row.clone();
+            let menu_parent = cx.entity().downgrade();
             list = list.child(
                 div()
                     .id(SharedString::from(format!(
                         "models-row-{}-{}",
                         row.provider, row.model
                     )))
+                    .role(Role::Button)
+                    .aria_label(format!("{} — {}", row.name, provider))
+                    .aria_selected(selected)
                     .flex()
                     .items_center()
                     .gap_2()
@@ -776,14 +887,100 @@ impl Coincide {
                     .tooltip(move |window, cx| {
                         Tooltip::new(format!("Model ID: {model_id}")).build(window, cx)
                     })
-                    .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
+                    .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                        window.focus(&this.models_settings.focus, cx);
                         let modifiers = event.modifiers();
                         this.click_model_row(
                             key.clone(),
                             modifiers.platform || modifiers.control || modifiers.shift,
                             cx,
                         )
-                    })),
+                    }))
+                    .context_menu(move |menu, _, _| {
+                        let default_row = menu_row.clone();
+                        let owner = menu_parent.clone();
+                        let favorite = menu_row.favorite;
+                        let hidden = menu_row.hidden;
+                        let favorite_row = menu_row.clone();
+                        let favorite_owner = menu_parent.clone();
+                        let hidden_row = menu_row.clone();
+                        let hidden_owner = menu_parent.clone();
+                        let copied = menu_row.model.clone();
+                        let mut menu = menu
+                            .item(
+                                PopupMenuItem::new("Use for New Threads")
+                                    .disabled(menu_row.default)
+                                    .on_click(move |_, window, cx| {
+                                        let _ = owner.update(cx, |this, cx| {
+                                            this.set_default_model(&default_row, window, cx)
+                                        });
+                                    }),
+                            )
+                            .item(
+                                PopupMenuItem::new("Copy Model ID").on_click(move |_, _, cx| {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(copied.clone()))
+                                }),
+                            )
+                            .separator()
+                            .item(
+                                PopupMenuItem::new(if favorite {
+                                    "Remove from Favorites"
+                                } else {
+                                    "Add to Favorites"
+                                })
+                                .on_click(move |_, window, cx| {
+                                    let _ = favorite_owner.update(cx, |this, cx| {
+                                        this.change_model_preference(
+                                            &[Change::Favorite(
+                                                &favorite_row.provider,
+                                                &favorite_row.model,
+                                                !favorite,
+                                            )],
+                                            window,
+                                            cx,
+                                        )
+                                    });
+                                }),
+                            )
+                            .item(
+                                PopupMenuItem::new(if hidden {
+                                    "Show in Model Picker"
+                                } else {
+                                    "Hide from Model Picker"
+                                })
+                                .on_click(move |_, window, cx| {
+                                    let _ = hidden_owner.update(cx, |this, cx| {
+                                        this.change_model_preference(
+                                            &[Change::Hidden(
+                                                &hidden_row.provider,
+                                                &hidden_row.model,
+                                                !hidden,
+                                            )],
+                                            window,
+                                            cx,
+                                        )
+                                    });
+                                }),
+                            );
+                        if menu_row.custom {
+                            let row = menu_row.clone();
+                            let owner = menu_parent.clone();
+                            menu = menu.separator().item(
+                                PopupMenuItem::new("Remove Custom Model").on_click(
+                                    move |_, window, cx| {
+                                        let _ = owner.update(cx, |this, cx| {
+                                            this.change_model_preference(
+                                                &[Change::Custom(&row.provider, &row.model, false)],
+                                                window,
+                                                cx,
+                                            )
+                                        });
+                                    },
+                                ),
+                            );
+                        }
+                        menu
+                    }),
             );
         }
         if count == 0 {
@@ -989,9 +1186,8 @@ impl Coincide {
             .gap_3()
             .when(in_provider_page, |panel| panel.child(div().text_lg().child("Models")))
             .child(div().text_sm().text_color(muted).child(
-                "Models your providers offer, plus custom model IDs you add. Select a model to use it for new threads, add it to Favorites, or hide it from the model picker. Command- or Control-click selects several. Reload Models asks every provider for its models.",
+                "Choose a default for new threads, favorite models, or hide them from the picker. Command- or Control-click selects several.",
             ))
-            .when(!in_provider_page, |pane| pane.child(filters))
             .child(toolbar)
             .child(list)
             .child(form)

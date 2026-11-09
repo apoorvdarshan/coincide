@@ -10,7 +10,10 @@ use coincide_core::{
     local_usage::{CaptureCoverage, Query, Report, project},
 };
 use gpui_kit::*;
-use std::sync::mpsc::{self, Receiver, SyncSender};
+use std::{
+    sync::mpsc::{self, Receiver, SyncSender},
+    time::Duration,
+};
 
 type Reply<T> = (u64, Result<T, String>);
 struct Reader<T> {
@@ -85,6 +88,17 @@ pub struct Mount {
     engine: SharedEngine,
     reader: Reader<Report>,
     dashboard_reader: Reader<Data>,
+    context_reader: Reader<(
+        crate::composer_meters::Target,
+        Option<crate::composer_meters::Snapshot>,
+    )>,
+    context_target: Option<crate::composer_meters::Target>,
+    context_pending: bool,
+    context_running: bool,
+    pub(crate) context_usage: Option<(
+        crate::composer_meters::Target,
+        crate::composer_meters::Snapshot,
+    )>,
 }
 impl Mount {
     pub fn new(engine: SharedEngine, cx: &mut App) -> Self {
@@ -94,6 +108,66 @@ impl Mount {
             engine,
             reader: Reader::default(),
             dashboard_reader: Reader::default(),
+            context_reader: Reader::default(),
+            context_target: None,
+            context_pending: false,
+            context_running: false,
+            context_usage: None,
+        }
+    }
+    /// One local read on selection change or turn completion. Streaming deltas
+    /// do not reparse the saved history or scan the conversation.
+    pub fn observe_context(&mut self, thread: Option<&serde_json::Value>, running: bool) {
+        let changed = match (thread, self.context_target.as_ref()) {
+            (Some(thread), Some(target)) => !target.matches(thread),
+            (None, None) => false,
+            _ => true,
+        };
+        let ended = self.context_running && !running;
+        if changed || ended {
+            self.context_target = thread.map(crate::composer_meters::Target::from_thread);
+            self.context_usage = None;
+            self.context_pending = self.context_target.is_some();
+        }
+        self.context_running = running;
+        if !self.context_pending || !self.context_reader.owner.can_start() {
+            return;
+        }
+        let Some(target) = self.context_target.clone() else {
+            return;
+        };
+        let engine = self.engine.clone();
+        if self
+            .context_reader
+            .start(move || {
+                let deadline = std::time::Instant::now() + Duration::from_secs(3);
+                let bytes = loop {
+                    match engine.try_lock() {
+                        Ok(engine) => {
+                            if engine.admissions_frozen() {
+                                return Err("Usage is closing".into());
+                            }
+                            break engine
+                                .store
+                                .saved_usage_snapshot()
+                                .map_err(|e| e.to_string())?
+                                .0;
+                        }
+                        Err(std::sync::TryLockError::WouldBlock)
+                            if std::time::Instant::now() < deadline =>
+                        {
+                            std::thread::sleep(Duration::from_millis(10))
+                        }
+                        _ => return Err("Context usage is unavailable".into()),
+                    }
+                };
+                let usage =
+                    crate::composer_meters::read(&bytes, &target).map_err(|e| e.to_string())?;
+                Ok((target, usage))
+            })
+            .is_ok()
+        {
+            self.context_pending = false;
         }
     }
     /// Reads saved turns and account rows for Settings › Usage in the background.
@@ -145,6 +219,12 @@ impl Mount {
                 .update(cx, |panel, cx| panel.set_snapshot(result, cx));
         }
         let mut changed = false;
+        if let Some(Ok((target, usage))) = self.context_reader.poll() {
+            if self.context_target.as_ref() == Some(&target) {
+                self.context_usage = usage.map(|usage| (target, usage));
+                changed = true;
+            }
+        }
         if let Some(result) = self.dashboard_reader.poll() {
             self.dashboard.accept(result);
             changed = true;
@@ -154,19 +234,32 @@ impl Mount {
     pub fn request_shutdown(&mut self) {
         self.reader.close();
         self.dashboard_reader.close();
+        self.context_reader.close();
         self.dashboard.claude.close();
     }
     pub fn shutdown_status(&mut self) -> ShutdownStatus {
         let history = self.reader.owner.status();
         let dashboard = self.dashboard_reader.owner.status();
+        let context = self.context_reader.owner.status();
         ShutdownStatus {
-            closed: history.closed && dashboard.closed,
-            unjoined: history.unjoined + dashboard.unjoined,
-            returned: history.returned.saturating_add(dashboard.returned),
-            panicked: history.panicked.saturating_add(dashboard.panicked),
-            unclassified: history.unclassified + dashboard.unclassified,
-            pending_pickers: history.pending_pickers + dashboard.pending_pickers,
-            spawn_error: history.spawn_error.or(dashboard.spawn_error),
+            closed: history.closed && dashboard.closed && context.closed,
+            unjoined: history.unjoined + dashboard.unjoined + context.unjoined,
+            returned: history
+                .returned
+                .saturating_add(dashboard.returned)
+                .saturating_add(context.returned),
+            panicked: history
+                .panicked
+                .saturating_add(dashboard.panicked)
+                .saturating_add(context.panicked),
+            unclassified: history.unclassified + dashboard.unclassified + context.unclassified,
+            pending_pickers: history.pending_pickers
+                + dashboard.pending_pickers
+                + context.pending_pickers,
+            spawn_error: history
+                .spawn_error
+                .or(dashboard.spawn_error)
+                .or(context.spawn_error),
         }
     }
 }

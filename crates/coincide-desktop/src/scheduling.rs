@@ -1,6 +1,7 @@
 //! Native schedule editing uses the same validator and recurrence calculations
 //! as the API. Saving a draft never grants execution approval.
 use super::*;
+use crate::native_menu::AccessibleMenuExt as _;
 use coincide_core::scheduling::{
     Recurrence, format_local_datetime, parse_date, parse_local_datetime,
 };
@@ -8,8 +9,10 @@ use gpui_kit::{
     assets::IconName as Symbol,
     component::{
         checkbox::Checkbox,
+        date_picker::{DatePicker, DatePickerEvent, DatePickerState},
         input::{Enter, Escape},
-        menu::{ContextMenuExt, DropdownMenu, PopupMenuItem},
+        menu::{ContextMenuExt, PopupMenuItem},
+        time_field::{TimeField, TimeFieldEvent, TimeFieldState, TimePrecision},
         tooltip::Tooltip,
     },
 };
@@ -83,12 +86,17 @@ pub(super) struct ScheduleEditor {
     rendered_minute: i64,
     name: Entity<InputState>,
     prompt: Entity<TextareaState>,
+    date_picker: Entity<DatePickerState>,
+    time_field: Entity<TimeFieldState>,
     date: Entity<InputState>,
     time: Entity<InputState>,
     zone: Entity<InputState>,
     interval: Entity<InputState>,
     cron: Entity<InputState>,
     preview: String,
+    preview_valid: bool,
+    focus: FocusHandle,
+    restore_focus: Option<FocusHandle>,
     // Validate/preview after timing changes or a minute passes; ordinary 150ms
     // UI polls must not repeat a potentially multi-year cron search.
     preview_key: Option<Value>,
@@ -96,7 +104,11 @@ pub(super) struct ScheduleEditor {
     delete_prompt: Option<Task<()>>,
 }
 impl ScheduleEditor {
-    pub fn subscriptions(&self, cx: &mut Context<Coincide>) -> Vec<Subscription> {
+    pub fn subscriptions(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Coincide>,
+    ) -> Vec<Subscription> {
         let mut subscriptions: Vec<_> = [
             &self.name,
             &self.date,
@@ -125,6 +137,44 @@ impl ScheduleEditor {
                 cx.notify();
             }
         }));
+        subscriptions.push(cx.subscribe_in(
+            &self.date_picker,
+            window,
+            |this, _, event, window, cx| {
+                let DatePickerEvent::Change(value) = event;
+                if let Some(value) = value.start() {
+                    this.schedule_editor.date.update(cx, |input, cx| {
+                        input.set_value(value.format("%Y-%m-%d").to_string(), window, cx)
+                    });
+                    this.schedule_editor.time.update(cx, |input, cx| {
+                        input.set_value(value.format("%H:%M").to_string(), window, cx)
+                    });
+                    this.schedule_editor
+                        .time_field
+                        .update(cx, |field, cx| field.set_time(value.time(), window, cx));
+                    cx.notify();
+                }
+            },
+        ));
+        subscriptions.push(cx.subscribe_in(
+            &self.time_field,
+            window,
+            |this, _, event, window, cx| {
+                let TimeFieldEvent::Change(time) = event;
+                this.schedule_editor.time.update(cx, |input, cx| {
+                    input.set_value(time.format("%H:%M").to_string(), window, cx)
+                });
+                if let Ok(date) = chrono::NaiveDate::parse_from_str(
+                    &this.schedule_editor.date.read(cx).value(),
+                    "%Y-%m-%d",
+                ) {
+                    this.schedule_editor.date_picker.update(cx, |field, cx| {
+                        field.set_date_time(date.and_time(*time), window, cx)
+                    });
+                }
+                cx.notify();
+            },
+        ));
         subscriptions
     }
     pub fn new(window: &mut Window, cx: &mut Context<Coincide>) -> Self {
@@ -159,6 +209,12 @@ impl ScheduleEditor {
                     .placeholder("Message to send to this conversation")
                     .submit_on_enter(false)
             }),
+            date_picker: cx.new(|cx| {
+                DatePickerState::new(window, cx)
+                    .date_format("%d %b %Y")
+                    .time_precision(TimePrecision::Minute)
+            }),
+            time_field: cx.new(|cx| TimeFieldState::new(window, cx)),
             date: cx.new(|cx| InputState::new(window, cx).placeholder("YYYY-MM-DD")),
             time: cx.new(|cx| InputState::new(window, cx).placeholder("HH:MM")),
             zone: cx.new(|cx| {
@@ -167,6 +223,9 @@ impl ScheduleEditor {
             interval: cx.new(|cx| InputState::new(window, cx).placeholder("30")),
             cron: cx.new(|cx| InputState::new(window, cx).placeholder("0 9 * * 1-5")),
             preview: String::new(),
+            preview_valid: false,
+            focus: cx.focus_handle(),
+            restore_focus: None,
             delete_prompt: None,
             preview_key: None,
         }
@@ -272,6 +331,7 @@ impl ScheduleEditor {
                 list::list(&dates)
             ))
         })();
+        self.preview_valid = result.is_ok();
         self.preview = result.unwrap_or_else(|error| error.to_string());
     }
 }
@@ -459,7 +519,7 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.selected.is_none() && (id.is_none() || !self.schedule_editor.all_conversations) {
+        if self.selected.is_none() && !self.schedule_editor.all_conversations {
             self.schedule_status = "Choose a conversation before creating a schedule.".into();
             cx.notify();
             return;
@@ -520,7 +580,12 @@ impl Coincide {
         editor.baseline_target = existing
             .as_ref()
             .map(|task| task["threadID"].clone())
-            .unwrap_or_else(|| self.selected.as_ref().unwrap()["id"].clone());
+            .unwrap_or_else(|| {
+                self.selected
+                    .as_ref()
+                    .map(|thread| thread["id"].clone())
+                    .unwrap_or(Value::Null)
+            });
         editor.thread_id = editor
             .baseline_target
             .as_str()
@@ -529,7 +594,20 @@ impl Coincide {
         editor.project_id = existing
             .as_ref()
             .map(|task| task["projectID"].clone())
-            .unwrap_or_else(|| self.selected.as_ref().unwrap()["projectID"].clone());
+            .unwrap_or_else(|| {
+                self.selected
+                    .as_ref()
+                    .map(|thread| thread["projectID"].clone())
+                    .or_else(|| {
+                        self.projects
+                            .iter()
+                            .find(|project| {
+                                project["id"] != coincide_core::bot_runtime::BOTS_PROJECT_ID
+                            })
+                            .map(|project| project["id"].clone())
+                    })
+                    .unwrap_or(Value::Null)
+            });
         editor.target_label = if editor.thread_id.is_empty() {
             "New conversation per run".into()
         } else {
@@ -604,19 +682,37 @@ impl Coincide {
                 cx,
             )
         });
+        if let Ok(value) = chrono::NaiveDateTime::parse_from_str(
+            &format!(
+                "{} {}",
+                editor.date.read(cx).value(),
+                editor.time.read(cx).value()
+            ),
+            "%Y-%m-%d %H:%M",
+        ) {
+            editor
+                .date_picker
+                .update(cx, |field, cx| field.set_date_time(value, window, cx));
+            editor
+                .time_field
+                .update(cx, |field, cx| field.set_time(value.time(), window, cx));
+        }
         editor.baseline_recurrence = recurrence;
         editor.preview_key = None;
         editor.open = true;
+        editor.restore_focus = window.focused(cx);
+        editor.name.read(cx).focus_handle(cx).focus(window, cx);
         self.schedule_status.clear();
         cx.notify();
     }
-    fn save_schedule(&mut self, cx: &mut Context<Self>) {
+    fn save_schedule(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let editor = &self.schedule_editor;
         let outcome = (|| -> Result<Value> {
             anyhow::ensure!(
                 editor.open
                     && editor.editing_global == editor.all_conversations
                     && (editor.editing_global
+                        || editor.thread_id.is_empty()
                         || self
                             .selected
                             .as_ref()
@@ -659,7 +755,7 @@ impl Coincide {
                 call(
                     &self.engine,
                     "schedules.create",
-                    json!({"task":{"name":name,"prompt":prompt,"projectID":editor.project_id,"threadID":editor.thread_id,"recurrence":recurrence}}),
+                    json!({"task":{"name":name,"prompt":prompt,"projectID":editor.project_id,"threadID":if editor.thread_id.is_empty() {Value::Null} else {json!(editor.thread_id)},"recurrence":recurrence}}),
                 )
             }
         })();
@@ -693,157 +789,357 @@ impl Coincide {
             }
             Err(error) => self.schedule_status = format!("Schedule was not saved: {error}"),
         }
+        if !self.schedule_editor.open {
+            self.restore_schedule_editor_focus(window, cx);
+        }
         self.refresh_schedules(cx);
     }
+    fn restore_schedule_editor_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(focus) = self.schedule_editor.restore_focus.take() {
+            focus.focus(window, cx);
+        }
+    }
+    fn dismiss_schedule_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.schedule_editor.open = false;
+        self.restore_schedule_editor_focus(window, cx);
+        cx.notify();
+    }
     /// Swift's ⌘Return and Esc in the editor.
-    fn schedule_editor_keys(&self, form: Div, cx: &mut Context<Self>) -> Div {
+    fn schedule_editor_keys<E: InteractiveElement>(&self, form: E, cx: &mut Context<Self>) -> E {
         form.capture_action(cx.listener(|this, action: &Enter, window, cx| {
             if action.secondary && this.schedule_editor.open {
                 window.prevent_default();
                 cx.stop_propagation();
-                this.save_schedule(cx);
+                this.save_schedule(window, cx);
             }
         }))
-        .capture_action(cx.listener(|this, _: &Escape, _, cx| {
+        .capture_action(cx.listener(|this, _: &Escape, window, cx| {
             if this.schedule_editor.open {
                 cx.stop_propagation();
-                this.schedule_editor.open = false;
-                cx.notify();
+                this.dismiss_schedule_editor(window, cx);
             }
         }))
+    }
+    fn schedule_target_menu(&self, cx: &mut Context<Self>) -> AnyElement {
+        let editor = &self.schedule_editor;
+        let target_label = if editor.thread_id.is_empty() {
+            self.projects
+                .iter()
+                .find(|project| project["id"] == editor.project_id)
+                .map(|project| format!("New thread in {}", text(project, "name")))
+                .unwrap_or_else(|| "Choose project…".into())
+        } else {
+            editor.target_label.clone()
+        };
+        let current = self.selected.clone();
+        let projects = self.projects.clone();
+        let parent = cx.entity().downgrade();
+        let chosen = editor.project_id.clone();
+        let project_target = editor.thread_id.is_empty();
+        Button::new("schedule-target")
+            .label(target_label)
+            .ghost()
+            .small()
+            .dropdown_caret(true)
+            .disabled(editor.editing_id.is_some() || (!editor.all_conversations && !project_target))
+            .accessibility_label("Schedule destination")
+            .accessible_menu(move |mut menu, _, _| {
+                if let Some(thread) = &current {
+                    let thread = thread.clone();
+                    let parent = parent.clone();
+                    menu = menu.item(
+                        PopupMenuItem::new("This conversation")
+                            .checked(!project_target)
+                            .on_click(move |_, _, cx| {
+                                let _ = parent.update(cx, |this, cx| {
+                                    this.schedule_editor.thread_id = text(&thread, "id");
+                                    this.schedule_editor.project_id = thread["projectID"].clone();
+                                    this.schedule_editor.target_label = text(&thread, "title");
+                                    cx.notify();
+                                });
+                            }),
+                    );
+                    menu = menu.item(PopupMenuItem::separator());
+                }
+                for project in projects
+                    .iter()
+                    .filter(|project| project["id"] != coincide_core::bot_runtime::BOTS_PROJECT_ID)
+                {
+                    let project = project.clone();
+                    let parent = parent.clone();
+                    menu = menu.item(
+                        PopupMenuItem::new(format!("New thread in {}", text(&project, "name")))
+                            .checked(project_target && project["id"] == chosen)
+                            .on_click(move |_, _, cx| {
+                                let _ = parent.update(cx, |this, cx| {
+                                    this.schedule_editor.thread_id.clear();
+                                    this.schedule_editor.project_id = project["id"].clone();
+                                    this.schedule_editor.target_label =
+                                        "New conversation per run".into();
+                                    this.schedule_status.clear();
+                                    cx.notify();
+                                });
+                            }),
+                    );
+                }
+                menu
+            })
+            .into_any_element()
     }
     fn schedule_editor_pane(&self, cx: &mut Context<Self>) -> AnyElement {
         let editor = &self.schedule_editor;
         let kind = editor.kind.as_str();
-        let mut form = div()
-            .flex()
-            .flex_col()
-            .flex_shrink_0()
-            .gap_2()
-            .p_3()
-            .rounded_md()
-            .bg(self.color(0x202a3b))
-            .child(div().font_semibold().child(if editor.editing_id.is_some() {
-                "Edit schedule for review"
-            } else {
-                "Create schedule for review"
-            }))
-            .child(
-                div()
-                    .text_sm()
-                    .child(format!("Conversation: {}", editor.target_label)),
+        let parent = cx.entity().downgrade();
+        let selected_kind = editor.kind.clone();
+        let repeat = Button::new("schedule-repeat")
+            .label(
+                KINDS
+                    .iter()
+                    .find(|(value, _)| *value == kind)
+                    .map(|(_, label)| *label)
+                    .unwrap_or("Daily"),
             )
-            .child(div().text_sm().child("Name"))
-            .child(Input::new(&editor.name))
-            .child(div().text_sm().child("Message"))
-            .child(Textarea::new(&editor.prompt).h(px(90.)))
-            .child(div().flex().flex_wrap().gap_2().children(KINDS.iter().map(
-                |&(value, label)| {
-                    Button::new(SharedString::from(format!("schedule-kind-{value}")))
-                        .label(label)
-                        .when(kind == value, |b| b.primary())
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.schedule_editor.kind = value.into();
-                            cx.notify();
-                        }))
-                },
-            )))
-            .child(div().text_sm().child("Time zone (IANA name)"))
-            .child(Input::new(&editor.zone));
-        if matches!(kind, "once" | "interval") {
-            form = form
-                .child(div().text_sm().child(if kind == "once" {
-                    "Run at (local date and 24-hour time)"
-                } else {
-                    "First run (local date and 24-hour time)"
-                }))
-                .child(
-                    div()
-                        .flex()
-                        .gap_2()
-                        .child(Input::new(&editor.date))
-                        .child(Input::new(&editor.time)),
-                );
-        } else if kind != "cron" {
-            form = form
-                .child(div().text_sm().child("Local time (HH:MM, 24-hour)"))
-                .child(Input::new(&editor.time));
+            .small()
+            .dropdown_caret(true)
+            .accessibility_label("Repeat")
+            .accessible_menu(move |mut menu, _, _| {
+                for &(value, label) in KINDS {
+                    let parent = parent.clone();
+                    menu = menu.item(
+                        PopupMenuItem::new(label)
+                            .checked(value == selected_kind)
+                            .on_click(move |_, _, cx| {
+                                let _ = parent.update(cx, |this, cx| {
+                                    this.schedule_editor.kind = value.into();
+                                    cx.notify();
+                                });
+                            }),
+                    );
+                }
+                menu
+            });
+        let muted = cx.theme().muted_foreground;
+        let label = |text: &'static str| div().text_xs().text_color(muted).child(text);
+        let mut timing = div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap_2()
+            .child(repeat);
+        if kind == "weekly" {
+            let day = editor.weekday;
+            let parent = cx.entity().downgrade();
+            timing = timing.child(
+                Button::new("schedule-weekday")
+                    .label(
+                        DAYS.iter()
+                            .find(|(value, _)| *value == day)
+                            .map(|(_, name)| *name)
+                            .unwrap_or("Mon"),
+                    )
+                    .small()
+                    .dropdown_caret(true)
+                    .accessibility_label("Weekday")
+                    .accessible_menu(move |mut menu, _, _| {
+                        for &(value, name) in DAYS {
+                            let parent = parent.clone();
+                            menu =
+                                menu.item(PopupMenuItem::new(name).checked(day == value).on_click(
+                                    move |_, _, cx| {
+                                        let _ = parent.update(cx, |this, cx| {
+                                            this.schedule_editor.weekday = value;
+                                            cx.notify();
+                                        });
+                                    },
+                                ));
+                        }
+                        menu
+                    }),
+            );
         }
         if kind == "interval" {
             let unit = editor.interval_unit;
-            form = form.child(div().text_sm().child("Every")).child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(div().w(px(90.)).child(Input::new(&editor.interval)))
-                    .children(UNITS.iter().enumerate().map(|(index, (_, label))| {
-                        Button::new(SharedString::from(format!("schedule-unit-{index}")))
-                            .label(*label)
-                            .small()
-                            .when(unit == index, |b| b.primary())
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.schedule_editor.interval_unit = index;
-                                cx.notify();
-                            }))
-                    })),
-            );
+            let parent = cx.entity().downgrade();
+            timing = timing
+                .child(div().w(px(76.)).child(Input::new(&editor.interval).small()))
+                .child(
+                    Button::new("schedule-interval-unit")
+                        .label(UNITS[unit].1)
+                        .small()
+                        .dropdown_caret(true)
+                        .accessibility_label("Interval unit")
+                        .accessible_menu(move |mut menu, _, _| {
+                            for (index, (_, name)) in UNITS.iter().enumerate() {
+                                let parent = parent.clone();
+                                menu = menu.item(
+                                    PopupMenuItem::new(*name).checked(unit == index).on_click(
+                                        move |_, _, cx| {
+                                            let _ = parent.update(cx, |this, cx| {
+                                                this.schedule_editor.interval_unit = index;
+                                                cx.notify();
+                                            });
+                                        },
+                                    ),
+                                );
+                            }
+                            menu
+                        }),
+                );
         }
-        if matches!(kind, "weekly" | "days") {
-            form = form
-                .child(div().text_sm().child(if kind == "weekly" {
-                    "Choose one weekday"
-                } else {
-                    "Choose one or more weekdays"
-                }))
-                .child(div().flex().flex_wrap().gap_2().children(DAYS.iter().map(
-                    |&(day, label)| {
-                        let selected = if kind == "weekly" {
-                            editor.weekday == day
-                        } else {
-                            editor.days.contains(&day)
-                        };
-                        Button::new(SharedString::from(format!("schedule-weekday-{day}")))
-                            .label(label)
-                            .when(selected, |b| b.primary())
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                if this.schedule_editor.kind == "weekly" {
-                                    this.schedule_editor.weekday = day;
-                                } else if this.schedule_editor.days.contains(&day) {
-                                    this.schedule_editor.days.retain(|value| *value != day);
-                                } else {
-                                    this.schedule_editor.days.push(day);
-                                    this.schedule_editor.days.sort_unstable();
-                                }
-                                cx.notify();
-                            }))
-                    },
-                )));
+        if matches!(kind, "once" | "interval") {
+            timing = timing.child(DatePicker::new(&editor.date_picker).small());
+        } else if kind != "cron" {
+            timing = timing.child(TimeField::new(&editor.time_field).small());
+        }
+        let mut fields = div()
+            .id("schedule-editor-fields")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .px_5()
+            .py_3()
+            .child(label("Name"))
+            .child(Input::new(&editor.name).small())
+            .child(label("Sends to"))
+            .child(self.schedule_target_menu(cx))
+            .child(label("Task prompt"))
+            .child(Textarea::new(&editor.prompt).h(px(110.)))
+            .child(label("Schedule"))
+            .child(timing);
+        if kind == "days" {
+            fields = fields.child(div().flex().gap_1().children(DAYS.iter().map(
+                |&(day, name)| {
+                    Button::new(SharedString::from(format!("schedule-day-{day}")))
+                        .label(name)
+                        .small()
+                        .selected(editor.days.contains(&day))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if this.schedule_editor.days.contains(&day) {
+                                this.schedule_editor.days.retain(|value| *value != day);
+                            } else {
+                                this.schedule_editor.days.push(day);
+                                this.schedule_editor.days.sort_unstable();
+                            }
+                            cx.notify();
+                        }))
+                },
+            )));
         }
         if kind == "cron" {
-            form=form.child(div().text_sm().child("Cron: minute hour day-of-month month day-of-week" )).child(Input::new(&editor.cron))
-            .child(div().text_sm().child("Example: 0 9 * * 1-5 runs at 09:00 on weekdays. Runs must be at least five minutes apart."));
+            fields = fields
+                .child(Input::new(&editor.cron).small())
+                .child(label("Minute · hour · day of month · month · weekday"));
         }
-        let paused = editor.paused;
-        let form = form.child(
-            Checkbox::new("schedule-paused")
-                .label("Paused")
-                .checked(paused)
-                .on_click(cx.listener(|this, checked: &bool, _, cx| {
-                    this.schedule_editor.paused = *checked;
-                    cx.notify();
-                })),
-        );
-        self.schedule_editor_keys(form, cx)
-            .child(div().text_sm().child(editor.preview.clone()))
-            .child(div().text_sm().child("Busy conversations wait for their current turn. Saving edits requires renewed approval; it does not interrupt an already running turn."))
-            .child(div().flex().gap_2()
-                .child(Button::new("schedule-save").label("Save for review").primary().on_click(cx.listener(|this,_,_,cx|this.save_schedule(cx))))
-                .child(Button::new("schedule-cancel").label("Cancel").on_click(cx.listener(|this,_,_,cx|{this.schedule_editor.open=false;cx.notify();}))))
-            .into_any_element()
+        fields = fields.child(div().text_xs().text_color(if editor.preview_valid { cx.theme().muted_foreground } else { cx.theme().danger }).child(editor.preview.clone()))
+            .child(label("Time Zone")).child(Input::new(&editor.zone).small())
+            .child(div().text_xs().text_color(cx.theme().muted_foreground).child(if editor.thread_id.is_empty() {
+                "Each run starts a new conversation using the project’s defaults. Coincide must be open; missed runs are skipped."
+            } else { "Each run sends this prompt to the conversation using its current agent and model. Busy conversations receive it when their turn ends. Coincide must be open; missed runs are skipped." }));
+        if !self.schedule_status.is_empty() {
+            fields = fields.child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().danger)
+                    .child(self.schedule_status.clone()),
+            );
+        }
+        let valid_target = !editor.thread_id.is_empty()
+            || self.projects.iter().any(|project| {
+                project["id"] == editor.project_id
+                    && project["id"] != coincide_core::bot_runtime::BOTS_PROJECT_ID
+            });
+        let valid = valid_target
+            && editor.preview_valid
+            && !editor.name.read(cx).value().trim().is_empty()
+            && !editor.prompt.read(cx).value().trim().is_empty();
+        use gpui_kit::base::FocusTrapElement;
+        self.schedule_editor_keys(
+            div()
+                .id("schedule-editor-dialog")
+                .role(Role::Dialog)
+                .aria_label("Scheduled task editor")
+                .w_full()
+                .max_w(px(580.))
+                .max_h_full()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .rounded_lg()
+                .bg(self.color(0x10141c))
+                .border_1()
+                .border_color(cx.theme().border)
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .child(div().px_5().pt_4().pb_2().font_semibold().child(
+                    if editor.editing_id.is_some() {
+                        "Edit Scheduled Task"
+                    } else {
+                        "New Scheduled Task"
+                    },
+                ))
+                .child(fields)
+                .child(
+                    div()
+                        .px_5()
+                        .py_3()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            Checkbox::new("schedule-paused")
+                                .label("Paused")
+                                .checked(editor.paused)
+                                .on_click(cx.listener(|this, checked, _, cx| {
+                                    this.schedule_editor.paused = *checked;
+                                    cx.notify();
+                                })),
+                        )
+                        .child(div().flex_1())
+                        .child(
+                            Button::new("schedule-cancel")
+                                .label("Cancel")
+                                .small()
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.dismiss_schedule_editor(window, cx)
+                                })),
+                        )
+                        .child(
+                            Button::new("schedule-save")
+                                .label("Save for review")
+                                .small()
+                                .primary()
+                                .disabled(!valid)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.save_schedule(window, cx)
+                                })),
+                        ),
+                ),
+            cx,
+        )
+        .focus_trap("schedule-editor-focus", &editor.focus)
+        .into_any_element()
+    }
+    pub(super) fn schedule_editor_overlay(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.schedules_open || !self.schedule_editor.open {
+            return None;
+        }
+        Some(
+            div()
+                .absolute()
+                .inset_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .p_5()
+                .bg(gpui_kit::black().opacity(0.45))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .child(self.schedule_editor_pane(cx))
+                .into_any_element(),
+        )
     }
 
-    /// The bot a thread belongs to, when the sidebar knows that bot.
     fn schedule_bot_of(&self, thread: &str) -> Option<String> {
         let bot = self
             .sidebar_all_threads
@@ -1027,6 +1323,10 @@ impl Coincide {
             RowAction::Open => {
                 if let Some(thread) = self.schedule_open_target(&task) {
                     self.select(&thread, window, cx);
+                } else if !self.schedule_editor.open
+                    && self.schedule_editor.scope_epoch == scope_epoch
+                {
+                    self.open_schedule_editor(Some(id), window, cx);
                 }
             }
             RowAction::TogglePause if pause => {
@@ -1050,7 +1350,32 @@ impl Coincide {
                 }
             }
             RowAction::Delete => {
-                self.schedule_action(id, "schedules.delete", expected, scope_epoch, cx)
+                let answer = window.prompt(
+                    PromptLevel::Warning,
+                    &format!("Delete scheduled task “{}”?", text(&task, "name")),
+                    Some(if task["threadID"].is_null() {
+                        "Existing threads are kept. A running thread continues until you stop it."
+                    } else {
+                        "The thread and its messages are kept. A running turn continues until you stop it."
+                    }),
+                    &["Delete", "Cancel"], cx,
+                );
+                let id = id.to_owned();
+                let expected = expected.clone();
+                cx.spawn_in(window, async move |this, cx| {
+                    if answer.await == Ok(0) {
+                        let _ = this.update_in(cx, |this, _, cx| {
+                            this.schedule_action(
+                                &id,
+                                "schedules.delete",
+                                &expected,
+                                scope_epoch,
+                                cx,
+                            );
+                        });
+                    }
+                })
+                .detach();
             }
             _ => {}
         }
@@ -1075,7 +1400,7 @@ impl Coincide {
             .compact()
             .dropdown_caret(true)
             .accessibility_label("Schedules to show")
-            .dropdown_menu(move |mut menu, _, _| {
+            .accessible_menu(move |mut menu, _, _| {
                 for filter in ScheduleFilter::ALL {
                     // A thread's own schedules panel already is This Thread.
                     if filter == ScheduleFilter::ThisThread && !global {
@@ -1306,7 +1631,7 @@ impl Coincide {
             lines = lines.child(
                 div().flex().child(
                     Button::new(SharedString::from(format!("schedule-approve-{id}")))
-                        .label("Approve in Rust")
+                        .label("Allow")
                         .small()
                         .disabled(editing)
                         .on_click(cx.listener(move |this, _, _, cx| {
@@ -1338,6 +1663,7 @@ impl Coincide {
         let edit_open = self.schedule_editor.open;
         div()
             .id(SharedString::from(format!("schedule-row-{id}")))
+            .role(Role::Button)
             .aria_label(spoken)
             .flex()
             .flex_none()
@@ -1424,17 +1750,12 @@ impl Coincide {
             (coincide_core::store::swift_timestamp() / 60.).floor() as i64;
         let muted = cx.theme().muted_foreground;
         let global = self.schedule_editor.all_conversations;
-        let mut header =
-            div()
-                .flex()
-                .flex_none()
-                .items_center()
-                .gap_2()
-                .child(div().text_lg().child(if global {
-                    "Scheduled"
-                } else {
-                    "Schedules for this conversation"
-                }));
+        let mut header = div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap_2()
+            .child(div().text_sm().font_semibold().child("Scheduled"));
         if !self.schedules.is_empty() {
             header = header.child(
                 div()
@@ -1446,12 +1767,57 @@ impl Coincide {
         header = header
             .child(div().flex_1())
             .child(self.schedule_filter_menu(cx));
-        let mut content=div().id("schedule-panel").flex().flex_col().flex_1().min_h_0().min_w_0().gap_3().p_4().overflow_y_scroll()
-            .child(header)
-            .child(Input::new(&self.schedule_editor.filter))
-            .child(div().text_sm().child("Imported schedules remain dormant until approved separately in Coincide Rust. The app must stay open; missed occurrences are skipped."))
-            .child(Button::new("schedule-new").label(if global {"New for selected conversation"} else {"New schedule"}).disabled(self.selected.is_none() || self.schedule_editor.open)
-                .on_click(cx.listener(|this,_,window,cx|this.open_schedule_editor(None,window,cx))));
+        let parent = cx.entity().downgrade();
+        let thread_available = self.selected.is_some();
+        let project_available = self
+            .projects
+            .iter()
+            .any(|project| project["id"] != coincide_core::bot_runtime::BOTS_PROJECT_ID);
+        header = header.child(
+            Button::new("schedule-new").icon(Symbol::Plus).ghost().compact().small()
+                .accessibility_label("New Scheduled Task").tooltip("New Scheduled Task")
+                .disabled(self.schedule_editor.open)
+                .accessible_menu(move |menu, _, _| {
+                    let thread_owner = parent.clone();
+                    let project_owner = parent.clone();
+                    menu.item(PopupMenuItem::new("Schedule in This Thread…").disabled(!thread_available)
+                        .on_click(move |_, window, cx| { let _ = thread_owner.update(cx, |this, cx| this.open_schedule_editor(None, window, cx)); }))
+                    .item(PopupMenuItem::new("New Thread Each Run…").disabled(!project_available)
+                        .on_click(move |_, window, cx| { let _ = project_owner.update(cx, |this, cx| {
+                            this.open_schedule_editor(None, window, cx);
+                            if this.schedule_editor.open {
+                                this.schedule_editor.thread_id.clear();
+                                this.schedule_editor.baseline_target = Value::Null;
+                                if !this.projects.iter().any(|project| project["id"] == this.schedule_editor.project_id && project["id"] != coincide_core::bot_runtime::BOTS_PROJECT_ID) {
+                                    this.schedule_editor.project_id = this.projects.iter().find(|project| project["id"] != coincide_core::bot_runtime::BOTS_PROJECT_ID)
+                                        .map(|project| project["id"].clone()).unwrap_or(Value::Null);
+                                }
+                                this.schedule_editor.target_label = "New conversation per run".into();
+                                cx.notify();
+                            }
+                        }); }))
+                }),
+        );
+        let mut content = div()
+            .id("schedule-panel")
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h_0()
+            .min_w_0()
+            .child(div().px_3().py_2().child(header))
+            .child(
+                div()
+                    .px_3()
+                    .pb_2()
+                    .child(Input::new(&self.schedule_editor.filter).small()),
+            );
+        let mut list = div()
+            .id("schedule-list")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .px_2();
         if !self.schedule_status.is_empty() {
             content = content.child(
                 div()
@@ -1459,9 +1825,6 @@ impl Coincide {
                     .text_color(muted)
                     .child(self.schedule_status.clone()),
             );
-        }
-        if self.schedule_editor.open {
-            content = content.child(self.schedule_editor_pane(cx));
         }
         let query = self.schedule_editor.filter.read(cx).value().to_string();
         let selected = self.selected.as_ref().map(|thread| text(thread, "id"));
@@ -1486,7 +1849,7 @@ impl Coincide {
             &|owner: &Owner| self.schedule_group_title(owner),
         );
         if groups.is_empty() {
-            content = content.child(
+            list = list.child(
                 div()
                     .py_6()
                     .text_sm()
@@ -1512,7 +1875,7 @@ impl Coincide {
                 rows.push(self.schedule_row(task, &local_zone, now, cx));
             }
         }
-        content.children(rows).into_any_element()
+        content.child(list.children(rows)).into_any_element()
     }
 }
 // The engine lock stays held from this comparison through approval or edit,

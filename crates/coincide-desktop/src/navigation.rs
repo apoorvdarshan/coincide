@@ -492,7 +492,10 @@ impl Coincide {
                     }),
             )
     }
-    fn sidebar_thread_status(&self, thread: &ThreadSummary) -> sidebar_thread_status::RowStatus {
+    pub(super) fn sidebar_thread_status(
+        &self,
+        thread: &ThreadSummary,
+    ) -> sidebar_thread_status::RowStatus {
         sidebar_thread_status::row_status(
             self.thread_activity.approvals(&thread.id),
             self.running
@@ -1340,7 +1343,19 @@ impl Coincide {
             .border_r_1()
             .border_color(self.color(0x29303d))
             .p_3()
+            .when(cfg!(target_os = "macos"), |view| view.pt(px(56.)))
             .gap_2()
+            .when(cfg!(target_os = "macos"), |view| {
+                view.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .h(px(44.))
+                        .on_mouse_down(MouseButton::Left, window_chrome::titlebar_mouse_down),
+                )
+            })
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 if this.search.read(cx).focus_handle(cx).is_focused(window)
                     || this.project_picker_open

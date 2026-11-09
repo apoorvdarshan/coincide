@@ -45,6 +45,7 @@ mod tests {
                 selected: ProfileChoice::Persistent(id),
                 open_tabs: 1,
                 persistent_profiles_available: true,
+                private_by_default: false,
             },
             active: Some("tab-one".into()),
             tabs: vec![("tab-one".into(), 3)],
@@ -396,9 +397,7 @@ impl BrowserSettings {
             cx,
             |engine, admission, epoch, generation, binding| {
                 allowed(&admission, &epoch, generation)?;
-                let guard = engine
-                    .try_lock()
-                    .map_err(|_| anyhow::anyhow!("App is busy; reload history to try again"))?;
+                let guard = wait_for_engine(&engine, || allowed(&admission, &epoch, generation))?;
                 allowed(&admission, &epoch, generation)?;
                 ensure!(
                     guard.active_thread() == Some(binding.snapshot.thread.as_str()),

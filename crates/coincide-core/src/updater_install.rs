@@ -1740,6 +1740,45 @@ mod tests {
         let mut child = std::process::Command::new(&bin).arg("30").spawn().unwrap();
         std::thread::sleep(std::time::Duration::from_millis(100));
         child.kill().unwrap();
+        // SIGKILL delivery is asynchronous. Wait for the actual zombie state
+        // without reaping; under build load the process can still be live just
+        // after kill(), in which case refusing installation is correct.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::uninit();
+            let size = std::mem::size_of::<libc::proc_bsdinfo>() as i32;
+            let got = unsafe {
+                proc_pidinfo(
+                    child.id() as i32,
+                    libc::PROC_PIDTBSDINFO,
+                    0,
+                    info.as_mut_ptr().cast(),
+                    size,
+                )
+            };
+            if got == size && unsafe { info.assume_init() }.pbi_status == libc::SZOMB {
+                break;
+            }
+            let mut name = [0u8; 64];
+            let named = unsafe {
+                proc_name(
+                    child.id() as i32,
+                    name.as_mut_ptr().cast(),
+                    name.len() as u32,
+                )
+            };
+            // macOS may stop exposing proc_bsdinfo for the zombie; proc_name
+            // also returns no executable name, which is the guard's other
+            // proof that no executable remains running.
+            if named == 0 {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "synthetic child did not exit"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
         // The child is a zombie carrying the preview name until wait().
         MacProcessGuard
             .ensure_stopped(&dir.path().join("Coincide Rust.app"))

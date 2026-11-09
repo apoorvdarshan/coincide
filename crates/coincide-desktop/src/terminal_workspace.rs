@@ -8,6 +8,7 @@
 //! All engine calls run on one serialized worker. No shell commands are generated.
 //! Mode-sensitive input is encoded by terminal.input in core; native IME preedit
 //! is local to a revocable per-pane focus session and never edits shell output.
+use crate::native_menu::AccessibleMenuExt as _;
 use crate::terminal_selection::TerminalSelection;
 #[path = "terminal_context.rs"]
 mod context;
@@ -945,6 +946,7 @@ impl Activation {
 pub struct TerminalWorkspace {
     thread: String,
     tabs: Vec<Tab>,
+    tab_scroll: ScrollHandle,
     active: Option<PaneId>,
     panes: HashMap<PaneId, Pane>,
     next: PaneId,
@@ -1011,6 +1013,7 @@ impl TerminalWorkspace {
         Self {
             thread: thread_id,
             tabs: vec![],
+            tab_scroll: ScrollHandle::new(),
             active: None,
             panes: HashMap::new(),
             next: 1,
@@ -1143,6 +1146,7 @@ impl TerminalWorkspace {
             focus: key,
         });
         self.active = Some(key);
+        self.tab_scroll.scroll_to_item(self.tabs.len() - 1);
     }
     pub fn run_script(&mut self, script: String, window: &mut Window, cx: &mut Context<Self>) {
         self.activation.requested = false;
@@ -2164,59 +2168,6 @@ impl TerminalWorkspace {
                 "Creating terminal…"
             }));
         }
-        let mut footer = div().flex().flex_wrap().gap_1().items_center();
-        let alternate = pane
-            .frame
-            .as_ref()
-            .is_some_and(|f| f["viewport"]["alternateScreen"] == true);
-        for (name, label, scroll) in [
-            ("top", "History", TerminalScroll::Top),
-            ("up", "Page ↑", TerminalScroll::PageUp),
-            ("down", "Page ↓", TerminalScroll::PageDown),
-            ("bottom", "Live", TerminalScroll::Bottom),
-        ] {
-            footer = footer.child(
-                Button::new(SharedString::from(format!("{name}-{key}")))
-                    .label(label)
-                    .disabled(alternate || pane.closing || pane.frame.is_none())
-                    .on_click(cx.listener(move |this, _, _, cx| this.scroll(key, scroll, cx))),
-            );
-        }
-        footer = footer.child(
-            Button::new(SharedString::from(format!("copy-{key}")))
-                .label("Copy selection")
-                .disabled(
-                    pane.frame
-                        .as_ref()
-                        .is_none_or(|f| !pane.selection.has_selection(&id, f)),
-                )
-                .on_click(cx.listener(move |this, _, _, cx| this.copy(key, cx))),
-        );
-        footer = footer.child(
-            Button::new(SharedString::from(format!("use-selection-{key}")))
-                .label("Use selection in message")
-                .tooltip(
-                    "Attach selected visible terminal output as a reference; no message is sent",
-                )
-                .disabled(
-                    self.context_pending
-                        || !self.visible
-                        || pane.closing
-                        || pane
-                            .frame
-                            .as_ref()
-                            .is_none_or(|f| !pane.selection.has_selection(&id, f)),
-                )
-                .on_click(
-                    cx.listener(move |this, _, _, cx| this.request_context_selection(key, cx)),
-                ),
-        );
-        if let Some(frame) = &pane.frame {
-            footer = footer.child(div().child(format!(
-                "{}×{} · {} rows above live",
-                frame["cols"], frame["rows"], frame["viewport"]["displayOffset"],
-            )));
-        }
         let weak = cx.entity().downgrade();
         let ime = pane.ime.clone();
         let native_focus = pane.focus.clone();
@@ -2398,7 +2349,6 @@ impl TerminalWorkspace {
                     .children(banner)
                     .children(close),
             )
-            .child(footer)
             .child(div().text_sm().child(pane.notice.clone()))
             .child(div().text_sm().child(composition_notice))
             .into_any_element()
@@ -2430,6 +2380,9 @@ impl TerminalWorkspace {
     }
     fn activate_tab(&mut self, key: PaneId, window: &mut Window, cx: &mut Context<Self>) {
         self.active = Some(key);
+        if let Some(index) = self.tabs.iter().position(|tab| tab.key == key) {
+            self.tab_scroll.scroll_to_item(index);
+        }
         self.watch();
         if let Some(tab) = self.tabs.iter().find(|t| t.key == key) {
             let focus = tab.focus;
@@ -2451,11 +2404,13 @@ impl TerminalWorkspace {
             .id("terminal-tabs")
             .role(Role::TabList)
             .aria_label("Terminal tabs")
+            .track_scroll(&self.tab_scroll)
+            .flex_1()
             .flex()
             .items_center()
             .gap(px(2.))
             .min_w_0()
-            .overflow_x_hidden();
+            .overflow_x_scroll();
         for tab in &self.tabs {
             strip = strip.child(self.tab_item(tab, cx));
         }
@@ -2521,6 +2476,71 @@ impl TerminalWorkspace {
                         })),
                 );
             }
+        }
+        if let Some(tab) = active {
+            let key = tab.focus;
+            let pane = self.panes.get(&key);
+            let selected = pane.is_some_and(|pane| {
+                pane.frame.as_ref().is_some_and(|frame| {
+                    pane.selection
+                        .has_selection(&pane.terminal.clone().unwrap_or_default(), frame)
+                })
+            });
+            let can_scroll = pane.is_some_and(|pane| {
+                !pane.closing
+                    && pane
+                        .frame
+                        .as_ref()
+                        .is_some_and(|frame| frame["viewport"]["alternateScreen"] != true)
+            });
+            let can_use = selected && self.visible && !self.context_pending;
+            let parent = cx.entity().downgrade();
+            row = row.child(
+                Button::new("terminal-actions")
+                    .icon(IconName::Ellipsis)
+                    .ghost()
+                    .compact()
+                    .accessibility_label("Terminal actions")
+                    .tooltip("Terminal actions")
+                    .accessible_menu(move |mut menu, _, _| {
+                        for (label, action) in [
+                            ("Scroll to Top", TerminalScroll::Top),
+                            ("Page Up", TerminalScroll::PageUp),
+                            ("Page Down", TerminalScroll::PageDown),
+                            ("Scroll to Bottom", TerminalScroll::Bottom),
+                        ] {
+                            let owner = parent.clone();
+                            menu = menu.item(
+                                PopupMenuItem::new(label).disabled(!can_scroll).on_click(
+                                    move |_, _, cx| {
+                                        let _ = owner
+                                            .update(cx, |this, cx| this.scroll(key, action, cx));
+                                    },
+                                ),
+                            );
+                        }
+                        let copy_owner = parent.clone();
+                        let use_owner = parent.clone();
+                        menu.separator()
+                            .item(
+                                PopupMenuItem::new("Copy Selection")
+                                    .disabled(!selected)
+                                    .on_click(move |_, _, cx| {
+                                        let _ =
+                                            copy_owner.update(cx, |this, cx| this.copy(key, cx));
+                                    }),
+                            )
+                            .item(
+                                PopupMenuItem::new("Use Selection in Message")
+                                    .disabled(!can_use)
+                                    .on_click(move |_, _, cx| {
+                                        let _ = use_owner.update(cx, |this, cx| {
+                                            this.request_context_selection(key, cx)
+                                        });
+                                    }),
+                            )
+                    }),
+            );
         }
         row.child(
             Button::new("terminal-hide")
@@ -2595,6 +2615,7 @@ impl TerminalWorkspace {
             .role(Role::Tab)
             .aria_label(label)
             .aria_selected(selected)
+            .flex_shrink_0()
             .flex()
             .items_center()
             .gap(px(5.))

@@ -644,16 +644,17 @@ impl Coincide {
                             .child(div().text_xs().child(summary)),
                     )
                     .child(
-                        Button::new(SharedString::from(format!(
+                        gpui_kit::component::switch::Switch::new(SharedString::from(format!(
                             "provider-overview-use-{}",
                             provider_key(provider)
                         )))
-                        .label(if enabled { "On" } else { "Off" })
                         .accessibility_label(format!("Use {}", descriptor.display_name))
+                        .checked(enabled)
+                        .color(self.color(0xe4e9f2))
                         .on_click(cx.listener(
-                            move |this, _, window, cx| {
+                            move |this, value: &bool, window, cx| {
                                 this.set_settings_provider_enabled(
-                                    provider, enabled, !enabled, window, cx,
+                                    provider, enabled, *value, window, cx,
                                 )
                             },
                         )),
@@ -663,7 +664,11 @@ impl Coincide {
                             "provider-overview-open-{}",
                             provider_key(provider)
                         )))
-                        .label("Show settings")
+                        .icon(gpui_kit::assets::IconName::ChevronRight)
+                        .ghost()
+                        .small()
+                        .accessibility_label(format!("Show {} settings", descriptor.display_name))
+                        .tooltip("Show settings")
                         .on_click(cx.listener(
                             move |this, _, window, cx| {
                                 this.navigate_settings_section(section, window, cx)
@@ -774,23 +779,33 @@ impl Coincide {
                     .gap_3()
                     .child(div().flex_1().child(format!("Use {}", section.label())))
                     .child(
-                        Button::new("provider-preferences-enabled")
-                            .label(if enabled { "On" } else { "Off" })
-                            .on_click(cx.listener(move |this, _, window, cx| {
+                        gpui_kit::component::switch::Switch::new("provider-preferences-enabled")
+                            .accessibility_label(format!("Use {}", section.label()))
+                            .checked(enabled)
+                            .color(self.color(0xe4e9f2))
+                            .on_click(cx.listener(move |this, value: &bool, window, cx| {
                                 this.set_settings_provider_enabled(
-                                    provider, enabled, !enabled, window, cx,
+                                    provider, enabled, *value, window, cx,
                                 )
                             })),
                     ),
             )
-            .child(div().text_sm().child(
-                "Coincide uses this provider’s command-line tool and your existing sign-in.",
-            ));
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(self.color(0x98a6ba))
+                    .child("Uses the provider’s command-line tool and your existing sign-in."),
+            );
+        if enabled {
+            pane = pane.child(accounts);
+        }
         match provider {
             ProviderId::Codex => {
                 pane = pane.child(
                     Button::new("provider-codex-accounts")
-                        .label("Accounts and sign-in")
+                        .label("Legacy account settings…")
+                        .small()
+                        .ghost()
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.open_codex_account_settings(window, cx)
                         })),

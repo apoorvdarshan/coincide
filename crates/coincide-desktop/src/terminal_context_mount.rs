@@ -24,6 +24,7 @@ impl Coincide {
                         .is_some_and(|current| current.entity_id() == workspace.entity_id())
                 {
                     self.terminal_open = false;
+                    self.remember_terminal_visibility();
                     if self.terminal_on_right() {
                         self.remember_inspector_choice(None, cx);
                     }

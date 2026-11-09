@@ -4,6 +4,7 @@ use crate::credentials::{
     ApprovalPrompt, ApprovalView, FillJob, NativeDecision, QueuedSink, complete_approval,
     private_fill_channel,
 };
+use crate::native_menu::AccessibleMenuExt as _;
 use crate::worker_owner::{ShutdownStatus, WorkerOwner};
 use coincide_core::credentials::{
     CliCommand, Failure, Login, Manager, PageBinding, Status, Vault, VaultCommand,
@@ -11,7 +12,11 @@ use coincide_core::credentials::{
 use coincide_core::passkeys::{BitwardenPasskeys, PasskeyVault};
 use gpui_kit::{
     AppContext, Context, Entity, IntoElement, ParentElement, Render, SharedString, Styled, Window,
-    component::{Disableable, button::Button},
+    component::{
+        Disableable, Sizable,
+        button::{Button, ButtonVariants},
+        menu::PopupMenuItem,
+    },
     div,
 };
 use std::{
@@ -629,97 +634,166 @@ fn failure_text(failure: Failure) -> &'static str {
 }
 impl Render for CredentialSettings {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut panel = div().flex().flex_col().gap_2().p_4().child("Password managers")
-            .child("Select a connected CLI account. Login approval is always required; approval cannot be disabled.");
-        if self.browser_requests.pending() {
-            panel = panel
-                .child("Agent request: choose a saved login and explicitly approve filling it.");
-            if let Some(item) = self.browser_requests.item() {
-                panel = panel.child(SharedString::from(format!("Requested login: {item}")));
-            }
-        }
+        let mut panel = div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .px_4()
+            .py_2()
+            .child(div().text_xs().child(
+                "Connect a password manager to fill saved logins after you approve the request.",
+            ));
         if self.sources.is_empty() {
-            panel = panel.child("No supported CLI found. Install Bitwarden CLI or 1Password CLI with Homebrew, then reopen this panel.");
+            panel = panel.child(div().text_xs().child("Install the Bitwarden or 1Password command-line tool to connect a password manager."));
         }
         for (index, source) in self.sources.iter().enumerate() {
+            let selected = self.selected_source == Some(index);
             panel = panel.child(
-                Button::new(SharedString::from(format!("credential-manager-{index}")))
-                    .label(format!(
-                        "{}{}",
-                        source.label(),
-                        if self.selected_source == Some(index) {
-                            " · selected"
-                        } else {
-                            ""
-                        }
-                    ))
-                    .disabled(self.busy || self.workers.closed())
-                    .on_click(cx.listener(move |this, _, _, cx| this.connect(index, cx))),
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .child(source.label())
+                            .child(div().text_xs().child(if selected {
+                                "Connected"
+                            } else {
+                                "Available on this Mac"
+                            })),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!("credential-manager-{index}")))
+                            .label(if selected { "Refresh" } else { "Connect…" })
+                            .small()
+                            .disabled(self.busy || self.workers.closed())
+                            .on_click(cx.listener(move |this, _, _, cx| this.connect(index, cx))),
+                    ),
             );
         }
-        for (index, account) in self.accounts.iter().enumerate() {
+        if !self.accounts.is_empty() {
+            let accounts = self
+                .accounts
+                .iter()
+                .map(|a| a.label.clone())
+                .collect::<Vec<_>>();
+            let selected = self.selected_account;
+            let label = selected
+                .and_then(|i| accounts.get(i))
+                .cloned()
+                .unwrap_or_else(|| "Choose Account…".into());
+            let parent = cx.entity().downgrade();
+            let disabled = self.busy || self.page.is_none();
             panel = panel.child(
-                Button::new(SharedString::from(format!("credential-account-{index}")))
-                    .label(format!(
-                        "{}{}",
-                        account.label,
-                        if self.selected_account == Some(index) {
-                            " · selected"
-                        } else {
-                            ""
-                        }
-                    ))
-                    .disabled(self.busy || self.page.is_none())
-                    .on_click(cx.listener(move |this, _, _, cx| this.load_account(index, cx))),
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child("Account")
+                    .child(
+                        Button::new("credential-account-menu")
+                            .label(label)
+                            .small()
+                            .dropdown_caret(true)
+                            .disabled(disabled)
+                            .accessible_menu(move |mut menu, _, _| {
+                                for (index, label) in accounts.iter().enumerate() {
+                                    let parent = parent.clone();
+                                    menu = menu.item(
+                                        PopupMenuItem::new(label.clone())
+                                            .checked(selected == Some(index))
+                                            .on_click(move |_, _, cx| {
+                                                let _ = parent.update(cx, |this, cx| {
+                                                    this.load_account(index, cx)
+                                                });
+                                            }),
+                                    );
+                                }
+                                menu
+                            }),
+                    ),
             );
         }
-        if let Some(index) = self.selected_account {
+        if self.browser_requests.pending() {
+            panel = panel.child(div().text_sm().child(
+                "An agent requested a saved login. Choose a login below to review the request.",
+            ));
+            if let Some(item) = self.browser_requests.item() {
+                panel = panel.child(
+                    div()
+                        .text_xs()
+                        .child(SharedString::from(format!("Requested login: {item}"))),
+                );
+            }
+        }
+        if self.busy
+            || self.approval.is_some()
+            || self.active_scope.is_some()
+            || self.browser_requests.pending()
+        {
             panel = panel.child(
-                Button::new("credential-refresh-logins")
-                    .label("Refresh matching logins")
-                    .disabled(self.busy || self.page.is_none())
-                    .on_click(cx.listener(move |this, _, _, cx| this.load_account(index, cx))),
+                Button::new("credential-cancel-request")
+                    .label("Cancel Request")
+                    .small()
+                    .ghost()
+                    .on_click(cx.listener(|this, _, _, cx| this.cancel(cx))),
             );
         }
-        panel = panel.child(
-            Button::new("credential-cancel-request")
-                .label("Cancel login request")
-                .disabled(
-                    !self.busy
-                        && self.approval.is_none()
-                        && self.active_scope.is_none()
-                        && !self.browser_requests.pending(),
-                )
-                .on_click(cx.listener(|this, _, _, cx| this.cancel(cx))),
-        );
-        panel = panel
-            .child(SharedString::from(
-                self.page
-                    .as_ref()
-                    .map(|page| page.origin().to_owned())
-                    .unwrap_or_else(|| "No eligible HTTPS browser page selected.".into()),
-            ))
-            .child(SharedString::from(self.status.clone()));
-        if !self.fill_available {
-            panel = panel.child("Private filling is unavailable in this browser backend. You can inspect matching login metadata; filling and individual secret retrieval are disabled.");
+        if let Some(page) = &self.page {
+            let mut row = div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(div().text_xs().child(page.origin().to_owned()));
+            if let Some(index) = self.selected_account {
+                row = row.child(
+                    Button::new("credential-refresh-logins")
+                        .label("Refresh Logins")
+                        .small()
+                        .ghost()
+                        .disabled(self.busy)
+                        .on_click(cx.listener(move |this, _, _, cx| this.load_account(index, cx))),
+                );
+            }
+            panel = panel.child(row);
+        }
+        if !self.status.is_empty()
+            && self.status != "Select a password manager to read account metadata."
+        {
+            panel = panel.child(div().text_xs().child(self.status.clone()));
         }
         for (index, login) in self.logins.iter().enumerate() {
             panel = panel.child(
-                Button::new(SharedString::from(format!("credential-login-{index}")))
-                    .label(format!("{} · {}", login.title, login.username))
-                    .disabled(
-                        self.busy
-                            || !self.fill_available
-                            || self.approval.is_some()
-                            || !self.browser_requests.matches(login),
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .child(
+                        div()
+                            .child(login.title.clone())
+                            .child(div().text_xs().child(login.username.clone())),
                     )
-                    .on_click(cx.listener(move |this, _, _, cx| this.request_approval(index, cx))),
+                    .child(
+                        Button::new(SharedString::from(format!("credential-login-{index}")))
+                            .label("Fill…")
+                            .small()
+                            .disabled(
+                                self.busy
+                                    || !self.fill_available
+                                    || self.approval.is_some()
+                                    || !self.browser_requests.matches(login),
+                            )
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| this.request_approval(index, cx)),
+                            ),
+                    ),
             );
         }
         if let Some(pending) = &self.approval {
             panel = panel.child(pending.view.clone());
         }
-        panel.child("Bitwarden uses its current CLI account; switching Bitwarden accounts is not supported here. 1Password reads are scoped to the selected account. Passkeys come from Bitwarden only; see Passkeys below.")
+        panel
     }
 }
 

@@ -1,8 +1,9 @@
 //! Settings › Browser › Search engine, as Swift's picker: what the address bar
 //! searches with when the user types words instead of an address.
 use super::*;
+use crate::native_menu::AccessibleMenuExt as _;
 use coincide_core::browser_address::SearchEngine;
-use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
+use gpui_kit::component::menu::PopupMenuItem;
 
 pub(super) const SEARCH_ENGINE_HELP: &str = "What the address bar searches with when you type words instead of an address. Addresses such as localhost:3000, IP addresses and file paths always open directly.";
 
@@ -41,15 +42,23 @@ impl BrowserSettings {
         let label = current.map_or("Loading…", SearchEngine::name);
         div()
             .flex()
-            .flex_col()
-            .gap_1()
-            .child("Search engine")
+            .items_center()
+            .justify_between()
+            .gap_3()
+            .child(
+                div().flex_1().child("Search engine").child(
+                    div()
+                        .text_xs()
+                        .child("Used for searches typed in the address bar."),
+                ),
+            )
             .child(
                 Button::new("browser-search-engine")
                     .label(label)
+                    .small()
                     .dropdown_caret(true)
                     .disabled(current.is_none() || self.workers.closed())
-                    .dropdown_menu(move |mut menu, _, _| {
+                    .accessible_menu(move |mut menu, _, _| {
                         for engine in SearchEngine::ALL {
                             let parent = parent.clone();
                             menu = menu.item(
@@ -65,7 +74,6 @@ impl BrowserSettings {
                         menu
                     }),
             )
-            .child(div().text_xs().child(SEARCH_ENGINE_HELP))
             .into_any_element()
     }
 }

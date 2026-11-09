@@ -916,6 +916,7 @@ impl BrowserController {
         let load_navigation = navigation.clone();
         let load_closed = self.shutdown.callbacks.closed.clone();
         let passkey_requested = Arc::new(AtomicU64::new(0));
+        self.profiles.pin_selection(thread)?;
         let profile = self.profiles.selected(thread);
         let profile_key = profile.key(thread);
         if let ProfileChoice::Persistent(id) = &profile {
@@ -2214,8 +2215,16 @@ impl BrowserController {
         Ok(())
     }
     pub(super) fn navigation_available(&self, thread: &str, cx: &App) -> (bool, bool) {
-        let Some(id) = self.active.get(thread) else { return (false, false); };
-        let Some(tab) = self.tabs.get(thread).and_then(|tabs|tabs.iter().find(|tab|&tab.id == id)) else {return (false,false);};
+        let Some(id) = self.active.get(thread) else {
+            return (false, false);
+        };
+        let Some(tab) = self
+            .tabs
+            .get(thread)
+            .and_then(|tabs| tabs.iter().find(|tab| &tab.id == id))
+        else {
+            return (false, false);
+        };
         native_history::availability(tab.view.read(cx).raw())
     }
     pub fn tab_list(&self, thread: &str) -> Value {

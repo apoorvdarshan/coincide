@@ -1,12 +1,10 @@
 //! A retained native form for one explicit folder project. Every popup is bound
 //! to its opening generation; saving uses the Core review, never current focus.
 use super::*;
+use crate::native_menu::AccessibleMenuExt as _;
 use coincide_core::project_defaults::ProjectDefaultsReview;
 use gpui_kit::assets::IconName;
-use gpui_kit::component::{
-    checkbox::Checkbox,
-    menu::{DropdownMenu, PopupMenuItem},
-};
+use gpui_kit::component::{checkbox::Checkbox, menu::PopupMenuItem};
 
 /// A model's catalog entry, when its provider's catalog is loaded.
 pub(super) fn catalog_model<'a>(
@@ -386,7 +384,7 @@ impl Coincide {
             .label(title)
             .disabled(global)
             .dropdown_caret(true)
-            .dropdown_menu(move |mut menu, _, _| {
+            .accessible_menu(move |mut menu, _, _| {
                 for (title, chosen, selection) in &choices {
                     let parent = parent.clone();
                     let selection = selection.clone();
@@ -501,7 +499,7 @@ impl Coincide {
                         button.icon(IconName::Zap)
                     })
                     .dropdown_caret(true)
-                    .dropdown_menu(move |mut menu, _, _| {
+                    .accessible_menu(move |mut menu, _, _| {
                         for (title, selection) in &choices {
                             let parent = parent.clone();
                             let selection = selection.clone();
@@ -565,7 +563,7 @@ impl Coincide {
                         .label(account_label)
                         .disabled(global)
                         .dropdown_caret(true)
-                        .dropdown_menu(move |mut menu, _, _| {
+                        .accessible_menu(move |mut menu, _, _| {
                             for (account, label) in &accounts {
                                 let parent = parent.clone();
                                 let mut next = selection.clone();
@@ -656,7 +654,7 @@ impl Coincide {
                         .label(title)
                         .disabled(global)
                         .dropdown_caret(true)
-                        .dropdown_menu(move |mut menu, _, _| {
+                        .accessible_menu(move |mut menu, _, _| {
                             for (value, title) in &choices {
                                 let parent = parent.clone();
                                 let value = *value;

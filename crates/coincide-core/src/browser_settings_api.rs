@@ -70,6 +70,16 @@ impl Engine {
         Ok(())
     }
 
+    /// Native Settings action only. The agent API deliberately cannot change
+    /// the default permission for controlling a browser.
+    pub fn set_browser_default_agent_control(&mut self, enabled: bool) -> Result<()> {
+        self.require_admissions()?;
+        self.store
+            .patch_document(DOCUMENT, &json!({"agentControlByDefault":enabled}))?;
+        self.revision += 1;
+        Ok(())
+    }
+
     fn browser_settings_reply(&self) -> Value {
         let control = self.browser_agent_control_settings();
         json!({
@@ -135,6 +145,31 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_default_control_preserves_overrides_and_cannot_be_changed_by_the_api() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = Engine::fixture(Store::open(&dir.path().join("state.sqlite")).unwrap());
+        engine.store.save_document(DOCUMENT, &json!({"searchEngine":"bing","agentControl":{"thread":true},"profileID":"unchanged"})).unwrap();
+        engine.set_browser_default_agent_control(false).unwrap();
+        let stored = engine.store.document(DOCUMENT).unwrap().unwrap();
+        assert_eq!(stored["agentControlByDefault"], false);
+        assert_eq!(stored["agentControl"]["thread"], true);
+        assert_eq!(stored["searchEngine"], "bing");
+        assert_eq!(stored["profileID"], "unchanged");
+        assert!(
+            engine
+                .execute(
+                    "browser.settings.patch",
+                    &json!({"agentControlByDefault":true})
+                )
+                .is_err()
+        );
+        assert_eq!(
+            engine.browser_agent_control_settings()["agentControlByDefault"],
+            false
+        );
+    }
 
     #[test]
     fn native_control_revokes_pending_agent_replies_but_preserves_native_operations() {

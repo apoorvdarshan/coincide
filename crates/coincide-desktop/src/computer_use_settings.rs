@@ -5,7 +5,12 @@ use crate::computer_use::{Handle, Status};
 use coincide_core::computer_use::{Failure, Permission, PermissionKind};
 use gpui_kit::{
     base::Disableable,
-    component::{button::Button, switch::Switch},
+    component::{
+        ActiveTheme, Sizable, StyledExt,
+        button::{Button, ButtonVariants},
+        switch::Switch,
+    },
+    prelude::FluentBuilder,
     *,
 };
 use std::{collections::BTreeMap, time::Duration};
@@ -165,25 +170,71 @@ impl Render for ComputerUseSettingsPanel {
         } else {
             self.status.error.map(failure_text)
         };
-        div().flex().flex_col().gap_3().p_4()
-
-            .child(format!("Let agents see and interact with {} through Coincide.", if cfg!(target_os="macos") {"Mac apps"} else {"apps on this computer"}))
-            .child(div().flex().flex_col().gap_1()
-                .child(div().flex().items_center().justify_between().gap_3().child(format!("Allow agents to use this {COMPUTER}")).child(Switch::new("computer-use-enable").accessibility_label(format!("Allow agents to use this {COMPUTER}")).checked(enabled).disabled(self.status.stopped||(!enabled&&!self.status.native_compiled)).on_click(cx.listener(|this,checked,_,cx|this.set_enabled(*checked,cx)))))
-                .child(div().text_sm().child("Agents can view the screen and interact with apps while Computer Use is on. All providers use a private connection for each thread.")))
-            .child(format!("Status: {}", self.state()))
-            .child(format!("App accessibility: {:?} · Window capture: {:?}",self.status.permissions.accessibility,self.status.permissions.screen_capture))
-            .child(div().flex().gap_2()
-                .child(Button::new("computer-use-refresh").label("Refresh").disabled(!permission).on_click(cx.listener(|this,_,_,cx|this.permission(None,cx)))))
-            .child(div().flex().gap_2()
-                .child(Button::new("computer-use-ax").label(if cfg!(target_os="macos") {"Grant Accessibility access"} else {"Check app accessibility"}).disabled(!permission).on_click(cx.listener(|this,_,_,cx|this.permission(Some(PermissionKind::Accessibility),cx))))
-                .child(Button::new("computer-use-screen").label(if cfg!(target_os="macos") {"Grant Screen Recording access"} else {"Check window capture"}).disabled(!permission).on_click(cx.listener(|this,_,_,cx|this.permission(Some(PermissionKind::ScreenCapture),cx)))))
-            .child(div().text_sm().child("Activity"))
-            .child(if using.is_empty() { "No threads are using this computer.".into() } else { using.join("\n") })
-            .children(attention.map(|text| div().flex().flex_col().gap_1().child(div().text_sm().child("Computer Use needs attention")).child(text)))
-            .child(div().text_sm().child("Turning Computer Use off ends agents’ access. Computer Use also stops when Coincide quits."))
-            .child("No browser control, arbitrary scripts or commands. macOS requires Accessibility and Screen Recording access. Windows follows its app and window capture permissions. Linux requires X11, XRes, XComposite and app accessibility; Wayland and XWayland are unsupported. Dispatch success requires a new observation to verify the result.")
-            .child(self.notice.clone().or_else(||self.save_error.clone()).or_else(||self.status.error.map(|e|format!("{e:?}"))).unwrap_or_default())
+        let label = |permission| match permission {
+            Permission::Granted => "Allowed",
+            Permission::Denied => "Not allowed",
+            Permission::Unknown => "Not checked",
+            Permission::Unsupported => "Unavailable on this platform",
+        };
+        let mut pane = div().flex().flex_col().gap_3().p_4()
+            .child(div().flex().items_center().gap_3()
+                .child(div().flex_1().child(format!("Allow agents to use this {COMPUTER}"))
+                    .child(div().text_xs().text_color(cx.theme().muted_foreground).child("Agents can see and interact with apps through a private connection for each conversation.")))
+                .child(Switch::new("computer-use-enable").color(cx.theme().foreground).accessibility_label(format!("Allow agents to use this {COMPUTER}"))
+                    .checked(enabled).disabled(self.status.stopped || (!enabled && !self.status.native_compiled))
+                    .on_click(cx.listener(|this, checked, _, cx| this.set_enabled(*checked, cx)))))
+            .child(div().flex().items_center().justify_between().child(self.state())
+                .child(Button::new("computer-use-refresh").icon(gpui_kit::assets::IconName::RefreshCw).ghost().small().accessibility_label("Refresh permissions").tooltip("Refresh permissions").disabled(!permission)
+                    .on_click(cx.listener(|this, _, _, cx| this.permission(None, cx)))));
+        for (id, title, state, kind) in [
+            (
+                "computer-use-ax",
+                "Accessibility",
+                self.status.permissions.accessibility,
+                PermissionKind::Accessibility,
+            ),
+            (
+                "computer-use-screen",
+                "Screen Recording",
+                self.status.permissions.screen_capture,
+                PermissionKind::ScreenCapture,
+            ),
+        ] {
+            pane = pane.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .py_2()
+                    .border_b_1()
+                    .border_color(cx.theme().border)
+                    .child(
+                        div().flex_1().child(title).child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(label(state)),
+                        ),
+                    )
+                    .when(state != Permission::Granted, |row| {
+                        row.child(
+                            Button::new(id)
+                                .label("Grant Access")
+                                .small()
+                                .accessibility_label(format!("Grant {title} access"))
+                                .disabled(!permission)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.permission(Some(kind), cx)
+                                })),
+                        )
+                    }),
+            );
+        }
+        pane.child(div().font_semibold().child("Activity"))
+            .child(div().text_sm().child(if using.is_empty() { "No conversations are using this computer.".into() } else { using.join("\n") }))
+            .children(attention.map(|text| div().text_sm().text_color(cx.theme().danger).child(text)))
+            .child(div().text_xs().text_color(cx.theme().muted_foreground).child("Turn Computer Use off to end agents’ access. Access also ends when Coincide quits."))
+            .child(div().text_xs().text_color(cx.theme().danger).child(self.notice.clone().or_else(|| self.save_error.clone()).or_else(|| self.status.error.map(|error| failure_text(error).to_owned())).unwrap_or_default()))
     }
 }
 

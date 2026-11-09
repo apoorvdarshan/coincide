@@ -1,18 +1,19 @@
 //! Native profiles, metadata preview and explicit saved bookmark import. No cookies,
 //! passwords, keys, login grants or original Swift website stores are imported.
+use crate::native_menu::AccessibleMenuExt as _;
 use crate::worker_owner::{ShutdownStatus as WorkerOwnerStatus, WorkerOwner};
 use anyhow::{Result, ensure};
 use coincide_core::{
     api::SharedEngine,
     browser_bookmarks::{self, Library, Plan},
 };
+use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     AnyElement, AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement,
     PathPromptOptions, Render, ScrollHandle, SharedString, StatefulInteractiveElement, Styled,
     Window,
     component::{
-        Disableable,
-        Sizable,
+        Disableable, Sizable,
         button::{Button, ButtonVariants},
         input::{Input, InputState},
     },
@@ -31,6 +32,34 @@ use std::{
     },
 };
 use uuid::Uuid;
+/// Metadata reads wait briefly for normal UI snapshots instead of turning
+/// routine lock contention into a persistent error. Cancellation is observed
+/// while waiting, before ownership is acquired, and before any read.
+fn wait_for_engine<'a>(
+    engine: &'a SharedEngine,
+    active: impl Fn() -> Result<()>,
+) -> Result<std::sync::MutexGuard<'a, coincide_core::api::Engine>> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        active()?;
+        match engine.try_lock() {
+            Ok(guard) => {
+                active()?;
+                return Ok(guard);
+            }
+            Err(std::sync::TryLockError::Poisoned(_)) => {
+                anyhow::bail!("Browser state is unavailable")
+            }
+            Err(std::sync::TryLockError::WouldBlock) => {
+                ensure!(
+                    std::time::Instant::now() < deadline,
+                    "The app is busy. Try refreshing again."
+                );
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        }
+    }
+}
 const MAX_DOCUMENT: u64 = 1_048_576;
 #[path = "cookie_import_flow.rs"]
 pub(crate) mod cookie_flow;
@@ -93,11 +122,13 @@ pub struct ProfileSnapshot {
     pub selected: ProfileChoice,
     pub open_tabs: usize,
     pub persistent_profiles_available: bool,
+    pub private_by_default: bool,
 }
 #[derive(Clone)]
 pub enum ProfileOperation {
     Select(ProfileChoice),
     CreateFresh(String),
+    SetPrivateDefault(bool),
 }
 pub struct ProfileRequest {
     pub thread: String,
@@ -110,6 +141,7 @@ pub(crate) struct ProfileCatalog {
     pub revision: u64,
     pub profiles: Vec<ProfileMetadata>,
     selections: BTreeMap<String, ProfileChoice>,
+    private_by_default: bool,
     raw_document: Value,
 }
 impl ProfileCatalog {
@@ -195,6 +227,7 @@ impl ProfileCatalog {
                 revision: 0,
                 profiles: parsed,
                 selections,
+                private_by_default: value["usesPrivateSessions"].as_bool().unwrap_or(false),
                 raw_document: value,
             }
         } else {
@@ -208,6 +241,7 @@ impl ProfileCatalog {
                     cookie_import: None,
                 }],
                 selections: BTreeMap::new(),
+                private_by_default: false,
                 raw_document: json!({"version":1,"profiles":[],"threads":{}}),
             }
         };
@@ -218,7 +252,11 @@ impl ProfileCatalog {
     }
     pub fn selected(&self, thread: &str) -> ProfileChoice {
         self.selections.get(thread).cloned().unwrap_or_else(|| {
-            ProfileChoice::Persistent(self.profiles.iter().find(|p| p.is_default).unwrap().id)
+            if self.private_by_default {
+                ProfileChoice::Private
+            } else {
+                ProfileChoice::Persistent(self.profiles.iter().find(|p| p.is_default).unwrap().id)
+            }
         })
     }
     pub fn snapshot(&self, thread: &str, open_tabs: usize) -> ProfileSnapshot {
@@ -229,6 +267,7 @@ impl ProfileCatalog {
             selected: self.selected(thread),
             open_tabs,
             persistent_profiles_available: true,
+            private_by_default: self.private_by_default,
         }
     }
     pub fn apply(
@@ -244,7 +283,9 @@ impl ProfileCatalog {
         );
         let old_profiles = self.profiles.clone();
         let old_selections = self.selections.clone();
+        let old_default = self.private_by_default;
         match request.operation {
+            ProfileOperation::SetPrivateDefault(enabled) => self.private_by_default = enabled,
             ProfileOperation::Select(choice) => {
                 ensure!(
                     open_tabs == 0,
@@ -283,10 +324,24 @@ impl ProfileCatalog {
         if let Err(error) = self.save() {
             self.profiles = old_profiles;
             self.selections = old_selections;
+            self.private_by_default = old_default;
             return Err(error);
         }
         self.revision = self.revision.wrapping_add(1);
         Ok(())
+    }
+    /// Freeze the chosen profile for this conversation before constructing a tab.
+    /// A later change of the default must not silently rebind open native views.
+    pub fn pin_selection(&mut self, thread: &str) -> Result<()> {
+        if self.selections.contains_key(thread) {
+            return Ok(());
+        }
+        let request = ProfileRequest {
+            thread: thread.into(),
+            revision: self.revision,
+            operation: ProfileOperation::Select(self.selected(thread)),
+        };
+        self.apply(thread, request, 0)
     }
     pub(crate) fn reserve_cookie_profile(
         &self,
@@ -409,6 +464,9 @@ impl ProfileCatalog {
         // Unknown fields remain opaque data; only existing owned fields/new rows
         // are patched. They never become profile/path/runtime authority.
         let mut value = self.raw_document.clone();
+        if self.private_by_default || value.get("usesPrivateSessions").is_some() {
+            value["usesPrivateSessions"] = json!(self.private_by_default);
+        }
         let old = value["profiles"].as_array().cloned().unwrap_or_default();
         let profiles=self.profiles.iter().map(|profile| {
             let mut row=old.iter().find(|row|row["id"].as_str().and_then(|id|Uuid::parse_str(id).ok())==Some(profile.id)).cloned()
@@ -689,6 +747,8 @@ pub struct BrowserSettings {
     chosen: Option<ChosenBookmarks>,
     library: Option<Library>,
     pub(super) pane_mode: bool,
+    advanced_open: bool,
+    new_profile_open: bool,
     pane_library_attempt: Option<u64>,
     library_page: usize,
     preview_page: usize,
@@ -767,6 +827,8 @@ impl BrowserSettings {
                 chosen: None,
                 library: None,
                 pane_mode: false,
+                advanced_open: false,
+                new_profile_open: false,
                 pane_library_attempt: None,
                 library_page: 0,
                 preview_page: 0,
@@ -875,6 +937,8 @@ impl BrowserSettings {
         if self.pane_library_attempt != Some(self.generation)
             && self.snapshot.is_some()
             && !self.import_busy
+            && !self.profile_pending
+            && !self.history.busy()
             && self.workers.can_start()
         {
             self.pane_library_attempt = Some(self.generation);
@@ -937,15 +1001,21 @@ impl BrowserSettings {
             .gap_2()
             .p_2()
             .child(
-                div().flex().items_center().justify_between().child("Bookmarks").child(
-                    Button::new("browser-pane-library-reload")
-                        .icon(gpui_kit::assets::IconName::RefreshCw)
-                        .ghost().xsmall()
-                        .accessibility_label("Refresh bookmarks")
-                        .tooltip("Refresh bookmarks")
-                        .disabled(busy)
-                        .on_click(cx.listener(|this, _, _, cx| this.reload_bookmarks(cx))),
-                ),
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child("Bookmarks")
+                    .child(
+                        Button::new("browser-pane-library-reload")
+                            .icon(gpui_kit::assets::IconName::RefreshCw)
+                            .ghost()
+                            .xsmall()
+                            .accessibility_label("Refresh bookmarks")
+                            .tooltip("Refresh bookmarks")
+                            .disabled(busy)
+                            .on_click(cx.listener(|this, _, _, cx| this.reload_bookmarks(cx))),
+                    ),
             );
         if let Some(library) = &self.library {
             if library.bookmarks.is_empty() {
@@ -955,14 +1025,42 @@ impl BrowserSettings {
                 let id = bookmark.id;
                 let revision = library.revision;
                 panel = panel.child(
-                    Button::new(SharedString::from(format!("browser-pane-bookmark-{id}")))
-                        .label(bookmark.title.chars().take(60).collect::<String>())
-                        .w_full().ghost().compact()
-                        .tooltip(bookmark.url.clone())
-                        .disabled(busy)
-                        .on_click(
-                            cx.listener(move |this, _, _, cx| this.open_bookmark(id, revision, cx)),
-                        ),
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div().flex_1().min_w_0().child(
+                                Button::new(SharedString::from(format!(
+                                    "browser-pane-bookmark-{id}"
+                                )))
+                                .label(bookmark.title.chars().take(60).collect::<String>())
+                                .w_full()
+                                .ghost()
+                                .compact()
+                                .tooltip(bookmark.url.clone())
+                                .disabled(busy)
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| this.open_bookmark(id, revision, cx),
+                                )),
+                            ),
+                        )
+                        .when(!self.pane_mode, |row| {
+                            row.child(
+                                Button::new(SharedString::from(format!(
+                                    "browser-remove-bookmark-{id}"
+                                )))
+                                .icon(gpui_kit::assets::IconName::Close)
+                                .ghost()
+                                .xsmall()
+                                .accessibility_label("Remove bookmark")
+                                .tooltip("Remove bookmark")
+                                .disabled(busy)
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| this.remove_bookmark(id, revision, cx),
+                                )),
+                            )
+                        }),
                 );
             }
         }
@@ -972,14 +1070,45 @@ impl BrowserSettings {
         }
         panel.into_any_element()
     }
+    fn remove_bookmark(&mut self, id: Uuid, revision: u64, cx: &mut Context<Self>) {
+        self.library_work(
+            "Removing bookmark…",
+            cx,
+            move |engine, admission, epoch, generation, _| {
+                library_context_allowed(&admission, &epoch, generation)?;
+                let mut engine = engine.try_lock().map_err(|_| {
+                    anyhow::anyhow!("The app is busy. Try removing the bookmark again.")
+                })?;
+                let library = engine.saved_browser_bookmarks()?;
+                ensure!(
+                    library.revision == revision,
+                    "Bookmarks changed. Refresh before removing this bookmark."
+                );
+                let bookmark = library
+                    .bookmarks
+                    .iter()
+                    .find(|bookmark| bookmark.id == id)
+                    .ok_or_else(|| anyhow::anyhow!("Bookmark no longer exists"))?;
+                let candidate = browser_bookmarks::Candidate {
+                    url: bookmark.url.clone(),
+                    title: bookmark.title.clone(),
+                    folder: None,
+                };
+                library_context_allowed(&admission, &epoch, generation)?;
+                Ok(LibraryReply::Reloaded(
+                    engine.toggle_browser_bookmark(revision, candidate)?,
+                ))
+            },
+        );
+    }
     fn reload_bookmarks(&mut self, cx: &mut Context<Self>) {
         self.library_work(
             "Loading bookmarks…",
             cx,
             |engine, admission, epoch, generation, snapshot| {
                 library_context_allowed(&admission, &epoch, generation)?;
-                let engine = engine.try_lock().map_err(|_| {
-                    anyhow::anyhow!("The app is busy; reload saved bookmarks to try again")
+                let engine = wait_for_engine(&engine, || {
+                    library_context_allowed(&admission, &epoch, generation)
                 })?;
                 library_context_allowed(&admission, &epoch, generation)?;
                 ensure!(
@@ -1244,6 +1373,175 @@ impl BrowserSettings {
         cx.notify();
     }
 }
+impl BrowserSettings {
+    fn overview_page(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        use gpui_kit::component::{menu::PopupMenuItem, switch::Switch};
+        self.ensure_pane_library(cx);
+        let mut view = div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .p_4()
+            .child(self.search_engine_row(cx));
+        let busy = self.import_busy || self.profile_pending || self.workers.closed();
+        if let Some(snapshot) = self.snapshot.clone() {
+            view = view.child(div().flex().items_center().justify_between().gap_3()
+                .child(div().flex_1().min_w_0().child("Use private sessions").child(div().text_xs().whitespace_normal().child("New browser sessions use temporary storage, cleared when Coincide quits. Existing conversations keep their selected profile.")))
+                .child(Switch::new("browser-private-default").color(gpui_kit::rgb(0xe4e9f2))
+                    .checked(snapshot.private_by_default).disabled(busy)
+                    .accessibility_label("Use private sessions")
+                    .on_click(cx.listener(|this, enabled: &bool, _, cx| {
+                        this.request(ProfileOperation::SetPrivateDefault(*enabled), cx);
+                    }))));
+            let selected = snapshot.selected.clone();
+            let label = match selected {
+                ProfileChoice::Private => "Private session".into(),
+                ProfileChoice::Persistent(id) => snapshot
+                    .profiles
+                    .iter()
+                    .find(|p| p.id == id)
+                    .map(|p| p.name.clone())
+                    .unwrap_or_else(|| "Default".into()),
+            };
+            let parent = cx.entity().downgrade();
+            let picker = Button::new("browser-current-profile")
+                .label(label)
+                .small()
+                .dropdown_caret(true)
+                .disabled(busy || snapshot.open_tabs > 0)
+                .accessibility_label("Browser profile")
+                .accessible_menu(move |mut menu, _, _| {
+                    for profile in &snapshot.profiles {
+                        let id = profile.id;
+                        let parent = parent.clone();
+                        menu = menu.item(
+                            PopupMenuItem::new(profile.name.clone())
+                                .checked(selected == ProfileChoice::Persistent(id))
+                                .disabled(
+                                    !profile.is_default && !snapshot.persistent_profiles_available,
+                                )
+                                .on_click(move |_, _, cx| {
+                                    let _ = parent.update(cx, |this, cx| {
+                                        this.request(
+                                            ProfileOperation::Select(ProfileChoice::Persistent(id)),
+                                            cx,
+                                        )
+                                    });
+                                }),
+                        );
+                    }
+                    let parent = parent.clone();
+                    menu.item(PopupMenuItem::separator()).item(
+                        PopupMenuItem::new("Private session")
+                            .checked(selected == ProfileChoice::Private)
+                            .on_click(move |_, _, cx| {
+                                let _ = parent.update(cx, |this, cx| {
+                                    this.request(
+                                        ProfileOperation::Select(ProfileChoice::Private),
+                                        cx,
+                                    )
+                                });
+                            }),
+                    )
+                });
+            view = view.child(div().flex().items_center().justify_between().gap_3()
+                .child(div().flex_1().min_w_0().child("Browser profile").child(div().text_xs().whitespace_normal().child(if snapshot.open_tabs > 0 { "Close this conversation’s browser tabs to change profiles." } else { "Shared profiles keep sign-ins. Private sessions are cleared when Coincide quits." })))
+                .child(picker));
+        } else {
+            view = view.child(
+                div()
+                    .text_xs()
+                    .child("Open a conversation to choose its browser profile."),
+            );
+        }
+        let default_control = self.engine.as_ref().and_then(|engine| {
+            engine.try_lock().ok().map(|engine| {
+                engine.browser_agent_control_settings()["agentControlByDefault"]
+                    .as_bool()
+                    .unwrap_or(false)
+            })
+        });
+        let expected = default_control.unwrap_or(false);
+        view = view.child(div().flex().items_center().justify_between().gap_3()
+            .child(div().flex_1().min_w_0().child("Agent Control by default").child(div().text_xs().whitespace_normal().child("Let agents use their conversation’s browser. Each conversation can override this in its browser toolbar.")))
+            .child(Switch::new("browser-default-agent-control").color(gpui_kit::rgb(0xe4e9f2)).checked(expected).disabled(default_control.is_none()).accessibility_label("Agent Control by default")
+                .on_click(cx.listener(move |this, enabled: &bool, _, cx| {
+                    let result = (|| -> Result<()> {
+                        let shared = this.engine.as_ref().ok_or_else(|| anyhow::anyhow!("Browser is unavailable"))?;
+                        let mut engine = shared.try_lock().map_err(|_| anyhow::anyhow!("The app is busy. Try again."))?;
+                        ensure!(engine.browser_agent_control_settings()["agentControlByDefault"] == expected, "The browser setting changed. Try again.");
+                        engine.set_browser_default_agent_control(*enabled)
+                    })();
+                    this.status = result.err().map(|error| error.to_string()).unwrap_or_default(); cx.notify();
+                }))));
+        view = view.child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child("Profiles")
+                .child(
+                    Button::new("browser-new-profile-disclosure")
+                        .label("New Profile…")
+                        .small()
+                        .disabled(busy)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.new_profile_open = !this.new_profile_open;
+                            cx.notify();
+                        })),
+                ),
+        );
+        if self.new_profile_open {
+            view = view.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(Input::new(&self.name).small()),
+                    )
+                    .child(
+                        Button::new("browser-profile-create")
+                            .label("Create")
+                            .small()
+                            .disabled(busy)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let name = this.name.read(cx).value().to_string();
+                                this.request(ProfileOperation::CreateFresh(name), cx);
+                            })),
+                    ),
+            );
+        }
+        view = view.child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(
+                    div().child("Import browser data").child(
+                        div()
+                            .text_xs()
+                            .child("Review bookmarks, history, cookies, and saved-login imports."),
+                    ),
+                )
+                .child(
+                    Button::new("browser-import-tools")
+                        .label("Import…")
+                        .small()
+                        .disabled(busy)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.advanced_open = true;
+                            cx.notify();
+                        })),
+                ),
+        );
+        view.child(self.pane_library(cx)).into_any_element()
+    }
+}
+
 impl Drop for BrowserSettings {
     fn drop(&mut self) {
         self.request_shutdown();
@@ -1253,6 +1551,9 @@ impl Render for BrowserSettings {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.pane_mode {
             return self.pane_library(cx).into_any_element();
+        }
+        if !self.advanced_open {
+            return self.overview_page(cx);
         }
         let busy = self.import_busy
             || self.profile_pending
@@ -1264,6 +1565,15 @@ impl Render for BrowserSettings {
             .flex_col()
             .gap_2()
             .p_4()
+            .child(
+                Button::new("browser-import-tools-back")
+                    .label("Back to Browser Settings")
+                    .small()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.advanced_open = false;
+                        cx.notify();
+                    })),
+            )
             .child(search_engine)
             .child("Browser profiles");
         if let Some(snapshot) = &self.snapshot {
@@ -1455,6 +1765,70 @@ mod tests {
             revision: catalog.revision,
             operation,
         }
+    }
+    #[::core::prelude::v1::test]
+    fn metadata_reads_wait_for_short_contention_and_cancel_while_the_owner_is_busy() {
+        use std::sync::{Mutex, atomic::AtomicBool};
+        let scratch = Scratch::new();
+        let engine = Arc::new(Mutex::new(coincide_core::api::Engine::new(
+            coincide_core::store::Store::open(&scratch.0.join("fixture.sqlite")).unwrap(),
+        )));
+        for cancel in [false, true] {
+            let guard = engine.lock().unwrap();
+            let worker_engine = engine.clone();
+            let cancelled = Arc::new(AtomicBool::new(false));
+            let cancelled_worker = cancelled.clone();
+            let (entered, ready) = std::sync::mpsc::channel();
+            let worker = std::thread::spawn(move || {
+                let first = AtomicBool::new(true);
+                wait_for_engine(&worker_engine, || {
+                    if first.swap(false, Ordering::AcqRel) {
+                        entered.send(()).unwrap();
+                    }
+                    ensure!(!cancelled_worker.load(Ordering::Acquire), "Read cancelled");
+                    Ok(())
+                })
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+            });
+            ready
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .unwrap();
+            if cancel {
+                cancelled.store(true, Ordering::Release);
+                assert_eq!(worker.join().unwrap().unwrap_err(), "Read cancelled");
+                drop(guard);
+            } else {
+                drop(guard);
+                worker.join().unwrap().unwrap();
+            }
+        }
+    }
+    #[::core::prelude::v1::test]
+    fn private_default_survives_restart_without_rebinding_existing_conversations() {
+        let scratch = Scratch::new();
+        let mut catalog = ProfileCatalog::open(scratch.0.clone(), None).unwrap();
+        let shared = catalog.selected("existing");
+        catalog.pin_selection("existing").unwrap();
+        let enable = request(
+            &catalog,
+            "existing",
+            ProfileOperation::SetPrivateDefault(true),
+        );
+        catalog.apply("existing", enable, 1).unwrap();
+        assert_eq!(catalog.selected("existing"), shared);
+        assert_eq!(catalog.selected("new-private"), ProfileChoice::Private);
+        catalog.pin_selection("new-private").unwrap();
+        let disable = request(
+            &catalog,
+            "existing",
+            ProfileOperation::SetPrivateDefault(false),
+        );
+        catalog.apply("existing", disable, 1).unwrap();
+        let restarted = ProfileCatalog::open(scratch.0.clone(), None).unwrap();
+        assert_eq!(restarted.selected("existing"), shared);
+        assert_eq!(restarted.selected("new-private"), ProfileChoice::Private);
+        assert_eq!(restarted.selected("another-new"), shared);
     }
     #[::core::prelude::v1::test]
     fn fresh_profiles_preserve_default_and_thread_choices_across_restart() {

@@ -1206,9 +1206,7 @@ fn footer_summary(
     } else {
         "Edit selection options"
     };
-    let mut accessible = format!(
-        "{action}. Saved: {saved}."
-    );
+    let mut accessible = format!("{action}. Saved: {saved}.");
     if let Some(annotation) = &annotation {
         accessible.push_str(&format!(" {annotation}."));
     }
@@ -1243,6 +1241,23 @@ fn account_problem(provider: &Value, account: &Value, configured: &Value) -> Opt
         _ => Some("Account support is not described by current capabilities.".into()),
     }
 }
+/// Swift's collapse priority: mode, follow-up, access, speed, effort, model.
+fn footer_compaction(widths: [f32; 6], available: f32) -> [bool; 6] {
+    let mut result = [false; 6];
+    let mut total = widths.iter().sum::<f32>()
+        + widths.iter().filter(|w| **w > 0.).count().saturating_sub(1) as f32 * 2.;
+    for i in [5, 4, 3, 2, 1, 0] {
+        if total <= available {
+            break;
+        }
+        if widths[i] > 28. {
+            total -= widths[i] - 28.;
+            result[i] = true;
+        }
+    }
+    result
+}
+
 impl Coincide {
     pub(super) fn selected_account_wait_status(&self) -> &'static str {
         if self.selection_ui.capabilities["namedModels"]["accountCatalogReady"] == true
@@ -2445,7 +2460,11 @@ impl Coincide {
             }
         }
     }
-    pub(super) fn composer_selection_footer(&self, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn composer_selection_footer(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let Some(thread) = &self.selected else {
             return div().into_any_element();
         };
@@ -2520,7 +2539,52 @@ impl Coincide {
                         .as_array()
                         .is_some_and(|choices| !choices.is_empty())
             });
-        let mut controls = div().flex().flex_wrap().items_center().gap_1().gap(px(2.));
+        let available = self.composer_available_width(window);
+        let measure = |label: &str| {
+            let run = TextRun {
+                len: label.len(),
+                font: font("system-ui"),
+                color: self.color(0xe4e9f2).into(),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+            f32::from(
+                window
+                    .text_system()
+                    .shape_line(label.into(), px(13.), &[run], None)
+                    .width,
+            )
+        };
+        let follow = coincide_core::composer_follow_up::selected(thread, &self.settings);
+        let widths = [
+            (measure(&model) + 35.).min(240.),
+            measure(&effort) + 36.,
+            if speed_supported {
+                measure(&speed) + 36.
+            } else {
+                0.
+            },
+            measure(access) + 36.,
+            measure(follow.label()) + 36.,
+            measure(mode) + 28.,
+        ];
+        // Attach, voice, send and optional usage/context meters keep their space.
+        let trailing = 76.
+            + self.composer_meter_width(cx)
+            + if coincide_core::voice::Settings::decode(&self.settings).enabled {
+                30.
+            } else {
+                0.
+            }
+            + if self.running.contains(&text(thread, "id")) {
+                30.
+            } else {
+                0.
+            };
+        let compact = footer_compaction(widths, (available - trailing).max(0.));
+        let mut controls = div().flex().items_center().gap(px(2.));
+
         let facets = [
             (
                 PickerFacet::Model,
@@ -2557,9 +2621,16 @@ impl Coincide {
             .into_iter()
             .filter(|(facet, ..)| *facet != PickerFacet::Speed || speed_supported)
         {
+            let small = compact[match facet {
+                PickerFacet::Model => 0,
+                PickerFacet::Effort => 1,
+                PickerFacet::Speed => 2,
+                PickerFacet::Access => 3,
+                PickerFacet::Mode => 5,
+            }];
             controls = controls.child(
                 Button::new(id)
-                    .when(facet != PickerFacet::Model, |button| {
+                    .when(facet != PickerFacet::Model && !small, |button| {
                         button.label(label.clone())
                     })
                     .accessibility_label(help.clone())
@@ -2567,12 +2638,22 @@ impl Coincide {
                     .h(px(28.))
                     .rounded(px(8.))
                     .when(facet == PickerFacet::Model, |button| {
-                        button.max_w(px(240.)).child(chat_layout::provider_label(
-                            &text(selection, "provider"),
-                            label.clone(),
-                        ))
+                        if small {
+                            button.w(px(28.)).p_0().child(chat_layout::provider_label(
+                                &text(selection, "provider"),
+                                String::new(),
+                            ))
+                        } else {
+                            button.max_w(px(240.)).child(chat_layout::provider_label(
+                                &text(selection, "provider"),
+                                label.clone(),
+                            ))
+                        }
                     })
-                    .when(facet != PickerFacet::Mode, |button| {
+                    .when(small && facet != PickerFacet::Model, |button| {
+                        button.w(px(28.)).p_0()
+                    })
+                    .when(facet != PickerFacet::Mode && !small, |button| {
                         button.dropdown_caret(true)
                     })
                     .when(facet != PickerFacet::Model, |button| {
@@ -2620,7 +2701,7 @@ impl Coincide {
                     ),
             );
             if facet == PickerFacet::Access {
-                controls = controls.child(self.follow_up_button(cx));
+                controls = controls.child(self.follow_up_button(compact[4], cx));
             }
         }
         div()
@@ -2718,13 +2799,16 @@ impl Coincide {
         div()
             .flex()
             .flex_col()
+            .flex_1()
+            .min_h_0()
+            .justify_center()
             .items_center()
             .gap_2()
             .px(px(24.))
             .pb_5()
             .child(
                 div()
-                    .font_family("New York")
+                    .font_family(crate::settings::reply_font())
                     .text_3xl()
                     .text_center()
                     .child(headline),
@@ -3130,6 +3214,10 @@ impl Coincide {
         content: AnyElement,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let width = width
+            .min(f32::from(window.viewport_size().width) - 24.)
+            .max(160.);
+        let height = (f32::from(window.viewport_size().height) - 24.).clamp(160., 540.);
         let anchor = self
             .selection_ui
             .popover_anchor
@@ -3161,7 +3249,7 @@ impl Coincide {
                         div()
                             .id("composer-popover-card")
                             .w(px(width))
-                            .max_h(px(540.))
+                            .max_h(px(height))
                             .overflow_y_scroll()
                             .rounded(px(14.))
                             .bg(self.color(0x181d28))
@@ -3680,6 +3768,24 @@ impl Coincide {
 
 #[cfg(test)]
 mod tests {
+    #[::core::prelude::v1::test]
+    fn footer_labels_collapse_in_swifts_order_without_spending_space_on_absent_speed() {
+        let widths = [180., 75., 0., 110., 80., 65.];
+        assert_eq!(super::footer_compaction(widths, 600.), [false; 6]);
+        assert_eq!(
+            super::footer_compaction(widths, 485.),
+            [false, false, false, false, false, true]
+        );
+        assert_eq!(
+            super::footer_compaction(widths, 350.),
+            [false, false, false, true, true, true]
+        );
+        assert_eq!(
+            super::footer_compaction(widths, 140.),
+            [true, true, false, true, true, true]
+        );
+    }
+
     use super::*;
     #[::core::prelude::v1::test]
     fn picker_preferences_filter_without_inventing_catalog_rows_or_changing_selection() {
