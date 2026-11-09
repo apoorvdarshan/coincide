@@ -71,7 +71,7 @@ fn run(engine: SharedEngine, receiver: Receiver<Request>, latest: Arc<AtomicU64>
         };
         // Wait for a quiet period, keeping only the newest text.
         loop {
-            match receiver.recv_timeout(Duration::from_millis(500)) {
+            match receiver.recv_timeout(Duration::from_millis(1200)) {
                 Ok(next) => request = next,
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break,
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,

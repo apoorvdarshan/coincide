@@ -313,7 +313,7 @@ def main():
         time.sleep(0.2)
         command("import", "-window", window, str(artifacts / "composer-after-click.png"), env=env)
         draft = "Native X11 keyboard draft survives restart"
-        command("xdotool", "type", "--clearmodifiers", "--delay", "25", draft, env=env)
+        command("xdotool", "type", "--clearmodifiers", "--delay", "100", draft, env=env)
         command("import", "-window", window, str(artifacts / "composer-after-type.png"), env=env)
         # Drafts persist at the thread-switch boundary, not on every keystroke,
         # so the typing path never waits on the store. Switch to a fresh thread
