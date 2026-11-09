@@ -4639,6 +4639,9 @@ impl Coincide {
         // The active find target uses the existing expanded native body so a
         // later-line match remains visible. Clearing Find remounts the compact row.
         if kind == "notice" && !find_revealed {
+            if chat_layout::is_synthetic_turn_end(&body) {
+                return self.turn_decorated(index, div().into_any_element(), plan.header, cx);
+            }
             let row = self.notice_row(&source_id, &item_id, body, window, cx);
             return self.turn_decorated(index, row, plan.header, cx);
         }

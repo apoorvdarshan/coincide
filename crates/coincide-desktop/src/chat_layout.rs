@@ -97,6 +97,13 @@ impl ComposerSizing {
     }
 }
 
+/// Earlier Rust builds stored a "Turn ended" notice at the end of every turn;
+/// Swift never did. Keep the stored items for exact transcripts and search, but
+/// do not draw a divider Swift has no equivalent for.
+pub(super) fn is_synthetic_turn_end(body: &str) -> bool {
+    notice_label(body) == "Turn ended"
+}
+
 fn notice_label(body: &str) -> &str {
     body.split([
         '\n', '\r', '\u{b}', '\u{c}', '\u{85}', '\u{2028}', '\u{2029}',
@@ -204,7 +211,9 @@ impl Coincide {
 
 #[cfg(test)]
 mod tests {
-    use super::{ComposerSizing, PROVIDER_LOGOS, composer_height, notice_label};
+    use super::{
+        ComposerSizing, PROVIDER_LOGOS, composer_height, is_synthetic_turn_end, notice_label,
+    };
 
     #[test]
     fn all_supported_provider_logos_are_local_png_assets() {
@@ -229,6 +238,14 @@ mod tests {
     }
 
     #[test]
+    fn synthetic_turn_end_remains_stored_but_is_not_drawn() {
+        assert!(is_synthetic_turn_end("Turn ended"));
+        assert!(is_synthetic_turn_end("\nTurn ended\n"));
+        assert!(!is_synthetic_turn_end("Interrupted"));
+        assert!(!is_synthetic_turn_end("Turn ended early"));
+    }
+
+    #[::core::prelude::v1::test]
     fn notice_matches_swift_first_nonempty_line_without_changing_copy_source() {
         let full = "\n\rTurn ended\nComplete synthetic detail";
         assert_eq!(notice_label(full), "Turn ended");
