@@ -1720,8 +1720,10 @@ cutover; no Swift app or Swift data was removed or modified.
   live OpenCode turn.
 - The transcript shows Swift's floating "Jump to Latest" pill when it is no
   longer following the tail; clicking scrolls to the end.
-- A draft whose blur/thread-switch save hit a busy Engine is retried on the
-  next tick instead of waiting for the user to press the retry banner.
+- Drafts save with a 1.2-second background debounce: typing only touches
+  memory, and one worker writes the latest text, retrying while the Engine is
+  busy. This also gives the Linux native smoke a deterministic persistence
+  point without per-keystroke store writes on the UI thread.
 - Built, signed with the shared Developer ID identity, notarized (submissions
   `34def274-ced7-4f29-b16f-4b2b2277e90b` for 0.1.15,
   `66606092-81c0-4b5b-9454-33ec1bca1150` for 0.1.16,
@@ -1732,8 +1734,9 @@ cutover; no Swift app or Swift data was removed or modified.
   `4cd62e69-6500-4935-bfac-db2dd69d2d15` for 0.1.21 and
   `ae8cb572-094c-4b27-8ee4-4a1b691783b5` for 0.1.22 and
   `ecab1f70-d6db-4f0a-9c33-f4047efa5cc1` for 0.1.24 and
-  `d4500768-1ea4-4801-8753-62023772f1f5` for 0.1.25, all Accepted), stapled
-  and installed `0.1.25` (build 35); Gatekeeper reports a notarized Developer
+  `d4500768-1ea4-4801-8753-62023772f1f5` for 0.1.25 and
+  `2f099dda-942f-44fc-85f3-06c7775c06a1` for 0.1.26, all Accepted), stapled
+  and installed `0.1.26` (build 36); Gatekeeper reports a notarized Developer
   ID. (0.1.23 was built locally but superseded before installation.)
 - `cargo test -p coincide-core --lib` passed 1159 tests (9 ignored) and
   `cargo test -p coincide-desktop --bin coincide-rust` passed 810 tests
