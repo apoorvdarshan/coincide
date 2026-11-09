@@ -535,8 +535,14 @@ impl Coincide {
                         .as_ref()
                         .is_some_and(|thread| thread["id"] == id)
                     {
-                        self.request_archive(cx);
+                        self.request_archive(window, cx);
                     }
+                } else if self
+                    .selected
+                    .as_ref()
+                    .is_some_and(|thread| thread["id"] == id)
+                {
+                    self.archive_open_thread(id, window, cx);
                 } else {
                     self.set_archived(id, true, cx);
                 }

@@ -9,7 +9,7 @@ use keyboard_settings::Command as K;
 const FILE_MANAGERS: [&str; 3] = ["com.apple.finder", "windows.explorer", "linux.files"];
 
 impl Coincide {
-    fn selected_id(&self) -> Option<String> {
+    pub(super) fn selected_id(&self) -> Option<String> {
         self.selected
             .as_ref()
             .map(|thread| text(thread, "id"))
@@ -216,7 +216,7 @@ impl Coincide {
             }
             K::Rename => self.begin_rename(window, cx),
             K::Pin => self.toggle("isPinned", cx),
-            K::Archive => self.request_archive(cx),
+            K::Archive => self.request_archive(window, cx),
             K::CopyPath => {
                 if let Some(path) = self.open_folder() {
                     cx.write_to_clipboard(ClipboardItem::new_string(path.display().to_string()));

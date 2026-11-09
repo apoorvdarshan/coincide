@@ -147,6 +147,14 @@ pub(super) fn new_thread_project(
         .then(|| NO_PROJECT.to_owned())
 }
 
+/// The visible sidebar row after `id`, else the one before it, as Swift's
+/// `handOffSelectionIfNeeded` prefers.
+fn sidebar_sibling(rows: &[(String, bool, bool)], id: &str) -> Option<String> {
+    let index = rows.iter().position(|row| row.0 == id)?;
+    rows.get(index + 1)
+        .or_else(|| index.checked_sub(1).and_then(|before| rows.get(before)))
+        .map(|row| row.0.clone())
+}
 impl Coincide {
     /// Add Project…: the folder chooser, from the empty sidebar or New Thread.
     pub(super) fn add_project_from_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1914,7 +1922,52 @@ impl Coincide {
         }
     }
 
-    pub(super) fn request_archive(&mut self, cx: &mut Context<Self>) {
+    /// After the open conversation leaves the sidebar, open its sibling, or
+    /// clear the conversation like Swift does when no sibling remains.
+    pub(super) fn hand_off_removed_selection(
+        &mut self,
+        removed: &str,
+        sibling: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .selected
+            .as_ref()
+            .and_then(|thread| thread["id"].as_str())
+            != Some(removed)
+        {
+            return;
+        }
+        if let Some(sibling) = sibling {
+            self.select(&sibling, window, cx);
+            return;
+        }
+        self.selected = None;
+        self.transcript_count = 0;
+        self.transcript_list.reset(0);
+        self.expanded.clear();
+        self.composer
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.sync_workspace_context(cx);
+        cx.notify();
+    }
+    /// Archives the open conversation and opens the next one, as Swift does.
+    pub(super) fn archive_open_thread(
+        &mut self,
+        id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let rows = self.bulk_sidebar_binding(cx).rows;
+        let sibling = sidebar_sibling(&rows, id);
+        let done = self.set_archived(id, true, cx);
+        if done {
+            self.hand_off_removed_selection(id, sibling, window, cx);
+        }
+        done
+    }
+    pub(super) fn request_archive(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(thread) = self.selected.as_ref() else {
             return;
         };
@@ -1928,16 +1981,24 @@ impl Coincide {
             self.archive_confirmation = Some(id);
             cx.notify();
         } else {
-            self.set_archived(&id, true, cx);
+            self.archive_open_thread(&id, window, cx);
         }
     }
 
-    fn snooze_selected(&mut self, seconds: Option<f64>, cx: &mut Context<Self>) {
+    fn snooze_selected(
+        &mut self,
+        seconds: Option<f64>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(id) = self.selected.as_ref().map(|v| text(v, "id")) else {
             return;
         };
         let date = seconds.map(|seconds| coincide_core::store::swift_timestamp() + seconds);
-        self.patch_navigation(
+        let leaves_sidebar = date.is_some() && !self.show_snoozed;
+        let rows = self.bulk_sidebar_binding(cx).rows;
+        let sibling = sidebar_sibling(&rows, &id);
+        let done = self.patch_navigation(
             &id,
             json!({"snoozedUntil":date}),
             if date.is_some() {
@@ -1947,6 +2008,9 @@ impl Coincide {
             },
             cx,
         );
+        if done && leaves_sidebar {
+            self.hand_off_removed_selection(&id, sibling, window, cx);
+        }
     }
 
     pub(super) fn thread_management(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -1974,7 +2038,7 @@ impl Coincide {
                         Button::new(SharedString::from(format!("archive-confirm-{id}")))
                             .accessibility_id(SharedString::from(format!("archive-confirm-{id}")))
                             .label("Confirm archive")
-                            .on_click(cx.listener(move |this, _, _, cx| {
+                            .on_click(cx.listener(move |this, _, window, cx| {
                                 if this.archive_confirmation.as_deref() != Some(id.as_str())
                                     || this
                                         .selected
@@ -1983,7 +2047,7 @@ impl Coincide {
                                 {
                                     return;
                                 }
-                                if this.set_archived(&id, true, cx) {
+                                if this.archive_open_thread(&id, window, cx) {
                                     this.archive_confirmation = None;
                                 }
                             })),
@@ -2004,31 +2068,37 @@ impl Coincide {
                 date.timestamp() as f64 > coincide_core::store::swift_timestamp() + 978307200.
             });
         if self.thread_actions_open {
-            pane = pane.child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .items_center()
-                    .gap_2()
-                    .child(Button::new("snooze-hour").label("Snooze 1 hour").on_click(
-                        cx.listener(|this, _, _, cx| this.snooze_selected(Some(3600.), cx)),
-                    ))
-                    .child(Button::new("snooze-day").label("Snooze 1 day").on_click(
-                        cx.listener(|this, _, _, cx| this.snooze_selected(Some(86400.), cx)),
-                    ))
-                    .when(snoozed, |row| {
-                        row.child(
-                            Button::new("snooze-clear").label("Unsnooze").on_click(
-                                cx.listener(|this, _, _, cx| this.snooze_selected(None, cx)),
-                            ),
-                        )
-                        .child(
-                            div()
-                                .text_sm()
-                                .child(format!("Until {}", schedule_date(&thread["snoozedUntil"]))),
-                        )
-                    }),
-            );
+            pane =
+                pane.child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .items_center()
+                        .gap_2()
+                        .child(Button::new("snooze-hour").label("Snooze 1 hour").on_click(
+                            cx.listener(|this, _, window, cx| {
+                                this.snooze_selected(Some(3600.), window, cx)
+                            }),
+                        ))
+                        .child(Button::new("snooze-day").label("Snooze 1 day").on_click(
+                            cx.listener(|this, _, window, cx| {
+                                this.snooze_selected(Some(86400.), window, cx)
+                            }),
+                        ))
+                        .when(snoozed, |row| {
+                            row.child(Button::new("snooze-clear").label("Unsnooze").on_click(
+                                cx.listener(|this, _, window, cx| {
+                                    this.snooze_selected(None, window, cx)
+                                }),
+                            ))
+                            .child(
+                                div().text_sm().child(format!(
+                                    "Until {}",
+                                    schedule_date(&thread["snoozedUntil"])
+                                )),
+                            )
+                        }),
+                );
         }
         Some(pane.into_any_element())
     }
@@ -2125,6 +2195,21 @@ mod project_tests {
             missing_project_folders(&projects),
             std::collections::HashSet::from(["gone".to_owned()])
         );
+    }
+
+    #[::core::prelude::v1::test]
+    fn removed_open_thread_hands_off_to_the_next_visible_row_then_the_previous() {
+        let rows_of = |ids: &[&str]| {
+            ids.iter()
+                .map(|id| ((*id).to_owned(), false, false))
+                .collect::<Vec<_>>()
+        };
+        let rows = rows_of(&["a", "b", "c"]);
+        assert_eq!(sidebar_sibling(&rows, "b").as_deref(), Some("c"));
+        assert_eq!(sidebar_sibling(&rows, "c").as_deref(), Some("b"));
+        assert_eq!(sidebar_sibling(&rows, "a").as_deref(), Some("b"));
+        assert_eq!(sidebar_sibling(&rows_of(&["only"]), "only"), None);
+        assert_eq!(sidebar_sibling(&rows, "missing"), None);
     }
 
     #[::core::prelude::v1::test]
