@@ -302,5 +302,46 @@ for visual verification; it is not a measurement of actual usage.
   controls into extra rows. The empty-chat layout uses the available chat area,
   the registered reply font, and no microphone when dictation is disabled.
 
-The last layout and persistence changes still require the final native run
-before an updated installed bundle is recorded here.
+The final native run confirmed that the bottom terminal stays open on relaunch,
+starts/restores a real PTY, and retains its saved 120-point drawer height. After
+scrolling the sidebar to expose the target, selecting another conversation and
+returning restored each conversation’s terminal. An offscreen AXPress initially
+did not select the row; that attempt is not counted as a successful interaction.
+The narrow and wide layouts both kept the composer controls on one line.
+
+The context button’s accessible label now also reports output, cached input and
+cost, using the same snapshot as its details. An explicit plain-terminal request
+made before window activation remains pending until the workspace mounts.
+
+Final desktop regression run: 827 passed, 26 ignored, no failures. The release
+build of the desktop, CLI and store binaries passed. The final reviewed source
+commit is `e1ca101f71cf946578ffc53f7f9126c6ef2d3945`.
+
+One background API-quit run exposed a shutdown dependency on rendering a final
+frame. Offscreen/minimized windows may never draw it. Shutdown now depends on
+saved drafts and joined owners, without requiring visual acknowledgement; all
+actual drain gates remain. The final review window was explicitly minimized,
+verified absent from the visible screen, and then exited through the API in
+0.97 seconds without forced termination. About was also opened successfully
+after scrolling its sidebar item into view. The synthetic usage record was
+removed from the isolated review database after visual verification.
+
+The wider matrix above remains open, including browser data clearing and the
+remaining import/password-manager capabilities, exhaustive transcript and media
+states, provider-specific end-to-end runs, and native Windows/Linux acceptance.
+A production bundle does not turn those unchecked rows into completed parity.
+
+
+### Installed 0.1.35 checkpoint
+
+Version 0.1.35 (build 45), from `e1ca101f71cf946578ffc53f7f9126c6ef2d3945`, was signed with Developer ID,
+accepted by Apple notarization, stapled and validated by Gatekeeper, and installed
+in `~/Applications/Coincide Rust.app`. The installed executable matches the
+signed artifact byte for byte (SHA-256 `2c8dc43f35d1d6fefd2cec6cd28b0c64d44dc9670483fe0f610ea4e2bbb224f0`).
+The app opened its original Rust SQLite database and answered through its
+original control socket with zero pending persistence and no running/starting
+turns. The previous 0.1.34 bundle remains at
+`/Users/apoorvdarshan/Applications/.Coincide-Rust-0.1.34-rollback-1794235557998615000`. No review snapshot or synthetic usage data was installed.
+
+This is a verified checkpoint of the 50-file continuation, not closure of the
+full parity matrix.
