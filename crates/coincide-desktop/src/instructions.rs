@@ -12,6 +12,7 @@ use file::EditorFile;
 use gpui_kit::{
     base::Disableable,
     component::{
+        ActiveTheme, Selectable, StyledExt,
         button::*,
         input::{InputEvent, Textarea, TextareaState},
     },
@@ -27,6 +28,7 @@ pub(super) struct InstructionsPanel {
     status: String,
     blocked: bool,
     native_edited: bool,
+    setup_open: bool,
     _subscription: Subscription,
 }
 impl InstructionsPanel {
@@ -67,6 +69,7 @@ impl InstructionsPanel {
             status,
             blocked: false,
             native_edited: false,
+            setup_open: false,
             _subscription: subscription,
         };
         panel.reload(window, cx);
@@ -180,12 +183,10 @@ impl Render for InstructionsPanel {
         div()
             .id("global-instructions-editor")
             .flex()
-            .flex_col()
-            .gap_3()
-            .p_4()
             .size_full()
             .min_h_0()
-            .overflow_y_scroll()
+            .min_w_0()
+            .overflow_hidden()
             .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 let modifiers = event.keystroke.modifiers;
                 let primary = if cfg!(target_os = "macos") {
@@ -205,72 +206,133 @@ impl Render for InstructionsPanel {
                     cx.stop_propagation();
                 }
             }))
+            .child(self.instructions_sidebar(cx))
             .child(
                 div()
+                    .flex_1()
+                    .min_w_0()
+                    .min_h_0()
                     .flex()
                     .flex_col()
-                    .gap_3()
-                    .flex_shrink_0()
-                    .child(self.setup_controls(cx))
-                    .child(div().text_sm().child(self.setup.visible_status()))
-                    .child(div().text_lg().child("Instructions"))
-                    .child("Changes are written only when you choose Save.")
-                    .when_some(
-                        self.source
-                            .as_ref()
-                            .map(|source| source.path().display().to_string()),
-                        |view, path| view.child(div().text_sm().child(path)),
-                    )
                     .child(
                         div()
                             .flex()
+                            .items_center()
                             .gap_2()
+                            .p_3()
+                            .border_b_1()
+                            .border_color(cx.theme().border)
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_1()
+                                    .child(
+                                        div().truncate().font_semibold().child(
+                                            self.source
+                                                .as_ref()
+                                                .and_then(|source| source.path().file_name())
+                                                .map(|name| name.to_string_lossy().into_owned())
+                                                .unwrap_or_else(|| "Instructions".into()),
+                                        ),
+                                    )
+                                    .child(
+                                        div()
+                                            .truncate()
+                                            .text_xs()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child(self.native_target_label()),
+                                    ),
+                            )
+                            .child(
+                                Button::new("global-instructions-reload")
+                                    .icon(gpui_kit::assets::IconName::RefreshCw)
+                                    .ghost()
+                                    .compact()
+                                    .accessibility_label(if dirty {
+                                        "Discard edits and reload"
+                                    } else {
+                                        "Reload instructions"
+                                    })
+                                    .tooltip(if dirty {
+                                        "Discard edits and reload"
+                                    } else {
+                                        "Reload instructions"
+                                    })
+                                    .on_click(
+                                        cx.listener(|this, _, window, cx| this.reload(window, cx)),
+                                    ),
+                            )
                             .child(
                                 Button::new("global-instructions-save")
                                     .label("Save")
                                     .primary()
+                                    .compact()
                                     .disabled(
                                         !readable
                                             || !dirty
                                             || self.blocked
-                                            || (self.setup.review.is_some()
-                                                || self.setup.has_copy_review()
-                                                || self.setup.git_busy())
+                                            || self.setup.review.is_some()
+                                            || self.setup.has_copy_review()
+                                            || self.setup.git_busy()
                                             || self.setup.picker_pending,
                                     )
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.human_save(cx);
                                     })),
-                            )
-                            .child(
-                                Button::new("global-instructions-reload")
-                                    .label(if dirty {
-                                        "Discard edits and reload"
-                                    } else {
-                                        "Reload"
-                                    })
-                                    .on_click(
-                                        cx.listener(|this, _, window, cx| this.reload(window, cx)),
-                                    ),
                             ),
                     )
-                    .child(if dirty { "Unsaved edits" } else { "Saved text" })
-                    .child(div().text_sm().child(self.status.clone()))
+                    .when(!readable, |view| {
+                        view.child(div().p_3().text_sm().child(
+                            "Choose or create an instruction file in the sidebar to start editing.",
+                        ))
+                    })
                     .child(
                         div()
-                            .h(px(180.))
-                            .min_h(px(180.))
-                            .flex_shrink_0()
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_hidden()
                             .font_family("monospace")
                             .child(Textarea::new(&self.editor).h_full().disabled(
                                 !readable
-                                    || (self.setup.review.is_some()
-                                        || self.setup.has_copy_review()
-                                        || self.setup.git_busy())
+                                    || self.setup.review.is_some()
+                                    || self.setup.has_copy_review()
+                                    || self.setup.git_busy()
                                     || self.setup.picker_pending,
                             )),
                     )
-                    .child(self.setup_review(cx)),
+                    .child(
+                        div()
+                            .border_t_1()
+                            .border_color(cx.theme().border)
+                            .px_3()
+                            .py_2()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(if dirty {
+                                "Unsaved changes — Save to update the file".into()
+                            } else if self.status.is_empty() {
+                                "Saved".into()
+                            } else {
+                                self.status.clone()
+                            }),
+                    )
+                    .when(
+                        self.setup.review.is_some()
+                            || self.setup.has_copy_review()
+                            || self.setup.git_busy(),
+                        |view| {
+                            view.child(
+                                div()
+                                    .id("instructions-review-scroll")
+                                    .max_h(px(300.))
+                                    .overflow_y_scroll()
+                                    .child(self.setup_review(cx)),
+                            )
+                        },
+                    ),
             )
     }
 }

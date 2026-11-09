@@ -12,7 +12,8 @@ use gpui_kit::{
     Window,
     component::{
         Disableable,
-        button::Button,
+        Sizable,
+        button::{Button, ButtonVariants},
         input::{Input, InputState},
     },
     div,
@@ -751,7 +752,7 @@ impl BrowserSettings {
         status
     }
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> (Self, Receiver<ProfileRequest>) {
-        let name = cx.new(|cx| InputState::new(window, cx).placeholder("New Rust profile name"));
+        let name = cx.new(|cx| InputState::new(window, cx).placeholder("Profile name"));
         let (sender, requests) = mpsc::sync_channel(8);
         let (import_sender, imports) = mpsc::sync_channel(1);
         (
@@ -935,12 +936,16 @@ impl BrowserSettings {
             .flex_col()
             .gap_2()
             .p_2()
-            .child("Saved bookmarks")
             .child(
-                Button::new("browser-pane-library-reload")
-                    .label("Reload bookmarks")
-                    .disabled(busy)
-                    .on_click(cx.listener(|this, _, _, cx| this.reload_bookmarks(cx))),
+                div().flex().items_center().justify_between().child("Bookmarks").child(
+                    Button::new("browser-pane-library-reload")
+                        .icon(gpui_kit::assets::IconName::RefreshCw)
+                        .ghost().xsmall()
+                        .accessibility_label("Refresh bookmarks")
+                        .tooltip("Refresh bookmarks")
+                        .disabled(busy)
+                        .on_click(cx.listener(|this, _, _, cx| this.reload_bookmarks(cx))),
+                ),
             );
         if let Some(library) = &self.library {
             if library.bookmarks.is_empty() {
@@ -952,6 +957,7 @@ impl BrowserSettings {
                 panel = panel.child(
                     Button::new(SharedString::from(format!("browser-pane-bookmark-{id}")))
                         .label(bookmark.title.chars().take(60).collect::<String>())
+                        .w_full().ghost().compact()
                         .tooltip(bookmark.url.clone())
                         .disabled(busy)
                         .on_click(
@@ -960,13 +966,15 @@ impl BrowserSettings {
                 );
             }
         }
-        panel
-            .child(SharedString::from(self.status.clone()))
-            .into_any_element()
+        panel = panel.child(self.pane_history(cx));
+        if !self.status.is_empty() && self.status != "Bookmarks refreshed." {
+            panel = panel.child(div().text_xs().child(self.status.clone()));
+        }
+        panel.into_any_element()
     }
     fn reload_bookmarks(&mut self, cx: &mut Context<Self>) {
         self.library_work(
-            "Loading saved Rust bookmarks…",
+            "Loading bookmarks…",
             cx,
             |engine, admission, epoch, generation, snapshot| {
                 library_context_allowed(&admission, &epoch, generation)?;
@@ -1096,8 +1104,7 @@ impl BrowserSettings {
                         }
                         self.library = Some(library);
                         self.library_page = 0;
-                        self.status =
-                            "Saved Rust bookmarks reloaded. Source files were not changed.".into();
+                        self.status = "Bookmarks refreshed.".into();
                     }
                     Ok(LibraryReply::Saved(result)) => {
                         self.status = format!(
@@ -1303,7 +1310,7 @@ impl Render for BrowserSettings {
             .child(Input::new(&self.name))
             .child(
                 Button::new("browser-profile-create")
-                    .label("Create fresh Rust profile")
+                    .label("Create profile")
                     .disabled(
                         busy || self
                             .snapshot
@@ -1356,7 +1363,7 @@ impl Render for BrowserSettings {
         }
         panel = panel.child(
             Button::new("bookmark-library-reload")
-                .label("Reload saved Rust bookmarks")
+                .label("Reload bookmarks")
                 .disabled(busy || self.engine.is_none() || self.snapshot.is_none())
                 .on_click(cx.listener(|this, _, _, cx| this.reload_bookmarks(cx))),
         );

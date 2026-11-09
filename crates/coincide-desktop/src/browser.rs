@@ -2213,6 +2213,11 @@ impl BrowserController {
         tab.loading = true;
         Ok(())
     }
+    pub(super) fn navigation_available(&self, thread: &str, cx: &App) -> (bool, bool) {
+        let Some(id) = self.active.get(thread) else { return (false, false); };
+        let Some(tab) = self.tabs.get(thread).and_then(|tabs|tabs.iter().find(|tab|&tab.id == id)) else {return (false,false);};
+        native_history::availability(tab.view.read(cx).raw())
+    }
     pub fn tab_list(&self, thread: &str) -> Value {
         let native_password_manager = credential_bridge::credential_fill_available();
         let native_tab_shortcuts = self.tabs.get(thread).is_some_and(|tabs| {

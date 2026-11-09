@@ -1875,6 +1875,9 @@ impl Coincide {
         }
         match call(&self.engine, "browser.request", params) {
             Ok(result) => {
+                if self.status.starts_with("Browser:") {
+                    self.status.clear();
+                }
                 self.browser_ui_operations
                     .insert(text(&result, "operationId"), thread);
             }
@@ -2084,6 +2087,8 @@ impl Coincide {
                     self.browser_ui_operations.remove(&id);
                     if let Some(error) = result["result"]["error"].as_str() {
                         self.status = format!("Browser: {error}");
+                    } else if self.status.starts_with("Browser:") {
+                        self.status.clear();
                     }
                     changed = true;
                 }
@@ -2136,150 +2141,67 @@ impl Coincide {
         }
     }
     fn browser_pane(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.historical_image_is_open() {
-            return None;
-        }
+        if self.historical_image_is_open() { return None; }
         let thread = self.selected.as_ref().map(|v| text(v, "id"))?;
         let browser = self.browser.as_ref()?;
-        if !browser.is_visible(&thread) {
-            return None;
-        }
+        if !browser.is_visible(&thread) { return None; }
         let tabs = browser.tab_list(&thread);
+        let (can_go_back, can_go_forward) = browser.navigation_available(&thread, cx);
         let webview = browser.active_view(&thread);
-        let active = tabs["tabs"]
-            .as_array()
-            .and_then(|tabs| tabs.iter().find(|t| t["active"] == true))
-            .cloned();
-        let url = active
-            .as_ref()
-            .map(|tab| text(tab, "url"))
-            .unwrap_or_default();
-        let tab_buttons = tabs["tabs"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .map(|tab| {
-                let id = text(tab, "id");
-                let title: String = text(tab, "title").chars().take(24).collect();
-                Button::new(SharedString::from(format!("browser-tab-{id}")))
-                    .label(title)
+        let active = tabs["tabs"].as_array().and_then(|tabs| tabs.iter().find(|t| t["active"] == true)).cloned();
+        let url = active.as_ref().map(|tab| text(tab, "url")).unwrap_or_default();
+        let loading = active.as_ref().is_some_and(|tab| tab["loading"] == true);
+        let tab_buttons = tabs["tabs"].as_array().into_iter().flatten().map(|tab| {
+            let id = text(tab, "id");
+            let select_id = id.clone();
+            let close_id = id.clone();
+            let title = text(tab, "title");
+            let title = if title.trim().is_empty() || title == "about:blank" { "New tab".to_owned() } else { title };
+            let selected = tab["active"] == true;
+            div().id(SharedString::from(format!("browser-tab-{id}")))
+                .role(Role::Button)
+                .aria_label(format!("Select tab: {title}"))
+                .flex().items_center().flex_shrink_0().min_w(px(76.)).max_w(px(200.))
+                .h(px(28.)).px_2().gap_1().rounded(px(6.))
+                .bg(self.color(if selected { 0x181d28 } else { 0x10141c }))
+                .cursor_pointer()
+                .on_click(cx.listener(move |this, _, _, cx| this.browser_action(BrowserAction::SelectTab, Some(select_id.clone()), cx)))
+                .child(div().min_w_0().flex_1().truncate().text_xs().child(title.clone()))
+                .child(Button::new(SharedString::from(format!("browser-tab-close-{id}")))
+                    .icon(gpui_kit::assets::IconName::Close).ghost().compact().xsmall()
+                    .accessibility_label(format!("Close tab: {title}"))
+                    .tooltip("Close tab")
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.browser_action(BrowserAction::SelectTab, Some(id.clone()), cx)
-                    }))
-            })
-            .collect::<Vec<_>>();
-        let active_id = active.as_ref().map(|tab| text(tab, "id"));
-        let pane_controls = self.browser_pane_controls(&thread, active.as_ref(), cx);
-        let library_popup = self
-            .browser_library_visible()
-            .then(|| self.browser_settings_panel.clone());
+                        cx.stop_propagation();
+                        this.browser_action(BrowserAction::CloseTab, Some(close_id.clone()), cx);
+                    }))).into_any_element()
+        }).collect::<Vec<_>>();
+        let controls = self.browser_pane_controls(&thread, active.as_ref(), cx);
+        let agent_control = self.browser_agent_control_button(&thread, cx);
+        let library_popup = self.browser_library_visible().then(|| self.browser_settings_panel.clone());
         let dialog_banner = self.browser_dialog_banner(cx);
         let user_turn_banner = self.browser_user_turn_banner(cx);
-        let page = self.browser_page(&thread, webview, cx);
         let passkey_banner = self.browser_passkey_banner(cx);
-        Some(
-            div()
-                .track_focus(&self.browser_focus)
-                .flex()
-                .flex_col()
-                .flex_1()
-                .min_w_0()
-                .h_full()
-                .border_l_1()
-                .border_color(self.color(0x29303d))
-                .child(
-                    div()
-                        .flex()
-                        .flex_wrap()
-                        .flex_shrink_0()
-                        .gap_1()
-                        .p_2()
-                        .child(Button::new("browser-back").label("←").on_click(cx.listener(
-                            |this, _, _, cx| this.browser_action(BrowserAction::Back, None, cx),
-                        )))
-                        .child(
-                            Button::new("browser-forward")
-                                .label("→")
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.browser_action(BrowserAction::Forward, None, cx)
-                                })),
-                        )
-                        .child(
-                            Button::new("browser-reload")
-                                .label("Reload")
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.browser_action(BrowserAction::Reload, None, cx)
-                                })),
-                        )
-                        .child(
-                            Button::new("browser-new-tab")
-                                .label("+")
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.browser_action(
-                                        BrowserAction::NewTab { url: None },
-                                        None,
-                                        cx,
-                                    )
-                                })),
-                        )
-                        .child(
-                            Button::new("browser-close-tab")
-                                .label("Close tab")
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    if let Some(id) = active_id.clone() {
-                                        this.browser_action(BrowserAction::CloseTab, Some(id), cx);
-                                    }
-                                })),
-                        )
-                        .child(
-                            Button::new("browser-hide")
-                                .label("Hide")
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.browser_action(BrowserAction::Hide, None, cx)
-                                })),
-                        ),
-                )
-                .child(
-                    div()
-                        .id("browser-tabs")
-                        .flex()
-                        .gap_1()
-                        .px_2()
-                        .overflow_x_scroll()
-                        .children(tab_buttons),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .gap_1()
-                        .p_2()
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .child(Input::new(&self.browser_address)),
-                        )
-                        .child(Button::new("browser-go").label("Go").on_click(
-                            cx.listener(|this, _, window, cx| this.browser_go(window, cx)),
-                        )),
-                )
-                .child(
-                    div()
-                        .px_2()
-                        .pb_2()
-                        .min_w_0()
-                        .truncate()
-                        .text_xs()
-                        .child(url),
-                )
-                .child(pane_controls)
-                .children(library_popup)
-                .children(dialog_banner)
-                .children(user_turn_banner)
-                .child(page)
-                .children(passkey_banner)
-                .into_any_element(),
-        )
+        let page = self.browser_page(&thread, webview, cx);
+        let icon = |id, name, label: &'static str| Button::new(id).icon(name).accessibility_label(label).tooltip(label).ghost().compact().xsmall().h(px(26.));
+        Some(div().id("browser-preview").track_focus(&self.browser_focus)
+            .flex().flex_col().flex_1().min_w_0().min_h_0().h_full()
+            .border_l_1().border_color(self.color(0x29303d))
+            .child(div().flex().items_center().flex_shrink_0().h(px(36.)).px_2().gap_1()
+                .child(div().id("browser-tabs").flex().items_center().flex_1().min_w_0().overflow_x_scroll().gap_1().children(tab_buttons))
+                .child(icon("browser-new-tab", gpui_kit::assets::IconName::Plus, "New tab").on_click(cx.listener(|this, _, _, cx| this.browser_action(BrowserAction::NewTab { url: None }, None, cx))))
+                .child(agent_control)
+                .child(icon("browser-hide", gpui_kit::assets::IconName::Close, "Close Browser").on_click(cx.listener(|this, _, _, cx| this.browser_action(BrowserAction::Hide, None, cx)))))
+            .child(div().flex().items_center().flex_shrink_0().h(px(36.)).px_2().gap_1()
+                .child(icon("browser-back", gpui_kit::assets::IconName::ChevronLeft, "Back").disabled(!can_go_back).on_click(cx.listener(|this, _, _, cx| this.browser_action(BrowserAction::Back, None, cx))))
+                .child(icon("browser-forward", gpui_kit::assets::IconName::ChevronRight, "Forward").disabled(!can_go_forward).on_click(cx.listener(|this, _, _, cx| this.browser_action(BrowserAction::Forward, None, cx))))
+                .child(div().flex_1().min_w_0().child(Input::new(&self.browser_address).small()))
+                .child(controls)
+                .child(icon("browser-reload", if loading { gpui_kit::assets::IconName::LoaderCircle } else { gpui_kit::assets::IconName::RefreshCw }, "Reload Preview").on_click(cx.listener(|this, _, _, cx| this.browser_action(BrowserAction::Reload, None, cx)))))
+            .when(!url.is_empty() && url != "about:blank", |view| view.child(div().px_2().pb_1().min_w_0().truncate().text_xs().text_color(self.color(0xe4e9f2).opacity(0.55)).child(url)))
+            .when_some(library_popup, |view, library| view.child(div().max_h(px(300.)).min_h_0().overflow_hidden().child(library)))
+            .children(dialog_banner).children(user_turn_banner).children(passkey_banner)
+            .child(page).into_any_element())
     }
     fn refresh(&mut self, cx: &mut Context<Self>) -> bool {
         if let Ok(engine) = self.engine.try_lock() {
@@ -3147,7 +3069,7 @@ impl Coincide {
             None
         };
         let engine = self.engine.clone();
-        let history_binding = if settings_visible {
+        let history_binding = if settings_visible || pane_library {
             selected_thread.as_deref().and_then(|thread| {
                 self.browser
                     .as_ref()
@@ -4338,6 +4260,51 @@ impl Coincide {
         }
         cx.notify();
     }
+    /// One tool/reasoning row after Swift-style normalization. None means the
+    /// provider emitted a duplicate row that Swift never draws.
+    fn work_row(
+        &mut self,
+        source: &str,
+        index: usize,
+        item: &Value,
+        expanded: bool,
+        nested: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let mut item = item.clone();
+        presentation::normalize_opencode_tool(&mut item);
+        presentation::normalize_legacy_reasoning(&mut item);
+        if presentation::is_question_tool(&item) || presentation::is_duplicate_reasoning_tool(&item)
+        {
+            return None;
+        }
+        let item_id = text(&item, "id");
+        let row = self.tool_row(source, &item_id, &item, expanded, window, cx);
+        Some(if nested {
+            div()
+                .w_full()
+                .pl(px(presentation::RAIL_GUTTER))
+                .child(row)
+                .into_any_element()
+        } else {
+            row
+        })
+    }
+
+    fn toggle_work_group(
+        &mut self,
+        source: &str,
+        anchor: &str,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        self.chat_turns.toggle(source, anchor);
+        if index < self.transcript_count {
+            self.transcript_list.splice(index..index + 1, 1);
+        }
+        cx.notify();
+    }
     fn toggle_item_expanded(&mut self, source: &str, item: &str, cx: &mut Context<Self>) {
         let Some(thread) = self.selected.as_ref().filter(|v| v["id"] == source) else {
             return;
@@ -4414,21 +4381,71 @@ impl Coincide {
             let row = self.question_row(&source_id, &item_id, &item, window, cx);
             return self.turn_decorated(index, row, plan.header, cx);
         }
-        if (kind == "tool" || kind == "reasoning") && !find_revealed {
-            let mut item = item.clone();
-            presentation::normalize_opencode_tool(&mut item);
-            presentation::normalize_legacy_reasoning(&mut item);
-            // OpenCode reports the question tool call and the form as two
-            // items, and repeats reasoning parts as raw tool JSON. Swift shows
-            // only the form row and the normalized reasoning row.
-            if (kind == "tool" && presentation::is_question_tool(&item))
-                || (kind == "tool" && presentation::is_duplicate_reasoning_tool(&item))
-            {
-                return self.turn_decorated(index, div().into_any_element(), plan.header, cx);
+        if let Some(group) = plan.group.clone()
+            && group.items.first().copied() == Some(index)
+        {
+            let items = self
+                .selected
+                .as_ref()
+                .and_then(|thread| thread["items"].as_array())
+                .map(|items| {
+                    group
+                        .items
+                        .iter()
+                        .filter_map(|index| items.get(*index).cloned())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let normalized = items
+                .iter()
+                .map(|item| {
+                    let mut item = item.clone();
+                    presentation::normalize_opencode_tool(&mut item);
+                    presentation::normalize_legacy_reasoning(&mut item);
+                    item
+                })
+                .collect::<Vec<_>>();
+            let summary = self.group_row(
+                &source_id,
+                &item_id,
+                index,
+                &normalized,
+                group.expanded,
+                window,
+                cx,
+            );
+            let mut column = div().flex().flex_col().child(summary);
+            if group.expanded {
+                for (child_index, child) in group.items.iter().zip(items.iter()) {
+                    if let Some(row) = self.work_row(
+                        &source_id,
+                        *child_index,
+                        child,
+                        self.expanded.contains(child_index),
+                        true,
+                        window,
+                        cx,
+                    ) {
+                        column = column.child(row);
+                    }
+                }
             }
-            let expanded = self.expanded.contains(&index);
-            let row = self.tool_row(&source_id, &item_id, &item, expanded, window, cx);
-            return self.turn_decorated(index, row, plan.header, cx);
+            return self.turn_decorated(index, column.into_any_element(), plan.header, cx);
+        }
+        if (kind == "tool" || kind == "reasoning") && !find_revealed {
+            let item = item.clone();
+            if let Some(row) = self.work_row(
+                &source_id,
+                index,
+                &item,
+                self.expanded.contains(&index),
+                false,
+                window,
+                cx,
+            ) {
+                return self.turn_decorated(index, row, plan.header, cx);
+            }
+            return self.turn_decorated(index, div().into_any_element(), plan.header, cx);
         }
         let copy_empty = body.is_empty();
         let collapsible = kind != "user" && kind != "assistant";
@@ -4444,6 +4461,20 @@ impl Coincide {
             .or_else(|| item["model"].as_str())
             .unwrap_or_default()
             .to_owned();
+        let reply_time = {
+            use chrono::TimeZone;
+            let stamp = item
+                .get("completedAt")
+                .filter(|value| !value.is_null())
+                .unwrap_or(&item["createdAt"]);
+            chat_turns::seconds(stamp)
+                .and_then(|seconds| {
+                    chrono::Local
+                        .timestamp_opt((seconds + 978_307_200.) as i64, 0)
+                        .single()
+                })
+                .map(|time| time.format("%-I:%M %p").to_string())
+        };
         let work_header = presentation::work_header(item);
         let work_status = work_header.as_ref().and_then(|header| header.status);
         let label = match kind.as_str() {
@@ -4501,10 +4532,7 @@ impl Coincide {
                 "copy-message-{source_id}-{item_id}"
             )))
             .accessibility_label("Copy message")
-            .when(kind == "user", |button| {
-                button.icon(gpui_kit::assets::IconName::Copy)
-            })
-            .when(kind != "user", |button| button.label("Copy message"))
+            .icon(gpui_kit::assets::IconName::Copy)
             .ghost()
             .compact()
             .when(kind == "assistant" || kind == "user", |button| {
@@ -4552,12 +4580,10 @@ impl Coincide {
             .flex()
             .flex_wrap()
             .items_center()
-            .justify_between()
-            .gap_2()
+            .gap_1()
             .child(
                 div()
                     .min_w_0()
-                    .flex_1()
                     .flex()
                     .flex_wrap()
                     .items_center()
@@ -4592,7 +4618,8 @@ impl Coincide {
                     .accessibility_id(SharedString::from(format!(
                         "quote-message-{source_id}-{item_id}"
                     )))
-                    .label("Quote message")
+                    .icon(gpui_kit::assets::IconName::MessagesSquare)
+                    .accessibility_label("Quote message")
                     .ghost()
                     .compact()
                     .xsmall()
@@ -4617,7 +4644,7 @@ impl Coincide {
                     .accessibility_label(SharedString::from(format!(
                         "Fork through response: {action_excerpt}"
                     )))
-                    .label("Fork through this turn")
+                    .icon(gpui_kit::assets::IconName::GitBranch)
                     .ghost()
                     .compact()
                     .xsmall()
@@ -4627,9 +4654,22 @@ impl Coincide {
                     })),
                 )
             })
+            .when(kind == "assistant", |footer| {
+                footer.when_some(reply_time, |footer, time| {
+                    footer.child(
+                        div()
+                            .text_xs()
+                            .text_color(self.color(0xe4e9f2).opacity(0.4))
+                            .child(time),
+                    )
+                })
+            })
             .when_some(work_disclosure, |header, control| header.child(control));
         let (header, footer) = if kind == "assistant" {
-            (None, Some(metadata.into_any_element()))
+            (
+                None,
+                plan.terminal_reply.then(|| metadata.into_any_element()),
+            )
         } else if kind == "user" {
             (None, None)
         } else {
@@ -4947,6 +4987,7 @@ impl Coincide {
 }
 impl Render for Coincide {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.chat_turns.begin_render();
         // Swift's palette floats about a sixth of the way down the window.
         let palette_top = (f32::from(window.viewport_size().height) * 0.16).max(64.);
         self.sync_context_details();
@@ -5648,6 +5689,23 @@ fn main() -> Result<()> {
     application.on_reopen(reopen_main_window);
     application.run(move |cx| {
         gpui_kit::init(cx);
+        // New York is a hidden macOS system family. Register its installed
+        // bytes with GPUI's font database so it resolves like AppKit's serif
+        // descriptor instead of silently falling back to the UI sans font.
+        #[cfg(target_os = "macos")]
+        {
+            let fonts = [
+                "/System/Library/Fonts/NewYork.ttf",
+                "/System/Library/Fonts/NewYorkItalic.ttf",
+            ]
+            .into_iter()
+            .filter_map(|path| std::fs::read(path).ok())
+            .map(std::borrow::Cow::Owned)
+            .collect::<Vec<_>>();
+            if let Err(error) = cx.text_system().add_fonts(fonts) {
+                eprintln!("Unable to load system serif font: {error}");
+            }
+        }
         composer_file_picker::init(cx);
         sidebar_keys::init(cx);
         composer_follow_up_mount::init(cx);

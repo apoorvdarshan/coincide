@@ -347,6 +347,7 @@ impl Coincide {
         });
         div()
             .id("settings-pane")
+            .text_size(px(13.))
             .flex_1()
             .min_w_0()
             .min_h_0()

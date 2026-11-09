@@ -1,7 +1,13 @@
 //! Compact conversation chrome. All actions retain their existing controllers;
 //! expanding secondary actions changes presentation only.
 use super::*;
-use gpui_kit::{assets::IconName, component::tooltip::Tooltip};
+use gpui_kit::{
+    assets::IconName,
+    component::{
+        menu::{DropdownMenu, PopupMenuItem},
+        tooltip::Tooltip,
+    },
+};
 
 // Read only the selected conversation's persisted metadata. The independent
 // sidebar project filter is not the conversation's project or live Git HEAD.
@@ -161,169 +167,78 @@ impl Coincide {
                             ),
                     )
                     .child(self.right_panel_buttons(cx))
-                    .child(
-                        Button::new("pull-requests-toggle")
-                            .icon(IconName::GitPullRequest)
-                            .accessibility_label("Pull Requests")
-                            .tooltip("Toggle pull requests")
-                            .ghost()
-                            .compact()
-                            .selected(self.pull_requests_panel_open())
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.toggle_pull_requests_panel(window, cx)
-                            })),
-                    )
-                    .child(
-                        Button::new("conversation-actions-toggle")
-                            .icon(IconName::Ellipsis)
-                            .accessibility_label(if self.thread_actions_open {
-                                "Hide conversation actions"
-                            } else {
-                                "More conversation actions"
-                            })
-                            .tooltip("More conversation actions")
-                            .ghost()
-                            .compact()
-                            .selected(self.thread_actions_open)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.thread_actions_open = !this.thread_actions_open;
-                                cx.notify();
-                            })),
-                    ),
+                    .child(self.conversation_actions_menu(cx)),
             )
-            .when(self.thread_actions_open, |view| {
-                view.child(
-                    div()
-                        .id("conversation-toolbar-secondary")
-                        .flex()
-                        .flex_wrap()
-                        .items_center()
-                        .gap_1()
-                        .px_3()
-                        .pb_2()
-                        .child(
-                            Button::new("session-import-toggle")
-                                .label(if self.session_import_open {
-                                    "Close import"
-                                } else {
-                                    "Import CLI session"
-                                })
-                                .ghost()
-                                .compact()
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.session_import_open = !this.session_import_open;
-                                    this.sync_transcription_binding(cx);
-                                    this.sync_credentials(cx);
-                                    cx.notify();
-                                })),
-                        )
-                        .child(
-                            Button::new("password-settings-toggle")
-                                .label(if self.settings_open && self.credentials_open {
-                                    "Close passwords"
-                                } else {
-                                    "Passwords"
-                                })
-                                .ghost()
-                                .compact()
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.session_import_open = false;
-                                    let open = !(this.settings_open && this.credentials_open);
-                                    this.credentials_open = open;
-                                    this.browser_settings_open = false;
-                                    this.media.opened = false;
-                                    this.credential_panel
-                                        .update(cx, |panel, cx| panel.cancel(cx));
-                                    this.notifications_open = false;
-                                    this.bots_open = false;
-                                    this.transcription_open = false;
-                                    this.settings_open = open;
-                                    this.provider_settings.open = false;
-                                    this.sync_credentials(cx);
-                                    this.sync_transcription_binding(cx);
-                                    cx.notify();
-                                })),
-                        )
-                        .child(
-                            Button::new("schedules")
-                                .label(
-                                    if self.schedules_open
-                                        && !self.schedule_editor.all_conversations
-                                    {
-                                        "Close schedules"
-                                    } else {
-                                        "Schedules"
-                                    },
-                                )
-                                .ghost()
-                                .compact()
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.settings_open = false;
-                                    this.workspace_open = false;
-                                    this.session_import_open = false;
-                                    if this.schedules_open
-                                        && !this.schedule_editor.all_conversations
-                                    {
-                                        this.close_schedule_surface();
-                                    } else {
-                                        this.open_conversation_schedules(window, cx);
-                                    }
-                                    cx.notify();
-                                })),
-                        )
-                        .child(
-                            Button::new("fork")
-                                .label("Fork")
-                                .ghost()
-                                .compact()
-                                .on_click(cx.listener(|this, _, window, cx| this.fork(window, cx))),
-                        )
-                        .child(
-                            Button::new("pin")
-                                .label("Pin / unpin")
-                                .ghost()
-                                .compact()
-                                .on_click(
-                                    cx.listener(|this, _, _, cx| this.toggle("isPinned", cx)),
-                                ),
-                        )
-                        .child(
-                            Button::new("rename-thread")
-                                .label("Rename")
-                                .ghost()
-                                .compact()
-                                .disabled(self.selected.is_none())
-                                .on_click(
-                                    cx.listener(|this, _, window, cx| {
-                                        this.begin_rename(window, cx)
-                                    }),
-                                ),
-                        )
-                        .child(
-                            Button::new("archive")
-                                .label(
-                                    if self
-                                        .selected
-                                        .as_ref()
-                                        .is_some_and(|v| v["isArchived"] == true)
-                                    {
-                                        "Restore"
-                                    } else {
-                                        "Archive"
-                                    },
-                                )
-                                .ghost()
-                                .compact()
-                                .disabled(self.selected.is_none())
-                                .on_click(cx.listener(|this, _, _, cx| this.request_archive(cx))),
-                        ),
-                )
-            })
             .into_any_element()
     }
 }
 
 impl Coincide {
+    fn conversation_actions_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let owner = cx.entity().downgrade();
+        let selected = self.selected.is_some();
+        let pinned = self
+            .selected
+            .as_ref()
+            .is_some_and(|v| v["isPinned"] == true);
+        let archived = self
+            .selected
+            .as_ref()
+            .is_some_and(|v| v["isArchived"] == true);
+        Button::new("conversation-actions-toggle")
+            .icon(IconName::Ellipsis)
+            .accessibility_label("More conversation actions")
+            .tooltip("More conversation actions")
+            .ghost()
+            .compact()
+            .dropdown_menu_with_anchor(Anchor::TopRight, move |mut menu, _, _| {
+                type Action = fn(&mut Coincide, &mut Window, &mut Context<Coincide>);
+                let actions: [(&str, bool, Action); 7] = [
+                    ("Rename…", selected, |this, window, cx| {
+                        this.begin_rename(window, cx)
+                    }),
+                    (
+                        if pinned { "Unpin" } else { "Pin" },
+                        selected,
+                        |this, _, cx| this.toggle("isPinned", cx),
+                    ),
+                    ("Fork Thread", selected, |this, window, cx| {
+                        this.fork(window, cx)
+                    }),
+                    ("Schedule…", selected, |this, window, cx| {
+                        this.open_conversation_schedules(window, cx)
+                    }),
+                    (
+                        if archived { "Restore" } else { "Archive" },
+                        selected,
+                        |this, _, cx| this.request_archive(cx),
+                    ),
+                    ("Import CLI session…", true, |this, _, cx| {
+                        this.session_import_open = true;
+                        this.sync_transcription_binding(cx);
+                        this.sync_credentials(cx);
+                    }),
+                    ("Passwords…", true, |this, window, cx| {
+                        this.open_settings_panel(window, cx);
+                        this.credentials_open = true;
+                        this.sync_credentials(cx);
+                    }),
+                ];
+                for (label, enabled, action) in actions {
+                    let owner = owner.clone();
+                    menu = menu.item(PopupMenuItem::new(label).disabled(!enabled).on_click(
+                        move |_, window, cx| {
+                            let _ = owner.update(cx, |this, cx| {
+                                action(this, window, cx);
+                                cx.notify();
+                            });
+                        },
+                    ));
+                }
+                menu
+            })
+    }
+
     /// Swift's `RunStatusView`: "Connecting…", "Working 0:42" with Stop, or an
     /// orange "Needs approval"; nothing while the open thread is idle.
     fn run_status_pill(&self, cx: &mut Context<Self>) -> Option<AnyElement> {

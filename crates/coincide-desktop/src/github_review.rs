@@ -1,7 +1,8 @@
 //! Native GitHub pull requests panel after Swift's PullRequestsViewController,
 //! with a separate explicit action surface. Parent mounts this entity, calls
 //! set_context on every thread/root change and set_visible as the panel shows
-//! or hides. Repository is explicitly entered by the user. GitHub reads run in
+//! or hides. The selected folder's repository is discovered automatically; a
+//! manual override remains under Choose repository. GitHub reads run in
 //! one background worker, never GPUI render; only the saved filter touches the
 //! Engine here, with try_lock, when the panel opens and when the user picks one.
 //! Check Out in New Thread emits CheckoutOpened for the parent to select.
@@ -362,6 +363,31 @@ fn fetch_merge_methods(
         .collect::<Vec<_>>();
     if methods.is_empty() { all } else { methods }
 }
+fn fetch_availability(
+    api: &mut impl FnMut(&str, Value) -> Result<Value>,
+    scope: &(String, String),
+) -> Result<Value> {
+    let start = api("github.pr.availability", json!({"threadId":scope.0}))?;
+    ensure!(
+        start["expectedRoot"] == scope.1,
+        "Repository folder changed"
+    );
+    let binding = Binding {
+        thread: scope.0.clone(),
+        root: scope.1.clone(),
+        repository: String::new(),
+        involvement: Involvement::All,
+    };
+    let payload = finish(api, &binding, &start)?;
+    ensure!(
+        payload["kind"] == "availability"
+            && payload["threadId"] == scope.0
+            && payload["expectedRoot"] == scope.1,
+        "Repository response belongs to another conversation"
+    );
+    Ok(payload)
+}
+
 fn fetch_admitted(
     api: &mut impl FnMut(&str, Value) -> Result<Value>,
     request: &Request,
@@ -481,6 +507,14 @@ pub struct GitHubReviewPanel {
     engine: SharedEngine,
     scope: Option<(String, String)>,
     repository: Entity<InputState>,
+    detected_repository: Option<String>,
+    override_scope: Option<(String, String)>,
+    discovery_attempted: bool,
+    refresh_pending: bool,
+    repository_editing: bool,
+    setup_expanded: bool,
+    discovery_tx: mpsc::Sender<(u64, (String, String), Result<Value>)>,
+    discovery_rx: mpsc::Receiver<(u64, (String, String), Result<Value>)>,
     state: String,
     involvement: Involvement,
     filter_loaded: bool,
@@ -532,6 +566,7 @@ impl GitHubReviewPanel {
     pub fn new(engine: SharedEngine, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let (tx, rx) = mpsc::channel();
         let (checkout_tx, checkout_rx) = mpsc::channel();
+        let (discovery_tx, discovery_rx) = mpsc::channel();
         let poll = cx.spawn_in(window, async move |this, cx| {
             loop {
                 cx.background_executor()
@@ -553,6 +588,7 @@ impl GitHubReviewPanel {
                 if this.workers.closed() {
                     return;
                 }
+                this.override_scope = this.scope.clone();
                 this.generation = this.generation.wrapping_add(1);
                 this.active = None;
                 this.detail = None;
@@ -587,6 +623,14 @@ impl GitHubReviewPanel {
             engine,
             scope: None,
             repository,
+            detected_repository: None,
+            override_scope: None,
+            discovery_attempted: false,
+            refresh_pending: false,
+            repository_editing: false,
+            setup_expanded: false,
+            discovery_tx,
+            discovery_rx,
             state: "open".into(),
             involvement: Involvement::All,
             filter_loaded: false,
@@ -608,7 +652,7 @@ impl GitHubReviewPanel {
             review_body,
             clear_review: false,
             visible: false,
-            notice: "Choose a conversation and enter its GitHub repository.".into(),
+            notice: "Choose a conversation to see its repository’s pull requests.".into(),
             banner: None,
             focus: cx.focus_handle(),
             tx,
@@ -701,7 +745,7 @@ impl GitHubReviewPanel {
         if self.busy
             || self.scope.as_ref()
                 != Some(&(request.binding.thread.clone(), request.binding.root.clone()))
-            || self.repository.read(cx).value().trim() != request.binding.repository
+            || self.repository_value(cx) != request.binding.repository
             || self.involvement != request.binding.involvement
             || pr["number"].as_u64() != Some(*number)
             || pr["headRefOid"] != *head
@@ -745,6 +789,11 @@ impl GitHubReviewPanel {
             return;
         }
         self.scope = scope;
+        self.detected_repository = None;
+        self.override_scope = None;
+        self.discovery_attempted = false;
+        self.repository_editing = false;
+        self.refresh_pending = true;
         self.invalidate_actions(cx);
         self.generation = self.generation.wrapping_add(1);
         self.active = None;
@@ -758,7 +807,7 @@ impl GitHubReviewPanel {
         self.notice = if self.busy {
             "Waiting for the previous read; its result will be discarded."
         } else {
-            "Enter owner/name and load pull requests for this context."
+            "Finding this folder’s GitHub repository…"
         }
         .into();
         // A repository already entered reloads for the new thread, as Swift's
@@ -784,6 +833,45 @@ impl GitHubReviewPanel {
             .detach();
         }
     }
+    fn repository_value(&self, cx: &App) -> String {
+        if self.override_scope.is_some() && self.override_scope == self.scope {
+            self.repository.read(cx).value().trim().to_owned()
+        } else {
+            self.detected_repository.clone().unwrap_or_default()
+        }
+    }
+    fn discover_repository(&mut self, cx: &mut Context<Self>) {
+        if self.busy || !self.workers.can_start() {
+            self.refresh_pending = true;
+            return;
+        }
+        let Some(scope) = self.scope.clone() else {
+            return;
+        };
+        self.discovery_attempted = true;
+        self.busy = true;
+        self.notice = "Finding this folder’s GitHub repository…".into();
+        let generation = self.generation;
+        let tx = self.discovery_tx.clone();
+        let engine = self.engine.clone();
+        if !self.workers.spawn(move |admission| {
+            let result = (|| -> Result<Value> {
+                ensure!(admission.allowed(), "GitHub panel closed");
+                fetch_availability(
+                    &mut |method, params| {
+                        ensure!(admission.allowed(), "GitHub panel closed");
+                        call(&engine, method, params)
+                    },
+                    &scope,
+                )
+            })();
+            let _ = tx.send((generation, scope, result));
+        }) {
+            self.busy = false;
+            self.notice = "Could not start repository discovery. Try Refresh.".into();
+        }
+        cx.notify();
+    }
     fn close_sheets(&mut self) {
         self.merge_confirm = None;
         if self.review.as_ref().is_none_or(|sheet| !sheet.submitting) {
@@ -797,7 +885,18 @@ impl GitHubReviewPanel {
         if self.busy || self.performing(cx) || self.workers.closed() {
             return;
         }
-        if !self::repository(self.repository.read(cx).value().trim()) || self.scope.is_none() {
+        if self.scope.is_none() {
+            return;
+        }
+        if !self::repository(&self.repository_value(cx)) {
+            if self.override_scope.is_some() && self.override_scope == self.scope {
+                self.notice = "Enter a GitHub repository as owner/name.".into();
+                cx.notify();
+                return;
+            }
+            if force || !self.discovery_attempted {
+                self.discover_repository(cx);
+            }
             return;
         }
         match self.selected.clone() {
@@ -841,7 +940,7 @@ impl GitHubReviewPanel {
     }
     fn list_request(&mut self, cx: &mut Context<Self>) -> Option<Request> {
         let (thread, root) = self.scope.clone()?;
-        let repository = self.repository.read(cx).value().trim().to_string();
+        let repository = self.repository_value(cx);
         if !self::repository(&repository) {
             self.invalidate_actions(cx);
             self.list.clear();
@@ -849,7 +948,9 @@ impl GitHubReviewPanel {
             self.selected = None;
             self.active = None;
             self.truncated = false;
-            self.notice = "Enter a GitHub repository as owner/name.".into();
+            if !self.discovery_attempted {
+                self.discover_repository(cx);
+            }
             cx.notify();
             return None;
         }
@@ -1060,6 +1161,9 @@ impl GitHubReviewPanel {
         self.discard_read_results();
     }
     fn discard_read_results(&mut self) {
+        while self.discovery_rx.try_recv().is_ok() {
+            self.busy = false;
+        }
         if discard_completions(&self.rx) | discard_completions(&self.checkout_rx) {
             self.busy = false;
             self.checking_out = None;
@@ -1087,6 +1191,47 @@ impl GitHubReviewPanel {
         if self.workers.closed() {
             self.discard_read_results();
             return;
+        }
+        while let Ok((generation, scope, result)) = self.discovery_rx.try_recv() {
+            self.busy = false;
+            if self.generation != generation || self.scope.as_ref() != Some(&scope) {
+                self.refresh_pending = true;
+                continue;
+            }
+            match result {
+                Ok(payload) if payload["state"] == "ready" => {
+                    let repository = payload["repository"].as_str().unwrap_or_default();
+                    if self::repository(repository) {
+                        self.detected_repository = Some(repository.into());
+                        self.notice.clear();
+                        self.refresh_pending = true;
+                    } else {
+                        self.notice = "The repository address could not be read.".into();
+                    }
+                }
+                Ok(payload) => {
+                    self.notice = match payload["state"].as_str() {
+                        Some("notRepository") => "This folder is not a Git repository.",
+                        Some("noRemote") => {
+                            "Add a GitHub remote to this repository to see its pull requests."
+                        }
+                        Some("needsGitHubCli") => {
+                            "Sign in with GitHub CLI (gh auth login), then Refresh."
+                        }
+                        Some("unsupportedHost") => {
+                            "This repository’s host is not supported by the GitHub panel."
+                        }
+                        _ => "Could not find this repository. Try Refresh or choose a repository.",
+                    }
+                    .into();
+                }
+                Err(error) => self.notice = format!("Could not load the repository: {error}"),
+            }
+            cx.notify();
+        }
+        if self.refresh_pending && !self.busy && self.visible && self.workers.can_start() {
+            self.refresh_pending = false;
+            self.reload(false, cx);
         }
         if let Some(status) = self.writes.as_ref().and_then(|writes| writes.status())
             && self.write_status.as_ref() != Some(&status)
@@ -1514,6 +1659,37 @@ impl GitHubReviewPanel {
             }
         }
         header = header.child(div().flex_1());
+        if self.selected.is_none() {
+            let repo = self.repository_value(cx);
+            if !repo.is_empty() {
+                header = header.child(
+                    div()
+                        .min_w_0()
+                        .max_w(px(180.))
+                        .truncate()
+                        .text_xs()
+                        .text_color(muted)
+                        .child(repo),
+                );
+            }
+        }
+        header = header.child(
+            Button::new("github-choose-repository")
+                .icon(IconName::Settings2)
+                .ghost()
+                .compact()
+                .accessibility_label("Choose repository")
+                .tooltip("Choose repository")
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.repository_editing = !this.repository_editing;
+                    if this.repository_editing {
+                        let value = this.repository_value(cx);
+                        this.repository
+                            .update(cx, |input, cx| input.set_value(value, window, cx));
+                    }
+                    cx.notify();
+                })),
+        );
         if self.busy || self.performing(cx) {
             header = header.child(Spinner::new().xsmall().color(muted));
         }
@@ -1597,6 +1773,7 @@ impl GitHubReviewPanel {
         }
         div()
             .id(SharedString::from(format!("github-pr-{number}")))
+            .role(gpui_kit::Role::Button)
             .aria_label(spoken)
             .flex()
             .items_center()
@@ -1654,6 +1831,27 @@ impl GitHubReviewPanel {
     fn list_body(&self, cx: &mut Context<Self>) -> Div {
         let muted = cx.theme().muted_foreground;
         let mut body = div().flex().flex_col().gap_0p5();
+        if self.list.is_empty() && (self.active.is_none() || !self.notice.is_empty()) {
+            return body.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .text_center()
+                    .gap_2()
+                    .px_4()
+                    .py_8()
+                    .child(Icon::new(IconName::GitPullRequest).text_color(muted))
+                    .child(div().font_semibold().child(if self.busy {
+                        "Loading pull requests…"
+                    } else if self.scope.is_none() {
+                        "No conversation selected"
+                    } else {
+                        "Pull requests"
+                    }))
+                    .child(div().text_sm().text_color(muted).child(self.notice.clone())),
+            );
+        }
         if self.list.is_empty() && !self.busy && self.active.is_some() {
             let (title, explanation) = empty_list(&self.state, self.involvement);
             return body.child(
@@ -2200,10 +2398,14 @@ impl Render for GitHubReviewPanel {
             .flex_col()
             .gap_2()
             .p_3()
-            .child(Input::new(&self.repository).small())
+            .when(self.repository_editing, |pane| {
+                pane.child(Input::new(&self.repository).small())
+            })
             .child(self.header(cx))
             .child(div().h(px(1.)).flex_none().bg(border));
-        if let Some(status) = &self.write_status {
+        if self.selected.is_some()
+            && let Some(status) = &self.write_status
+        {
             let message = match status {
                 crate::github_write_transport::Status::Opening => Some("Opening the local GitHub action ledger…".into()),
                 crate::github_write_transport::Status::Initializing => Some("Initializing the local ledger. No GitHub request is made.".into()),
@@ -2211,12 +2413,15 @@ impl Render for GitHubReviewPanel {
                 crate::github_write_transport::Status::Ready => None,
                 crate::github_write_transport::Status::Failed(error) => Some(format!("GitHub actions unavailable: {error}. Restore the original ledger; it will not be recreated automatically.")),
             };
-            if let Some(message) = message {
+            if self.setup_expanded
+                && let Some(message) = message
+            {
                 pane = pane.child(div().flex_none().text_xs().text_color(muted).child(message));
             }
             if status == &crate::github_write_transport::Status::FirstSetup {
-                pane = pane.child(Button::new("github-write-first-setup").label("Initialize local GitHub action ledger").small()
+                pane = pane.child(Button::new("github-write-first-setup").label(if self.setup_expanded { "Enable GitHub actions" } else { "Set up merge and review actions…" }).small()
                     .on_click(cx.listener(|this, _, _, cx| {
+                        if !this.setup_expanded { this.setup_expanded = true; cx.notify(); return; }
                         if this.workers.closed() { return; }
                         if let Some(writes) = &this.writes
                             && !writes.initialize_from_user_action()
@@ -2225,7 +2430,7 @@ impl Render for GitHubReviewPanel {
                     })));
             }
         }
-        if !self.notice.is_empty() {
+        if !self.notice.is_empty() && self.selected.is_some() {
             pane = pane.child(
                 div()
                     .flex_none()
@@ -2793,5 +2998,36 @@ mod tests {
                 .recv_timeout(std::time::Duration::from_secs(5))
                 .unwrap()
         );
+    }
+}
+
+#[cfg(test)]
+mod repository_discovery_tests {
+    use super::*;
+    #[::core::prelude::v1::test]
+    fn availability_is_automatic_and_bound_to_the_selected_folder() {
+        let scope = ("thread".to_owned(), "/workspace/project".to_owned());
+        let mut methods = Vec::new();
+        let result = fetch_availability(&mut |method, params| {
+            methods.push(method.to_owned());
+            assert_eq!(params["threadId"], "thread");
+            if method == "github.pr.availability" {
+                Ok(json!({"operationId":"discovery", "expectedRoot":"/workspace/project"}))
+            } else {
+                assert_eq!(params["expectedRoot"], "/workspace/project");
+                Ok(json!({"ready":true,"result":{"kind":"availability","threadId":"thread","expectedRoot":"/workspace/project","state":"ready","repository":"owner/project"}}))
+            }
+        }, &scope).unwrap();
+        assert_eq!(result["repository"], "owner/project");
+        assert_eq!(methods, ["github.pr.availability", "github.result"]);
+    }
+    #[::core::prelude::v1::test]
+    fn discovery_rejects_replies_from_another_conversation_or_root() {
+        let scope = ("thread".to_owned(), "/workspace/project".to_owned());
+        for (thread, root) in [("other", "/workspace/project"), ("thread", "/other")] {
+            assert!(fetch_availability(&mut |method, _| {
+                Ok(if method == "github.pr.availability" {json!({"operationId":"d","expectedRoot":"/workspace/project"})} else {json!({"ready":true,"result":{"kind":"availability","threadId":thread,"expectedRoot":root,"state":"ready","repository":"owner/project"}})})
+            }, &scope).is_err());
+        }
     }
 }

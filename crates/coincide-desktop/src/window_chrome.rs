@@ -208,6 +208,17 @@ pub(super) struct State {
     shown_second: Option<u64>,
 }
 
+/// macOS opens NSWindow with a content rect, but reports the outer frame.
+/// Persisting that outer size as the next content size adds the titlebar on
+/// every reopen. Other platforms' constructors use their reported bounds.
+pub(super) fn restorable_size(outer: gpui_kit::Size<Pixels>, content: gpui_kit::Size<Pixels>) -> gpui_kit::Size<Pixels> {
+    if cfg!(target_os = "macos") {
+        content
+    } else {
+        outer
+    }
+}
+
 impl State {
     pub(super) fn new(saved: Option<SavedFrame>) -> Self {
         Self {
@@ -262,6 +273,7 @@ impl Coincide {
             WindowBounds::Maximized(bounds) => (bounds, true),
             WindowBounds::Fullscreen(_) => return,
         };
+        let restored_size = restorable_size(bounds.size, window.viewport_size());
         let frame = SavedFrame {
             display: window
                 .display(cx)
@@ -269,8 +281,8 @@ impl Coincide {
                 .map(|uuid| uuid.to_string()),
             x: f64::from(f32::from(bounds.origin.x)),
             y: f64::from(f32::from(bounds.origin.y)),
-            width: f64::from(f32::from(bounds.size.width)),
-            height: f64::from(f32::from(bounds.size.height)),
+            width: f64::from(f32::from(restored_size.width)),
+            height: f64::from(f32::from(restored_size.height)),
             maximized,
         };
         if self.window_chrome.saved_frame.as_ref() == Some(&frame) {
@@ -420,5 +432,24 @@ mod tests {
             })
         );
         assert!(!state.run_clocks.contains_key("bad"));
+    }
+}
+
+#[cfg(test)]
+mod restore_size_regression {
+    use super::*;
+    #[::core::prelude::v1::test]
+    fn repeated_macos_reopens_do_not_accumulate_titlebar_height() {
+        let requested = size(px(860.), px(640.));
+        let mut saved = requested;
+        for _ in 0..5 {
+            let outer = if cfg!(target_os = "macos") {
+                size(saved.width, saved.height + px(32.))
+            } else {
+                saved
+            };
+            saved = restorable_size(outer, requested);
+        }
+        assert_eq!(saved, requested);
     }
 }

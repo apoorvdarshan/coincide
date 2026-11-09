@@ -1,4 +1,6 @@
 use super::*;
+use gpui_kit::assets::IconName;
+use std::collections::HashMap;
 
 // Shared with the macOS Theme and TranscriptMetrics. Keep the composer and
 // virtualized transcript rows aligned without constraining the scroll viewport.
@@ -22,6 +24,201 @@ pub(super) fn provider_name(provider: &str) -> &str {
 pub(super) struct WorkHeader {
     pub title: String,
     pub status: Option<&'static str>,
+}
+
+/// The label Swift shows while a tool is the live activity in a work group.
+pub(super) fn group_category_label(category: &str) -> &'static str {
+    match category {
+        "command" => "Run command",
+        "fileChange" => "Change file",
+        "read" => "Read file",
+        "search" => "Search code",
+        "web" => "Search the web",
+        "mcp" => "Call MCP tool",
+        "task" => "Run subagent",
+        "todo" => "Update the plan",
+        _ => "Use tool",
+    }
+}
+
+/// Swift's TranscriptLabels.summary(of:): "Ran 3 commands and read 2 files",
+/// naming the two most significant kinds of work.
+pub(super) fn group_summary(items: &[Value]) -> String {
+    let tools = items
+        .iter()
+        .filter(|item| item["kind"] == "tool")
+        .collect::<Vec<_>>();
+    if tools.is_empty() {
+        return if items.len() == 1 {
+            "Thought".into()
+        } else {
+            format!("Thought {} times", items.len())
+        };
+    }
+    let mut order = Vec::new();
+    let mut counts = HashMap::<String, usize>::new();
+    for tool in &tools {
+        let category = category_label(tool);
+        if !counts.contains_key(&category) {
+            order.push(category.clone());
+        }
+        *counts.entry(category).or_default() += 1;
+    }
+    let mut ranked = order.into_iter().enumerate().collect::<Vec<_>>();
+    ranked.sort_by_key(|(position, category)| (category_priority(category), *position));
+    ranked.truncate(2);
+    ranked.sort_by_key(|(position, _)| *position);
+    let shown = ranked
+        .iter()
+        .map(|(_, category)| counts[category])
+        .sum::<usize>();
+    let mut parts = ranked
+        .into_iter()
+        .map(|(_, category)| category_phrase(&category, counts[&category]))
+        .collect::<Vec<_>>();
+    let remaining = tools.len().saturating_sub(shown);
+    if remaining > 0 {
+        parts.push(if remaining == 1 {
+            "performed 1 other action".into()
+        } else {
+            format!("performed {remaining} other actions")
+        });
+    }
+    let sentence = parts
+        .into_iter()
+        .enumerate()
+        .map(|(index, part)| {
+            if index == 0 {
+                part
+            } else {
+                let mut chars = part.chars();
+                chars
+                    .next()
+                    .map(|first| first.to_lowercase().collect::<String>() + chars.as_str())
+                    .unwrap_or(part)
+            }
+        })
+        .collect::<Vec<_>>();
+    match sentence.len() {
+        0 => "Used tools".into(),
+        1 => sentence[0].clone(),
+        2 => format!("{} and {}", sentence[0], sentence[1]),
+        _ => format!("{}, {}, and {}", sentence[0], sentence[1], sentence[2]),
+    }
+}
+
+fn category_label(item: &Value) -> String {
+    item["category"].as_str().unwrap_or("other").to_owned()
+}
+
+fn category_priority(category: &str) -> u8 {
+    match category {
+        "command" | "fileChange" | "task" => 0,
+        "other" => 2,
+        _ => 1,
+    }
+}
+
+fn category_phrase(category: &str, count: usize) -> String {
+    let one = count == 1;
+    match category {
+        "command" => {
+            if one {
+                "Ran 1 command".into()
+            } else {
+                format!("Ran {count} commands")
+            }
+        }
+        "fileChange" => {
+            if one {
+                "Changed 1 file".into()
+            } else {
+                format!("Changed {count} files")
+            }
+        }
+        "read" => {
+            if one {
+                "Read 1 file".into()
+            } else {
+                format!("Read {count} files")
+            }
+        }
+        "search" => {
+            if one {
+                "Searched code once".into()
+            } else {
+                format!("Searched code {count} times")
+            }
+        }
+        "web" => {
+            if one {
+                "Searched the web once".into()
+            } else {
+                format!("Searched the web {count} times")
+            }
+        }
+        "mcp" => {
+            if one {
+                "Called 1 MCP tool".into()
+            } else {
+                format!("Called {count} MCP tools")
+            }
+        }
+        "task" => {
+            if one {
+                "Ran 1 subagent".into()
+            } else {
+                format!("Ran {count} subagents")
+            }
+        }
+        "todo" => {
+            if one {
+                "Updated the plan".into()
+            } else {
+                format!("Updated the plan {count} times")
+            }
+        }
+        _ => {
+            if one {
+                "Used 1 tool".into()
+            } else {
+                format!("Used {count} tools")
+            }
+        }
+    }
+}
+
+/// The symbol for a group: its category when every tool shares one, otherwise
+/// a generic tool, and the brain when it only contains reasoning.
+pub(super) fn group_icon(items: &[Value]) -> IconName {
+    let mut categories = items
+        .iter()
+        .filter(|item| item["kind"] == "tool")
+        .map(|item| item["category"].as_str().unwrap_or("other"))
+        .collect::<Vec<_>>();
+    categories.sort_unstable();
+    categories.dedup();
+    if categories.is_empty() {
+        return IconName::Brain;
+    }
+    if categories.len() == 1 {
+        return icon_for_category(categories[0]);
+    }
+    IconName::Hammer
+}
+
+pub(super) fn icon_for_category(category: &str) -> IconName {
+    match category {
+        "command" => IconName::SquareTerminal,
+        "fileChange" => IconName::PencilLine,
+        "read" => IconName::FileText,
+        "search" => IconName::Search,
+        "web" => IconName::Globe,
+        "mcp" => IconName::Puzzle,
+        "task" => IconName::Users,
+        "todo" => IconName::ListChecks,
+        _ => IconName::Wrench,
+    }
 }
 
 /// OpenCode's question tool call duplicates the form item; only the form row
@@ -269,6 +466,32 @@ mod work_header_tests {
             assert_eq!(work_header(&item).unwrap().title, title);
         }
         assert!(work_header(&json!({"kind":"assistant","status":"running"})).is_none());
+    }
+
+    #[::core::prelude::v1::test]
+    fn work_group_summary_matches_swift_wording() {
+        let items = vec![
+            json!({"kind":"tool","category":"command"}),
+            json!({"kind":"tool","category":"command"}),
+            json!({"kind":"tool","category":"read"}),
+            json!({"kind":"tool","category":"search"}),
+        ];
+        assert_eq!(
+            group_summary(&items),
+            "Ran 2 commands, read 1 file, and performed 1 other action"
+        );
+        assert_eq!(
+            group_summary(&[
+                json!({"kind":"reasoning"}),
+                json!({"kind":"reasoning"}),
+                json!({"kind":"reasoning"}),
+            ]),
+            "Thought 3 times"
+        );
+        assert_eq!(
+            group_summary(&[json!({"kind":"tool","category":"command"})]),
+            "Ran 1 command"
+        );
     }
 
     #[::core::prelude::v1::test]

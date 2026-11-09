@@ -987,7 +987,7 @@ impl Coincide {
             .flex()
             .flex_col()
             .gap_3()
-            .child(div().text_lg().child("Models"))
+            .when(in_provider_page, |panel| panel.child(div().text_lg().child("Models")))
             .child(div().text_sm().text_color(muted).child(
                 "Models your providers offer, plus custom model IDs you add. Select a model to use it for new threads, add it to Favorites, or hide it from the model picker. Command- or Control-click selects several. Reload Models asks every provider for its models.",
             ))

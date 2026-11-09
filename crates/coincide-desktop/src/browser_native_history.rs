@@ -219,3 +219,38 @@ mod tests {
         assert_eq!(calls.get(), 1);
     }
 }
+
+/// Native history state for the visible toolbar; querying it never navigates.
+pub(super) fn availability(view: &wry::WebView) -> (bool, bool) {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2::rc::Retained;
+        use objc2_web_kit::WKWebView;
+        use wry::WebViewExtMacOS;
+        let native: Retained<WKWebView> = view.webview().into_super();
+        unsafe { (native.canGoBack(), native.canGoForward()) }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        use webkit2gtk::WebViewExt;
+        use wry::WebViewExtUnix;
+        let native = view.webview();
+        (native.can_go_back(), native.can_go_forward())
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use windows::core::BOOL;
+        use wry::WebViewExtWindows;
+        let native = view.webview();
+        let (mut back, mut forward) = (BOOL::from(false), BOOL::from(false));
+        let valid = unsafe {
+            native.CanGoBack(&mut back).is_ok() && native.CanGoForward(&mut forward).is_ok()
+        };
+        (valid && back.as_bool(), valid && forward.as_bool())
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    {
+        let _ = view;
+        (false, false)
+    }
+}

@@ -1,5 +1,6 @@
 use super::*;
 use coincide_core::appshots::{self, Settings};
+use gpui_kit::component::switch::Switch;
 impl Coincide {
     fn change_appshot_setting(
         &mut self,
@@ -124,7 +125,7 @@ impl Coincide {
         let settings = Settings::read(&self.settings);
         let mut pane=div().id("appshots-settings").flex_1().min_w_0().min_h_0().overflow_y_scroll().p_5().flex().flex_col().gap_4()
             .child("Capture the window you’re working in and ask an agent about it.")
-            .child(Button::new("appshots-enabled").label(if settings.enabled{"Turn off Appshots"}else{"Turn on Appshots"}).on_click(cx.listener(move|this,_,window,cx|this.change_appshot_setting("enabled",json!(!settings.enabled),window,cx))))
+            .child(self.labeled_row("Turn on Appshots", None, Switch::new("appshots-enabled").accessibility_label("Turn on Appshots").color(self.color(0xe4e9f2)).checked(settings.enabled).on_click(cx.listener(move|this,checked:&bool,window,cx|this.change_appshot_setting("enabled",json!(*checked),window,cx)))))
             .child("Capture the frontmost window of the app you’re using and attach it to a chat, ready for your question.")
             .child("Take an appshot with")
             .child(div().flex().gap_2()
@@ -154,9 +155,9 @@ impl Coincide {
                 )
                 .child("Use Command or Control with a key. Delete removes it; Escape cancels.");
         }
-        pane=pane.child(Button::new("appshots-text").label(if settings.includes_text{"Include the window’s text: On"}else{"Include the window’s text: Off"}).on_click(cx.listener(move|this,_,window,cx|this.change_appshot_setting("includesWindowText",json!(!settings.includes_text),window,cx))))
+        pane=pane.child(self.labeled_row("Include the window’s text", None, Switch::new("appshots-text").accessibility_label("Include the window’s text").color(self.color(0xe4e9f2)).checked(settings.includes_text).on_click(cx.listener(move|this,checked:&bool,window,cx|this.change_appshot_setting("includesWindowText",json!(*checked),window,cx)))))
             .child("Adds text the app exposes through Accessibility as a card beside the picture. Password fields are excluded.")
-            .child(Button::new("appshots-sound").label(if settings.sound{"Play a sound: On"}else{"Play a sound: Off"}).on_click(cx.listener(move|this,_,window,cx|this.change_appshot_setting("playsSound",json!(!settings.sound),window,cx))))
+            .child(self.labeled_row("Play a sound", None, Switch::new("appshots-sound").accessibility_label("Play a sound").color(self.color(0xe4e9f2)).checked(settings.sound).on_click(cx.listener(move|this,checked:&bool,window,cx|this.change_appshot_setting("playsSound",json!(*checked),window,cx)))))
             .child(format!("Status: {}",self.appshots.status))
             .child(div().text_lg().child("Permissions"))
             .child(format!("Screen Recording: {} · Accessibility: {}",if self.appshots.permissions.screen{"Allowed"}else{"Not granted"},if self.appshots.permissions.accessibility{"Allowed"}else{"Not granted"}));

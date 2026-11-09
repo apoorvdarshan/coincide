@@ -550,6 +550,138 @@ pub(super) fn fenced(text: &str) -> String {
 impl super::Coincide {
     /// A tool call's row: TranscriptToolCell's one-line header and, while
     /// expanded, its detail panel capped at Swift's 320-point height.
+    /// Swift's TranscriptGroupCell: consecutive tool/reasoning rows collapse
+    /// into one line. While a member runs, the line names that activity;
+    /// otherwise it summarizes the finished work.
+    pub(super) fn group_row(
+        &mut self,
+        source: &str,
+        item_id: &str,
+        index: usize,
+        items: &[Value],
+        expanded: bool,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let running = items
+            .iter()
+            .rev()
+            .find(|item| item["status"].as_str() == Some("running"));
+        let title = if let Some(running) = running {
+            if running["kind"] == "reasoning" {
+                "Thinking".to_owned()
+            } else {
+                super::presentation::group_category_label(
+                    running["category"].as_str().unwrap_or("other"),
+                )
+                .to_owned()
+            }
+        } else {
+            super::presentation::group_summary(items)
+        };
+        let group_icon = if let Some(running) = running {
+            if running["kind"] == "reasoning" {
+                IconName::Brain
+            } else {
+                icon(running["category"].as_str().unwrap_or("other"))
+            }
+        } else {
+            super::presentation::group_icon(items)
+        };
+        let failed = items
+            .iter()
+            .any(|item| item["kind"] == "tool" && item["status"] == "failed");
+        let secondary = self.color(0xe4e9f2).opacity(0.6);
+        let failure = rgb(if self.appearance_dark {
+            0xFF453A
+        } else {
+            0xFF3B30
+        });
+        let toggle = {
+            let source = source.to_owned();
+            let anchor = item_id.to_owned();
+            move |this: &mut Self, cx: &mut Context<Self>| {
+                this.toggle_work_group(&source, &anchor, index, cx)
+            }
+        };
+        let toggle_click = toggle.clone();
+        div()
+            .flex()
+            .w_full()
+            .px(px(super::presentation::CONTENT_GUTTER))
+            .justify_center()
+            .child(
+                div()
+                    .id(SharedString::from(format!(
+                        "message-row-{source}-{item_id}"
+                    )))
+                    .flex()
+                    .flex_col()
+                    .w_full()
+                    .min_w_0()
+                    .max_w(px(super::presentation::CONTENT_WIDTH))
+                    .pl(px(super::presentation::RAIL_GUTTER))
+                    .mb(px(4.))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .h(px(26.))
+                            .min_w_0()
+                            .w_full()
+                            .text_color(secondary)
+                            .text_size(px((self.conversation_font_size() - 1.).max(10.)))
+                            .child(Icon::new(group_icon).xsmall().text_color(if failed {
+                                Hsla::from(failure)
+                            } else {
+                                Hsla::from(secondary)
+                            }))
+                            .child(
+                                div()
+                                    .id(SharedString::from(format!(
+                                        "group-title-{source}-{item_id}"
+                                    )))
+                                    .min_w_0()
+                                    .flex_1()
+                                    .truncate()
+                                    .cursor_pointer()
+                                    .on_click(
+                                        cx.listener(move |this, _, _, cx| toggle_click(this, cx)),
+                                    )
+                                    .child(title),
+                            )
+                            .when(running.is_some(), |row| {
+                                row.child(
+                                    Icon::new(IconName::LoaderCircle)
+                                        .xsmall()
+                                        .text_color(Hsla::from(secondary)),
+                                )
+                            })
+                            .child(
+                                Button::new(SharedString::from(format!(
+                                    "group-expand-{source}-{item_id}"
+                                )))
+                                .accessibility_label(if expanded {
+                                    "Collapse work group"
+                                } else {
+                                    "Expand work group"
+                                })
+                                .icon(if expanded {
+                                    IconName::ChevronDown
+                                } else {
+                                    IconName::ChevronRight
+                                })
+                                .ghost()
+                                .compact()
+                                .xsmall()
+                                .on_click(cx.listener(move |this, _, _, cx| toggle(this, cx))),
+                            ),
+                    ),
+            )
+            .into_any_element()
+    }
+
     /// Swift's TranscriptQuestionCell: one work-log line for the request, with
     /// its answers underneath once resolved. The request itself is answered in
     /// the composer banner, never by dumping the provider payload here.

@@ -1207,7 +1207,7 @@ fn footer_summary(
         "Edit selection options"
     };
     let mut accessible = format!(
-        "{action}. Saved: {saved}. Automatic/default means no stored override; runtime support and authentication are not verified."
+        "{action}. Saved: {saved}."
     );
     if let Some(annotation) = &annotation {
         accessible.push_str(&format!(" {annotation}."));
@@ -3785,11 +3785,7 @@ mod tests {
                 .accessible
                 .starts_with("Hide selection options. Saved:")
         );
-        assert!(
-            summary
-                .accessible
-                .contains("runtime support and authentication are not verified")
-        );
+        assert!(!summary.accessible.contains("authentication"));
         assert!(summary.annotation.is_none());
     }
     #[::core::prelude::v1::test]

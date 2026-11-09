@@ -5,7 +5,7 @@ use crate::computer_use::{Handle, Status};
 use coincide_core::computer_use::{Failure, Permission, PermissionKind};
 use gpui_kit::{
     base::Disableable,
-    component::{button::Button, checkbox::Checkbox},
+    component::{button::Button, switch::Switch},
     *,
 };
 use std::{collections::BTreeMap, time::Duration};
@@ -166,10 +166,10 @@ impl Render for ComputerUseSettingsPanel {
             self.status.error.map(failure_text)
         };
         div().flex().flex_col().gap_3().p_4()
-            .child(div().text_lg().child("Computer Use"))
+
             .child(format!("Let agents see and interact with {} through Coincide.", if cfg!(target_os="macos") {"Mac apps"} else {"apps on this computer"}))
             .child(div().flex().flex_col().gap_1()
-                .child(Checkbox::new("computer-use-enable").label(format!("Allow agents to use this {COMPUTER}")).checked(enabled).disabled(self.status.stopped||(!enabled&&!self.status.native_compiled)).on_click(cx.listener(|this,checked,_,cx|this.set_enabled(*checked,cx))))
+                .child(div().flex().items_center().justify_between().gap_3().child(format!("Allow agents to use this {COMPUTER}")).child(Switch::new("computer-use-enable").accessibility_label(format!("Allow agents to use this {COMPUTER}")).checked(enabled).disabled(self.status.stopped||(!enabled&&!self.status.native_compiled)).on_click(cx.listener(|this,checked,_,cx|this.set_enabled(*checked,cx)))))
                 .child(div().text_sm().child("Agents can view the screen and interact with apps while Computer Use is on. All providers use a private connection for each thread.")))
             .child(format!("Status: {}", self.state()))
             .child(format!("App accessibility: {:?} · Window capture: {:?}",self.status.permissions.accessibility,self.status.permissions.screen_capture))

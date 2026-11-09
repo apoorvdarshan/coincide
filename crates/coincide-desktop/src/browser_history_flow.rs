@@ -1,6 +1,7 @@
 //! Reviewed, profile-bound history import using the existing owned worker lane.
 use super::*;
 use coincide_core::browser_history::{self, Library as HistoryLibrary, Plan as HistoryPlan};
+use gpui_kit::component::{Sizable, button::ButtonVariants};
 
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct Binding {
@@ -611,6 +612,54 @@ impl BrowserSettings {
             self.history.reload = false;
             self.history_reload(cx);
         }
+    }
+    pub(super) fn pane_history(&self, cx: &mut Context<Self>) -> AnyElement {
+        let busy = self.history.pending || self.history.workers.closed();
+        let mut view = div().flex().flex_col().gap_1().child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child("History")
+                .child(
+                    Button::new("pane-history-refresh")
+                        .icon(gpui_kit::assets::IconName::RefreshCw)
+                        .ghost()
+                        .xsmall()
+                        .accessibility_label("Refresh history")
+                        .disabled(busy)
+                        .on_click(cx.listener(|this, _, _, cx| this.history_reload(cx))),
+                ),
+        );
+        if let Some(library) = &self.history.library {
+            if library.rows.is_empty() {
+                view = view.child(div().text_xs().child("No browsing history yet."));
+            }
+            for entry in library.rows.iter().take(30) {
+                let id = entry.id;
+                let revision = library.revision;
+                let title = if entry.view.title.is_empty() {
+                    entry.view.url.clone()
+                } else {
+                    entry.view.title.clone()
+                };
+                view = view.child(
+                    Button::new(SharedString::from(format!("pane-history-open-{id}")))
+                        .label(title)
+                        .tooltip(entry.view.url.clone())
+                        .w_full()
+                        .ghost()
+                        .compact()
+                        .disabled(busy)
+                        .on_click(
+                            cx.listener(move |this, _, _, cx| this.history_open(id, revision, cx)),
+                        ),
+                );
+            }
+        } else {
+            view = view.child(div().text_xs().child(self.history.status.clone()));
+        }
+        view.into_any_element()
     }
     pub(super) fn render_history(&self, cx: &mut Context<Self>) -> AnyElement {
         let busy = self.import_busy
