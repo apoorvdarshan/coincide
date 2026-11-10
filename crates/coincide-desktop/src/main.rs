@@ -5812,6 +5812,9 @@ impl Render for Coincide {
             .when_some(self.project_script_editor(cx), |view, form| {
                 view.child(form)
             })
+            .when_some(self.project_management_overlay(cx), |view, form| {
+                view.child(form)
+            })
             .when_some(self.git_modal(cx), |view, modal| view.child(modal))
             .when_some(self.schedule_editor_overlay(cx), |view, editor| {
                 view.child(editor)

@@ -272,6 +272,29 @@ impl Coincide {
         }
         cx.notify();
     }
+    /// Swift's Add Project sheet: the project form floats over the window
+    /// instead of pushing the conversation list down inside the sidebar.
+    pub(super) fn project_management_overlay(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let form = self.project_management_form(cx)?;
+        Some(
+            div()
+                .id("project-management-overlay")
+                .absolute()
+                .inset_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .p_3()
+                .bg(rgba(0x00000080))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|_, _, _, cx| cx.stop_propagation()),
+                )
+                .child(div().w(px(460.)).max_w_full().max_h_full().child(form))
+                .into_any_element(),
+        )
+    }
+
     pub(super) fn project_management_form(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let state = &self.project_management.session;
         if !state.open {
