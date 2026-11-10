@@ -5,8 +5,9 @@ use coincide_core::bot_runtime::BOTS_PROJECT_ID;
 
 #[path = "navigation_sections.rs"]
 mod sections;
+use crate::native_menu::AccessibleMenuExt as _;
 use gpui_kit::assets::IconName;
-use gpui_kit::component::menu::ContextMenuExt;
+use gpui_kit::component::menu::{ContextMenuExt, PopupMenuItem};
 use sections::NO_PROJECT;
 pub(super) const NO_PROJECT_ID: &str = NO_PROJECT;
 
@@ -608,6 +609,187 @@ impl Coincide {
                 && !self.media.close_requested
                 && !self.media.shutdown_requested,
         }
+    }
+    /// Swift's project filter and actions, as one compact menu anchored to the
+    /// sidebar's ellipsis instead of an expanded list of full-width buttons.
+    pub(super) fn project_filter_menu(&self, label: String, cx: &mut Context<Self>) -> AnyElement {
+        let parent = cx.entity().downgrade();
+        let selected = self.selected_project.clone();
+        let projects = self
+            .projects
+            .iter()
+            .filter(|project| {
+                project["id"] != NO_PROJECT
+                    && !project["id"]
+                        .as_str()
+                        .is_some_and(|id| id.eq_ignore_ascii_case(BOTS_PROJECT_ID))
+            })
+            .map(|project| (text(project, "id"), text(project, "name")))
+            .collect::<Vec<_>>();
+        let archived = self.show_archived;
+        let snoozed = self.show_snoozed;
+        let can_manage = selected.as_ref().is_some_and(|id| {
+            self.projects.iter().any(|project| {
+                project["id"].as_str() == Some(id.as_str())
+                    && project["isChats"] != true
+                    && project["isBots"] != true
+                    && id != NO_PROJECT
+                    && !id.eq_ignore_ascii_case(BOTS_PROJECT_ID)
+            })
+        });
+        let bulk = !self.thread_bulk.mode
+            && self.thread_bulk.status.is_empty()
+            && self.bulk_sidebar_binding(cx).available;
+        let menu_parent = parent.clone();
+        let choose = move |id: Option<String>| {
+            let parent = menu_parent.clone();
+            move |_: &gpui_kit::ClickEvent, _: &mut Window, cx: &mut App| {
+                let id = id.clone();
+                let _ = parent.update(cx, |this, cx| {
+                    this.thread_bulk.invalidate();
+                    this.selected_project = id;
+                    this.project_picker_open = false;
+                    cx.notify();
+                });
+            }
+        };
+        Button::new("projects-toggle")
+            .icon(IconName::Ellipsis)
+            .ghost()
+            .compact()
+            .h(px(32.))
+            .accessibility_label(format!("Project: {label}"))
+            .tooltip("Conversation filters and project actions")
+            .accessible_menu(move |mut menu, _window, _cx| {
+                menu = menu.item(
+                    PopupMenuItem::new("All projects")
+                        .checked(selected.is_none())
+                        .on_click(choose(None)),
+                );
+                menu = menu.item(
+                    PopupMenuItem::new("No project")
+                        .checked(selected.as_deref() == Some(NO_PROJECT))
+                        .on_click(choose(Some(NO_PROJECT.into()))),
+                );
+                menu = menu.item(
+                    PopupMenuItem::new("Bots")
+                        .checked(selected.as_deref() == Some(BOTS_PROJECT_ID))
+                        .on_click(choose(Some(BOTS_PROJECT_ID.into()))),
+                );
+                for (id, name) in projects.clone() {
+                    let checked = selected.as_ref() == Some(&id);
+                    menu = menu.item(
+                        PopupMenuItem::new(name)
+                            .checked(checked)
+                            .on_click(choose(Some(id))),
+                    );
+                }
+                menu = menu.separator();
+                {
+                    let parent = parent.clone();
+                    menu = menu.item(PopupMenuItem::new("Add folders…").on_click(
+                        move |_, window, cx| {
+                            let _ = parent.update(cx, |this, cx| {
+                                this.open_project_form(
+                                    project_management::Mode::Add,
+                                    None,
+                                    window,
+                                    cx,
+                                )
+                            });
+                        },
+                    ));
+                }
+                {
+                    let parent = parent.clone();
+                    let selected = selected.clone();
+                    menu = menu.item(
+                        PopupMenuItem::new("Manage selected project…")
+                            .disabled(!can_manage)
+                            .on_click(move |_, window, cx| {
+                                let selected = selected.clone();
+                                let _ = parent.update(cx, |this, cx| {
+                                    this.open_project_form(
+                                        project_management::Mode::Manage,
+                                        selected,
+                                        window,
+                                        cx,
+                                    )
+                                });
+                            }),
+                    );
+                }
+                {
+                    let parent = parent.clone();
+                    menu = menu.item(PopupMenuItem::new("Removed projects…").on_click(
+                        move |_, window, cx| {
+                            let _ = parent.update(cx, |this, cx| {
+                                this.open_project_form(
+                                    project_management::Mode::Recovery,
+                                    None,
+                                    window,
+                                    cx,
+                                )
+                            });
+                        },
+                    ));
+                }
+                if bulk {
+                    let parent = parent.clone();
+                    menu = menu.separator().item(
+                        PopupMenuItem::new("Select conversations…").on_click(move |_, _, cx| {
+                            let _ = parent.update(cx, |this, cx| {
+                                this.project_picker_open = false;
+                                this.sync_thread_bulk(cx);
+                                if this.bulk_sidebar_binding(cx).available {
+                                    this.thread_bulk.mode = true;
+                                    this.thread_bulk.invalidate();
+                                }
+                                cx.notify();
+                            });
+                        }),
+                    );
+                }
+                menu = menu.separator();
+                {
+                    let parent = parent.clone();
+                    menu = menu.item(
+                        PopupMenuItem::new("Show archived")
+                            .checked(archived)
+                            .on_click(move |_, _, cx| {
+                                let parent = parent.clone();
+                                let _ = parent.update(cx, |this, cx| {
+                                    this.thread_bulk.invalidate();
+                                    this.show_archived = !this.show_archived;
+                                    this.refresh(cx);
+                                });
+                            }),
+                    );
+                }
+                {
+                    let parent = parent.clone();
+                    menu = menu.item(
+                        PopupMenuItem::new("Show snoozed")
+                            .checked(snoozed)
+                            .on_click(move |_, _, cx| {
+                                let _ = parent.update(cx, |this, cx| {
+                                    this.thread_bulk.invalidate();
+                                    let value = !this.show_snoozed;
+                                    this.sidebar_preference(
+                                        "showsSnoozedThreads",
+                                        json!(value),
+                                        cx,
+                                    );
+                                    this.show_snoozed =
+                                        this.sidebar_preferences.flag("showsSnoozedThreads");
+                                    cx.notify();
+                                });
+                            }),
+                    );
+                }
+                menu
+            })
+            .into_any_element()
     }
     pub(super) fn navigation_sidebar(
         &self,
@@ -1457,23 +1639,7 @@ impl Coincide {
                                     })),
                             ),
                     )
-                    .child(
-                        Button::new("projects-toggle")
-                            .icon(IconName::Ellipsis)
-                            .ghost()
-                            .compact()
-                            .h(px(32.))
-                            .accessibility_label(format!("Project: {project_label}"))
-                            .tooltip("Conversation filters and project actions")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.thread_bulk.invalidate();
-                                this.project_picker_open = !this.project_picker_open;
-                                if !this.project_picker_open {
-                                    this.close_project_form(window, cx);
-                                }
-                                cx.notify();
-                            })),
-                    ),
+                    .child(self.project_filter_menu(project_label, cx)),
             )
             .child(self.sidebar_search_field(cx))
             .child(
@@ -1522,202 +1688,51 @@ impl Coincide {
                         })),
                 ),
             )
-            .when(self.project_picker_open, |view| {
+            .when(self.show_archived || self.show_snoozed, |view| {
                 view.child(
                     div()
                         .flex()
-                        .flex_col()
+                        .flex_wrap()
                         .gap_2()
                         .child(
-                            Button::new("projects-all")
-                                .label("All projects")
-                                .when(self.selected_project.is_none(), |b| b.primary())
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.thread_bulk.invalidate();
-                                    this.selected_project = None;
-                                    cx.notify();
-                                })),
-                        )
-                        .child(
-                            Button::new("projects-none")
-                                .label("No project")
-                                .when(self.selected_project.as_deref() == Some(NO_PROJECT), |b| {
-                                    b.primary()
+                            Button::new("archived")
+                                .ghost()
+                                .compact()
+                                .label(if self.show_archived {
+                                    "Hide archived"
+                                } else {
+                                    "Show archived"
                                 })
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.thread_bulk.invalidate();
-                                    this.selected_project = Some(NO_PROJECT.into());
-                                    cx.notify();
+                                    this.show_archived = !this.show_archived;
+                                    this.refresh(cx);
                                 })),
                         )
                         .child(
-                            Button::new("projects-bots")
-                                .label("Bots")
-                                .when(
-                                    self.selected_project.as_deref() == Some(BOTS_PROJECT_ID),
-                                    |b| b.primary(),
-                                )
+                            Button::new("snoozed")
+                                .ghost()
+                                .compact()
+                                .label(if self.show_snoozed {
+                                    "Hide snoozed"
+                                } else {
+                                    "Show snoozed"
+                                })
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.thread_bulk.invalidate();
-                                    this.selected_project = Some(BOTS_PROJECT_ID.into());
+                                    let value = !this.show_snoozed;
+                                    this.sidebar_preference(
+                                        "showsSnoozedThreads",
+                                        json!(value),
+                                        cx,
+                                    );
+                                    this.show_snoozed =
+                                        this.sidebar_preferences.flag("showsSnoozedThreads");
                                     cx.notify();
                                 })),
-                        )
-                        .child(
-                            div()
-                                .id("project-picker")
-                                .max_h(px(180.))
-                                .overflow_y_scroll()
-                                .flex()
-                                .flex_col()
-                                .gap_1()
-                                .children(
-                                    self.projects
-                                        .iter()
-                                        .filter(|p| {
-                                            p["id"] != NO_PROJECT
-                                                && !p["id"].as_str().is_some_and(|id| {
-                                                    id.eq_ignore_ascii_case(BOTS_PROJECT_ID)
-                                                })
-                                        })
-                                        .map(|project| {
-                                            let id = text(project, "id");
-                                            Button::new(SharedString::from(format!("project-{id}")))
-                                                .label(text(project, "name"))
-                                                .accessibility_label(format!(
-                                                    "Project {}: {}",
-                                                    text(project, "name"),
-                                                    text(project, "path")
-                                                ))
-                                                .tooltip(text(project, "path"))
-                                                .when(
-                                                    self.selected_project.as_ref() == Some(&id),
-                                                    |b| b.primary(),
-                                                )
-                                                .on_click(cx.listener(move |this, _, _, cx| {
-                                                    this.thread_bulk.invalidate();
-                                                    this.selected_project = Some(id.clone());
-                                                    cx.notify();
-                                                }))
-                                        }),
-                                ),
-                        )
-                        .child(Button::new("project-add").label("Add folders…").on_click(
-                            cx.listener(|this, _, window, cx| {
-                                this.open_project_form(
-                                    project_management::Mode::Add,
-                                    None,
-                                    window,
-                                    cx,
-                                )
-                            }),
-                        ))
-                        .child(
-                            Button::new("project-manage-selected")
-                                .label("Manage selected project…")
-                                .disabled(self.selected_project.as_ref().is_none_or(|id| {
-                                    !self.projects.iter().any(|p| {
-                                        p["id"] == *id
-                                            && p["isChats"] != true
-                                            && p["isBots"] != true
-                                            && *id != NO_PROJECT
-                                            && !id.eq_ignore_ascii_case(BOTS_PROJECT_ID)
-                                    })
-                                }))
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.open_project_form(
-                                        project_management::Mode::Manage,
-                                        this.selected_project.clone(),
-                                        window,
-                                        cx,
-                                    )
-                                })),
-                        )
-                        .child(
-                            Button::new("project-recovery")
-                                .label("Removed projects…")
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.open_project_form(
-                                        project_management::Mode::Recovery,
-                                        None,
-                                        window,
-                                        cx,
-                                    )
-                                })),
-                        )
-                        .when(
-                            !self.thread_bulk.mode && self.thread_bulk.status.is_empty(),
-                            |view| {
-                                view.child(
-                                    Button::new("sidebar-select-conversations-menu")
-                                        .ghost()
-                                        .compact()
-                                        .label("Select conversations…")
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.project_picker_open = false;
-                                            this.sync_thread_bulk(cx);
-                                            if this.bulk_sidebar_binding(cx).available {
-                                                this.thread_bulk.mode = true;
-                                                this.thread_bulk.invalidate();
-                                            }
-                                            cx.notify();
-                                        })),
-                                )
-                            },
-                        )
-                        .when_some(self.project_management_form(cx), |view, form| {
-                            view.child(form)
-                        }),
+                        ),
                 )
             })
-            .when(
-                self.project_picker_open || self.show_archived || self.show_snoozed,
-                |view| {
-                    view.child(
-                        div()
-                            .flex()
-                            .flex_wrap()
-                            .gap_2()
-                            .child(
-                                Button::new("archived")
-                                    .ghost()
-                                    .compact()
-                                    .label(if self.show_archived {
-                                        "Hide archived"
-                                    } else {
-                                        "Show archived"
-                                    })
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.thread_bulk.invalidate();
-                                        this.show_archived = !this.show_archived;
-                                        this.refresh(cx);
-                                    })),
-                            )
-                            .child(
-                                Button::new("snoozed")
-                                    .ghost()
-                                    .compact()
-                                    .label(if self.show_snoozed {
-                                        "Hide snoozed"
-                                    } else {
-                                        "Show snoozed"
-                                    })
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.thread_bulk.invalidate();
-                                        let value = !this.show_snoozed;
-                                        this.sidebar_preference(
-                                            "showsSnoozedThreads",
-                                            json!(value),
-                                            cx,
-                                        );
-                                        this.show_snoozed =
-                                            this.sidebar_preferences.flag("showsSnoozedThreads");
-                                        cx.notify();
-                                    })),
-                            ),
-                    )
-                },
-            )
             .when(
                 self.thread_bulk.mode || !self.thread_bulk.status.is_empty(),
                 |view| view.child(self.bulk_controls(cx)),
