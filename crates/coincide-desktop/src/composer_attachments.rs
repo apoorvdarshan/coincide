@@ -212,7 +212,14 @@ impl Coincide {
                     let operation_id = operation["operationId"].as_str().ok_or_else(|| {
                         anyhow::anyhow!("Image import did not return an operation ID")
                     })?;
+                    // A lost import job must end the import instead of keeping
+                    // the composer blocked with "Wait for image imports…".
+                    let deadline = Instant::now() + Duration::from_secs(90);
                     loop {
+                        anyhow::ensure!(
+                            Instant::now() < deadline,
+                            "Image import timed out; attach the image again"
+                        );
                         let poll_engine = engine.clone();
                         let params = json!({"threadId":thread,"operationId":operation_id});
                         let result = cx
