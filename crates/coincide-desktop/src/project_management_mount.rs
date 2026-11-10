@@ -69,6 +69,11 @@ impl Coincide {
             self.project_path
                 .update(cx, |v, cx| v.set_value(home.clone(), window, cx));
             self.project_management.folders.clear();
+            // The prefilled home folder already shows its subfolders.
+            let typed = self.project_path.read(cx).value().to_string();
+            self.project_management.session.completions =
+                project_management::path_completions(&typed);
+            self.project_management.session.completion_index = 0;
         }
         self.review_project_form(window, cx);
     }
