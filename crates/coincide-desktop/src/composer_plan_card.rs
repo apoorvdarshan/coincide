@@ -238,7 +238,7 @@ impl Coincide {
         // Tool rows fold their body; the plan opens in full, as Swift's
         // revealItem opens the turn that folds it away.
         if self.expanded.insert(index) {
-            self.transcript_list.splice(index..index + 1, 1);
+            self.splice_transcript(index..index + 1, 1);
         }
         self.transcript_list.scroll_to_reveal_item(index);
         cx.notify();

@@ -197,6 +197,13 @@ impl std::fmt::Display for EngineBusy {
     }
 }
 impl std::error::Error for EngineBusy {}
+/// Whether the reader is away from the tail. Only then must a splice leave the
+/// scroll position alone; at the bottom the transcript keeps following the
+/// newest reply, as every chat does.
+fn transcript_scrolled_away(top: gpui_kit::ListOffset, count: usize) -> bool {
+    top.item_ix < count || top.offset_in_item > px(1.)
+}
+
 fn engine_busy(error: &anyhow::Error) -> bool {
     error.is::<EngineBusy>()
 }
@@ -2603,7 +2610,7 @@ impl Coincide {
                 .as_ref()
                 .and_then(|selected| find_row(selected, &thread, &item))
         {
-            self.transcript_list.splice(index..index + 1, 1);
+            self.splice_transcript(index..index + 1, 1);
         }
         self.find_pending = None;
         cx.notify();
@@ -2788,7 +2795,7 @@ impl Coincide {
                     generation: *generation,
                     serial: *match_serial,
                 });
-                self.transcript_list.splice(index..index + 1, 1);
+                self.splice_transcript(index..index + 1, 1);
                 // The expanded/previously hidden row is now unmeasured.
                 // Pixel-based reveal uses its zero height and can anchor the
                 // preceding row; direct item anchoring mounts the exact target
@@ -3814,8 +3821,7 @@ impl Coincide {
                 .unwrap_or_default();
             self.set_starting_runs(starting, cx);
             if was_running != is_running {
-                self.transcript_list
-                    .splice(0..self.transcript_count, self.transcript_count);
+                self.splice_transcript(0..self.transcript_count, self.transcript_count);
                 cx.notify();
             }
             self.observe_thread_activity(&status, window, cx);
@@ -3837,8 +3843,7 @@ impl Coincide {
                         self.preserve_pending_draft(&mut v);
                         let count = v["items"].as_array().map_or(0, Vec::len);
                         let start = self.transcript_count.saturating_sub(1).min(count);
-                        self.transcript_list
-                            .splice(start..self.transcript_count, count - start);
+                        self.splice_transcript(start..self.transcript_count, count - start);
                         self.transcript_count = count;
                         self.selected = Some(v);
                         self.refresh_turn_changes();
@@ -3866,14 +3871,8 @@ impl Coincide {
         let requests = if self.running.contains(&thread) {
             match call(&self.engine, "agent.pending", json!({"threadId":thread})) {
                 Ok(value) => value.as_array().cloned().unwrap_or_default(),
-                Err(error) => {
-                    let status = format!("Unable to load agent requests: {error}");
-                    if self.status != status {
-                        self.status = status;
-                        cx.notify();
-                    }
-                    return;
-                }
+                // A busy engine is a retry, not news for the composer line.
+                Err(_) => return,
             }
         } else {
             Vec::new()
@@ -4291,6 +4290,19 @@ impl Coincide {
         }
         cx.notify();
     }
+    /// Keep the reader's place across a transcript splice. gpui moves a scroll
+    /// anchor that falls inside the spliced range to that range's start, so a
+    /// live row rewriting itself would otherwise pull someone who scrolled away
+    /// back down. Someone still at the bottom keeps following the tail.
+    pub(crate) fn splice_transcript(&mut self, range: std::ops::Range<usize>, count: usize) {
+        let top = self.transcript_list.logical_scroll_top();
+        let away = transcript_scrolled_away(top, self.transcript_count);
+        self.transcript_list.splice(range, count);
+        if away {
+            self.transcript_list.scroll_to(top);
+        }
+    }
+
     fn image_preview(
         &mut self,
         metadata: &Value,
@@ -4379,21 +4391,32 @@ impl Coincide {
                             Err(_) => PreviewState::Unavailable,
                         };
                         let selected = this.selected.as_ref().map(|thread| text(thread, "id"));
-                        for (thread, index) in &entry.rows {
-                            if selected.as_deref() == Some(thread.as_str())
-                                && *index < this.transcript_count
-                            {
-                                this.transcript_list.splice(*index..*index + 1, 1);
-                            }
+                        let rows = entry
+                            .rows
+                            .iter()
+                            .filter(|(thread, index)| {
+                                selected.as_deref() == Some(thread.as_str())
+                                    && *index < this.transcript_count
+                            })
+                            .map(|(_, index)| *index)
+                            .collect::<Vec<_>>();
+                        for index in rows {
+                            this.splice_transcript(index..index + 1, 1);
                         }
                     }
                     let selected = this.selected.as_ref().map(|thread| text(thread, "id"));
-                    for (thread, index) in this.image_waiting_rows.drain() {
-                        if selected.as_deref() == Some(thread.as_str())
-                            && index < this.transcript_count
-                        {
-                            this.transcript_list.splice(index..index + 1, 1);
-                        }
+                    let waiting = this
+                        .image_waiting_rows
+                        .iter()
+                        .filter(|(thread, index)| {
+                            selected.as_deref() == Some(thread.as_str())
+                                && *index < this.transcript_count
+                        })
+                        .map(|(_, index)| *index)
+                        .collect::<Vec<_>>();
+                    this.image_waiting_rows.clear();
+                    for index in waiting {
+                        this.splice_transcript(index..index + 1, 1);
                     }
                     cx.notify();
                 });
@@ -4700,7 +4723,7 @@ impl Coincide {
     ) {
         self.chat_turns.toggle(source, anchor);
         if index < self.transcript_count {
-            self.transcript_list.splice(index..index + 1, 1);
+            self.splice_transcript(index..index + 1, 1);
         }
         cx.notify();
     }
@@ -4725,7 +4748,7 @@ impl Coincide {
         } else if !self.expanded.remove(&index) {
             self.expanded.insert(index);
         }
-        self.transcript_list.splice(index..index + 1, 1);
+        self.splice_transcript(index..index + 1, 1);
         cx.notify();
     }
     fn message(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -5566,10 +5589,10 @@ impl Render for Coincide {
         // Ask where the list is, not whether it is following: the follow flag
         // only re-engages in a fully measured layout, so rows that are still
         // measuring left the pill up even at the bottom of the transcript.
-        let scrolled_away = {
-            let top = self.transcript_list.logical_scroll_top();
-            top.item_ix < self.transcript_count || top.offset_in_item > px(1.)
-        };
+        let scrolled_away = transcript_scrolled_away(
+            self.transcript_list.logical_scroll_top(),
+            self.transcript_count,
+        );
         let jump_to_latest = scrolled_away
             && self.selected.as_ref().is_some_and(|thread| {
                 thread["items"]
@@ -5678,36 +5701,6 @@ impl Render for Coincide {
                     .min_w_0()
                     .h_full()
                     .when_some(cookie_recovery, |view, recovery| view.child(recovery))
-                    .when(
-                        self.pending_drafts.values().any(|draft| draft.failed),
-                        |view| {
-                        view.child(
-                            div()
-                                .p_2()
-                                .flex()
-                                .items_center()
-                                .gap_2()
-                                .child("A draft could not be saved yet. Keep this window open.")
-                                .when(
-                                    self.pending_drafts
-                                        .values()
-                                        .any(|draft| draft.failed && draft.retry),
-                                    |view| {
-                                        view.child(
-                                            Button::new("retry-draft-save")
-                                                .label("Retry save")
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    draft_close::retry_failed(
-                                                        &mut this.pending_drafts,
-                                                    );
-                                                    this.flush_pending_drafts();
-                                                    cx.notify();
-                                                })),
-                                        )
-                                    },
-                                ),
-                        )
-                    })
                     .child(self.conversation_toolbar(title, cx))
                     .when_some(self.thread_management(cx), |view, management| {
                         view.child(management)
@@ -6411,5 +6404,40 @@ mod find_mount_tests {
         assert_eq!(list.logical_scroll_top().item_ix, 74);
         assert_eq!(list.logical_scroll_top().offset_in_item, px(0.));
         assert!(!list.is_following_tail());
+    }
+}
+
+#[cfg(test)]
+mod transcript_scroll_tests {
+    use super::*;
+    #[::core::prelude::v1::test]
+    fn the_tail_is_followed_only_from_the_tail() {
+        let end = gpui_kit::ListOffset {
+            item_ix: 12,
+            offset_in_item: px(0.),
+        };
+        assert!(!transcript_scrolled_away(end, 12));
+        // A tiny rounding offset at the very end is still the tail.
+        assert!(!transcript_scrolled_away(
+            gpui_kit::ListOffset {
+                item_ix: 12,
+                offset_in_item: px(0.5),
+            },
+            12
+        ));
+        assert!(transcript_scrolled_away(
+            gpui_kit::ListOffset {
+                item_ix: 11,
+                offset_in_item: px(0.),
+            },
+            12
+        ));
+        assert!(transcript_scrolled_away(
+            gpui_kit::ListOffset {
+                item_ix: 11,
+                offset_in_item: px(240.),
+            },
+            12
+        ));
     }
 }
