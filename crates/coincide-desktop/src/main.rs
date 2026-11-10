@@ -3116,9 +3116,27 @@ impl Coincide {
         if !self.project_ui_admitted() {
             return;
         }
-        let paths = self.project_management.folders.clone();
+        let mut paths = self.project_management.folders.clone();
         if paths.is_empty() {
-            return;
+            // A typed path is a selection too: expand ~ and require a folder.
+            let typed = self.project_path.read(cx).value().trim().to_owned();
+            let expanded = match typed.strip_prefix('~') {
+                Some(rest) => {
+                    let home = std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+                        .unwrap_or_default();
+                    format!("{home}{rest}")
+                }
+                None => typed,
+            };
+            let path = std::path::PathBuf::from(&expanded);
+            if !expanded.is_empty() && path.is_dir() {
+                paths.push(path);
+            } else {
+                self.project_management.session.error =
+                    "That folder doesn't exist. Type another path or choose a folder.".into();
+                cx.notify();
+                return;
+            }
         }
         match self.add_project_paths(&paths, window, cx) {
             Ok(()) => self.close_project_form(window, cx),

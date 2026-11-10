@@ -64,8 +64,10 @@ impl Coincide {
         self.project_management.session.begin(mode, target);
         self.project_picker_open = true;
         if mode == Mode::Add {
+            let home = std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+                .unwrap_or_default();
             self.project_path
-                .update(cx, |v, cx| v.set_value("", window, cx));
+                .update(cx, |v, cx| v.set_value(home.clone(), window, cx));
             self.project_management.folders.clear();
         }
         self.review_project_form(window, cx);
@@ -332,8 +334,15 @@ impl Coincide {
             .border_1()
             .border_color(self.color(0x29303d))
             .rounded_md()
-            .p_2()
-            .child(div().text_sm().child(title));
+            // Opaque like Swift's sheet: the transcript must not show through.
+            .bg(self.color(0x10141c))
+            .p_4()
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(title),
+            );
         if !project.is_null() {
             panel = panel
                 .child(div().text_sm().child(text(&project, "name")))
@@ -383,7 +392,7 @@ impl Coincide {
         }
         if matches!(mode, Mode::Add | Mode::Relocate) {
             panel = panel
-                .child(Input::new(&self.project_path).readonly(mode == Mode::Add))
+                .child(Input::new(&self.project_path).readonly(mode == Mode::Relocate))
                 .child(
                     Button::new("project-choose-folder")
                         .label(if choosing {
@@ -396,6 +405,14 @@ impl Coincide {
                             this.choose_project_folder(window, cx)
                         })),
                 );
+            if mode == Mode::Add {
+                panel = panel.child(
+                    div()
+                        .text_xs()
+                        .text_color(self.color(0xe4e9f2).opacity(0.6))
+                        .child("Type a folder path, or choose one. ~ means your home folder."),
+                );
+            }
             if mode == Mode::Add && self.project_management.folders.len() > 1 {
                 panel = panel.child(div().text_xs().child(format!(
                     "{} chosen folders; the first opens after adding.",
@@ -472,7 +489,9 @@ impl Coincide {
                     .label(label)
                     .disabled(
                         choosing
-                            || (mode == Mode::Add && self.project_management.folders.is_empty()),
+                            || (mode == Mode::Add
+                                && self.project_management.folders.is_empty()
+                                && self.project_path.read(cx).value().trim().is_empty()),
                     )
                     .on_click(
                         cx.listener(|this, _, window, cx| this.commit_project_form(window, cx)),
