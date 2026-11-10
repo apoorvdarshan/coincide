@@ -1697,9 +1697,8 @@ mod saved_catalog_tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         catalog.restore_saved(&saved("opencode", "saved-model", &["low"], "low"));
-        let selection = json!({"provider":"opencode","modelID":"saved-model"});
-        assert_eq!(catalog.reported_efforts(&selection), None);
-        let selection = json!({"provider":"opencode","modelID":"live-model"});
+        let saved_selection = json!({"provider":"opencode","modelID":"saved-model"});
+        assert_eq!(catalog.reported_efforts(&saved_selection), None);
         assert!(catalog.jobs.values().any(|job| {
             job.response["models"]
                 .as_array()
