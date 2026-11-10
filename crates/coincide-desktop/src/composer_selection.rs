@@ -3334,18 +3334,36 @@ impl Coincide {
                 let size = window.viewport_size();
                 point(size.width / 2. - px(width / 2.), size.height - px(96.))
             });
+        // The dismiss layer stops above the composer: with it covering the
+        // whole window, the first click on another chip only closed the open
+        // popover, so switching facets took two clicks.
+        let composer_state = self.composer.read(cx);
+        let text_height = crate::chat_layout::composer_height(
+            composer_state.display_map().wrap_row_count(),
+            composer_state.line_height().map(f32::from).unwrap_or(20.),
+            self.composer_available_height(window),
+        );
+        let clearance = text_height + 150.;
         div()
             .absolute()
             .inset_0()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    if this.selection_ui.expanded || this.follow_up_picker {
-                        this.selection_ui.expanded = false;
-                        this.follow_up_picker = false;
-                        cx.notify();
-                    }
-                }),
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0()
+                    .bottom(px(clearance))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            if this.selection_ui.expanded || this.follow_up_picker {
+                                this.selection_ui.expanded = false;
+                                this.follow_up_picker = false;
+                                cx.notify();
+                            }
+                        }),
+                    ),
             )
             .child(
                 anchored()

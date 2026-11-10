@@ -6,6 +6,7 @@
 //! single forward scan for the grammars this panel uses.
 use super::*;
 use gpui_kit::assets::IconName;
+use gpui_kit::{Role, StatefulInteractiveElement as _};
 use serde_json::Value;
 use std::ops::Range;
 
@@ -901,6 +902,7 @@ impl super::Coincide {
             }
         };
         let header_row = div()
+            .id(SharedString::from(format!("tool-row-{source}-{item_id}")))
             .flex()
             .items_center()
             .gap(px(6.))
@@ -929,12 +931,6 @@ impl super::Coincide {
                     .when(!reasoning, |title| title.flex_1())
                     .truncate()
                     .aria_label(SharedString::from(spoken.clone()))
-                    .when(expandable, |title| {
-                        let toggle = toggle.clone();
-                        title
-                            .cursor_pointer()
-                            .on_click(cx.listener(move |this, _, _, cx| toggle(this, cx)))
-                    })
                     .child(title_text),
             )
             .when(!preview.is_empty(), |row| {
@@ -960,24 +956,26 @@ impl super::Coincide {
                 row.child(Icon::new(icon).xsmall().text_color(color))
             })
             .when(expandable, |row| {
-                let id = SharedString::from(format!("expand-{source}-{item_id}"));
                 row.child(
-                    Button::new(id.clone())
-                        .accessibility_id(id)
-                        .accessibility_label(SharedString::from(format!(
-                            "{spoken}, {}",
-                            if expanded { "Collapse" } else { "Expand" }
-                        )))
-                        .icon(if expanded {
-                            IconName::ChevronDown
-                        } else {
-                            IconName::ChevronRight
-                        })
-                        .ghost()
-                        .compact()
-                        .xsmall()
-                        .on_click(cx.listener(move |this, _, _, cx| toggle(this, cx))),
+                    Icon::new(if expanded {
+                        IconName::ChevronDown
+                    } else {
+                        IconName::ChevronRight
+                    })
+                    .xsmall()
+                    .text_color(Hsla::from(secondary)),
                 )
+            })
+            .when(expandable, |row| {
+                let toggle = toggle.clone();
+                let label = SharedString::from(format!(
+                    "{spoken}, {}",
+                    if expanded { "Collapse" } else { "Expand" }
+                ));
+                row.cursor_pointer()
+                    .role(Role::Button)
+                    .aria_label(label)
+                    .on_click(cx.listener(move |this, _, _, cx| toggle(this, cx)))
             });
         let panel = expanded.then(|| {
             let detail = render(item);
