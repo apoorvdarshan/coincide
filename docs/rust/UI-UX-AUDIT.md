@@ -649,3 +649,16 @@ Three lines the user never asked to read, and one scroll rule:
 
 Unit coverage: `transcript_scroll_tests` (the tail is followed only from the
 tail, including the sub-pixel rounding case).
+
+## No running chatter under the composer — 2026-11-10
+
+The line under the composer narrated the turn: "Agent running · approval
+required for changes" on send, "Agent turn ended." when it settled, and a blank
+row with its own top margin whenever it had nothing to say. The turn header in
+the transcript already says how long the agent has been working, so this was
+repeated noise plus padding.
+
+The routine messages are no longer written, and the row is only built when the
+status has something to report, so a normal turn leaves no empty strip under the
+composer. Status text that reports a failure the user can act on still appears
+there.

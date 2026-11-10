@@ -3825,15 +3825,6 @@ impl Coincide {
                 cx.notify();
             }
             self.observe_thread_activity(&status, window, cx);
-            if was_running
-                && selected_thread
-                    .as_ref()
-                    .is_some_and(|id| !self.running.contains(id))
-                && self.status == "Agent running · approval required for changes"
-            {
-                self.status = "Agent turn ended.".into();
-                cx.notify();
-            }
             app_shell::set_badge(app_shell::pending_approvals(&status), cx);
             let revision = status["revision"].as_u64().unwrap_or(0);
             if revision != self.revision {
@@ -4666,7 +4657,6 @@ impl Coincide {
                         self.transcript_list
                             .splice(0..self.transcript_count, self.transcript_count);
                     }
-                    self.status = "Agent running · approval required for changes".into();
                     if let Some(thread) = self.selected.as_mut() {
                         thread["draft"] = json!("");
                         thread.as_object_mut().unwrap().remove("draftContext");
@@ -5889,7 +5879,11 @@ impl Render for Coincide {
                                                 .when_some(implement_button, |view, button| view.child(button))
 
                                         )
-                                        .when(!self.composer_files.opened && self.status != "Rust preview · separate data store", |view| view.child(
+                                        .when(
+                                            !self.composer_files.opened
+                                                && !self.status.is_empty()
+                                                && self.status != "Rust preview · separate data store",
+                                            |view| view.child(
                                             div()
                                                 .id("composer-status")
                                                 .mt_2()
