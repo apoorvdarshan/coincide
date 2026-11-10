@@ -568,3 +568,35 @@ Unit coverage (`cargo test -p coincide-desktop --bin coincide-rust
 terminal_workspace::find`): trailing-blank trimming, wide-glyph columns,
 case-insensitive matches with exact column bounds, every occurrence on a row,
 empty and overlong queries, wrapping in both directions, and the match cap.
+
+## Reply images — 2026-11-10
+
+Swift's `TranscriptMedia` scans an assistant reply for media and draws a card
+under it, so a reply whose whole answer is a screenshot shows the picture. Rust
+drew the reply text only: `![shot](path)` stayed a link, and a generated image
+listed in `attachments` kept the row visible but empty.
+
+`transcript_media::images` now collects the local images a reply names — its
+Markdown images, its image links, then its `attachments` — in the order it
+mentions them, at most eight, one card per distinct file. Each card draws the
+file at reply width with its name below, through the same image cache as the
+Rust-ingested previews. Resolutions are cached per item and reply, because
+resolving stats the file and rows redraw every frame; the cache clears when a
+conversation opens.
+
+Bounds, as Swift's loaders have them: only `png/jpg/jpeg/gif/webp/heic/avif/
+bmp/tif/tiff`, only a regular file of at most 64 MiB, `file://`, `~/` and paths
+relative to the thread's folder (a `..` that leaves the folder is refused), and
+percent-escaped destinations decoded. Remote and `data:` URLs are never
+collected: a reply is agent-written text, and fetching what it points at would
+make the transcript a beacon.
+
+Video, audio and interactive HTML still render as ordinary links: Rust has no
+player yet, so they wait for that work rather than showing a frame that cannot
+play.
+
+Unit coverage (`cargo test -p coincide-desktop --bin coincide-rust
+transcript_media::`): Markdown images and links in order, folder-relative
+targets, attachments and de-duplication, missing files and other extensions,
+remote/`data:` refusal, escaped spaces and `file://`, a titled destination, the
+eight-image cap, and the `..` boundary.
