@@ -662,3 +662,26 @@ The routine messages are no longer written, and the row is only built when the
 status has something to report, so a normal turn leaves no empty strip under the
 composer. Status text that reports a failure the user can act on still appears
 there.
+
+## Composer attachments and controls during a turn — 2026-11-10
+
+- Attached images now read as a strip, as Swift's composer shows them: a row of
+  76 pt rounded thumbnails that wrap, each with its file name underneath and a
+  small ✕ over its corner. The "2 image(s) attached" heading and the per-row
+  "Remove" buttons are gone, so the draft keeps the space and the remove control
+  sits on the picture it removes.
+- A running turn no longer disables the composer's selection controls. Swift
+  keeps the model, effort, speed, access and mode controls enabled whenever a
+  conversation is open; a change made during a turn belongs to the next one.
+  Rust refused every change while running ("Selection is locked while this
+  conversation is running"), including from slash commands. Running is no longer
+  treated as a lock: changes are staged in the selection draft and applied as
+  soon as the turn ends. A provider switch still waits for the turn, which is
+  the provider's own rule, and real locks (bots, imports) still refuse.
+- A failed conversation-list poll no longer writes "Unable to load
+  conversations…" under the composer; a busy engine is a retry.
+
+Unit coverage: `cargo test -p coincide-desktop --bin coincide-rust
+composer_selection` (68 tests) now pins the new contract — a running turn stages
+a model, speed or mode change instead of refusing it, a genuine lock still
+locks, and provider switches still wait.
