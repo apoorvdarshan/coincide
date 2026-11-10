@@ -2433,9 +2433,9 @@ impl Coincide {
                     self.status.clear();
                 }
             }
-            Err(error) => {
+            Err(_) => {
+                // A busy engine is a retry, not news for the composer line.
                 complete = false;
-                self.status = format!("Unable to load conversations: {error}");
             }
         }
         if let Ok(reply) = call(&self.engine, "schedules.list", json!({})) {
@@ -3824,6 +3824,9 @@ impl Coincide {
                 self.splice_transcript(0..self.transcript_count, self.transcript_count);
                 cx.notify();
             }
+            if was_running && !is_running {
+                self.flush_staged_selection(cx);
+            }
             self.observe_thread_activity(&status, window, cx);
             app_shell::set_badge(app_shell::pending_approvals(&status), cx);
             let revision = status["revision"].as_u64().unwrap_or(0);
@@ -4559,36 +4562,54 @@ impl Coincide {
             div()
                 .id("draft-images")
                 .flex()
-                .flex_col()
-                .gap_1()
-                .max_h(px(110.))
+                .flex_wrap()
+                .items_start()
+                .gap_2()
+                .max_h(px(132.))
                 .overflow_y_scroll()
                 .mb_2()
-                .child(
-                    div()
-                        .text_sm()
-                        .child(format!("{} image(s) attached", images.len())),
-                )
                 .children(images.iter().map(|image| {
                     let id = text(image, "id");
+                    let name: String = text(image, "originalName").chars().take(120).collect();
                     div()
                         .flex()
+                        .flex_col()
                         .items_center()
-                        .gap_2()
+                        .gap_1()
                         .flex_shrink_0()
-                        .child(self.image_preview(image, None, 64., 64., window, cx))
-                        .child(div().flex_1().min_w_0().truncate().text_sm().child(format!(
-                            "{} · {}×{}",
-                            text(image, "originalName"),
-                            image["width"],
-                            image["height"]
-                        )))
                         .child(
-                            Button::new(SharedString::from(format!("remove-image-{id}")))
-                                .label("Remove")
-                                .on_click(
-                                    cx.listener(move |this, _, _, cx| this.remove_image(&id, cx)),
+                            div()
+                                .relative()
+                                .child(self.image_preview(image, None, 76., 76., window, cx))
+                                .child(
+                                    div().absolute().top(px(2.)).right(px(2.)).child(
+                                        Button::new(SharedString::from(format!(
+                                            "remove-image-{id}"
+                                        )))
+                                        .icon(gpui_kit::assets::IconName::Close)
+                                        .ghost()
+                                        .xsmall()
+                                        .w(px(18.))
+                                        .h(px(18.))
+                                        .rounded(px(9.))
+                                        .bg(self.color(0x111722).opacity(0.82))
+                                        .accessibility_label(format!("Remove {name}"))
+                                        .tooltip("Remove image")
+                                        .on_click(
+                                            cx.listener(move |this, _, _, cx| {
+                                                this.remove_image(&id, cx)
+                                            }),
+                                        ),
+                                    ),
                                 ),
+                        )
+                        .child(
+                            div()
+                                .max_w(px(76.))
+                                .truncate()
+                                .text_xs()
+                                .text_color(self.color(0xe4e9f2).opacity(0.7))
+                                .child(name),
                         )
                 }))
                 .into_any_element(),

@@ -946,10 +946,13 @@ fn catalog_response_matches(value: &Value, request: &CatalogRequest) -> bool {
             Some("loading" | "ready" | "failed" | "unsupported")
         )
 }
+/// A selection change made while a turn runs is kept for the next one.
+pub(super) const STAGED_SELECTION: &str = "Selection staged for the next turn";
+
 fn capability_lock(capabilities: &Value, running: bool) -> Option<String> {
-    if running {
-        return Some("Selection is locked while this conversation is running.".into());
-    }
+    // Swift leaves the composer's controls enabled during a turn: a change made
+    // now belongs to the next one, and a provider that cannot take it says so.
+    let _ = running;
     if capabilities["locked"] == true {
         return Some(
             capabilities["lockReason"]
@@ -2210,6 +2213,11 @@ impl Coincide {
             {
                 anyhow::bail!(reason);
             }
+            if self.running.contains(&id) {
+                // Queue it: the draft stays as it is and the turn's end applies
+                // it, instead of writing a selection the agent is still using.
+                anyhow::bail!(STAGED_SELECTION);
+            }
             let provider = capabilities["providers"]
                 .as_array()
                 .and_then(|rows| rows.iter().find(|row| row["provider"] == draft.provider));
@@ -2237,12 +2245,40 @@ impl Coincide {
                 self.selection_ui.context = None;
                 self.status = "Selection saved. Custom model availability is checked by the provider when used.".into();
             }
+            Err(error) if error.to_string() == STAGED_SELECTION => {
+                self.selection_ui.context = None;
+                self.status = "This change applies when the current turn ends.".into();
+            }
             Err(error) => {
                 self.selection_ui.context = None;
                 self.status = format!("Selection was not changed: {error}");
             }
         }
         cx.notify();
+    }
+    /// Apply the selection the user changed during a turn now that it ended.
+    /// This is the queue: the controls never go dead, and the change lands at
+    /// the first moment the provider can take it.
+    pub(super) fn flush_staged_selection(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.selected.as_ref().map(|thread| text(thread, "id")) else {
+            return;
+        };
+        if self.running.contains(&id) {
+            return;
+        }
+        let staged = self
+            .selection_ui
+            .drafts
+            .get(&id)
+            .is_some_and(SelectionDraft::has_edits);
+        if !staged {
+            return;
+        }
+        self.apply_selection_draft(cx);
+        // The turn ended on its own; the saved-selection note is not news.
+        if self.status.starts_with("Selection saved") {
+            self.status.clear();
+        }
     }
     /// Show the last catalog at once and only read again when there is none.
     /// Opening the picker never turns a ready list back into "Loading models…".
@@ -4228,7 +4264,16 @@ mod tests {
             capability_lock(&caps, false).as_deref(),
             Some("Bot/import lock")
         );
-        assert!(capability_lock(&caps, true).is_some());
+        assert_eq!(
+            capability_lock(&caps, true).as_deref(),
+            Some("Bot/import lock"),
+            "a real lock still locks; running no longer does"
+        );
+        let open = json!({"provenance":"static_runtime_contract","locked":false,"providers":[modes("codex",true)]});
+        assert!(
+            capability_lock(&open, true).is_none(),
+            "a running turn leaves the composer's controls usable"
+        );
         let baseline = SelectionDraft::from_thread(
             &json!({"selection":{"provider":"codex","modelID":"default"}}),
         );
@@ -4287,7 +4332,10 @@ mod tests {
         let mut caps =
             json!({"provenance":"static_runtime_contract","providers":[],"locked":false});
         assert!(capability_lock(&caps, false).is_none());
-        assert!(capability_lock(&caps, true).is_some());
+        assert!(
+            capability_lock(&caps, true).is_none(),
+            "running is not a lock; a change belongs to the next turn"
+        );
         caps["locked"] = json!(true);
         caps["lockReason"] = json!("Imported conversation");
         assert_eq!(
@@ -4511,7 +4559,8 @@ mod tests {
                 &command_capabilities("codex", false),
                 true
             )
-            .is_err()
+            .is_ok(),
+            "a mode change during a turn is staged, not refused"
         );
     }
     #[::core::prelude::v1::test]
@@ -4581,7 +4630,8 @@ mod tests {
                 &command_capabilities("codex", false),
                 true
             )
-            .is_err()
+            .is_ok(),
+            "a model chosen during a turn belongs to the next one"
         );
     }
     fn reported_limits() -> Value {
@@ -4718,6 +4768,12 @@ mod tests {
             }
             let (result, stored, calls) =
                 fake_usage_command(original.clone(), observation, response, case);
+            if case == "running" {
+                // A running turn no longer refuses the command: the report is
+                // read-only and clearing the draft is allowed mid-turn.
+                assert_eq!(calls.last().map(String::as_str), Some("threads.patch"));
+                continue;
+            }
             assert!(result.is_err(), "{case}");
             assert_eq!(stored, original, "{case}");
             assert!(!calls.iter().any(|call| call == "threads.patch"), "{case}");
@@ -4968,7 +5024,8 @@ mod tests {
                 &thread["selection"],
                 &json!("priority")
             )
-            .is_err()
+            .is_ok(),
+            "a running turn stages the change instead of refusing it"
         );
         assert!(
             validate_speed_choice(
