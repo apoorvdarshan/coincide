@@ -4,6 +4,9 @@ use std::collections::HashMap;
 pub(super) struct PendingDraft {
     pub text: String,
     pub retry: bool,
+    /// Set only after a save actually failed. Drafts waiting for their next
+    /// boundary (blur, thread switch, quit) are not failures and stay silent.
+    pub failed: bool,
 }
 
 pub(super) fn save_one(
@@ -19,7 +22,9 @@ pub(super) fn save_one(
         }
         Err((definitely_not_written, error)) => {
             // Only a busy try_lock proves dispatch did not run.
-            drafts.get_mut(id).unwrap().retry = definitely_not_written;
+            let draft = drafts.get_mut(id).unwrap();
+            draft.retry = definitely_not_written;
+            draft.failed = true;
             Some(error)
         }
     }
@@ -42,6 +47,7 @@ mod tests {
                 PendingDraft {
                     text: "one".into(),
                     retry: true,
+                    failed: false,
                 },
             ),
             (
@@ -49,6 +55,7 @@ mod tests {
                 PendingDraft {
                     text: "two\n".into(),
                     retry: false,
+                    failed: true,
                 },
             ),
         ]);
@@ -67,6 +74,7 @@ mod tests {
             PendingDraft {
                 text: original.into(),
                 retry: true,
+                failed: false,
             },
         )]);
         save_one(&mut drafts, "thread", |_, text| {

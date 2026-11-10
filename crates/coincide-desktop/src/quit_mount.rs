@@ -152,6 +152,7 @@ impl Coincide {
                         PendingDraft {
                             text: current,
                             retry: true,
+                            failed: false,
                         },
                     );
                 }
