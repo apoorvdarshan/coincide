@@ -409,8 +409,8 @@ simpler in Rust; everything not listed matched in code.
 - User messages lose Steer/Scheduled marks, long-message folding and the
   hover-only edit/copy/time row.
 - No "Thought for 4s", no animated spinner/shimmer for running groups.
-- Media is images-only: no video, audio or sandboxed interactive HTML; no
-  per-code-block copy buttons.
+- Media is images-only: no video, audio or sandboxed interactive HTML; every
+  fenced code block now carries Swift's per-block copy control.
 - Every finished turn gets a "Turn ended" notice row (Swift shows only
   "Interrupted"), and background-task lines are missing from the live row.
 - Welcome/empty state is a headline plus "Using X": no agent chips, setup
@@ -482,3 +482,21 @@ simpler in Rust; everything not listed matched in code.
 - Native Windows and Linux interaction acceptance still needs new runs.
 - The macOS Linux/Windows smoke scripts now find the conversation window by its
   process instead of the old fixed title, matching Swift's thread-title window.
+
+## Transcript code-block copy — 2026-11-10
+
+Swift's reply cells give every fenced code block its own copy control in the
+block's top-right corner, separate from the whole-message copy. Rust only had
+message-level copy, so a code example inside a long answer had to be selected by
+hand.
+
+`transcript::code_copy_actions` is now installed on every native Markdown body
+that the transcript draws, including the find-projected body and the tool-detail
+body. The control copies the block's own source exactly (whitespace, tabs and
+Unicode preserved), never the surrounding reply, and is disabled for an empty
+block. Its element identity comes from the fence's parsed source offset, with a
+content hash for custom nodes that have none, so repeated identical examples in
+one document keep separate controls.
+
+Unit coverage: verbatim payload, empty block, and stable/non-colliding identity
+(`cargo test -p coincide-desktop --bin coincide-rust transcript::`).
