@@ -274,6 +274,135 @@ impl Coincide {
         }
         cx.notify();
     }
+    /// Recomputed on every edit: the dropdown always describes the text.
+    pub(super) fn project_path_changed(&mut self, cx: &mut Context<Self>) {
+        if !matches!(
+            self.project_management.session.mode,
+            Mode::Add | Mode::Relocate
+        ) || !self.project_management.session.open
+        {
+            return;
+        }
+        let typed = self.project_path.read(cx).value().to_string();
+        self.project_management.session.completions = project_management::path_completions(&typed);
+        self.project_management.session.completion_index = 0;
+        cx.notify();
+    }
+    fn complete_project_path(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(path) = self
+            .project_management
+            .session
+            .completions
+            .get(index)
+            .cloned()
+        else {
+            return;
+        };
+        let mut text = path.to_string_lossy().into_owned();
+        if !text.ends_with('/') && !text.ends_with('\\') {
+            text.push('/');
+        }
+        self.project_path
+            .update(cx, |input, cx| input.set_value(text, window, cx));
+        self.project_path_changed(cx);
+        self.project_path
+            .read(cx)
+            .focus_handle(cx)
+            .focus(window, cx);
+    }
+    /// Tab completes the highlighted folder, arrows move, Return completes or
+    /// adds; typing is untouched.
+    pub(super) fn project_path_key(
+        &mut self,
+        event: &gpui_kit::KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.project_management.session.open {
+            return;
+        }
+        let count = self.project_management.session.completions.len();
+        match event.keystroke.key.as_str() {
+            "tab" if count > 0 => {
+                let index = self
+                    .project_management
+                    .session
+                    .completion_index
+                    .min(count - 1);
+                self.complete_project_path(index, window, cx);
+                cx.stop_propagation();
+            }
+            "down" if count > 0 => {
+                let next = (self.project_management.session.completion_index + 1) % count;
+                self.project_management.session.completion_index = next;
+                cx.notify();
+                cx.stop_propagation();
+            }
+            "up" if count > 0 => {
+                let next = (self.project_management.session.completion_index + count - 1) % count;
+                self.project_management.session.completion_index = next;
+                cx.notify();
+                cx.stop_propagation();
+            }
+            "enter" if count > 0 => {
+                let index = self
+                    .project_management
+                    .session
+                    .completion_index
+                    .min(count - 1);
+                self.complete_project_path(index, window, cx);
+                cx.stop_propagation();
+            }
+            "enter"
+                if self.project_management.session.mode == Mode::Add
+                    && !self.project_path.read(cx).value().trim().is_empty() =>
+            {
+                // Swift's sheet adds on Return once the field names a folder.
+                self.commit_project_form(window, cx);
+                cx.stop_propagation();
+            }
+            _ => {}
+        }
+    }
+    fn project_path_field(&self, mode: Mode, cx: &Context<Self>) -> AnyElement {
+        let completions = self.project_management.session.completions.clone();
+        let selected = self.project_management.session.completion_index;
+        let mut rows = div().flex().flex_col().gap_1();
+        for (index, path) in completions.iter().take(8).enumerate() {
+            let label = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.to_string_lossy().into_owned());
+            let full = path.to_string_lossy().into_owned();
+            rows = rows.child(
+                Button::new(SharedString::from(format!("project-completion-{index}")))
+                    .accessibility_label(format!("Use folder {full}"))
+                    .tooltip(full)
+                    .label(label)
+                    .compact()
+                    .ghost()
+                    .w_full()
+                    .justify_start()
+                    .when(index == selected, |button| button.primary())
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.complete_project_path(index, window, cx)
+                    })),
+            );
+        }
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .capture_key_down(
+                cx.listener(|this, event: &gpui_kit::KeyDownEvent, window, cx| {
+                    this.project_path_key(event, window, cx)
+                }),
+            )
+            .child(Input::new(&self.project_path).readonly(mode == Mode::Relocate))
+            .when(!completions.is_empty(), |view| view.child(rows))
+            .into_any_element()
+    }
+
     /// Swift's Add Project sheet: the project form floats over the window
     /// instead of pushing the conversation list down inside the sidebar.
     pub(super) fn project_management_overlay(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -391,20 +520,18 @@ impl Coincide {
             panel = panel.child(Input::new(&self.project_management.name));
         }
         if matches!(mode, Mode::Add | Mode::Relocate) {
-            panel = panel
-                .child(Input::new(&self.project_path).readonly(mode == Mode::Relocate))
-                .child(
-                    Button::new("project-choose-folder")
-                        .label(if choosing {
-                            "Choosing folder…"
-                        } else {
-                            "Choose folder…"
-                        })
-                        .disabled(choosing)
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.choose_project_folder(window, cx)
-                        })),
-                );
+            panel = panel.child(self.project_path_field(mode, cx)).child(
+                Button::new("project-choose-folder")
+                    .label(if choosing {
+                        "Choosing folder…"
+                    } else {
+                        "Choose folder…"
+                    })
+                    .disabled(choosing)
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.choose_project_folder(window, cx)),
+                    ),
+            );
             if mode == Mode::Add {
                 panel = panel.child(
                     div()

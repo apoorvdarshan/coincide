@@ -30,6 +30,9 @@ pub(super) struct Session {
     pub recoveries: Vec<serde_json::Value>,
     pub error: String,
     pub choosing: bool,
+    /// Matching subfolders for the typed path, shown under the field.
+    pub completions: Vec<std::path::PathBuf>,
+    pub completion_index: usize,
     generation: u64,
 }
 impl Session {
@@ -42,12 +45,16 @@ impl Session {
         self.recoveries.clear();
         self.error.clear();
         self.choosing = false;
+        self.completions.clear();
+        self.completion_index = 0;
     }
     pub fn close(&mut self) {
         self.generation = self.generation.wrapping_add(1);
         self.open = false;
         self.preview = None;
         self.choosing = false;
+        self.completions.clear();
+        self.completion_index = 0;
     }
     pub fn choose(&mut self) -> Option<(u64, Mode, Option<String>)> {
         if !self.open || self.choosing || !matches!(self.mode, Mode::Add | Mode::Relocate) {
@@ -97,5 +104,104 @@ mod tests {
         assert!(s.preview.is_none());
         assert_eq!(s.target.as_deref(), Some("archive"));
         assert_eq!(s.mode.operation(), Some("restore"));
+    }
+}
+
+/// Matching subfolders for a partially typed path, keeping the text the user
+/// wrote (so `~` stays `~`). Directory names only, hidden entries only once a
+/// dot is typed, sorted, and capped for a short dropdown.
+pub(super) fn path_completions(input: &str) -> Vec<std::path::PathBuf> {
+    let input = input.trim();
+    if input.is_empty() {
+        return Vec::new();
+    }
+    let (typed_dir, prefix) = match input.rfind(['/', '\\']) {
+        Some(index) => (&input[..=index], &input[index + 1..]),
+        None => ("", input),
+    };
+    let dir = if typed_dir.is_empty() {
+        std::path::PathBuf::from(".")
+    } else {
+        expand_home(typed_dir)
+    };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut found = entries
+        .flatten()
+        .take(2_000)
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with(prefix) && (!prefix.is_empty() || !name.starts_with('.')) {
+                Some(std::path::PathBuf::from(format!("{typed_dir}{name}")))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    found.sort();
+    found.truncate(8);
+    found
+}
+
+/// `~` and `~/x` resolve against the home folder; anything else is unchanged.
+pub(super) fn expand_home(path: &str) -> std::path::PathBuf {
+    if path == "~" || path.starts_with("~/") || path.starts_with("~\\") {
+        let home =
+            std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).unwrap_or_default();
+        return if path.len() <= 2 {
+            std::path::PathBuf::from(home)
+        } else {
+            std::path::PathBuf::from(home).join(&path[2..])
+        };
+    }
+    std::path::PathBuf::from(path)
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::*;
+
+    #[::core::prelude::v1::test]
+    fn completions_list_matching_folders_only() {
+        let root = tempfile::tempdir().unwrap();
+        for name in ["alpha", "alphabet", "beta"] {
+            std::fs::create_dir(root.path().join(name)).unwrap();
+        }
+        std::fs::write(root.path().join("alpha.txt"), b"file").unwrap();
+        std::fs::write(root.path().join("alpha2"), b"file").unwrap();
+        std::fs::create_dir(root.path().join(".hidden")).unwrap();
+        let base = root.path().to_string_lossy().into_owned();
+        let found = path_completions(&format!("{base}/alph"));
+        assert_eq!(
+            found,
+            vec![
+                std::path::PathBuf::from(format!("{base}/alpha")),
+                std::path::PathBuf::from(format!("{base}/alphabet")),
+            ]
+        );
+        assert!(
+            path_completions(&format!("{base}/"))
+                .iter()
+                .all(|path| { path.file_name().is_some_and(|name| name != ".hidden") })
+        );
+        assert!(
+            path_completions(&format!("{base}/.h"))
+                .iter()
+                .any(|path| { path.file_name().is_some_and(|name| name == ".hidden") })
+        );
+        assert!(path_completions(&format!("{base}/zzz")).is_empty());
+    }
+
+    #[::core::prelude::v1::test]
+    fn home_expansion_keeps_plain_paths() {
+        let home = std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).unwrap();
+        assert_eq!(expand_home("~"), std::path::PathBuf::from(&home));
+        assert_eq!(
+            expand_home("~/code"),
+            std::path::PathBuf::from(&home).join("code")
+        );
+        assert_eq!(expand_home("/tmp/x"), std::path::PathBuf::from("/tmp/x"));
     }
 }
