@@ -5416,7 +5416,14 @@ impl Render for Coincide {
             .map(|v| text(v, "title"))
             .unwrap_or_else(|| "Welcome to Coincide".into());
         let entity = cx.entity();
-        let jump_to_latest = !self.transcript_list.is_following_tail()
+        // Ask where the list is, not whether it is following: the follow flag
+        // only re-engages in a fully measured layout, so rows that are still
+        // measuring left the pill up even at the bottom of the transcript.
+        let scrolled_away = {
+            let top = self.transcript_list.logical_scroll_top();
+            top.item_ix < self.transcript_count || top.offset_in_item > px(1.)
+        };
+        let jump_to_latest = scrolled_away
             && self.selected.as_ref().is_some_and(|thread| {
                 thread["items"]
                     .as_array()
