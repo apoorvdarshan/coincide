@@ -520,6 +520,29 @@ silently replaced.
 Unit coverage: worktree over bot over project resolution, a bot's folder, a
 deleted bot's home fallback, and the terminal's bot-folder start.
 
+## Composer prompt recall — 2026-11-10
+
+Swift's composer recalls earlier prompts of the conversation with Up and Down.
+Rust had no recall; both keys only moved the caret, so re-sending a long prompt
+meant finding and copying it from the transcript.
+
+`composer_history` follows Swift's `recallHistory`: Up in an empty composer
+shows the newest prompt and walks toward the oldest; Down walks forward and ends
+at the empty draft. It refuses whenever a recall does not apply, and the key
+then keeps its native caret movement. The same guard list as Swift is used:
+
+- A prompt walk starts only from an empty composer, and only while the text is
+  still exactly the text that recall placed, so any edit ends the walk.
+- Draft images or attached context block recall; so does a non-collapsed
+  selection, or a caret that is not on the first (Up) or last (Down) line.
+- The walk passes the oldest prompt without wrapping or clearing the text.
+- Consecutive duplicates are recalled once, in the same order Swift uses.
+- A conversation switch and every new prompt reset the walk.
+
+Placement is not a native edit, so the draft is recorded through the same path a
+typed change uses; otherwise a recalled prompt would not survive a thread
+switch. Unit coverage: up/down walks, past-the-oldest consumption, empty
+threads, and consecutive-duplicate skipping.
 ## Terminal find and tab cycling — 2026-11-10
 
 SwiftTerm gives every terminal ⌘F find and the system's ⇧⌘[ / ⇧⌘] tab

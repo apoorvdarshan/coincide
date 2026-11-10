@@ -837,6 +837,13 @@ impl Coincide {
             keys::Decision::Pass
                 if scope.owns_keys()
                     && self.composer_suggestion_key(suggestion_key(key), window, cx) => {}
+            // Swift recalls earlier prompts from an empty composer on Up/Down;
+            // anything it declines stays the input's own caret movement. The
+            // recall checks its own focus, so an open browser or terminal pane
+            // does not take these keys away from the composer.
+            keys::Decision::Pass
+                if matches!(key, keys::Key::Up | keys::Key::Down)
+                    && self.composer_history_key(key == keys::Key::Up, modified, window, cx) => {}
             keys::Decision::Pass => return,
             keys::Decision::Consume => {}
             keys::Decision::Dismiss => self.close_composer_file_picker(window, cx),
