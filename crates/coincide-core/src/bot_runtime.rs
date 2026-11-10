@@ -98,8 +98,9 @@ fn selection(bot: &Value) -> Result<Value> {
         "Alternate bot accounts are unsupported; selection was not changed"
     );
     ensure!(
-        bot["accessMode"] == "approval" && bot["interactionMode"] == "build",
-        "Bot runtime requires saved approval/build modes"
+        matches!(bot["accessMode"].as_str(), Some("approval" | "fullAccess"))
+            && bot["interactionMode"] == "build",
+        "Bot runtime requires a saved access mode and Build"
     );
     // Swift bots may save an effort or speed; a bot conversation always starts
     // at the provider default. Keep the provider and model, drop the rest.
@@ -227,10 +228,11 @@ fn create_with_home(store: &mut Store, params: &Value, home: &Path) -> Result<Va
     let instructions = instructions(bot, name, persona)?;
     let id = Uuid::new_v4().to_string().to_uppercase();
     let now = swift_timestamp();
-    let context = json!({"version":1,"botId":stored_id,"sourceBaseline":baseline,"provider":provider,"selection":selection.clone(),
+    let access_mode = required(bot, "accessMode")?.to_owned();
+    let context = json!({"version":1,"botId":stored_id,"sourceBaseline":baseline,"provider":provider,"selection":selection.clone(),"accessMode":access_mode.clone(),
         "cwd":cwd,"name":name,"persona":persona,"instructions":instructions});
     let thread = json!({"id":id,"projectID":BOTS_PROJECT_ID,"botID":stored_id,"title":"New conversation",
-        "selection":selection,"worktreePath":cwd,"accessMode":"approval","interactionMode":"build",
+        "selection":selection,"worktreePath":cwd,"accessMode":access_mode,"interactionMode":"build",
         "createdAt":now,"updatedAt":now,"isPinned":false,"isArchived":false,"items":[],"sessions":{},
         "accountSessions":{},"draft":"","rustMessageQueue":[],"rustDraftImages":[],"rustBotContext":context});
     store.create_bot_thread_if_unchanged(source.as_ref(), &thread)?;
@@ -329,7 +331,7 @@ mod tests {
             let p = params(&store);
             assert!(create_with_home(&mut store, &p, &home).is_err(), "{field}");
         }
-        for (field, invalid) in [("accessMode", "fullAccess"), ("interactionMode", "plan")] {
+        for (field, invalid) in [("accessMode", "unknownMode"), ("interactionMode", "plan")] {
             let mut next = value.clone();
             next["bots"][0][field] = json!(invalid);
             store.save_document("bots.json", &next).unwrap();
@@ -351,6 +353,16 @@ mod tests {
         );
         let thread = store.thread(created["threadId"].as_str().unwrap()).unwrap();
         assert_eq!(thread["selection"], created["selection"]);
+
+        // A full-access Swift bot keeps its access mode in its conversations.
+        let mut next = value.clone();
+        next["bots"][0]["accessMode"] = json!("fullAccess");
+        store.save_document("bots.json", &next).unwrap();
+        let p = params(&store);
+        let created = create_with_home(&mut store, &p, &home).unwrap();
+        let thread = store.thread(created["threadId"].as_str().unwrap()).unwrap();
+        assert_eq!(thread["accessMode"], "fullAccess");
+        assert_eq!(thread["rustBotContext"]["accessMode"], "fullAccess");
     }
     #[test]
     fn helper_compares_envelope_in_transaction_and_rolls_back_cache_failure() {
