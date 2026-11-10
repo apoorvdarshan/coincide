@@ -90,19 +90,8 @@ fn operation(
     }
 }
 fn stored_root(api: &mut impl FnMut(&str, Value) -> Result<Value>, thread: &str) -> Result<String> {
-    let value = api("threads.read", json!({"threadId":thread,"itemLimit":0}))?;
-    let path = if let Some(path) = value["worktreePath"].as_str() {
-        PathBuf::from(path)
-    } else {
-        let projects = api("projects.list", json!({}))?;
-        let project = projects
-            .as_array()
-            .context("Invalid projects")?
-            .iter()
-            .find(|p| p["id"] == value["projectID"])
-            .context("Choose a project working directory first")?;
-        PathBuf::from(string(project, "path")?)
-    };
+    let path = crate::thread_folder::working_directory(api, thread)?
+        .context("Choose a project working directory first")?;
     ensure!(path.is_absolute(), "Working directory must be absolute");
     Ok(path
         .canonicalize()?

@@ -500,3 +500,21 @@ one document keep separate controls.
 
 Unit coverage: verbatim payload, empty block, and stable/non-colliding identity
 (`cargo test -p coincide-desktop --bin coincide-rust transcript::`).
+
+## Bot conversations' folder — 2026-11-10
+
+A bot conversation's folder is not in the user's project list: Swift gives every
+bot its own folder (`Bot.workingDirectory`, home when unset) and resolves a
+thread's folder as worktree, then the bot's folder, then the project. Rust asked
+only for `worktreePath` or a project, so imported bot conversations with no
+worktree showed **Folder Not Found** in Changes and Local Git, and their
+terminal started in the home folder instead of the bot's.
+
+`thread_folder::working_directory` now applies Swift's order for the panels, and
+the terminal's start directory asks the bot's folder when no project matches.
+A deleted bot and a bot without a folder both fall back to home, as in Swift; a
+stored folder that no longer exists is still reported as missing rather than
+silently replaced.
+
+Unit coverage: worktree over bot over project resolution, a bot's folder, a
+deleted bot's home fallback, and the terminal's bot-folder start.
