@@ -911,6 +911,7 @@ impl Coincide {
                         PendingDraft {
                             text: updated.clone(),
                             retry: true,
+                            failed: false,
                         },
                     );
                     self.composer.update(cx, |composer, cx| {
@@ -1412,6 +1413,7 @@ impl Coincide {
                         PendingDraft {
                             text: draft,
                             retry: true,
+                            failed: false,
                         },
                     );
                     // Drafts persist when the composer loses focus, the thread
@@ -5531,16 +5533,20 @@ impl Render for Coincide {
                     .min_w_0()
                     .h_full()
                     .when_some(cookie_recovery, |view, recovery| view.child(recovery))
-                    .when(!self.pending_drafts.is_empty(), |view| {
+                    .when(
+                        self.pending_drafts.values().any(|draft| draft.failed),
+                        |view| {
                         view.child(
                             div()
                                 .p_2()
                                 .flex()
                                 .items_center()
                                 .gap_2()
-                                .child("Drafts are not saved yet. Keep this window open.")
+                                .child("A draft could not be saved yet. Keep this window open.")
                                 .when(
-                                    self.pending_drafts.values().any(|draft| !draft.retry),
+                                    self.pending_drafts
+                                        .values()
+                                        .any(|draft| draft.failed && draft.retry),
                                     |view| {
                                         view.child(
                                             Button::new("retry-draft-save")
