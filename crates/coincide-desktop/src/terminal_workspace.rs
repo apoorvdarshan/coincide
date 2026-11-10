@@ -12,6 +12,8 @@ use crate::native_menu::AccessibleMenuExt as _;
 use crate::terminal_selection::TerminalSelection;
 #[path = "terminal_context.rs"]
 mod context;
+#[path = "terminal_find.rs"]
+mod find;
 #[path = "terminal_tabs.rs"]
 mod tabs;
 use anyhow::{Result, ensure};
@@ -27,6 +29,7 @@ use gpui_kit::{
     component::{
         ActiveTheme, Icon, Sizable,
         button::*,
+        input::{Input, InputEvent, InputState},
         menu::{ContextMenuExt, PopupMenuItem},
         progress::ProgressCircle,
         tooltip::Tooltip,
@@ -576,10 +579,21 @@ fn clear_creation_notice(notice: &mut String, closing: bool) {
     }
 }
 
+/// SwiftTerm's owned find panel. The query is the native input's own text, so
+/// selection, IME and undo behave like every other field; the matches are this
+/// pane's, refreshed whenever the query or the visible page changes.
+struct FindBar {
+    input: Entity<InputState>,
+    hits: Vec<find::Hit>,
+    current: Option<usize>,
+    _subscription: Subscription,
+}
 struct Pane {
     terminal: Option<String>,
     frame: Option<Value>,
     selection: TerminalSelection,
+    /// SwiftTerm's owned ⌘F panel: this pane's query, matches and position.
+    find: Option<FindBar>,
     focus: FocusHandle,
     scroll: ScrollHandle,
     ticket: u64,
@@ -603,6 +617,7 @@ impl Pane {
             terminal: None,
             frame: None,
             selection: Default::default(),
+            find: None,
             focus: cx.focus_handle(),
             scroll: ScrollHandle::new(),
             ticket: 0,
@@ -1588,6 +1603,9 @@ impl TerminalWorkspace {
                             pane.notice = error.to_string();
                         }
                     }
+                    if pane.find.is_some() {
+                        self.sync_find(key, cx);
+                    }
                 }
             }
         }
@@ -1814,6 +1832,20 @@ impl TerminalWorkspace {
         self.invalidate_context();
         let k = &event.keystroke;
         let command = k.modifiers.platform || (k.modifiers.control && k.modifiers.shift);
+        // SwiftTerm owns ⌘F: it opens the pane's find bar instead of typing.
+        if command && !k.modifiers.alt && k.key.eq_ignore_ascii_case("f") {
+            self.open_find(key, window, cx);
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
+        // Tab cycling, as SwiftTerm's macOS menu receives it: ⇧⌘[ and ⇧⌘].
+        if command && !k.modifiers.alt && matches!(k.key.as_str(), "[" | "{" | "]" | "}") {
+            let forward = matches!(k.key.as_str(), "]" | "}");
+            self.cycle_tab(key, forward, window, cx);
+            cx.stop_propagation();
+            return;
+        }
         if command && !k.modifiers.alt && k.key.eq_ignore_ascii_case("v") {
             if let Some(input) = cx.read_from_clipboard().and_then(|c| c.text()) {
                 if valid_payload(&input, true).is_ok() {
@@ -2019,6 +2051,22 @@ impl TerminalWorkspace {
                         .flex_shrink_0()
                         .h(px(cell_h))
                         .w_full();
+                    // Only this row's matches, so highlighting never rescans
+                    // every match in the page for each cell.
+                    let row_hits = pane
+                        .find
+                        .as_ref()
+                        .map(|bar| {
+                            bar.hits
+                                .iter()
+                                .enumerate()
+                                .filter(|(_, hit)| hit.row == offset + row_index)
+                                .map(|(index, hit)| {
+                                    (hit.start, hit.end, bar.current == Some(index))
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
                     if let Some(cells) = row_cells.as_array() {
                         for (col, cell) in cells.iter().enumerate() {
                             if cell["continuation"] == true
@@ -2035,6 +2083,10 @@ impl TerminalWorkspace {
                                 col,
                                 width,
                             );
+                            let highlighted = row_hits
+                                .iter()
+                                .find(|(start, end, _)| *start < col + width && *end > col)
+                                .map(|(_, _, current)| *current);
                             let down_id = id.clone();
                             let drag_id = id.clone();
                             row = row.child(
@@ -2065,6 +2117,11 @@ impl TerminalWorkspace {
                                     })
                                     .when(selected, |view| {
                                         view.child(div().absolute().inset_0().bg(rgba(0x648ce670)))
+                                    })
+                                    .when_some(highlighted, |view, current| {
+                                        view.child(div().absolute().inset_0().bg(rgba(
+                                            if current { 0xf5a524c0 } else { 0xf5a52460 },
+                                        )))
                                     })
                                     .on_mouse_down(
                                         MouseButton::Left,
@@ -2284,6 +2341,8 @@ impl TerminalWorkspace {
                     })),
             )
         });
+        // SwiftTerm's find panel sits above the page it searches.
+        let find_bar = pane.find.as_ref().map(|bar| self.find_bar(key, bar, cx));
         div()
             .relative()
             .flex()
@@ -2291,6 +2350,7 @@ impl TerminalWorkspace {
             .flex_1()
             .min_h_0()
             .min_w_0()
+            .when_some(find_bar, |view, bar| view.child(bar))
             .child(
                 div()
                     .relative()
@@ -2389,6 +2449,129 @@ impl TerminalWorkspace {
             self.focus(focus, window, cx);
         }
         cx.notify();
+    }
+    /// ⇧⌘[ and ⇧⌘] move between tabs without wrapping, as the system's own
+    /// Show Previous/Next Tab does. The pane being left keeps its shell.
+    fn cycle_tab(
+        &mut self,
+        key: PaneId,
+        forward: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = self.tabs.iter().position(|tab| tab.key == key) else {
+            return;
+        };
+        let step = if forward { 1 } else { -1 };
+        let Some(next) = index
+            .checked_add_signed(step)
+            .filter(|next| *next < self.tabs.len())
+        else {
+            return;
+        };
+        let key = self.tabs[next].key;
+        self.activate_tab(key, window, cx);
+    }
+    /// ⌘F: the pane's own find bar, focused and matching the page it already
+    /// shows. Reopening keeps the query, as SwiftTerm's panel does.
+    fn open_find(&mut self, key: PaneId, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.panes.contains_key(&key) {
+            return;
+        }
+        if self.panes[&key].find.is_none() {
+            let input = cx.new(|cx| InputState::new(window, cx).placeholder("Find in terminal…"));
+            let subscription = cx.subscribe_in(
+                &input,
+                window,
+                move |this, _, event: &InputEvent, window, cx| {
+                    if this.panes.get(&key).is_none_or(|pane| pane.find.is_none()) {
+                        return;
+                    }
+                    match event {
+                        InputEvent::Change => {
+                            this.sync_find(key, cx);
+                            this.reveal_find(key, cx);
+                            cx.notify();
+                        }
+                        InputEvent::PressEnter { shift, .. } => {
+                            this.step_find(key, !shift, cx);
+                        }
+                        _ => {}
+                    }
+                    let _ = window;
+                },
+            );
+            if let Some(pane) = self.panes.get_mut(&key) {
+                pane.find = Some(FindBar {
+                    input,
+                    hits: Vec::new(),
+                    current: None,
+                    _subscription: subscription,
+                });
+            }
+        }
+        self.sync_find(key, cx);
+        if let Some(bar) = self.panes.get(&key).and_then(|pane| pane.find.as_ref()) {
+            bar.input.read(cx).focus_handle(cx).focus(window, cx);
+        }
+        self.reveal_find(key, cx);
+    }
+    /// Escape closes the bar and hands focus back to the shell.
+    fn close_find(&mut self, key: PaneId, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(pane) = self.panes.get_mut(&key) else {
+            return;
+        };
+        if pane.find.take().is_none() {
+            return;
+        }
+        let focus = pane.focus.clone();
+        focus.focus(window, cx);
+        cx.notify();
+    }
+    /// Re-match the current page. Matches follow both the query and the page,
+    /// so a busy shell never leaves a stale count or a highlight off its text.
+    fn sync_find(&mut self, key: PaneId, cx: &App) {
+        let Some(pane) = self.panes.get_mut(&key) else {
+            return;
+        };
+        let Some(bar) = pane.find.as_mut() else {
+            return;
+        };
+        let query = bar.input.read(cx).value().to_string();
+        let rows = pane
+            .frame
+            .as_ref()
+            .map(|frame| find::rows(&frame["grid"]))
+            .unwrap_or_default();
+        bar.hits = find::hits(&rows, &query);
+        if bar.current.is_none_or(|current| current >= bar.hits.len()) {
+            bar.current = (!bar.hits.is_empty()).then_some(0);
+        }
+    }
+    /// Scroll the current match into view. Rows are exactly one cell high, so
+    /// the offset is the match's own row.
+    fn reveal_find(&mut self, key: PaneId, cx: &mut Context<Self>) {
+        let cell_h = self.metrics().cell_h;
+        let Some(pane) = self.panes.get_mut(&key) else {
+            return;
+        };
+        let Some(bar) = pane.find.as_ref() else {
+            return;
+        };
+        let Some(hit) = bar.current.and_then(|current| bar.hits.get(current)) else {
+            return;
+        };
+        let y = px(hit.row as f32 * cell_h);
+        pane.scroll.set_offset(point(px(0.), y));
+        cx.notify();
+    }
+    /// Return moves to the next match, ⇧Return to the previous one; both wrap.
+    fn step_find(&mut self, key: PaneId, forward: bool, cx: &mut Context<Self>) {
+        self.sync_find(key, cx);
+        if let Some(bar) = self.panes.get_mut(&key).and_then(|pane| pane.find.as_mut()) {
+            bar.current = find::step(&bar.hits, bar.current, forward);
+        }
+        self.reveal_find(key, cx);
     }
     /// The tab's ×, a middle click or its Close: every pane of the tab.
     fn close_tab(&mut self, key: PaneId, window: &mut Window, cx: &mut Context<Self>) {
@@ -2555,6 +2738,79 @@ impl TerminalWorkspace {
     }
     /// One tab: an icon (or its progress), the title and a close button that
     /// shows on hover. The title dims once the shell exits.
+    /// The pane's find strip: the query field, the position of the current
+    /// match, previous/next, and Close. Escape closes it and returns focus.
+    fn find_bar(&self, key: PaneId, bar: &FindBar, cx: &mut Context<Self>) -> AnyElement {
+        let muted = cx.theme().muted_foreground;
+        let count = bar.hits.len();
+        let status = match (count, bar.current) {
+            (0, _) => "No results".to_owned(),
+            (count, Some(current)) => format!("{} of {count}", current + 1),
+            (count, None) => format!("{count} matches"),
+        };
+        let empty = count == 0;
+        let mut strip = div()
+            .id(SharedString::from(format!("terminal-find-{key}")))
+            .role(Role::Group)
+            .aria_label("Find in terminal")
+            .flex()
+            .items_center()
+            .gap_2()
+            .px_2()
+            .py_1()
+            .bg(cx.theme().popover)
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
+                if event.keystroke.key.eq_ignore_ascii_case("escape") {
+                    this.close_find(key, window, cx);
+                    cx.stop_propagation();
+                }
+            }))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(Input::new(&bar.input).appearance(false)),
+            )
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .text_size(px(11.))
+                    .text_color(muted)
+                    .child(status),
+            );
+        for (id, icon, tip, forward) in [
+            ("prev", IconName::ChevronUp, "Previous match", false),
+            ("next", IconName::ChevronDown, "Next match", true),
+        ] {
+            strip = strip.child(
+                Button::new(SharedString::from(format!("terminal-find-{id}-{key}")))
+                    .icon(icon)
+                    .ghost()
+                    .xsmall()
+                    .accessibility_label(tip)
+                    .tooltip(tip)
+                    .disabled(empty)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.step_find(key, forward, cx);
+                    })),
+            );
+        }
+        strip
+            .child(
+                Button::new(SharedString::from(format!("terminal-find-close-{key}")))
+                    .icon(IconName::Close)
+                    .ghost()
+                    .xsmall()
+                    .accessibility_label("Close find")
+                    .tooltip("Close Find")
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.close_find(key, window, cx);
+                    })),
+            )
+            .into_any_element()
+    }
     fn tab_item(&self, tab: &Tab, cx: &mut Context<Self>) -> AnyElement {
         let key = tab.key;
         let selected = Some(key) == self.active;

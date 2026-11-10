@@ -458,7 +458,8 @@ simpler in Rust; everything not listed matched in code.
   "agent used this browser" status line are absent.
 - Diff panel has no turn scopes and no "Comment on Selected Lines" → composer
   context.
-- Terminal has no ⌘F find and no ⇧⌘[ / ⇧⌘] tab cycling.
+- Terminal ⌘F find and ⇧⌘[ / ⇧⌘] tab cycling are present; find covers the
+  visible page only (core never exposes raw scrollback to the UI).
 - Saved-login fill detours through Settings instead of listing matching logins
   and one-time codes in place.
 - Schedule approvals lost Swift's in-thread approval card.
@@ -518,3 +519,29 @@ silently replaced.
 
 Unit coverage: worktree over bot over project resolution, a bot's folder, a
 deleted bot's home fallback, and the terminal's bot-folder start.
+
+## Terminal find and tab cycling — 2026-11-10
+
+SwiftTerm gives every terminal ⌘F find and the system's ⇧⌘[ / ⇧⌘] tab
+cycling. Rust's native terminal had neither: ⌘F reached the app menu, where
+Find is deliberately disabled in a terminal, and the only way between tabs was
+clicking one.
+
+- **⌘F** opens a find strip above the pane it belongs to, focused, matching the
+  page already on screen. Matches are case-insensitive and reported in reading
+  order; the strip shows the current match and the total, previous/next move
+  between them with wrapping, and Return/⇧Return do the same from the field.
+  Escape or Close dismisses it and returns focus to the shell. Each pane keeps
+  its own query, as SwiftTerm's panel does, and the strip re-matches when the
+  query or the visible page changes, so a busy shell never leaves a stale count
+  or a highlight on the wrong cells.
+- **⇧⌘[ / ⇧⌘]** move to the previous/next tab and stop at the ends, as the
+  system's Show Previous/Next Tab does. The shell that loses focus keeps
+  running and its pane keeps its layout.
+- Find searches the visible page, not scrollback: core hands the UI one
+  coherent page at a time and has no query for history.
+
+Unit coverage (`cargo test -p coincide-desktop --bin coincide-rust
+terminal_workspace::find`): trailing-blank trimming, wide-glyph columns,
+case-insensitive matches with exact column bounds, every occurrence on a row,
+empty and overlong queries, wrapping in both directions, and the match cap.
