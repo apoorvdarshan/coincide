@@ -1733,6 +1733,9 @@ impl Coincide {
                         ),
                 )
             })
+            .when_some(self.project_management_form(cx), |view, form| {
+                view.child(form)
+            })
             .when(
                 self.thread_bulk.mode || !self.thread_bulk.status.is_empty(),
                 |view| view.child(self.bulk_controls(cx)),
