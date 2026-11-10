@@ -50,9 +50,10 @@ impl Engine {
     }
 
     /// Swift TerminalLaunch.directory: the thread's worktree or project folder,
-    /// the project folder when the worktree is gone, else home.
+    /// the project folder when the worktree is gone, else home. A bot's
+    /// conversation runs in the bot's folder, its stand-in for a project.
     pub(super) fn terminal_start_directory(&self, thread: &Value) -> Result<StartDirectory> {
-        let project = self.store.projects()?.as_array().and_then(|projects| {
+        let mut project = self.store.projects()?.as_array().and_then(|projects| {
             projects
                 .iter()
                 .find(|project| project["id"] == thread["projectID"])
@@ -60,6 +61,11 @@ impl Engine {
                 .filter(|path| !path.is_empty())
                 .map(PathBuf::from)
         });
+        if project.is_none()
+            && let Some(bot) = thread["botID"].as_str().filter(|bot| !bot.is_empty())
+        {
+            project = self.store.bot_working_directory(bot)?;
+        }
         let preferred = thread["worktreePath"]
             .as_str()
             .filter(|path| !path.is_empty())
@@ -245,6 +251,41 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(names, ["Terminal 1", "Terminal 2"]);
         assert_eq!(engine.terminal_listing(Some("other")), json!([]));
+    }
+
+    /// A bot's conversation has no project folder of its own: it runs in the
+    /// bot's folder, and at home when the bot set none or no longer exists.
+    #[test]
+    fn a_bot_conversation_starts_in_the_bots_folder_else_home() {
+        let (root, mut engine) = engine();
+        let bot_folder = root.path().join("bot folder");
+        std::fs::create_dir_all(&bot_folder).unwrap();
+        engine
+            .store
+            .save_document(
+                "bots.json",
+                &json!({"bots":[
+                    {"id":"WITH-FOLDER","name":"Bot","folder":bot_folder},
+                    {"id":"NO-FOLDER","name":"Bot"}
+                ]}),
+            )
+            .unwrap();
+        for (bot, expected) in [
+            ("WITH-FOLDER", Some(bot_folder.clone())),
+            ("NO-FOLDER", None),
+            ("GONE", None),
+        ] {
+            let thread = json!({"id":"bot-thread","projectID":crate::bot_runtime::BOTS_PROJECT_ID,"botID":bot});
+            let start = engine.terminal_start_directory(&thread).unwrap();
+            assert_eq!(
+                start.path.canonicalize().unwrap(),
+                expected
+                    .unwrap_or_else(launch::home)
+                    .canonicalize()
+                    .unwrap(),
+                "bot {bot}"
+            );
+        }
     }
 
     #[test]

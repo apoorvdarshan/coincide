@@ -240,31 +240,9 @@ fn operation(api: &mut impl FnMut(&str, Value) -> Result<Value>, params: Value) 
     }
 }
 
-/// The stored working directory, which the Engine checks the request against.
-fn working_directory(
-    api: &mut impl FnMut(&str, Value) -> Result<Value>,
-    thread: &str,
-) -> Result<Option<PathBuf>> {
-    let value = api("threads.read", json!({"threadId":thread,"itemLimit":0}))?;
-    if let Some(path) = value["worktreePath"]
-        .as_str()
-        .filter(|path| !path.is_empty())
-    {
-        return Ok(Some(PathBuf::from(path)));
-    }
-    let projects = api("projects.list", json!({}))?;
-    Ok(projects
-        .as_array()
-        .context("Invalid projects")?
-        .iter()
-        .find(|project| project["id"] == value["projectID"])
-        .and_then(|project| project["path"].as_str())
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from))
-}
-
 fn load(api: &mut impl FnMut(&str, Value) -> Result<Value>, request: &Request) -> Result<Outcome> {
-    let stored = working_directory(api, &request.thread)?;
+    // Worktree, a bot's folder, then the project; the Engine checks the request against it.
+    let stored = crate::thread_folder::working_directory(api, &request.thread)?;
     let Some(folder) = stored
         .as_ref()
         .filter(|path| path.is_absolute() && path.is_dir())

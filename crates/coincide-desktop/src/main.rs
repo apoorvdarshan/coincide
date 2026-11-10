@@ -95,6 +95,7 @@ mod legacy_media_settings;
 mod main_window_poll;
 mod microphone;
 mod microphone_settings;
+mod thread_folder;
 #[rustfmt::skip]
 mod bot_artwork_data;
 mod models_settings;
