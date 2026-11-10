@@ -600,3 +600,30 @@ transcript_media::`): Markdown images and links in order, folder-relative
 targets, attachments and de-duplication, missing files and other extensions,
 remote/`data:` refusal, escaped spaces and `file://`, a titled destination, the
 eight-image cap, and the `..` boundary.
+
+## Reasoning effort for every provider, kept across launches — 2026-11-10
+
+The composer's effort chip said "Reasoning effort is not connected for this
+provider" for anything that was not Codex, even when the provider's own
+discovered model list advertised effort levels: OpenCode reports low/high/max
+for `deepseek-v4.1-flash`, and Swift lists exactly those. The capability was
+also only offered when a model catalog job happened to be in memory, so after a
+relaunch — or any restart — the menu fell back to "not connected" until someone
+refreshed models by hand.
+
+- Every provider now offers the efforts its own discovered list reported. Codex
+  keeps its separate proof path, which binds effort and speed to a model list it
+  read from the exact executable and account.
+- The latest ready list per provider is saved as `model-catalog.json` and
+  restored at launch, so a conversation opens with the menu it had before
+  instead of waiting for a provider process to run again. A live refresh
+  replaces the saved list as soon as it lands, and saving only happens when the
+  catalog actually changed.
+- A restored list is display metadata only: it carries no binding, no proof and
+  `authenticationChecked: false`, so nothing can be sent on the strength of it.
+  Codex lists are never restored at all, because their restore is proof-bound.
+
+Unit coverage (`cargo test -p coincide-core --lib saved_catalog`): a saved list
+answers effort choices without a live refresh, is written back unchanged, never
+replaces a live catalog, and ignores unknown providers and empty lists. The
+portable provider-resume test still passes.
