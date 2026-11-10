@@ -1385,6 +1385,11 @@ impl Coincide {
                     _ => {}
                 }
             }),
+            cx.subscribe(&project_path, |this, _, event, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.project_path_changed(cx);
+                }
+            }),
             cx.subscribe(&search, |this, search, event, cx| {
                 if matches!(event, InputEvent::Change) {
                     this.thread_bulk.invalidate();
