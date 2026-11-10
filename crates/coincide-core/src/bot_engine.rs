@@ -42,8 +42,12 @@ impl Engine {
         );
         Uuid::parse_str(required(context, "botId")?).context("Invalid bot identity")?;
         ensure!(
-            thread["accessMode"] == "approval" && thread["interactionMode"] == "build",
-            "Bot conversation requires its saved approval/build modes"
+            matches!(
+                thread["accessMode"].as_str(),
+                Some("approval" | "fullAccess")
+            ) && thread["interactionMode"] == "build"
+                && context["accessMode"] == thread["accessMode"],
+            "Bot conversation requires its saved access mode and Build"
         );
         let selection = &thread["selection"];
         ensure!(
