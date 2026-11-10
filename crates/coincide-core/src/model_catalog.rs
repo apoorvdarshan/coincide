@@ -446,6 +446,91 @@ impl ModelCatalog {
             )
         })
     }
+    /// The latest ready discovery per provider, as the next launch reads it.
+    ///
+    /// A discovered model list is display metadata: the composer's effort menu
+    /// and the model picker need it the moment a conversation opens, and
+    /// spawning the provider's CLI again on every launch makes the user wait
+    /// for a menu that was already known.
+    pub(crate) fn saved_document(&self) -> Value {
+        let mut providers = serde_json::Map::new();
+        for id in self.order.iter().rev() {
+            let Some(job) = self.jobs.get(id) else {
+                continue;
+            };
+            let Some(provider) = job.response["provider"].as_str() else {
+                continue;
+            };
+            // Codex keeps its own proof-bound restore; a saved list is never it.
+            if provider == "codex"
+                || job.named.is_some()
+                || job.response["state"] != "ready"
+                || providers.contains_key(provider)
+            {
+                continue;
+            }
+            let models = job.response["models"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            if models.is_empty() {
+                continue;
+            }
+            providers.insert(provider.to_owned(), json!({"models": models}));
+        }
+        json!({"version": 1, "providers": providers})
+    }
+    /// Install a saved document as ready catalogs. These rows carry no binding
+    /// and no proof: they let the UI show what was already discovered, and
+    /// every effort/speed decision still needs a live discovery of its own.
+    pub(crate) fn restore_saved(&mut self, saved: &Value) {
+        let Some(providers) = saved["providers"].as_object() else {
+            return;
+        };
+        for (provider, entry) in providers {
+            // Codex catalogs are bound to a proof of the executable and account,
+            // so a saved list could never stand in for one.
+            if provider == "codex" || crate::agent::Provider::from_name(provider).is_err() {
+                continue;
+            }
+            let Some(models) = entry["models"].as_array() else {
+                continue;
+            };
+            if models.is_empty()
+                || models.len() > MAX_MODELS
+                || self.jobs.values().any(|job| {
+                    job.named.is_none()
+                        && job.response["provider"] == provider.as_str()
+                        && job.response["state"] == "ready"
+                })
+            {
+                continue;
+            }
+            let id = format!("saved-{provider}");
+            if self.jobs.len() >= MAX_JOBS {
+                break;
+            }
+            self.jobs.insert(
+                id.clone(),
+                Job {
+                    named: None,
+                    binding: None,
+                    response: json!({
+                        "requestId": id,
+                        "provider": provider,
+                        "accountID": "default",
+                        "state": "ready",
+                        "provenance": "saved_model_list",
+                        "authenticationChecked": false,
+                        "models": models,
+                        "error": null
+                    }),
+                    cancelled: Arc::new(AtomicBool::new(false)),
+                },
+            );
+            self.order.push_back(id);
+        }
+    }
 }
 
 /// Strict public request contract; only the existing default account may be read.
@@ -1550,5 +1635,85 @@ mod speed_metadata_tests {
             json!([])
         );
         assert!(parse_model(&json!({"model":"reported","serviceTiers":false,"additionalSpeedTiers":["priority"]})).is_err());
+    }
+}
+
+#[cfg(test)]
+mod saved_catalog_tests {
+    use super::*;
+
+    fn saved(provider: &str, model: &str, efforts: &[&str], default: &str) -> Value {
+        json!({"version":1,"providers":{provider:{"models":[{
+            "id":model,
+            "displayName":model,
+            "reportedEfforts":efforts,
+            "reportedDefaultEffort":default
+        }]}}})
+    }
+
+    #[test]
+    fn a_saved_list_answers_effort_choices_without_a_live_refresh() {
+        let mut catalog = ModelCatalog::default();
+        catalog.restore_saved(&saved(
+            "opencode",
+            "opencode/deepseek-v4.1-flash",
+            &["low", "high", "max"],
+            "high",
+        ));
+        let selection = json!({"provider":"opencode","modelID":"opencode/deepseek-v4.1-flash"});
+        assert_eq!(
+            catalog.reported_efforts(&selection),
+            Some((
+                vec!["low".to_owned(), "high".to_owned(), "max".to_owned()],
+                Some("high".to_owned())
+            ))
+        );
+    }
+
+    #[test]
+    fn a_saved_list_is_written_back_unchanged() {
+        let document = saved("claude", "claude-sonnet-5-5", &["medium"], "medium");
+        let mut catalog = ModelCatalog::default();
+        catalog.restore_saved(&document);
+        let written = catalog.saved_document();
+        assert_eq!(
+            written["providers"]["claude"]["models"][0]["id"], "claude-sonnet-5-5",
+            "the restored list is the next launch's list"
+        );
+        assert_eq!(written["version"], 1);
+    }
+
+    #[test]
+    fn a_live_catalog_is_never_replaced_by_a_saved_one() {
+        let mut catalog = ModelCatalog::default();
+        catalog
+            .refresh_with("opencode", |_| Ok(vec![json!({"id":"live-model"})]))
+            .expect("refresh starts");
+        // Let the worker finish so the job is ready before the restore runs.
+        for _ in 0..200 {
+            if catalog.poll() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        catalog.restore_saved(&saved("opencode", "saved-model", &["low"], "low"));
+        let selection = json!({"provider":"opencode","modelID":"saved-model"});
+        assert_eq!(catalog.reported_efforts(&selection), None);
+        let selection = json!({"provider":"opencode","modelID":"live-model"});
+        assert!(catalog.jobs.values().any(|job| {
+            job.response["models"]
+                .as_array()
+                .is_some_and(|rows| rows.iter().any(|row| row["id"] == "live-model"))
+        }));
+    }
+
+    #[test]
+    fn unknown_providers_and_empty_lists_are_ignored() {
+        let mut catalog = ModelCatalog::default();
+        catalog.restore_saved(&json!({"version":1,"providers":{
+            "not-a-provider":{"models":[{"id":"x"}]},
+            "opencode":{"models":[]}
+        }}));
+        assert!(catalog.jobs.is_empty());
     }
 }

@@ -293,7 +293,33 @@ pub struct Engine {
     turn_checkpoints: checkpoint_api::State,
     composer_commands: crate::composer_suggestions::ReportedCommands,
 }
+/// Where the last launch's discovered model lists live. Display metadata only.
+const SAVED_MODEL_CATALOG: &str = "model-catalog.json";
+
 impl Engine {
+    /// Keep the latest discovered lists for the next launch. A failure here is
+    /// not a user-facing error: the catalog still works for this run.
+    fn save_model_catalog(&mut self) {
+        let saved = self.model_catalog.saved_document();
+        let empty = saved["providers"]
+            .as_object()
+            .is_none_or(|providers| providers.is_empty());
+        if empty {
+            return;
+        }
+        if self
+            .store
+            .document(SAVED_MODEL_CATALOG)
+            .ok()
+            .flatten()
+            .as_ref()
+            == Some(&saved)
+        {
+            return;
+        }
+        let _ = self.store.save_document(SAVED_MODEL_CATALOG, &saved);
+    }
+
     pub fn new(store: Store) -> Self {
         Self::initialize(store, true)
     }
@@ -318,6 +344,12 @@ impl Engine {
         }
         let idle_sleep = idle_sleep::IdleSleep::new(&store);
         let notification_events = notification_events::Outbox::new(&store);
+        // The last launch's discovery is display metadata a conversation opens
+        // with; a live refresh replaces it.
+        let mut model_catalog = crate::model_catalog::ModelCatalog::default();
+        if let Ok(Some(saved)) = store.document(SAVED_MODEL_CATALOG) {
+            model_catalog.restore_saved(&saved);
+        }
         Self {
             appshots_owner: Uuid::new_v4(),
             thread_bulk_owner: Uuid::new_v4(),
@@ -325,7 +357,7 @@ impl Engine {
             composer_file_owner: Uuid::new_v4(),
             codex_profile_login: None,
             project_management: project_management_api::State::default(),
-            model_catalog: crate::model_catalog::ModelCatalog::default(),
+            model_catalog,
             catalog_shutdown_requested: false,
             native_ui_editors: Default::default(),
             named_resume: crate::named_profile_resume::Registry::for_store(&store),
@@ -889,12 +921,16 @@ impl Engine {
                         provider["effort"] = self.composer_effort_capability(&thread["selection"]);
                         provider["speed"] = self.composer_speed_capability(&thread["selection"]);
                     }
-                    if thread["selection"]["provider"] == "opencode"
+                    // Codex keeps its own proof path above; every other provider
+                    // offers what its discovered model list reported, so a
+                    // provider with effort levels is never left unconnected.
+                    let effort_provider = thread["selection"]["provider"].clone();
+                    if effort_provider != "codex"
                         && thread["rustBotContext"].is_null()
                         && thread["botID"].is_null()
                         && !self.store.is_imported(id)?
                         && let Some((choices, reported)) = self.model_catalog.reported_efforts(&thread["selection"])
-                        && let Some(provider) = result["providers"].as_array_mut().and_then(|providers| providers.iter_mut().find(|provider| provider["provider"] == "opencode"))
+                        && let Some(provider) = result["providers"].as_array_mut().and_then(|providers| providers.iter_mut().find(|provider| provider["provider"] == effort_provider))
                     {
                         provider["effort"] = json!({"supported":true,"choices":choices,"reportedDefault":reported,
                             "effectiveDefault":null,"provenance":"provider_model_list","requiresExplicitModel":true,
@@ -2026,7 +2062,11 @@ impl Engine {
         let named_limits = self.current_profile_limits_binding();
         let limits_changed = self.model_catalog.limits_context(limits_executable)
             | self.model_catalog.named_limits_context(named_limits);
-        if self.model_catalog.poll() | limits_changed {
+        let catalog_changed = self.model_catalog.poll();
+        if catalog_changed {
+            self.save_model_catalog();
+        }
+        if catalog_changed | limits_changed {
             self.revision += 1;
         }
         self.poll_workspace_completions();
