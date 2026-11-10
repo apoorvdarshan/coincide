@@ -236,15 +236,17 @@ impl Coincide {
         for image in self.media.images.drain(..) {
             image.image.remove_asset(cx);
         }
-        if let Some(thread) = &self.selected {
-            for id in ids {
-                if let Some(index) = thread["items"]
-                    .as_array()
-                    .and_then(|items| items.iter().position(|item| item["id"] == id))
-                {
-                    self.transcript_list.splice(index..index + 1, 1);
-                }
-            }
+        let rows = self.selected.as_ref().map_or_else(Vec::new, |thread| {
+            ids.iter()
+                .filter_map(|id| {
+                    thread["items"]
+                        .as_array()
+                        .and_then(|items| items.iter().position(|item| item["id"] == *id))
+                })
+                .collect::<Vec<_>>()
+        });
+        for index in rows {
+            self.splice_transcript(index..index + 1, 1);
         }
         cx.notify();
     }
@@ -656,12 +658,13 @@ impl Coincide {
                             .iter()
                             .map(|image| image.item.clone())
                             .collect::<HashSet<_>>();
-                        if let Some(thread) = &self.selected {
-                            for id in ids {
-                                if let Some(index) = find_row(thread, &check.request.thread, &id) {
-                                    self.transcript_list.splice(index..index + 1, 1);
-                                }
-                            }
+                        let rows = self.selected.as_ref().map_or_else(Vec::new, |thread| {
+                            ids.iter()
+                                .filter_map(|id| find_row(thread, &check.request.thread, id))
+                                .collect::<Vec<_>>()
+                        });
+                        for index in rows {
+                            self.splice_transcript(index..index + 1, 1);
                         }
                         cx.notify();
                     } else {
@@ -674,7 +677,7 @@ impl Coincide {
                             && stored != check.snapshot
                         {
                             let count = stored["items"].as_array().map_or(0, Vec::len);
-                            self.transcript_list.splice(0..self.transcript_count, count);
+                            self.splice_transcript(0..self.transcript_count, count);
                             self.transcript_count = count;
                             self.selected = Some(stored);
                             self.sync_media_context(cx);

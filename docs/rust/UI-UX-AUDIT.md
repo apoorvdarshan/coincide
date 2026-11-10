@@ -627,3 +627,25 @@ Unit coverage (`cargo test -p coincide-core --lib saved_catalog`): a saved list
 answers effort choices without a live refresh, is written back unchanged, never
 replaces a live catalog, and ignores unknown providers and empty lists. The
 portable provider-resume test still passes.
+
+## Quiet composer failures and a transcript that stays where you left it — 2026-11-10
+
+Three lines the user never asked to read, and one scroll rule:
+
+- The "A draft could not be saved yet. Keep this window open." bar above the
+  transcript is gone. Saving still retries in the background, and quitting with
+  an unsaved draft still stops and offers Retry save — the difference is that a
+  transient save no longer paints a permanent warning into the conversation.
+- A failed `agent.pending` poll no longer writes "Unable to load agent requests:
+  App is busy processing another operation…" under the composer. A busy engine
+  is a retry, not news.
+- Scrolling no longer gets pulled back to the newest reply. gpui moves a list's
+  scroll anchor to the start of any range that is spliced, and the live reply is
+  spliced on every update, so a reader who had scrolled away was dragged along
+  with it. Every transcript splice now captures the reader's position first and
+  restores it when they are away from the tail; someone still at the bottom
+  keeps following the newest reply, with the Jump to Latest pill appearing only
+  once they leave.
+
+Unit coverage: `transcript_scroll_tests` (the tail is followed only from the
+tail, including the sub-pixel rounding case).
