@@ -154,6 +154,7 @@ mod tool_detail;
 mod transcript;
 mod transcript_find;
 mod transcript_links;
+mod transcript_media;
 mod transcription_composer;
 mod transcription_settings;
 mod turn_changes;
@@ -562,6 +563,10 @@ struct Coincide {
     image_waiting_rows: std::collections::HashSet<(String, usize)>,
     image_assets: Entity<RetainAllImageCache>,
     image_asset_order: std::collections::VecDeque<std::path::PathBuf>,
+    /// Reply media by item and reply text. Resolving stats the files, so the
+    /// answer is kept rather than recomputed on every frame.
+    reply_media_cache:
+        std::cell::RefCell<std::collections::HashMap<(String, u64), Vec<transcript_media::Media>>>,
     search: Entity<InputState>,
     status: String,
     show_archived: bool,
@@ -1688,6 +1693,7 @@ impl Coincide {
             image_waiting_rows: Default::default(),
             image_assets: RetainAllImageCache::new(cx),
             image_asset_order: Default::default(),
+            reply_media_cache: Default::default(),
             search,
             status: browser_error.unwrap_or_else(|| "Rust preview · separate data store".into()),
             browser,
@@ -2483,6 +2489,7 @@ impl Coincide {
                     self.image_assets
                         .update(cx, |cache, cx| cache.clear(window, cx));
                     self.image_asset_order.clear();
+                    self.reply_media_cache.borrow_mut().clear();
                     self.image_waiting_rows.clear();
                     for entry in self.image_previews.values_mut() {
                         entry.rows.clear();
@@ -4439,6 +4446,94 @@ impl Coincide {
             })
             .into_any_element()
     }
+    /// Images a reply points at: its Markdown images and image links, then any
+    /// generated files it lists in `attachments`, resolved against the thread's
+    /// folder. Swift's `TranscriptMedia.extract` does the same from the reply.
+    fn reply_media(&self, item: &Value) -> Vec<transcript_media::Media> {
+        let key = item["id"].as_str().unwrap_or_default();
+        let Ok(attachments) = serde_json::to_string(&item["attachments"]) else {
+            return Vec::new();
+        };
+        let text = item["text"].as_str().unwrap_or_default();
+        // Cheap guard before hashing the whole reply: most name no file.
+        let attached = item["attachments"]
+            .as_array()
+            .is_some_and(|list| !list.is_empty());
+        if !attached && !text.contains("](") {
+            return Vec::new();
+        }
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        text.hash(&mut hasher);
+        attachments.hash(&mut hasher);
+        let root = self.selected_root_hint();
+        root.hash(&mut hasher);
+        let revision = hasher.finish();
+        let cache_key = (key.to_owned(), revision);
+        if let Some(found) = self.reply_media_cache.borrow().get(&cache_key) {
+            return found.clone();
+        }
+        let attachments = item["attachments"]
+            .as_array()
+            .map(|list| {
+                list.iter()
+                    .filter_map(|path| path.as_str().map(str::to_owned))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let found = transcript_media::images(
+            text,
+            &attachments,
+            root.as_deref().map(std::path::Path::new),
+        );
+        let mut cache = self.reply_media_cache.borrow_mut();
+        if cache.len() > 256 {
+            cache.clear();
+        }
+        cache.insert(cache_key, found.clone());
+        found
+    }
+    /// Swift's media cards: the image at reply width with its file name, in the
+    /// shared image cache so a scrolled row costs nothing to redraw.
+    fn media_cards(&self, media: &[transcript_media::Media]) -> Vec<AnyElement> {
+        media
+            .iter()
+            .map(|media| {
+                let caption = media
+                    .path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or(&media.source)
+                    .chars()
+                    .take(200)
+                    .collect::<String>();
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        img(media.path.clone())
+                            .image_cache(&self.image_assets)
+                            .max_w(px(380.))
+                            .h(px(266.))
+                            .flex_shrink_0()
+                            .object_fit(ObjectFit::Contain)
+                            .rounded_md()
+                            .with_loading(|| {
+                                div().text_xs().child("Loading image…").into_any_element()
+                            })
+                            .with_fallback(|| {
+                                div()
+                                    .text_xs()
+                                    .child("Image unavailable")
+                                    .into_any_element()
+                            }),
+                    )
+                    .child(div().max_w(px(380.)).truncate().text_xs().child(caption))
+                    .into_any_element()
+            })
+            .collect()
+    }
     fn draft_images(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let images = self.selected.as_ref()?["rustDraftImages"]
             .as_array()?
@@ -4819,6 +4914,10 @@ impl Coincide {
         // Only Rust-ingested metadata is previewable. Legacy imported media is
         // deliberately not opened through arbitrary historical paths.
         let images = item["rustImages"].as_array().cloned().unwrap_or_default();
+        // Images a reply points at (Swift's `TranscriptMedia`): Markdown images
+        // and image links, plus generated files listed in `attachments`.
+        let media = self.reply_media(item);
+        let media_cards = self.media_cards(&media);
         let context_pane = self.transcript_context_pane(&source_id, &item_id, item, cx);
         let previews = images
             .iter()
@@ -5055,6 +5154,16 @@ impl Coincide {
             ))
             .when(!previews.is_empty(), |view| {
                 view.child(div().flex().flex_wrap().gap_2().mt_2().children(previews))
+            })
+            .when(!media_cards.is_empty(), |view| {
+                view.child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap_3()
+                        .mt_2()
+                        .children(media_cards),
+                )
             })
             .children(self.historical_images(&item_id, cx))
             .when_some(footer, |view, footer| view.child(footer));
