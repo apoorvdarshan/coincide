@@ -115,14 +115,24 @@ pub(super) fn path_completions(input: &str) -> Vec<std::path::PathBuf> {
     if input.is_empty() {
         return Vec::new();
     }
-    let (typed_dir, prefix) = match input.rfind(['/', '\\']) {
-        Some(index) => (&input[..=index], &input[index + 1..]),
-        None => ("", input),
-    };
-    let dir = if typed_dir.is_empty() {
-        std::path::PathBuf::from(".")
+    let expanded = expand_home(input);
+    // A complete folder lists its children; a partial segment completes it.
+    let (dir, typed_dir, prefix) = if expanded.is_dir() {
+        let typed_dir = if input.ends_with('/') || input.ends_with('\\') {
+            input.to_owned()
+        } else {
+            format!("{input}/")
+        };
+        (expanded, typed_dir, "")
     } else {
-        expand_home(typed_dir)
+        match input.rfind(['/', '\\']) {
+            Some(index) => (
+                expand_home(&input[..=index]),
+                input[..=index].to_owned(),
+                &input[index + 1..],
+            ),
+            None => (std::path::PathBuf::from("."), String::new(), input),
+        }
     };
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -173,16 +183,26 @@ mod path_tests {
         std::fs::write(root.path().join("alpha2"), b"file").unwrap();
         std::fs::create_dir(root.path().join(".hidden")).unwrap();
         let base = root.path().to_string_lossy().into_owned();
-        let found = path_completions(&format!("{base}/alph"));
+        // A complete folder lists its children.
         assert_eq!(
-            found,
+            path_completions(&base),
+            vec![
+                std::path::PathBuf::from(format!("{base}/alpha")),
+                std::path::PathBuf::from(format!("{base}/alphabet")),
+                std::path::PathBuf::from(format!("{base}/beta")),
+            ]
+        );
+        // A partial segment completes it.
+        let partial = format!("{base}/alph");
+        assert_eq!(
+            path_completions(&partial),
             vec![
                 std::path::PathBuf::from(format!("{base}/alpha")),
                 std::path::PathBuf::from(format!("{base}/alphabet")),
             ]
         );
         assert!(
-            path_completions(&format!("{base}/"))
+            path_completions(&base)
                 .iter()
                 .all(|path| { path.file_name().is_some_and(|name| name != ".hidden") })
         );
