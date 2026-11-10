@@ -50,6 +50,21 @@ fn write_documents(db: &Connection, values: &BTreeMap<String, Option<Value>>) ->
     Ok(())
 }
 impl Store {
+    /// A bot's own folder, Swift's `Bot.workingDirectory`: the folder the user
+    /// chose for it, or home when none is set. A conversation of a bot that no
+    /// longer exists also falls back to home, as Swift's `bot(id)?.workingDirectory`.
+    pub fn bot_working_directory(&self, id: &str) -> Result<Option<std::path::PathBuf>> {
+        let bots = self.document("bots.json")?;
+        let folder = bots
+            .as_ref()
+            .and_then(|bots| bots["bots"].as_array())
+            .and_then(|bots| bots.iter().find(|bot| bot["id"] == id))
+            .and_then(|bot| bot["folder"].as_str())
+            .filter(|folder| !folder.is_empty())
+            .map(std::path::PathBuf::from)
+            .filter(|folder| folder.is_absolute());
+        Ok(Some(folder.unwrap_or_else(crate::terminal::launch::home)))
+    }
     pub(crate) fn prepare_bot_lifecycle(&self, id: &str, deleting: bool) -> Result<BotLifecycle> {
         let id = Uuid::parse_str(id)?;
         let start = version(self.connection()?)?;
