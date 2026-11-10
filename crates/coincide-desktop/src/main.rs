@@ -58,6 +58,7 @@ mod composer_context_mount;
 mod composer_context_view;
 mod composer_file_picker;
 mod composer_follow_up_mount;
+mod composer_history;
 mod composer_plan_card;
 mod composer_selection;
 mod composer_steering;
@@ -548,6 +549,8 @@ struct Coincide {
     composer_accessory_scroll: ScrollHandle,
     composer_files: composer_file_picker::Picker,
     composer_suggestions: composer_suggestions::Suggestions,
+    /// The prompt an Up/Down walk is showing, and the text it placed.
+    composer_history: Option<composer_history::Recall>,
     attachment_import_threads: std::collections::HashSet<String>,
     attachment_root: Option<std::path::PathBuf>,
     image_previews: std::collections::HashMap<String, ImagePreview>,
@@ -1403,28 +1406,8 @@ impl Coincide {
                     this.flush_pending_drafts();
                 }
                 if matches!(event, InputEvent::Change) {this.thread_bulk.invalidate();this.composer_files.text_changed();this.invalidate_terminal_contexts(cx);}
-                if matches!(event, InputEvent::Change)
-                    && let Some(v) = this.selected.as_mut()
-                {
-                    let draft = this.composer.read(cx).value().to_string();
-                    if v["draft"].as_str() == Some(draft.as_str()) {
-                        return;
-                    }
-                    v["draft"] = json!(draft);
-                    let id = text(v, "id");
-                    this.draft_saver.record(&id, &draft);
-                    this.pending_drafts.insert(
-                        id.clone(),
-                        PendingDraft {
-                            text: draft,
-                            retry: true,
-                            failed: false,
-                        },
-                    );
-                    // Drafts persist when the composer loses focus, the thread
-                    // changes or the app quits. Keeping the store off the typing
-                    // path is essential: a long imported thread rewrites a
-                    // multi-megabyte document and blocks the UI.
+                if matches!(event, InputEvent::Change) {
+                    this.record_composer_draft(cx);
                 }
             }),
         ];
@@ -1693,6 +1676,7 @@ impl Coincide {
             composer_accessory_scroll: ScrollHandle::default(),
             composer_files,
             composer_suggestions: Default::default(),
+            composer_history: None,
             attachment_import_threads: Default::default(),
             attachment_root,
             image_previews: Default::default(),
@@ -2587,6 +2571,8 @@ impl Coincide {
                     self.terminal_activate_on_show = true;
                 }
                 self.sync_terminal_workspace(window, cx);
+                // A walk through the previous conversation's prompts ends here.
+                self.composer_history = None;
                 self.composer
                     .update(cx, |input, cx| input.set_value(draft, window, cx));
             }
@@ -4249,6 +4235,32 @@ impl Coincide {
                 )
                 .into_any_element(),
         )
+    }
+    /// Keep the stored draft in step with the composer, whether the text came
+    /// from a native edit or a recalled prompt.
+    fn record_composer_draft(&mut self, cx: &mut Context<Self>) {
+        let draft = self.composer.read(cx).value().to_string();
+        let Some(thread) = self.selected.as_mut() else {
+            return;
+        };
+        if thread["draft"].as_str() == Some(draft.as_str()) {
+            return;
+        }
+        thread["draft"] = json!(draft);
+        let id = text(thread, "id");
+        self.draft_saver.record(&id, &draft);
+        self.pending_drafts.insert(
+            id,
+            PendingDraft {
+                text: draft,
+                retry: true,
+                failed: false,
+            },
+        );
+        // Drafts persist when the composer loses focus, the thread changes or
+        // the app quits. Keeping the store off the typing path is essential: a
+        // long imported thread rewrites a multi-megabyte document and blocks
+        // the UI.
     }
     fn remove_image(&mut self, attachment_id: &str, cx: &mut Context<Self>) {
         let Some(thread_id) = self.selected.as_ref().map(|v| text(v, "id")) else {
