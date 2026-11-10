@@ -67,7 +67,7 @@ fn snapshot(store: &Store) -> Result<(Option<Value>, Value, String)> {
     let baseline = crate::digest_hex::lower_hex(Sha256::digest(bytes));
     Ok((source, document, baseline))
 }
-fn selection(bot: &Value) -> Result<&Value> {
+fn selection(bot: &Value) -> Result<Value> {
     let selection = &bot["selection"];
     let fields = selection
         .as_object()
@@ -98,14 +98,15 @@ fn selection(bot: &Value) -> Result<&Value> {
         "Alternate bot accounts are unsupported; selection was not changed"
     );
     ensure!(
-        selection["effort"].is_null() && selection["speed"].is_null(),
-        "Bot effort/speed is unsupported; selection was not changed"
-    );
-    ensure!(
         bot["accessMode"] == "approval" && bot["interactionMode"] == "build",
         "Bot runtime requires saved approval/build modes"
     );
-    Ok(selection)
+    // Swift bots may save an effort or speed; a bot conversation always starts
+    // at the provider default. Keep the provider and model, drop the rest.
+    Ok(json!({
+        "provider": required(selection, "provider")?,
+        "modelID": model,
+    }))
 }
 fn cwd(bot: &Value, home: &Path) -> Result<PathBuf> {
     ensure!(home.is_absolute(), "Home directory is not absolute");
@@ -210,7 +211,7 @@ fn create_with_home(store: &mut Store, params: &Value, home: &Path) -> Result<Va
         .context("Bot not found")?;
     let stored_id = required(bot, "id")?;
     let selection = selection(bot)?;
-    let provider = required(selection, "provider")?;
+    let provider = required(&selection, "provider")?;
     let name = required(bot, "name")?.trim();
     ensure!(
         !name.is_empty() && name.chars().count() <= 200 && !name.chars().any(char::is_control),
@@ -226,7 +227,7 @@ fn create_with_home(store: &mut Store, params: &Value, home: &Path) -> Result<Va
     let instructions = instructions(bot, name, persona)?;
     let id = Uuid::new_v4().to_string().to_uppercase();
     let now = swift_timestamp();
-    let context = json!({"version":1,"botId":stored_id,"sourceBaseline":baseline,"provider":provider,"selection":selection,
+    let context = json!({"version":1,"botId":stored_id,"sourceBaseline":baseline,"provider":provider,"selection":selection.clone(),
         "cwd":cwd,"name":name,"persona":persona,"instructions":instructions});
     let thread = json!({"id":id,"projectID":BOTS_PROJECT_ID,"botID":stored_id,"title":"New conversation",
         "selection":selection,"worktreePath":cwd,"accessMode":"approval","interactionMode":"build",
@@ -319,8 +320,6 @@ mod tests {
         for (field, invalid) in [
             ("provider", json!("grok")),
             ("accountID", json!("paid-alternate")),
-            ("effort", json!("high")),
-            ("speed", json!("fast")),
             ("serviceTier", json!("priority")),
             ("modelID", json!("--flag")),
         ] {
@@ -338,6 +337,20 @@ mod tests {
             assert!(create_with_home(&mut store, &p, &home).is_err());
         }
         assert!(store.summaries("", true).unwrap().is_empty());
+        // A Swift bot may save effort and speed; the conversation it starts
+        // keeps only the provider and model.
+        let mut next = value.clone();
+        next["bots"][0]["selection"]["effort"] = json!("xhigh");
+        next["bots"][0]["selection"]["speed"] = json!("priority");
+        store.save_document("bots.json", &next).unwrap();
+        let p = params(&store);
+        let created = create_with_home(&mut store, &p, &home).unwrap();
+        assert_eq!(
+            created["selection"],
+            json!({"provider":"codex","modelID":"default"})
+        );
+        let thread = store.thread(created["threadId"].as_str().unwrap()).unwrap();
+        assert_eq!(thread["selection"], created["selection"]);
     }
     #[test]
     fn helper_compares_envelope_in_transaction_and_rolls_back_cache_failure() {
@@ -460,11 +473,14 @@ mod tests {
             let p = params(&store);
             let result = create_with_home(&mut store, &p, &home).unwrap();
             let thread = store.thread(result["threadId"].as_str().unwrap()).unwrap();
-            assert_eq!(thread["selection"], document["bots"][0]["selection"]);
-            assert_eq!(
-                thread["rustBotContext"]["selection"],
-                document["bots"][0]["selection"]
-            );
+            // Every default alias becomes the provider default account, and the
+            // conversation starts without a saved effort or speed.
+            let expected = json!({
+                "provider": document["bots"][0]["selection"]["provider"],
+                "modelID": document["bots"][0]["selection"]["modelID"],
+            });
+            assert_eq!(thread["selection"], expected);
+            assert_eq!(thread["rustBotContext"]["selection"], expected);
         }
         let before = store.summaries("", true).unwrap().len();
         let mut document = value;
