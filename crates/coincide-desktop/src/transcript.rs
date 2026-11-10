@@ -8,7 +8,11 @@
 //! Editable inputs retain their own Copy handling.
 use gpui_kit::{
     base::{Root, RootPlugin, TextSelection, input::Copy},
-    component::text::{RenderedText, TextView, TextViewState},
+    component::{
+        Disableable as _, Sizable as _,
+        button::{Button, ButtonVariants as _},
+        text::{RenderedText, TextView, TextViewState},
+    },
     *,
 };
 use std::collections::HashMap;
@@ -57,9 +61,63 @@ pub fn markdown(
     cx: &mut App,
 ) -> TextView {
     routed(
-        TextView::new(&native_state(thread, item, source.into(), window, cx)),
+        TextView::new(&native_state(thread, item, source.into(), window, cx))
+            .code_block_actions(code_copy_actions),
         cx,
     )
+}
+
+/// Swift's reply cells place a copy control in the top-right corner of every
+/// fenced code block. The block supplies the exact bytes copied, so a fence
+/// inside a long reply copies only its own code, never the whole message.
+pub fn code_copy_actions(
+    code_block: &gpui_kit::base::text::CodeBlock,
+    _: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let id = code_copy_id(code_block);
+    let payload = code_copy_payload(code_block);
+    let empty = payload.is_none();
+    div()
+        .flex()
+        .items_center()
+        .child(
+            Button::new(SharedString::from(format!("copy-code-{id}")))
+                .accessibility_id(SharedString::from(format!("copy-code-{id}")))
+                .accessibility_label("Copy code")
+                .icon(gpui_kit::assets::IconName::Copy)
+                .ghost()
+                .compact()
+                .xsmall()
+                .disabled(empty)
+                .tooltip("Copy this code block")
+                .on_click(move |_, _, cx| {
+                    if let Some(code) = &payload {
+                        cx.write_to_clipboard(ClipboardItem::new_string(code.clone()));
+                    }
+                }),
+        )
+        .into_any_element()
+}
+
+/// The fence's own source, or nothing for an empty block, which draws no
+/// control. Copying must never fall back to the surrounding message.
+fn code_copy_payload(code_block: &gpui_kit::base::text::CodeBlock) -> Option<String> {
+    let code = code_block.code();
+    (!code.is_empty()).then(|| code.to_string())
+}
+
+/// The parsed source line identifies a fence inside one document; custom
+/// Markdown nodes without a span fall back to a stable hash of their content.
+fn code_copy_id(code_block: &gpui_kit::base::text::CodeBlock) -> String {
+    if let Some(span) = code_block.span {
+        return format!("{}", span.start);
+    }
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    code_block.code().hash(&mut hasher);
+    code_block.lang().hash(&mut hasher);
+    format!("{:x}", hasher.finish())
 }
 
 /// A registered native body whose fenced code is colored by `highlights`,
@@ -77,6 +135,7 @@ pub fn highlighted(
     let router = cx.try_global::<LinkRouter>().map(|router| router.0.clone());
     gpui_kit::base::TextView::new(&state)
         .code_block_highlighter(move |_| highlights.clone())
+        .code_block_actions(code_copy_actions)
         .on_link_click(move |url, event, window, cx| {
             if let Some(router) = &router {
                 router(url.as_ref(), event, window, cx);
@@ -268,7 +327,10 @@ pub fn managed_markdown(
             state: state.downgrade(),
         },
     );
-    routed(TextView::new(state), cx)
+    routed(
+        TextView::new(state).code_block_actions(code_copy_actions),
+        cx,
+    )
 }
 
 /// An opaque selection from exactly one focused, registered reply renderer.
@@ -388,7 +450,7 @@ pub fn apply_find_projection(
 
 #[cfg(test)]
 mod tests {
-    use super::{copy_payload, selection_id};
+    use super::{code_copy_id, code_copy_payload, copy_payload, selection_id};
 
     #[::core::prelude::v1::test]
     fn full_markdown_source_copy_preserves_bytes_and_whitespace() {
@@ -447,6 +509,28 @@ mod tests {
         );
         assert_ne!(selection_id("a/b", "c"), selection_id("a", "b/c"));
         assert_ne!(selection_id("中文", "item"), selection_id("中", "文/item"));
+    }
+
+    #[::core::prelude::v1::test]
+    fn code_copy_takes_the_fence_body_verbatim_including_unicode_and_indent() {
+        let code = "fn main() {\n\tprintln!(\"café 👩🏽‍💻\");\n}\n";
+        let block = gpui_kit::base::text::CodeBlock::from_code(code, Some("rust"));
+        assert_eq!(code_copy_payload(&block).as_deref(), Some(code));
+    }
+
+    #[::core::prelude::v1::test]
+    fn empty_code_block_offers_no_copy_payload() {
+        let block = gpui_kit::base::text::CodeBlock::from_code("", None::<String>);
+        assert_eq!(code_copy_payload(&block), None);
+    }
+
+    #[::core::prelude::v1::test]
+    fn code_copy_ids_are_stable_and_do_not_collide_across_fences() {
+        let first = gpui_kit::base::text::CodeBlock::from_code("let x = 1;", Some("rust"));
+        let again = gpui_kit::base::text::CodeBlock::from_code("let x = 1;", Some("rust"));
+        let other = gpui_kit::base::text::CodeBlock::from_code("let y = 2;", Some("rust"));
+        assert_eq!(code_copy_id(&first), code_copy_id(&again));
+        assert_ne!(code_copy_id(&first), code_copy_id(&other));
     }
 }
 
