@@ -58,7 +58,7 @@ objc2-web-kit = { version = "0.3.2", default-features = false, features = ["std"
 objc2-user-notifications = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "block2", "bitflags", "UNUserNotificationCenter", "UNNotificationSettings", "UNNotificationContent", "UNNotificationRequest", "UNNotificationTrigger", "UNNotification"] }
 
 [target.'cfg(target_os = "macos")'.build-dependencies]
-cc = "=1.11.0"
+cc = "=1.11.1"
 
 [dev-dependencies]
 gpui-base = { version = "=0.9.0", features = ["native-edit-test-support"] }
