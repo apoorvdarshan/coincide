@@ -685,3 +685,12 @@ Unit coverage: `cargo test -p coincide-desktop --bin coincide-rust
 composer_selection` (68 tests) now pins the new contract — a running turn stages
 a model, speed or mode change instead of refusing it, a genuine lock still
 locks, and provider switches still wait.
+
+## Message media at Swift's densities — 2026-11-10
+
+A user's attached images were drawn at 240 × 180 with their file name under
+each, which is not what Swift's cell shows: its attachments are a grid of small
+104 × 78 thumbnails, and only a generated image on an assistant reply is a
+large card. Rust now uses the same split — thumbnails for what the user sent,
+a labelled card at reply width for what the agent produced — from the one
+preview path both already shared.

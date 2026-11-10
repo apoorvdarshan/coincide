@@ -4953,17 +4953,39 @@ impl Coincide {
         let media = self.reply_media(item);
         let media_cards = self.media_cards(&media);
         let context_pane = self.transcript_context_pane(&source_id, &item_id, item, cx);
+        // Swift draws a user's attachments as a grid of small thumbnails and an
+        // assistant's generated image as a card. One list, two densities.
+        let (media_width, media_height) = if kind == "user" {
+            (104., 78.)
+        } else {
+            (380., 266.)
+        };
         let previews = images
             .iter()
             .take(20)
             .map(|image| {
                 let name: String = text(image, "originalName").chars().take(200).collect();
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(self.image_preview(image, Some(index), 240., 180., window, cx))
-                    .child(div().max_w(px(240.)).truncate().text_xs().child(name))
+                let card = div().flex().flex_col().gap_1().child(self.image_preview(
+                    image,
+                    Some(index),
+                    media_width,
+                    media_height,
+                    window,
+                    cx,
+                ));
+                if kind == "user" {
+                    // Thumbnails speak for themselves; only a generated image
+                    // card carries its file name.
+                    card
+                } else {
+                    card.child(
+                        div()
+                            .max_w(px(media_width))
+                            .truncate()
+                            .text_xs()
+                            .child(name),
+                    )
+                }
             })
             .collect::<Vec<_>>();
         let native_body = self.find_body(
