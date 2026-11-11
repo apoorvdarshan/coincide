@@ -800,3 +800,7 @@ palette surface and border; no other popup or card was found off-palette.
 - Every UI colour now resolves through the palette: `#364152` (border),
   `#263d5e` (raised), `#11151d` (content) and the question card's amber accent
   were the last literals outside it.
+
+- A message still being delivered shows a quiet "Sending…" line under it, and
+  a withheld follow-up now writes its reason as an error row in the thread as
+  well as the log.

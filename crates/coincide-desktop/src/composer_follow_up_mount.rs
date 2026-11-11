@@ -329,6 +329,9 @@ impl Coincide {
                     if let NativeFollowUpStatus::Retained(_) = &status {
                         self.restore_follow_up_draft(&delivery.thread, &delivery.draft, window, cx);
                     }
+                    if let NativeFollowUpStatus::Retained(reason) = &status {
+                        self.show_local_error(&format!("Message not delivered: {reason}"));
+                    }
                     self.status = match &status {
                         NativeFollowUpStatus::Retained(reason) => reason.clone(),
                         NativeFollowUpStatus::Delivered {

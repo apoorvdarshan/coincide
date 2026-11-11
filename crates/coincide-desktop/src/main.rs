@@ -5170,6 +5170,7 @@ impl Coincide {
         // and image links, plus generated files listed in `attachments`.
         let media = self.reply_media(item);
         let media_cards = self.media_cards(&media);
+        let pending_send = item["pendingSend"] == true;
         let context_pane = self.transcript_context_pane(&source_id, &item_id, item, cx);
         // Swift draws a user's attachments as a grid of small thumbnails and an
         // assistant's generated image as a card. One list, two densities.
@@ -5206,6 +5207,7 @@ impl Coincide {
                 }
             })
             .collect::<Vec<_>>();
+        let pending_color = self.color(0x98a6ba).opacity(0.7);
         let native_body = self.find_body(
             &source_id,
             &item_id,
@@ -5440,6 +5442,15 @@ impl Coincide {
                 )
             })
             .children(self.historical_images(&item_id, cx))
+            .when(pending_send, |view| {
+                view.child(
+                    div()
+                        .mt_1()
+                        .text_xs()
+                        .text_color(pending_color)
+                        .child("Sending…"),
+                )
+            })
             .when_some(footer, |view, footer| view.child(footer));
         // Swift's user card has no permanent author header. Keep both real
         // actions together below the bubble at its outer edge. They stay
