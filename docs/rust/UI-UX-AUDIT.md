@@ -745,3 +745,8 @@ since the message the user just wrote is the newest thing in the conversation.
 - A follow-up sent while a turn runs leaves the composer immediately, like a
   normal send, and only comes back if the engine actually withholds it (and
   never over text typed since).
+
+Sending no longer blocks the window: the engine call runs on the background
+executor, so the composer clears at once and the UI keeps painting while the
+turn is accepted. A refused send hands its text back to the composer on the next
+frame, where a window is available to edit the field.

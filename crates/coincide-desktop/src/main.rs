@@ -581,6 +581,9 @@ struct Coincide {
     /// A conversation the user asked for while the engine was busy. Retried
     /// each tick instead of failing with "App is busy".
     pending_select: Option<String>,
+    /// Text a refused send puts back in the composer on the next frame, where
+    /// a window is available to edit the field.
+    restore_composer: Option<String>,
     status: String,
     show_archived: bool,
     browser: Option<BrowserController>,
@@ -1714,6 +1717,7 @@ impl Coincide {
             reply_media_cache: Default::default(),
             search,
             pending_select: None,
+            restore_composer: None,
             status: browser_error.unwrap_or_else(|| "Rust preview · separate data store".into()),
             browser,
             browser_address,
@@ -4700,30 +4704,49 @@ impl Coincide {
                 thread["draft"] = json!("");
                 thread.as_object_mut().unwrap().remove("draftContext");
             }
-            match call(
-                &self.engine,
-                "agent.send",
-                json!({"threadId":id,"text":sent}),
-            ) {
-                Ok(_) => {
-                    self.pending_drafts.remove(&id);
-                    if !self.running.contains(&id) {
-                        self.running.push(id.clone());
-                        self.splice_transcript(0..self.transcript_count, self.transcript_count);
+            // The engine call runs off the UI thread: the window never freezes
+            // behind a send, and a refused send still restores the text.
+            let engine = self.engine.clone();
+            let sent_for_call = sent.clone();
+            let id_for_call = id.clone();
+            cx.spawn(async move |this, cx| {
+                let result = cx
+                    .background_executor()
+                    .spawn(async move {
+                        call(
+                            &engine,
+                            "agent.send",
+                            json!({"threadId":id_for_call,"text":sent_for_call}),
+                        )
+                    })
+                    .await;
+                let _ = this.update(cx, |this, cx| {
+                    match result {
+                        Ok(_) => {
+                            this.pending_drafts.remove(&id);
+                            if !this.running.contains(&id) {
+                                this.running.push(id.clone());
+                                this.splice_transcript(
+                                    0..this.transcript_count,
+                                    this.transcript_count,
+                                );
+                            }
+                            // The new message is the newest row: follow it.
+                            this.transcript_list.scroll_to_end();
+                        }
+                        Err(error) => {
+                            this.retry_selected_account_readiness();
+                            this.restore_composer = Some(sent.clone());
+                            if let Some(thread) = this.selected.as_mut() {
+                                thread["draft"] = json!(sent);
+                            }
+                            this.status = error.to_string();
+                        }
                     }
-                    // The new message is the newest row: follow it.
-                    self.transcript_list.scroll_to_end();
-                }
-                Err(e) => {
-                    self.retry_selected_account_readiness();
-                    self.composer
-                        .update(cx, |input, cx| input.set_value(sent.clone(), window, cx));
-                    if let Some(thread) = self.selected.as_mut() {
-                        thread["draft"] = json!(sent);
-                    }
-                    self.status = e.to_string();
-                }
-            }
+                    cx.notify();
+                });
+            })
+            .detach();
         }
         cx.notify();
     }
@@ -5628,6 +5651,10 @@ impl Render for Coincide {
                 self.composer
                     .update(cx, |input, cx| input.set_value(draft, window, cx));
             }
+        }
+        if let Some(text) = self.restore_composer.take() {
+            self.composer
+                .update(cx, |input, cx| input.set_value(text, window, cx));
         }
         if let Some(id) = self.pending_select.clone()
             && let Some(thread) = &self.selected
