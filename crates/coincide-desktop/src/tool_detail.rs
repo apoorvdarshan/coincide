@@ -1008,6 +1008,26 @@ impl super::Coincide {
                 .max_h(px(320.))
                 .overflow_y_scroll()
                 .track_scroll(&scroll)
+                // The panel scrolls first and keeps the transcript still; only
+                // at its own top or bottom does the wheel reach the transcript.
+                .on_scroll({
+                    let scroll = scroll.clone();
+                    cx.listener(move |_: &mut Self, event: &ScrollEvent, _, cx| {
+                        let delta = event.delta.pixel_delta(px(20.));
+                        let dy = f32::from(delta.y);
+                        if !dy.is_finite() || dy == 0. {
+                            return;
+                        }
+                        let offset = scroll.offset().y;
+                        let max = scroll.max_offset().y;
+                        let at_top = offset >= px(-1.);
+                        let at_bottom = offset <= -max + px(1.);
+                        let can_move = if dy > 0. { !at_top } else { !at_bottom };
+                        if can_move {
+                            cx.stop_propagation();
+                        }
+                    })
+                })
                 .text_size(px((self.conversation_font_size() - 2.).max(10.)))
                 .child(super::transcript::preserve_selected_copy(
                     source,

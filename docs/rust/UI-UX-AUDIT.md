@@ -717,3 +717,8 @@ transcript underneath instead and long command output could not be read at all.
 Each expanded detail now keeps a `ScrollHandle` (cleared when a conversation
 opens), so the wheel over the panel scrolls the panel and the transcript keeps
 its place.
+
+Nested scrolling now chains explicitly: while the panel can still move in the
+wheel's direction it takes the event alone and the transcript stays put; at the
+panel's top or bottom the event passes through, so the conversation keeps
+scrolling where the reader expects.
