@@ -68,6 +68,14 @@ enum RightPanel {
 
 impl Coincide {
     pub(super) fn conversation_toolbar(&self, title: String, cx: &mut Context<Self>) -> AnyElement {
+        // A conversation's stored title can carry a multi-line preview; the
+        // header shows the first line only, as Swift's cell does.
+        let title = title
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .unwrap_or("Conversation")
+            .to_owned();
         let bot = bot_heading(self.selected.as_ref(), &self.sidebar_bots);
         let (title, subtitle) = match bot.clone() {
             Some((name, conversation)) => (name, Some(conversation).filter(|c| !c.is_empty())),
