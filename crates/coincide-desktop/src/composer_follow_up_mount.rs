@@ -196,7 +196,12 @@ impl Coincide {
         }
         cx.notify();
     }
-    pub(super) fn send_follow_up(&mut self, alternate: bool, cx: &mut Context<Self>) {
+    pub(super) fn send_follow_up(
+        &mut self,
+        alternate: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.voice.preview.is_some() {
             self.cancel_composer_dictation(cx);
         }
@@ -216,6 +221,17 @@ impl Coincide {
             return;
         }
         let draft = self.composer.read(cx).value().to_string();
+        // The message shows in the conversation the moment it is sent; keeping
+        // it in the field until delivery is confirmed looked like a failed send.
+        // A withheld follow-up puts it back below.
+        self.pending_drafts.remove(&id);
+        self.composer
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        if let Some(thread) = self.selected.as_mut()
+            && text(thread, "id") == id
+        {
+            thread["draft"] = json!("");
+        }
         let result = self
             .engine
             .try_lock()
@@ -229,12 +245,36 @@ impl Coincide {
                     draft,
                     queued: false,
                 });
-                self.status =
-                    "Delivering follow-up; draft retained until delivery is confirmed.".into();
             }
-            Err(error) => self.status = error.to_string(),
+            Err(error) => {
+                self.restore_follow_up_draft(&id, &draft, window, cx);
+                self.status = error.to_string();
+            }
         }
         cx.notify();
+    }
+    /// Put a follow-up back in the composer after the engine withheld it, but
+    /// never over text the user has started typing since.
+    fn restore_follow_up_draft(
+        &mut self,
+        id: &str,
+        draft: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self
+            .selected
+            .as_ref()
+            .is_some_and(|thread| text(thread, "id") == id)
+            || !self.composer.read(cx).value().is_empty()
+        {
+            return;
+        }
+        self.composer
+            .update(cx, |input, cx| input.set_value(draft, window, cx));
+        if let Some(thread) = self.selected.as_mut() {
+            thread["draft"] = json!(draft);
+        }
     }
     pub(super) fn poll_composer_follow_ups(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let mut retained = Vec::new();
@@ -259,6 +299,9 @@ impl Coincide {
                 None | Some(NativeFollowUpStatus::Pending) => retained.push(delivery),
                 Some(status) => {
                     let delivered = matches!(status, NativeFollowUpStatus::Delivered { .. });
+                    if let NativeFollowUpStatus::Retained(_) = &status {
+                        self.restore_follow_up_draft(&delivery.thread, &delivery.draft, window, cx);
+                    }
                     self.status = match &status {
                         NativeFollowUpStatus::Retained(reason) => reason.clone(),
                         NativeFollowUpStatus::Delivered {

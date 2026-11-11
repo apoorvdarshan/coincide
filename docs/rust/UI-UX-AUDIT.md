@@ -731,3 +731,17 @@ it now leaves the field immediately, and a refused send puts it back with the
 error. And the new message could open somewhere above the newest row, because
 the row splice restored the previous scroll offset; a send now follows the tail,
 since the message the user just wrote is the newest thing in the conversation.
+
+## Opening conversations while the engine is busy; a silent composer — 2026-11-10
+
+- Switching conversations could fail outright with "Unable to open conversation:
+  App is busy processing another operation". A busy engine is transient, so the
+  target is now remembered and taken on the next tick instead of failing; the
+  sidebar selection follows once the read succeeds. Nothing about opening a
+  conversation should depend on a turn finishing.
+- The composer's status row is gone entirely. It had already lost the routine
+  running and turn-ended lines; what remained was transient noise such as a
+  draft save that hit a busy engine, which now retries silently instead.
+- A follow-up sent while a turn runs leaves the composer immediately, like a
+  normal send, and only comes back if the engine actually withholds it (and
+  never over text typed since).
