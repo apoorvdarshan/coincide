@@ -694,3 +694,16 @@ each, which is not what Swift's cell shows: its attachments are a grid of small
 large card. Rust now uses the same split — thumbnails for what the user sent,
 a labelled card at reply width for what the agent produced — from the one
 preview path both already shared.
+
+## Clickable tool rows and a popover that switches facets — 2026-11-10
+
+- A tool or reasoning row ("Run command", "Thought") only toggled from its title
+  text or its chevron; the rest of the row looked clickable and did nothing. The
+  whole header now toggles, with the chevron as an indicator rather than a
+  second target, and the row keeps the "Expand"/"Collapse" role and label.
+- The composer's popover dismiss layer covered the whole window, so the first
+  click on another chip only closed the open popover: changing from the model
+  chip to effort took two clicks. The dismiss layer now stops above the
+  composer, so a chip click reaches the chip and switches facet in one click.
+  The card itself keeps its anchor, because it is still positioned inside the
+  full-size layer.
