@@ -586,6 +586,13 @@ struct Coincide {
     restore_composer: Option<String>,
     /// A follow-up whose engine call found the lock busy, retried each tick.
     pending_follow_up: Option<(String, String, bool)>,
+    /// A Queue/Steer choice made while the engine was busy, written later.
+    pending_follow_up_choice: Option<(String, coincide_core::composer_follow_up::Behavior)>,
+    /// A just-sent message drawn before the stored thread contains it, with
+    /// the item count it was sent from.
+    pending_sent: Option<(String, String, usize, u64)>,
+    /// Identity for the optimistic row, so a refresh keeps the same element.
+    pending_seq: u64,
     /// The last dispatch the engine reported per conversation, so a busy frame
     /// cannot flip the send button between Send, Queue and Steer.
     dispatch_cache: std::cell::RefCell<
@@ -1726,6 +1733,9 @@ impl Coincide {
             pending_select: None,
             restore_composer: None,
             pending_follow_up: None,
+            pending_follow_up_choice: None,
+            pending_sent: None,
+            pending_seq: 0,
             dispatch_cache: Default::default(),
             status: browser_error.unwrap_or_else(|| "Rust preview · separate data store".into()),
             browser,
@@ -3877,6 +3887,17 @@ impl Coincide {
                         self.splice_transcript(start..self.transcript_count, count - start);
                         self.transcript_count = count;
                         self.selected = Some(v);
+                        self.reconcile_pending_send();
+                        let count = self
+                            .selected
+                            .as_ref()
+                            .and_then(|thread| thread["items"].as_array().map(Vec::len))
+                            .unwrap_or(self.transcript_count);
+                        if count != self.transcript_count {
+                            let start = self.transcript_count.min(count);
+                            self.splice_transcript(start..self.transcript_count, count - start);
+                            self.transcript_count = count;
+                        }
                         self.refresh_turn_changes();
                     } else {
                         return; // Retry this revision after the worker releases the engine.
@@ -4022,11 +4043,13 @@ impl Coincide {
         let thread = self.selected.as_ref().map(|v| text(v, "id"))?;
         // Approvals show one at a time in Swift's banner; questions keep their cards.
         let banner = self.approval_banner(window, cx);
-        let secondary = self.color(0xe4e9f2).opacity(0.62);
-        let tertiary = self.color(0xe4e9f2).opacity(0.4);
+        // The app's own palette: the card used a blue-grey surface (0x1c2028)
+        // and border (0x30353e) that appear nowhere else in the window.
+        let secondary = self.color(0x98a6ba);
+        let tertiary = self.color(0x98a6ba).opacity(0.7);
         let accent = self.color(0xE9B04E);
-        let surface = self.color(0x1c2028);
-        let border = self.color(0x30353e);
+        let surface = self.color(0x181d28);
+        let border = self.color(0x29303d);
         let mut cards = Vec::new();
         for request in &self.pending_requests {
             if request["method"] != "item/tool/requestUserInput" {
@@ -4652,6 +4675,132 @@ impl Coincide {
                 .into_any_element(),
         )
     }
+    /// Draw the message the user just sent before the stored thread has it, so
+    /// a send appears in the conversation at once instead of a second later.
+    pub(crate) fn show_pending_send(&mut self, id: &str, message: &str) {
+        let Some(thread) = self
+            .selected
+            .as_mut()
+            .filter(|thread| text(thread, "id") == id)
+        else {
+            return;
+        };
+        let images = thread["rustDraftImages"].clone();
+        let Some(items) = thread["items"].as_array_mut() else {
+            return;
+        };
+        let baseline = items.len();
+        let seq = self.pending_seq.wrapping_add(1);
+        self.pending_seq = seq;
+        let mut pending = json!({
+            "id": format!("pending-send-{seq}"),
+            "kind": "user",
+            "text": message,
+            "createdAt": 0,
+            "pendingSend": true
+        });
+        if images.as_array().is_some_and(|images| !images.is_empty()) {
+            pending["rustImages"] = images;
+        }
+        items.push(pending);
+        self.pending_sent = Some((id.to_owned(), message.to_owned(), baseline, seq));
+        let count = items.len();
+        let start = self.transcript_count.min(count);
+        self.splice_transcript(start..self.transcript_count, count - start);
+        self.transcript_count = count;
+        self.transcript_list.scroll_to_end();
+    }
+    /// Show a failure in the conversation itself: the composer's status row is
+    /// gone, and a refused send must not fail silently.
+    pub(crate) fn show_local_error(&mut self, message: &str) {
+        if let Ok(mut log) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/private/tmp/coincide-ui-errors.log")
+        {
+            use std::io::Write as _;
+            let _ = writeln!(log, "{:?} {message}", std::time::SystemTime::now());
+        }
+        let Some(thread) = self.selected.as_mut() else {
+            return;
+        };
+        let Some(items) = thread["items"].as_array_mut() else {
+            return;
+        };
+        let seq = self.pending_seq.wrapping_add(1);
+        self.pending_seq = seq;
+        items.push(json!({
+            "id": format!("local-error-{seq}"),
+            "kind": "error",
+            "text": message,
+            "createdAt": 0
+        }));
+        let count = items.len();
+        let start = self.transcript_count.min(count);
+        self.splice_transcript(start..self.transcript_count, count - start);
+        self.transcript_count = count;
+        self.transcript_list.scroll_to_end();
+    }
+    /// Take the optimistic row away again when the engine refuses the send.
+    pub(crate) fn drop_pending_send(&mut self, id: &str) {
+        if !self
+            .pending_sent
+            .as_ref()
+            .is_some_and(|(thread, ..)| thread == id)
+        {
+            return;
+        }
+        self.pending_sent = None;
+        let Some(thread) = self.selected.as_mut() else {
+            return;
+        };
+        let Some(items) = thread["items"].as_array_mut() else {
+            return;
+        };
+        items.retain(|item| item["pendingSend"] != true);
+        let count = items.len();
+        let start = self.transcript_count.min(count);
+        self.splice_transcript(start..self.transcript_count, count - start);
+        self.transcript_count = count;
+    }
+    /// Keep the optimistic row until the stored thread contains that message.
+    fn reconcile_pending_send(&mut self) {
+        let Some((id, message, baseline, seq)) = self.pending_sent.clone() else {
+            return;
+        };
+        let Some(thread) = self
+            .selected
+            .as_mut()
+            .filter(|thread| text(thread, "id") == id)
+        else {
+            self.pending_sent = None;
+            return;
+        };
+        let Some(items) = thread["items"].as_array_mut() else {
+            return;
+        };
+        let stored = items
+            .iter()
+            .skip(baseline)
+            .any(|item| item["kind"] == "user" && item["text"].as_str() == Some(message.as_str()));
+        if stored {
+            self.pending_sent = None;
+            return;
+        }
+        if items
+            .iter()
+            .any(|item| item["id"] == format!("pending-send-{seq}"))
+        {
+            return;
+        }
+        items.push(json!({
+            "id": format!("pending-send-{seq}"),
+            "kind": "user",
+            "text": message,
+            "createdAt": 0,
+            "pendingSend": true
+        }));
+    }
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.send_selected(false, window, cx);
     }
@@ -4715,6 +4864,7 @@ impl Coincide {
             }
             // The engine call runs off the UI thread: the window never freezes
             // behind a send, and a refused send still restores the text.
+            self.show_pending_send(&id, &sent);
             let engine = self.engine.clone();
             let sent_for_call = sent.clone();
             let id_for_call = id.clone();
@@ -4745,7 +4895,9 @@ impl Coincide {
                         }
                         Err(error) => {
                             this.retry_selected_account_readiness();
+                            this.drop_pending_send(&id);
                             this.restore_composer = Some(sent.clone());
+                            this.show_local_error(&format!("Message not sent: {error}"));
                             if let Some(thread) = this.selected.as_mut() {
                                 thread["draft"] = json!(sent);
                             }
@@ -5018,6 +5170,7 @@ impl Coincide {
         // and image links, plus generated files listed in `attachments`.
         let media = self.reply_media(item);
         let media_cards = self.media_cards(&media);
+        let pending_send = item["pendingSend"] == true;
         let context_pane = self.transcript_context_pane(&source_id, &item_id, item, cx);
         // Swift draws a user's attachments as a grid of small thumbnails and an
         // assistant's generated image as a card. One list, two densities.
@@ -5054,6 +5207,7 @@ impl Coincide {
                 }
             })
             .collect::<Vec<_>>();
+        let pending_color = self.color(0x98a6ba).opacity(0.7);
         let native_body = self.find_body(
             &source_id,
             &item_id,
@@ -5288,6 +5442,15 @@ impl Coincide {
                 )
             })
             .children(self.historical_images(&item_id, cx))
+            .when(pending_send, |view| {
+                view.child(
+                    div()
+                        .mt_1()
+                        .text_xs()
+                        .text_color(pending_color)
+                        .child("Sending…"),
+                )
+            })
             .when_some(footer, |view, footer| view.child(footer));
         // Swift's user card has no permanent author header. Keep both real
         // actions together below the bubble at its outer edge. They stay
@@ -5660,6 +5823,16 @@ impl Render for Coincide {
                 self.composer
                     .update(cx, |input, cx| input.set_value(draft, window, cx));
             }
+        }
+        if let Some((id, behavior)) = self.pending_follow_up_choice.clone()
+            && self
+                .selected
+                .as_ref()
+                .is_some_and(|thread| text(thread, "id") == id)
+            && self.engine.try_lock().is_ok()
+        {
+            self.pending_follow_up_choice = None;
+            self.choose_follow_up(behavior, cx);
         }
         if let Some((id, draft, alternate)) = self.pending_follow_up.take() {
             if self

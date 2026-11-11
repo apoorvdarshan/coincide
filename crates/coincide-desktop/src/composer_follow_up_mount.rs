@@ -167,15 +167,22 @@ impl Coincide {
         }
         Some(pane.into_any_element())
     }
-    fn choose_follow_up(&mut self, behavior: Behavior, cx: &mut Context<Self>) {
-        if !self.flush_pending_drafts() {
-            self.status = "Save the current draft before changing follow-up behavior.".into();
-            cx.notify();
-            return;
-        }
+    pub(super) fn choose_follow_up(&mut self, behavior: Behavior, cx: &mut Context<Self>) {
+        // Show the choice at once and write it when the engine is free: the
+        // picker used to fail silently while a turn held the lock.
         let Some(thread) = self.selected.clone() else {
             return;
         };
+        let id = text(&thread, "id");
+        if let Some(thread) = self.selected.as_mut() {
+            thread["followUpBehavior"] = json!(behavior.key());
+        }
+        self.follow_up_picker = false;
+        if !self.flush_pending_drafts() || self.engine.try_lock().is_err() {
+            self.pending_follow_up_choice = Some((id, behavior));
+            cx.notify();
+            return;
+        }
         let result = (|| -> Result<(Value, Value)> {
             let mut engine = self.engine.try_lock().map_err(|_| EngineBusy)?;
             let current = engine.store.thread(&text(&thread, "id"))?;
@@ -192,7 +199,14 @@ impl Coincide {
                 self.settings = settings;
                 self.follow_up_picker = false;
             }
-            Err(error) => self.status = error.to_string(),
+            Err(error) => {
+                if engine_busy(&error) {
+                    self.pending_follow_up_choice = Some((id, behavior));
+                } else {
+                    self.show_local_error(&format!("Follow-up choice not saved: {error}"));
+                    self.status = error.to_string();
+                }
+            }
         }
         cx.notify();
     }
@@ -222,6 +236,7 @@ impl Coincide {
         // The message shows in the conversation the moment it is sent; keeping
         // it in the field until delivery is confirmed looked like a failed send.
         // A withheld follow-up puts it back below.
+        self.show_pending_send(&id, &draft);
         self.pending_drafts.remove(&id);
         self.composer
             .update(cx, |input, cx| input.set_value("", window, cx));
@@ -250,8 +265,17 @@ impl Coincide {
                 self.pending_follow_up = Some((id, draft, alternate));
             }
             Err(error) => {
+                let reason = error.to_string();
+                if reason.contains("Collect the previous follow-up") {
+                    // The last steer is still being collected; try again next
+                    // tick rather than refusing this one.
+                    self.pending_follow_up = Some((id, draft, alternate));
+                    return;
+                }
+                self.drop_pending_send(&id);
                 self.restore_follow_up_draft(&id, &draft, window, cx);
-                self.status = error.to_string();
+                self.show_local_error(&format!("Message not sent: {reason}"));
+                self.status = reason;
             }
         }
         cx.notify();
@@ -304,6 +328,9 @@ impl Coincide {
                     let delivered = matches!(status, NativeFollowUpStatus::Delivered { .. });
                     if let NativeFollowUpStatus::Retained(_) = &status {
                         self.restore_follow_up_draft(&delivery.thread, &delivery.draft, window, cx);
+                    }
+                    if let NativeFollowUpStatus::Retained(reason) = &status {
+                        self.show_local_error(&format!("Message not delivered: {reason}"));
                     }
                     self.status = match &status {
                         NativeFollowUpStatus::Retained(reason) => reason.clone(),

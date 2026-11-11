@@ -766,3 +766,41 @@ frame, where a window is available to edit the field.
 - The conversation header is opaque and its heading is tall enough for both
   lines: the transcript no longer shows through the bar, and a project or bot
   subtitle is no longer clipped in half under the title.
+
+## A sent message appears at once — 2026-11-10
+
+The composer cleared immediately, but the message bubble only arrived with the
+next stored thread read, so a send looked like it took a second to land. The
+message is now drawn as a pending row the moment send is accepted locally, and
+the stored thread replaces it on the next read; the pending row is re-attached
+across refreshes until the stored one exists, and dropped if the engine refuses
+the send.
+
+The same optimistic row covers a follow-up sent during a turn: it appears with
+the message, and a withheld follow-up removes it and puts the text back.
+
+- A sent message's attached images travel with the optimistic row, so they no
+  longer appear a second after the text.
+- A refused send now says why in the conversation itself (an error row), since
+  the composer's status row is gone; the reason is also appended to
+  `/private/tmp/coincide-ui-errors.log` for diagnosis.
+- A follow-up refused only because the previous one is still being collected is
+  retried next tick instead of being dropped.
+
+### Palette sweep
+
+The window's palette is small and consistent: background `#10141c`, surface
+`#181d28`, border `#29303d`, text `#e4e9f2`, muted `#98a6ba`, selection
+`#202a3b`. The question card was the one surface outside it — `#1c2028` with a
+`#30353e` border, which reads blue beside everything else. It now uses the
+palette surface and border; no other popup or card was found off-palette.
+
+- The Queue/Steer picker no longer fails silently while a turn holds the engine:
+  the choice shows at once and is written on the next tick.
+- Every UI colour now resolves through the palette: `#364152` (border),
+  `#263d5e` (raised), `#11151d` (content) and the question card's amber accent
+  were the last literals outside it.
+
+- A message still being delivered shows a quiet "Sending…" line under it, and
+  a withheld follow-up now writes its reason as an error row in the thread as
+  well as the log.

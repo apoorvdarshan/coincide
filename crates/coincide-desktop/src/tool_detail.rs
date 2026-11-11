@@ -632,7 +632,7 @@ impl super::Coincide {
                             .min_w_0()
                             .w_full()
                             .text_color(secondary)
-                            .text_size(px((self.conversation_font_size() - 1.).max(10.)))
+                            .text_size(px((self.conversation_font_size() - 2.5).max(9.)))
                             .child(Icon::new(group_icon).xsmall().text_color(if failed {
                                 Hsla::from(failure)
                             } else {
@@ -715,8 +715,10 @@ impl super::Coincide {
         let answered = item["answers"]
             .as_object()
             .is_some_and(|answers| !answers.is_empty());
-        let secondary = self.color(0xe4e9f2).opacity(0.6);
-        let tertiary = self.color(0xe4e9f2).opacity(0.42);
+        // Swift's inline rows are quiet: smaller than body text and clearly
+        // muted, so a run of tool calls never competes with the reply.
+        let secondary = self.color(0xe4e9f2).opacity(0.5);
+        let tertiary = self.color(0xe4e9f2).opacity(0.34);
         let warning = rgb(if self.appearance_dark {
             0xFF9F0A
         } else {

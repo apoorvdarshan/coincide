@@ -331,7 +331,11 @@ impl Coincide {
                 button.icon(IconName::ChevronDown)
             })
             .when(primary.is_none(), |button| {
-                button.icon(IconName::SquarePlay).dropdown_caret(true)
+                // The built-in caret renders as a tiny corner tick at this size;
+                // a normal chevron beside the icon reads as a menu.
+                button
+                    .icon(IconName::SquarePlay)
+                    .child(Icon::new(IconName::ChevronDown).xsmall().text_color(muted))
             })
             .accessible_menu(move |mut menu, window, cx| {
                 for script in &menu_scripts {
