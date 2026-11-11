@@ -166,7 +166,8 @@ mod linux {
                 "/",
                 "org.freedesktop.Avahi.Server",
             ))?;
-            let path: OwnedObjectPath = block_on(server.call::<_, OwnedObjectPath>("EntryGroupNew", &()))?;
+            let path: OwnedObjectPath =
+                block_on(server.call::<_, OwnedObjectPath>("EntryGroupNew", &()))?;
             let group = block_on(Proxy::new(
                 &connection,
                 "org.freedesktop.Avahi",
