@@ -167,7 +167,7 @@ mod linux {
                 "org.freedesktop.Avahi.Server",
             ))?;
             let path: OwnedObjectPath =
-                block_on(server.call::<_, OwnedObjectPath>("EntryGroupNew", &()))?;
+                block_on(server.call::<_, _, OwnedObjectPath>("EntryGroupNew", &()))?;
             let group = block_on(Proxy::new(
                 &connection,
                 "org.freedesktop.Avahi",
@@ -175,7 +175,7 @@ mod linux {
                 "org.freedesktop.Avahi.EntryGroup",
             ))?;
             // Any interface and protocol (-1), no flags, default domain and host.
-            block_on(group.call::<_, ()>(
+            block_on(group.call::<_, _, ()>(
                 "AddService",
                 &(
                     -1i32,
@@ -189,7 +189,7 @@ mod linux {
                     txt,
                 ),
             ))?;
-            block_on(group.call::<_, ()>("Commit", &()))?;
+            block_on(group.call::<_, _, ()>("Commit", &()))?;
             Ok(Self {
                 group,
                 _connection: connection,
@@ -199,7 +199,7 @@ mod linux {
 
     impl Drop for Group {
         fn drop(&mut self) {
-            let _ = block_on(self.group.call::<_, ()>("Free", &()));
+            let _ = block_on(self.group.call::<_, _, ()>("Free", &()));
         }
     }
 }
