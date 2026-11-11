@@ -578,6 +578,9 @@ struct Coincide {
     reply_media_cache:
         std::cell::RefCell<std::collections::HashMap<(String, u64), Vec<transcript_media::Media>>>,
     search: Entity<InputState>,
+    /// A conversation the user asked for while the engine was busy. Retried
+    /// each tick instead of failing with "App is busy".
+    pending_select: Option<String>,
     status: String,
     show_archived: bool,
     browser: Option<BrowserController>,
@@ -962,7 +965,11 @@ impl Coincide {
             persist_pending_draft(&engine, id, text)
                 .map_err(|error| (engine_busy(&error), error.to_string()))
         }) {
-            self.status = format!("Draft remains in this window; not yet saved: {error}");
+            // A busy engine retries in the background; only a real failure is
+            // worth writing down.
+            if error != "App is busy processing another operation; try again shortly" {
+                self.status = format!("Draft remains in this window; not yet saved: {error}");
+            }
         }
     }
     fn flush_native_selection(&mut self) -> bool {
@@ -1706,6 +1713,7 @@ impl Coincide {
             tool_detail_scrolls: Default::default(),
             reply_media_cache: Default::default(),
             search,
+            pending_select: None,
             status: browser_error.unwrap_or_else(|| "Rust preview · separate data store".into()),
             browser,
             browser_address,
@@ -2466,6 +2474,14 @@ impl Coincide {
         self.credential_panel
             .update(cx, |panel, cx| panel.cancel(cx));
         match call(&self.engine, "threads.read", json!({"threadId":id})) {
+            Err(error) if engine_busy(&error) => {
+                // Opening a conversation must never fail because a turn or a
+                // save holds the engine for a moment: remember the target and
+                // take it as soon as the lock is free.
+                self.pending_select = Some(id.to_owned());
+                cx.notify();
+                return;
+            }
             Ok(mut v) => {
                 if self.global_schedules_route() {
                     self.close_schedule_surface();
@@ -2506,6 +2522,9 @@ impl Coincide {
                     for entry in self.image_previews.values_mut() {
                         entry.rows.clear();
                     }
+                }
+                if self.pending_select.as_deref() == Some(id) {
+                    self.pending_select = None;
                 }
                 self.transcript_count = v["items"].as_array().map_or(0, Vec::len);
                 self.transcript_list.reset(self.transcript_count);
@@ -4661,7 +4680,7 @@ impl Coincide {
             .as_ref()
             .is_some_and(|v| self.running.contains(&text(v, "id")))
         {
-            self.send_follow_up(alternate, cx);
+            self.send_follow_up(alternate, window, cx);
             return;
         }
         if let Some(v) = self.selected.as_ref() {
@@ -5610,6 +5629,12 @@ impl Render for Coincide {
                     .update(cx, |input, cx| input.set_value(draft, window, cx));
             }
         }
+        if let Some(id) = self.pending_select.clone()
+            && let Some(thread) = &self.selected
+            && text(thread, "id") != id
+        {
+            self.select(&id, window, cx);
+        }
         let selected_id = self
             .selected
             .as_ref()
@@ -5937,21 +5962,6 @@ impl Render for Coincide {
                                                 .when_some(implement_button, |view, button| view.child(button))
 
                                         )
-                                        .when(
-                                            !self.composer_files.opened
-                                                && !self.status.is_empty()
-                                                && self.status != "Rust preview · separate data store",
-                                            |view| view.child(
-                                            div()
-                                                .id("composer-status")
-                                                .mt_2()
-                                                .max_h(px(32.))
-                                                .flex_shrink_0()
-                                                .overflow_y_scroll()
-                                                .text_sm()
-                                                .text_color(self.color(0xe4e9f2).opacity(0.7))
-                                                .child(self.status.clone()),
-                                        )),
                                 )
                                 .when_some(self.branch_toolbar(cx), |view, toolbar| view.child(toolbar)),
                         )
