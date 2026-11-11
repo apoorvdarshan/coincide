@@ -167,15 +167,22 @@ impl Coincide {
         }
         Some(pane.into_any_element())
     }
-    fn choose_follow_up(&mut self, behavior: Behavior, cx: &mut Context<Self>) {
-        if !self.flush_pending_drafts() {
-            self.status = "Save the current draft before changing follow-up behavior.".into();
-            cx.notify();
-            return;
-        }
+    pub(super) fn choose_follow_up(&mut self, behavior: Behavior, cx: &mut Context<Self>) {
+        // Show the choice at once and write it when the engine is free: the
+        // picker used to fail silently while a turn held the lock.
         let Some(thread) = self.selected.clone() else {
             return;
         };
+        let id = text(&thread, "id");
+        if let Some(thread) = self.selected.as_mut() {
+            thread["followUpBehavior"] = json!(behavior.key());
+        }
+        self.follow_up_picker = false;
+        if !self.flush_pending_drafts() || self.engine.try_lock().is_err() {
+            self.pending_follow_up_choice = Some((id, behavior));
+            cx.notify();
+            return;
+        }
         let result = (|| -> Result<(Value, Value)> {
             let mut engine = self.engine.try_lock().map_err(|_| EngineBusy)?;
             let current = engine.store.thread(&text(&thread, "id"))?;
@@ -192,7 +199,14 @@ impl Coincide {
                 self.settings = settings;
                 self.follow_up_picker = false;
             }
-            Err(error) => self.status = error.to_string(),
+            Err(error) => {
+                if engine_busy(&error) {
+                    self.pending_follow_up_choice = Some((id, behavior));
+                } else {
+                    self.show_local_error(&format!("Follow-up choice not saved: {error}"));
+                    self.status = error.to_string();
+                }
+            }
         }
         cx.notify();
     }

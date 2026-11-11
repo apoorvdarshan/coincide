@@ -408,8 +408,10 @@ impl Coincide {
             0x10141c => p.content,
             0x29303d => p.border,
             0x111722 | 0x181d28 => p.surface,
-            0x202a3b | 0x253046 | 0x222c3d | 0x2b3549 => p.raised,
-            0x98b1d4 => p.accent,
+            0x202a3b | 0x253046 | 0x222c3d | 0x2b3549 | 0x263d5e => p.raised,
+            0x364152 => p.border,
+            0x11151d => p.content,
+            0x98b1d4 | 0xE9B04E => p.accent,
             0xe4e9f2 | 0x98a6ba => p.ink,
             _ => original,
         })

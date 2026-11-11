@@ -586,6 +586,8 @@ struct Coincide {
     restore_composer: Option<String>,
     /// A follow-up whose engine call found the lock busy, retried each tick.
     pending_follow_up: Option<(String, String, bool)>,
+    /// A Queue/Steer choice made while the engine was busy, written later.
+    pending_follow_up_choice: Option<(String, coincide_core::composer_follow_up::Behavior)>,
     /// A just-sent message drawn before the stored thread contains it, with
     /// the item count it was sent from.
     pending_sent: Option<(String, String, usize, u64)>,
@@ -1731,6 +1733,7 @@ impl Coincide {
             pending_select: None,
             restore_composer: None,
             pending_follow_up: None,
+            pending_follow_up_choice: None,
             pending_sent: None,
             pending_seq: 0,
             dispatch_cache: Default::default(),
@@ -5809,6 +5812,16 @@ impl Render for Coincide {
                 self.composer
                     .update(cx, |input, cx| input.set_value(draft, window, cx));
             }
+        }
+        if let Some((id, behavior)) = self.pending_follow_up_choice.clone()
+            && self
+                .selected
+                .as_ref()
+                .is_some_and(|thread| text(thread, "id") == id)
+            && self.engine.try_lock().is_ok()
+        {
+            self.pending_follow_up_choice = None;
+            self.choose_follow_up(behavior, cx);
         }
         if let Some((id, draft, alternate)) = self.pending_follow_up.take() {
             if self

@@ -794,3 +794,9 @@ The window's palette is small and consistent: background `#10141c`, surface
 `#202a3b`. The question card was the one surface outside it — `#1c2028` with a
 `#30353e` border, which reads blue beside everything else. It now uses the
 palette surface and border; no other popup or card was found off-palette.
+
+- The Queue/Steer picker no longer fails silently while a turn holds the engine:
+  the choice shows at once and is written on the next tick.
+- Every UI colour now resolves through the palette: `#364152` (border),
+  `#263d5e` (raised), `#11151d` (content) and the question card's amber accent
+  were the last literals outside it.
