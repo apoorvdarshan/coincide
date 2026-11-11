@@ -206,11 +206,9 @@ impl Coincide {
             self.cancel_composer_dictation(cx);
         }
 
-        if !self.flush_pending_drafts() {
-            self.status = "Draft persistence is recovering; message retained.".into();
-            cx.notify();
-            return;
-        }
+        // The text is in hand, so a draft that is still saving must not hold the
+        // message back; it saves in the background either way.
+        self.flush_pending_drafts();
         let Some(thread) = self.selected.clone() else {
             return;
         };
@@ -245,6 +243,11 @@ impl Coincide {
                     draft,
                     queued: false,
                 });
+            }
+            Err(error) if engine_busy(&error) => {
+                // The engine is busy for a moment; keep the message and take it
+                // as soon as the lock is free instead of refusing it.
+                self.pending_follow_up = Some((id, draft, alternate));
             }
             Err(error) => {
                 self.restore_follow_up_draft(&id, &draft, window, cx);
@@ -350,15 +353,28 @@ impl Coincide {
         let Some(thread) = self.selected.as_ref() else {
             return Dispatch::Send;
         };
-        self.engine
+        let id = text(thread, "id");
+        if let Some(dispatch) = self
+            .engine
             .try_lock()
             .ok()
             .and_then(|engine| engine.native_follow_up_dispatch(thread, alternate).ok())
-            .unwrap_or(if self.running.contains(&text(thread, "id")) {
-                Dispatch::Queue
-            } else {
-                Dispatch::Send
-            })
+        {
+            // Remember what the engine said so a busy frame cannot flip the
+            // button between Send, Queue and Steer while it is being read.
+            self.dispatch_cache
+                .borrow_mut()
+                .insert(id.clone(), dispatch);
+            return dispatch;
+        }
+        if let Some(dispatch) = self.dispatch_cache.borrow().get(&id) {
+            return *dispatch;
+        }
+        if self.running.contains(&id) {
+            Dispatch::Queue
+        } else {
+            Dispatch::Send
+        }
     }
 }
 pub(super) fn dispatch_icon(dispatch: Dispatch) -> gpui_kit::assets::IconName {
