@@ -758,3 +758,7 @@ frame, where a window is available to edit the field.
   already in hand and the draft retries in the background.
 - Clicking into the composer now dismisses an open model/effort/access picker,
   as any popup should.
+
+- A follow-up whose engine call lands on a busy lock is retried on the next
+  tick instead of being refused, so a message sent during a turn is delivered
+  rather than handed back.

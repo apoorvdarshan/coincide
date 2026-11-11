@@ -244,6 +244,11 @@ impl Coincide {
                     queued: false,
                 });
             }
+            Err(error) if engine_busy(&error) => {
+                // The engine is busy for a moment; keep the message and take it
+                // as soon as the lock is free instead of refusing it.
+                self.pending_follow_up = Some((id, draft, alternate));
+            }
             Err(error) => {
                 self.restore_follow_up_draft(&id, &draft, window, cx);
                 self.status = error.to_string();

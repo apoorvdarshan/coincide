@@ -584,6 +584,8 @@ struct Coincide {
     /// Text a refused send puts back in the composer on the next frame, where
     /// a window is available to edit the field.
     restore_composer: Option<String>,
+    /// A follow-up whose engine call found the lock busy, retried each tick.
+    pending_follow_up: Option<(String, String, bool)>,
     /// The last dispatch the engine reported per conversation, so a busy frame
     /// cannot flip the send button between Send, Queue and Steer.
     dispatch_cache: std::cell::RefCell<
@@ -1723,6 +1725,7 @@ impl Coincide {
             search,
             pending_select: None,
             restore_composer: None,
+            pending_follow_up: None,
             dispatch_cache: Default::default(),
             status: browser_error.unwrap_or_else(|| "Rust preview · separate data store".into()),
             browser,
@@ -5656,6 +5659,17 @@ impl Render for Coincide {
             if !focused && self.committed_composer_draft(cx) != draft {
                 self.composer
                     .update(cx, |input, cx| input.set_value(draft, window, cx));
+            }
+        }
+        if let Some((id, draft, alternate)) = self.pending_follow_up.take() {
+            if self
+                .selected
+                .as_ref()
+                .is_some_and(|thread| text(thread, "id") == id)
+            {
+                self.composer
+                    .update(cx, |input, cx| input.set_value(draft, window, cx));
+                self.send_follow_up(alternate, window, cx);
             }
         }
         if let Some(text) = self.restore_composer.take() {
