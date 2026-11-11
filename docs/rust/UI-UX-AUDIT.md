@@ -722,3 +722,12 @@ Nested scrolling now chains explicitly: while the panel can still move in the
 wheel's direction it takes the event alone and the transcript stays put; at the
 panel's top or bottom the event passes through, so the conversation keeps
 scrolling where the reader expects.
+
+## Sending feels instant and lands at the bottom — 2026-11-10
+
+Two things made sending feel wrong. The draft stayed in the composer until the
+engine had accepted the turn, so a short sentence sat there for about a second;
+it now leaves the field immediately, and a refused send puts it back with the
+error. And the new message could open somewhere above the newest row, because
+the row splice restored the previous scroll offset; a send now follows the tail,
+since the message the user just wrote is the newest thing in the conversation.

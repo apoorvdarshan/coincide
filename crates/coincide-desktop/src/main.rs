@@ -4670,28 +4670,38 @@ impl Coincide {
                 cx.notify();
                 return;
             }
+            let id = text(v, "id");
+            // Send reads as instant: the draft leaves the composer now, and a
+            // refused send puts it back. Waiting for the engine made a plain
+            // sentence sit in the field for a second.
+            let sent = self.composer.read(cx).value().to_string();
+            self.composer
+                .update(cx, |input, cx| input.set_value("", window, cx));
+            if let Some(thread) = self.selected.as_mut() {
+                thread["draft"] = json!("");
+                thread.as_object_mut().unwrap().remove("draftContext");
+            }
             match call(
                 &self.engine,
                 "agent.send",
-                json!({"threadId":v["id"],"text":self.composer.read(cx).value().to_string()}),
+                json!({"threadId":id,"text":sent}),
             ) {
                 Ok(_) => {
-                    let id = text(v, "id");
                     self.pending_drafts.remove(&id);
                     if !self.running.contains(&id) {
-                        self.running.push(id);
-                        self.transcript_list
-                            .splice(0..self.transcript_count, self.transcript_count);
+                        self.running.push(id.clone());
+                        self.splice_transcript(0..self.transcript_count, self.transcript_count);
                     }
-                    if let Some(thread) = self.selected.as_mut() {
-                        thread["draft"] = json!("");
-                        thread.as_object_mut().unwrap().remove("draftContext");
-                    }
-                    self.composer
-                        .update(cx, |input, cx| input.set_value("", window, cx));
+                    // The new message is the newest row: follow it.
+                    self.transcript_list.scroll_to_end();
                 }
                 Err(e) => {
                     self.retry_selected_account_readiness();
+                    self.composer
+                        .update(cx, |input, cx| input.set_value(sent.clone(), window, cx));
+                    if let Some(thread) = self.selected.as_mut() {
+                        thread["draft"] = json!(sent);
+                    }
                     self.status = e.to_string();
                 }
             }
