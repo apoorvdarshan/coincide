@@ -993,6 +993,11 @@ impl super::Coincide {
                 window,
                 cx,
             );
+            let scroll = self
+                .tool_detail_scrolls
+                .entry(format!("{source}-{item_id}"))
+                .or_default()
+                .clone();
             div()
                 .id(SharedString::from(format!(
                     "tool-detail-{source}-{item_id}"
@@ -1002,6 +1007,7 @@ impl super::Coincide {
                 .mb(px(6.))
                 .max_h(px(320.))
                 .overflow_y_scroll()
+                .track_scroll(&scroll)
                 .text_size(px((self.conversation_font_size() - 2.).max(10.)))
                 .child(super::transcript::preserve_selected_copy(
                     source,

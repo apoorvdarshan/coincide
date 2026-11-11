@@ -707,3 +707,13 @@ preview path both already shared.
   composer, so a chip click reaches the chip and switches facet in one click.
   The card itself keeps its anchor, because it is still positioned inside the
   full-size layer.
+
+## A tool detail that scrolls itself — 2026-11-10
+
+An expanded tool panel caps its height and clips what does not fit, so the
+overflow needs its own scroll position. It had none: the panel was a clipped
+box with `overflow_y_scroll` but no tracked handle, so a wheel over it moved the
+transcript underneath instead and long command output could not be read at all.
+Each expanded detail now keeps a `ScrollHandle` (cleared when a conversation
+opens), so the wheel over the panel scrolls the panel and the transcript keeps
+its place.
