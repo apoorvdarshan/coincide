@@ -998,7 +998,9 @@ impl GraphicsCaptureApiHandler for FrameOwner {
                 "Window exceeds Computer Use capture bounds"
             );
             let mut buffer = frame.buffer()?;
-            let rgba = buffer.as_nopadding_buffer()?.to_vec();
+            // windows-capture 2 fills a caller-owned buffer and returns a slice.
+            let mut pixels = Vec::new();
+            let rgba = buffer.as_nopadding_buffer(&mut pixels).to_vec();
             let png = coincide_core::appshots::encode_rgba(width, height, rgba)?;
             anyhow::ensure!(
                 png.len() <= 2_500_000,
