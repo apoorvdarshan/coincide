@@ -586,6 +586,11 @@ struct Coincide {
     restore_composer: Option<String>,
     /// A follow-up whose engine call found the lock busy, retried each tick.
     pending_follow_up: Option<(String, String, bool)>,
+    /// A just-sent message drawn before the stored thread contains it, with
+    /// the item count it was sent from.
+    pending_sent: Option<(String, String, usize, u64)>,
+    /// Identity for the optimistic row, so a refresh keeps the same element.
+    pending_seq: u64,
     /// The last dispatch the engine reported per conversation, so a busy frame
     /// cannot flip the send button between Send, Queue and Steer.
     dispatch_cache: std::cell::RefCell<
@@ -1726,6 +1731,8 @@ impl Coincide {
             pending_select: None,
             restore_composer: None,
             pending_follow_up: None,
+            pending_sent: None,
+            pending_seq: 0,
             dispatch_cache: Default::default(),
             status: browser_error.unwrap_or_else(|| "Rust preview · separate data store".into()),
             browser,
@@ -3877,6 +3884,17 @@ impl Coincide {
                         self.splice_transcript(start..self.transcript_count, count - start);
                         self.transcript_count = count;
                         self.selected = Some(v);
+                        self.reconcile_pending_send();
+                        let count = self
+                            .selected
+                            .as_ref()
+                            .and_then(|thread| thread["items"].as_array().map(Vec::len))
+                            .unwrap_or(self.transcript_count);
+                        if count != self.transcript_count {
+                            let start = self.transcript_count.min(count);
+                            self.splice_transcript(start..self.transcript_count, count - start);
+                            self.transcript_count = count;
+                        }
                         self.refresh_turn_changes();
                     } else {
                         return; // Retry this revision after the worker releases the engine.
@@ -4652,6 +4670,74 @@ impl Coincide {
                 .into_any_element(),
         )
     }
+    /// Draw the message the user just sent before the stored thread has it, so
+    /// a send appears in the conversation at once instead of a second later.
+    fn show_pending_send(&mut self, id: &str, message: &str) {
+        let Some(thread) = self
+            .selected
+            .as_mut()
+            .filter(|thread| text(thread, "id") == id)
+        else {
+            return;
+        };
+        let Some(items) = thread["items"].as_array_mut() else {
+            return;
+        };
+        let baseline = items.len();
+        let seq = self.pending_seq.wrapping_add(1);
+        self.pending_seq = seq;
+        items.push(json!({
+            "id": format!("pending-send-{seq}"),
+            "kind": "user",
+            "text": message,
+            "createdAt": 0,
+            "pendingSend": true
+        }));
+        self.pending_sent = Some((id.to_owned(), message.to_owned(), baseline, seq));
+        let count = items.len();
+        let start = self.transcript_count.min(count);
+        self.splice_transcript(start..self.transcript_count, count - start);
+        self.transcript_count = count;
+        self.transcript_list.scroll_to_end();
+    }
+    /// Keep the optimistic row until the stored thread contains that message.
+    fn reconcile_pending_send(&mut self) {
+        let Some((id, message, baseline, seq)) = self.pending_sent.clone() else {
+            return;
+        };
+        let Some(thread) = self
+            .selected
+            .as_mut()
+            .filter(|thread| text(thread, "id") == id)
+        else {
+            self.pending_sent = None;
+            return;
+        };
+        let Some(items) = thread["items"].as_array_mut() else {
+            return;
+        };
+        let stored = items
+            .iter()
+            .skip(baseline)
+            .any(|item| item["kind"] == "user" && item["text"].as_str() == Some(message.as_str()));
+        if stored {
+            self.pending_sent = None;
+            return;
+        }
+        if items
+            .iter()
+            .any(|item| item["id"] == format!("pending-send-{seq}"))
+        {
+            return;
+        }
+        items.push(json!({
+            "id": format!("pending-send-{seq}"),
+            "kind": "user",
+            "text": message,
+            "createdAt": 0,
+            "pendingSend": true
+        }));
+    }
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.send_selected(false, window, cx);
     }
@@ -4715,6 +4801,7 @@ impl Coincide {
             }
             // The engine call runs off the UI thread: the window never freezes
             // behind a send, and a refused send still restores the text.
+            self.show_pending_send(&id, &sent);
             let engine = self.engine.clone();
             let sent_for_call = sent.clone();
             let id_for_call = id.clone();
@@ -4745,6 +4832,25 @@ impl Coincide {
                         }
                         Err(error) => {
                             this.retry_selected_account_readiness();
+                            if this
+                                .pending_sent
+                                .as_ref()
+                                .is_some_and(|(thread, ..)| *thread == id)
+                            {
+                                this.pending_sent = None;
+                                if let Some(thread) = this.selected.as_mut()
+                                    && let Some(items) = thread["items"].as_array_mut()
+                                {
+                                    items.retain(|item| item["pendingSend"] != true);
+                                    let count = items.len();
+                                    let start = this.transcript_count.min(count);
+                                    this.splice_transcript(
+                                        start..this.transcript_count,
+                                        count - start,
+                                    );
+                                    this.transcript_count = count;
+                                }
+                            }
                             this.restore_composer = Some(sent.clone());
                             if let Some(thread) = this.selected.as_mut() {
                                 thread["draft"] = json!(sent);

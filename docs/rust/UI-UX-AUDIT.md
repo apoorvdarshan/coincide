@@ -766,3 +766,12 @@ frame, where a window is available to edit the field.
 - The conversation header is opaque and its heading is tall enough for both
   lines: the transcript no longer shows through the bar, and a project or bot
   subtitle is no longer clipped in half under the title.
+
+## A sent message appears at once — 2026-11-10
+
+The composer cleared immediately, but the message bubble only arrived with the
+next stored thread read, so a send looked like it took a second to land. The
+message is now drawn as a pending row the moment send is accepted locally, and
+the stored thread replaces it on the next read; the pending row is re-attached
+across refreshes until the stored one exists, and dropped if the engine refuses
+the send.
