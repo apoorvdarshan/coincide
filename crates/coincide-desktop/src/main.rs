@@ -4672,7 +4672,7 @@ impl Coincide {
     }
     /// Draw the message the user just sent before the stored thread has it, so
     /// a send appears in the conversation at once instead of a second later.
-    fn show_pending_send(&mut self, id: &str, message: &str) {
+    pub(crate) fn show_pending_send(&mut self, id: &str, message: &str) {
         let Some(thread) = self
             .selected
             .as_mut()
@@ -4699,6 +4699,28 @@ impl Coincide {
         self.splice_transcript(start..self.transcript_count, count - start);
         self.transcript_count = count;
         self.transcript_list.scroll_to_end();
+    }
+    /// Take the optimistic row away again when the engine refuses the send.
+    pub(crate) fn drop_pending_send(&mut self, id: &str) {
+        if !self
+            .pending_sent
+            .as_ref()
+            .is_some_and(|(thread, ..)| thread == id)
+        {
+            return;
+        }
+        self.pending_sent = None;
+        let Some(thread) = self.selected.as_mut() else {
+            return;
+        };
+        let Some(items) = thread["items"].as_array_mut() else {
+            return;
+        };
+        items.retain(|item| item["pendingSend"] != true);
+        let count = items.len();
+        let start = self.transcript_count.min(count);
+        self.splice_transcript(start..self.transcript_count, count - start);
+        self.transcript_count = count;
     }
     /// Keep the optimistic row until the stored thread contains that message.
     fn reconcile_pending_send(&mut self) {
@@ -4832,25 +4854,7 @@ impl Coincide {
                         }
                         Err(error) => {
                             this.retry_selected_account_readiness();
-                            if this
-                                .pending_sent
-                                .as_ref()
-                                .is_some_and(|(thread, ..)| *thread == id)
-                            {
-                                this.pending_sent = None;
-                                if let Some(thread) = this.selected.as_mut()
-                                    && let Some(items) = thread["items"].as_array_mut()
-                                {
-                                    items.retain(|item| item["pendingSend"] != true);
-                                    let count = items.len();
-                                    let start = this.transcript_count.min(count);
-                                    this.splice_transcript(
-                                        start..this.transcript_count,
-                                        count - start,
-                                    );
-                                    this.transcript_count = count;
-                                }
-                            }
+                            this.drop_pending_send(&id);
                             this.restore_composer = Some(sent.clone());
                             if let Some(thread) = this.selected.as_mut() {
                                 thread["draft"] = json!(sent);

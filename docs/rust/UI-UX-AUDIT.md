@@ -775,3 +775,6 @@ message is now drawn as a pending row the moment send is accepted locally, and
 the stored thread replaces it on the next read; the pending row is re-attached
 across refreshes until the stored one exists, and dropped if the engine refuses
 the send.
+
+The same optimistic row covers a follow-up sent during a turn: it appears with
+the message, and a withheld follow-up removes it and puts the text back.

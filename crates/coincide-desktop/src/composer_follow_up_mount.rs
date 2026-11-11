@@ -222,6 +222,7 @@ impl Coincide {
         // The message shows in the conversation the moment it is sent; keeping
         // it in the field until delivery is confirmed looked like a failed send.
         // A withheld follow-up puts it back below.
+        self.show_pending_send(&id, &draft);
         self.pending_drafts.remove(&id);
         self.composer
             .update(cx, |input, cx| input.set_value("", window, cx));
@@ -250,6 +251,7 @@ impl Coincide {
                 self.pending_follow_up = Some((id, draft, alternate));
             }
             Err(error) => {
+                self.drop_pending_send(&id);
                 self.restore_follow_up_draft(&id, &draft, window, cx);
                 self.status = error.to_string();
             }
