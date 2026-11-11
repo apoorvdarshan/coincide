@@ -91,11 +91,11 @@ impl Coincide {
             .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
             .flex_1()
             .min_w_0()
-            .h(px(38.))
             .flex()
             .flex_col()
             .justify_center()
             .gap(px(1.))
+            .py(px(2.))
             .when(cfg!(target_os = "macos"), |heading| {
                 heading.on_mouse_down(MouseButton::Left, |event, window, _| {
                     if event.click_count == 2 {
@@ -153,7 +153,7 @@ impl Coincide {
                     .id("conversation-toolbar-primary")
                     .flex()
                     .items_center()
-                    .h(px(44.))
+                    .min_h(px(44.))
                     .px_3()
                     .gap_1()
                     .child(heading)
