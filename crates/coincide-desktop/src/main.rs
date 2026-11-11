@@ -4040,12 +4040,13 @@ impl Coincide {
         let thread = self.selected.as_ref().map(|v| text(v, "id"))?;
         // Approvals show one at a time in Swift's banner; questions keep their cards.
         let banner = self.approval_banner(window, cx);
-        // Follow the app's theme instead of a fixed blue-grey card.
-        let secondary = cx.theme().muted_foreground;
-        let tertiary = cx.theme().muted_foreground.opacity(0.6);
-        let accent = cx.theme().accent;
-        let surface = cx.theme().popover;
-        let border = cx.theme().border;
+        // The app's own palette: the card used a blue-grey surface (0x1c2028)
+        // and border (0x30353e) that appear nowhere else in the window.
+        let secondary = self.color(0x98a6ba);
+        let tertiary = self.color(0x98a6ba).opacity(0.7);
+        let accent = self.color(0xE9B04E);
+        let surface = self.color(0x181d28);
+        let border = self.color(0x29303d);
         let mut cards = Vec::new();
         for request in &self.pending_requests {
             if request["method"] != "item/tool/requestUserInput" {

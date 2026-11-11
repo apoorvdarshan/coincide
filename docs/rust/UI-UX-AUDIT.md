@@ -786,3 +786,11 @@ the message, and a withheld follow-up removes it and puts the text back.
   `/private/tmp/coincide-ui-errors.log` for diagnosis.
 - A follow-up refused only because the previous one is still being collected is
   retried next tick instead of being dropped.
+
+### Palette sweep
+
+The window's palette is small and consistent: background `#10141c`, surface
+`#181d28`, border `#29303d`, text `#e4e9f2`, muted `#98a6ba`, selection
+`#202a3b`. The question card was the one surface outside it — `#1c2028` with a
+`#30353e` border, which reads blue beside everything else. It now uses the
+palette surface and border; no other popup or card was found off-palette.
