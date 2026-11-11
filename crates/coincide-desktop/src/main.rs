@@ -570,6 +570,9 @@ struct Coincide {
     image_waiting_rows: std::collections::HashSet<(String, usize)>,
     image_assets: Entity<RetainAllImageCache>,
     image_asset_order: std::collections::VecDeque<std::path::PathBuf>,
+    /// One scroll position per expanded tool detail, so its long output scrolls
+    /// inside the panel instead of moving the transcript under the pointer.
+    tool_detail_scrolls: std::collections::HashMap<String, ScrollHandle>,
     /// Reply media by item and reply text. Resolving stats the files, so the
     /// answer is kept rather than recomputed on every frame.
     reply_media_cache:
@@ -1700,6 +1703,7 @@ impl Coincide {
             image_waiting_rows: Default::default(),
             image_assets: RetainAllImageCache::new(cx),
             image_asset_order: Default::default(),
+            tool_detail_scrolls: Default::default(),
             reply_media_cache: Default::default(),
             search,
             status: browser_error.unwrap_or_else(|| "Rust preview · separate data store".into()),
@@ -2497,6 +2501,7 @@ impl Coincide {
                         .update(cx, |cache, cx| cache.clear(window, cx));
                     self.image_asset_order.clear();
                     self.reply_media_cache.borrow_mut().clear();
+                    self.tool_detail_scrolls.clear();
                     self.image_waiting_rows.clear();
                     for entry in self.image_previews.values_mut() {
                         entry.rows.clear();
