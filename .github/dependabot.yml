@@ -4,6 +4,14 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # webview2-com and the windows crate must move together with lb-wry,
+      # which pins webview2-com 0.38: a 0.39 bump alone gives two incompatible
+      # ICoreWebView2 types. Lift this when the wry fork moves.
+      - dependency-name: webview2-com
+        update-types: ["version-update:semver-major"]
+      - dependency-name: windows
+        update-types: ["version-update:semver-minor"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
