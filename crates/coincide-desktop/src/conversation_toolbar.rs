@@ -91,10 +91,11 @@ impl Coincide {
             .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
             .flex_1()
             .min_w_0()
-            .h(px(32.))
+            .h(px(38.))
             .flex()
             .flex_col()
             .justify_center()
+            .gap(px(1.))
             .when(cfg!(target_os = "macos"), |heading| {
                 heading.on_mouse_down(MouseButton::Left, |event, window, _| {
                     if event.click_count == 2 {
@@ -144,6 +145,7 @@ impl Coincide {
             .flex_shrink_0()
             .w_full()
             .min_w_0()
+            .bg(self.color(0x10141c))
             .border_b_1()
             .border_color(self.color(0x29303d))
             .child(

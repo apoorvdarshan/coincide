@@ -762,3 +762,7 @@ frame, where a window is available to edit the field.
 - A follow-up whose engine call lands on a busy lock is retried on the next
   tick instead of being refused, so a message sent during a turn is delivered
   rather than handed back.
+
+- The conversation header is opaque and its heading is tall enough for both
+  lines: the transcript no longer shows through the bar, and a project or bot
+  subtitle is no longer clipped in half under the title.
