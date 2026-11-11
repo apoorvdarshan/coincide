@@ -750,3 +750,11 @@ Sending no longer blocks the window: the engine call runs on the background
 executor, so the composer clears at once and the UI keeps painting while the
 turn is accepted. A refused send hands its text back to the composer on the next
 frame, where a window is available to edit the field.
+
+- The send button no longer flickers between Send, Queue and Steer while a
+  turn runs: the engine's answer is remembered per conversation, so a frame
+  that cannot read it keeps the last one instead of guessing.
+- A follow-up is never held back by a draft that is still saving; the text is
+  already in hand and the draft retries in the background.
+- Clicking into the composer now dismisses an open model/effort/access picker,
+  as any popup should.

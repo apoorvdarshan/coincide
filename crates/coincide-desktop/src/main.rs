@@ -584,6 +584,11 @@ struct Coincide {
     /// Text a refused send puts back in the composer on the next frame, where
     /// a window is available to edit the field.
     restore_composer: Option<String>,
+    /// The last dispatch the engine reported per conversation, so a busy frame
+    /// cannot flip the send button between Send, Queue and Steer.
+    dispatch_cache: std::cell::RefCell<
+        std::collections::HashMap<String, coincide_core::composer_follow_up::Dispatch>,
+    >,
     status: String,
     show_archived: bool,
     browser: Option<BrowserController>,
@@ -1718,6 +1723,7 @@ impl Coincide {
             search,
             pending_select: None,
             restore_composer: None,
+            dispatch_cache: Default::default(),
             status: browser_error.unwrap_or_else(|| "Rust preview · separate data store".into()),
             browser,
             browser_address,
@@ -5910,6 +5916,20 @@ impl Render for Coincide {
                                             div()
                                                 .id("composer-image-drop")
                                                 .flex_shrink_0()
+                                                // Clicking into the field puts the
+                                                // picker away, as any popup should.
+                                                .on_mouse_down(
+                                                    MouseButton::Left,
+                                                    cx.listener(|this, _, _, cx| {
+                                                        if this.selection_ui.expanded
+                                                            || this.follow_up_picker
+                                                        {
+                                                            this.selection_ui.expanded = false;
+                                                            this.follow_up_picker = false;
+                                                            cx.notify();
+                                                        }
+                                                    }),
+                                                )
                                                 .on_drop(cx.listener(
                                                     |this, paths: &ExternalPaths, _, cx| {
                                                         this.drop_image_paths(paths, cx)
