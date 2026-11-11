@@ -251,9 +251,17 @@ impl Coincide {
                 self.pending_follow_up = Some((id, draft, alternate));
             }
             Err(error) => {
+                let reason = error.to_string();
+                if reason.contains("Collect the previous follow-up") {
+                    // The last steer is still being collected; try again next
+                    // tick rather than refusing this one.
+                    self.pending_follow_up = Some((id, draft, alternate));
+                    return;
+                }
                 self.drop_pending_send(&id);
                 self.restore_follow_up_draft(&id, &draft, window, cx);
-                self.status = error.to_string();
+                self.show_local_error(&format!("Message not sent: {reason}"));
+                self.status = reason;
             }
         }
         cx.notify();

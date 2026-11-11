@@ -778,3 +778,11 @@ the send.
 
 The same optimistic row covers a follow-up sent during a turn: it appears with
 the message, and a withheld follow-up removes it and puts the text back.
+
+- A sent message's attached images travel with the optimistic row, so they no
+  longer appear a second after the text.
+- A refused send now says why in the conversation itself (an error row), since
+  the composer's status row is gone; the reason is also appended to
+  `/private/tmp/coincide-ui-errors.log` for diagnosis.
+- A follow-up refused only because the previous one is still being collected is
+  retried next tick instead of being dropped.

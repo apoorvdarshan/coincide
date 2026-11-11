@@ -335,11 +335,7 @@ impl Coincide {
                 // a normal chevron beside the icon reads as a menu.
                 button
                     .icon(IconName::SquarePlay)
-                    .child(
-                        Icon::new(IconName::ChevronDown)
-                            .xsmall()
-                            .text_color(muted),
-                    )
+                    .child(Icon::new(IconName::ChevronDown).xsmall().text_color(muted))
             })
             .accessible_menu(move |mut menu, window, cx| {
                 for script in &menu_scripts {

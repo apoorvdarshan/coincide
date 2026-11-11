@@ -4680,20 +4680,56 @@ impl Coincide {
         else {
             return;
         };
+        let images = thread["rustDraftImages"].clone();
         let Some(items) = thread["items"].as_array_mut() else {
             return;
         };
         let baseline = items.len();
         let seq = self.pending_seq.wrapping_add(1);
         self.pending_seq = seq;
-        items.push(json!({
+        let mut pending = json!({
             "id": format!("pending-send-{seq}"),
             "kind": "user",
             "text": message,
             "createdAt": 0,
             "pendingSend": true
-        }));
+        });
+        if images.as_array().is_some_and(|images| !images.is_empty()) {
+            pending["rustImages"] = images;
+        }
+        items.push(pending);
         self.pending_sent = Some((id.to_owned(), message.to_owned(), baseline, seq));
+        let count = items.len();
+        let start = self.transcript_count.min(count);
+        self.splice_transcript(start..self.transcript_count, count - start);
+        self.transcript_count = count;
+        self.transcript_list.scroll_to_end();
+    }
+    /// Show a failure in the conversation itself: the composer's status row is
+    /// gone, and a refused send must not fail silently.
+    pub(crate) fn show_local_error(&mut self, message: &str) {
+        if let Ok(mut log) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/private/tmp/coincide-ui-errors.log")
+        {
+            use std::io::Write as _;
+            let _ = writeln!(log, "{:?} {message}", std::time::SystemTime::now());
+        }
+        let Some(thread) = self.selected.as_mut() else {
+            return;
+        };
+        let Some(items) = thread["items"].as_array_mut() else {
+            return;
+        };
+        let seq = self.pending_seq.wrapping_add(1);
+        self.pending_seq = seq;
+        items.push(json!({
+            "id": format!("local-error-{seq}"),
+            "kind": "error",
+            "text": message,
+            "createdAt": 0
+        }));
         let count = items.len();
         let start = self.transcript_count.min(count);
         self.splice_transcript(start..self.transcript_count, count - start);
@@ -4856,6 +4892,7 @@ impl Coincide {
                             this.retry_selected_account_readiness();
                             this.drop_pending_send(&id);
                             this.restore_composer = Some(sent.clone());
+                            this.show_local_error(&format!("Message not sent: {error}"));
                             if let Some(thread) = this.selected.as_mut() {
                                 thread["draft"] = json!(sent);
                             }
