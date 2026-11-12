@@ -5,11 +5,31 @@ use coincide_core::{
     api::{NativeFollowUpStatus, NativeFollowUpTicket},
     composer_follow_up::{self as choice, Behavior, Dispatch},
 };
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum SendRoute {
+    WaitForImages,
+    FollowUp,
+    WaitForSelection,
+    Send,
+}
+
+pub(super) fn send_route(running: bool, importing: bool, changing_selection: bool) -> SendRoute {
+    if importing {
+        SendRoute::WaitForImages
+    } else if running {
+        SendRoute::FollowUp
+    } else if changing_selection {
+        SendRoute::WaitForSelection
+    } else {
+        SendRoute::Send
+    }
+}
 pub(super) struct PendingDelivery {
     ticket: Option<NativeFollowUpTicket>,
     thread: String,
     draft: String,
     queued: bool,
+    image_send: Option<u64>,
 }
 #[derive(Clone, Default, PartialEq, gpui_kit::Action)]
 #[action(namespace = coincide_follow_up, no_json, no_register)]
@@ -39,6 +59,7 @@ impl Coincide {
             thread,
             draft: String::new(),
             queued: true,
+            image_send: None,
         });
     }
 
@@ -263,7 +284,7 @@ impl Coincide {
         match result {
             Ok(ticket) => {
                 self.pending_follow_up = None;
-                self.show_pending_send(&id, &draft);
+                let image_send = self.show_pending_send(&id, &draft);
                 self.pending_drafts.remove(&id);
                 self.composer
                     .update(cx, |input, cx| input.set_value("", window, cx));
@@ -277,6 +298,7 @@ impl Coincide {
                     thread: id,
                     draft,
                     queued: false,
+                    image_send,
                 });
             }
             Err(error)
@@ -341,6 +363,7 @@ impl Coincide {
                 None | Some(NativeFollowUpStatus::Pending) => retained.push(delivery),
                 Some(status) => {
                     let delivered = matches!(status, NativeFollowUpStatus::Delivered { .. });
+                    self.finish_pending_images(delivery.image_send, delivered);
                     let restored = matches!(status, NativeFollowUpStatus::Retained(_))
                         && !delivery.queued
                         && self.restore_follow_up_draft(
@@ -480,5 +503,24 @@ fn behavior_help(behavior: Behavior) -> &'static str {
         Behavior::Interrupt => {
             "Stop the current turn, wait for its worker to return and save, then send"
         }
+    }
+}
+
+#[cfg(test)]
+mod send_route_tests {
+    use super::{SendRoute, send_route};
+
+    #[test]
+    fn running_turn_routes_to_follow_up_even_while_selection_is_refreshing() {
+        assert_eq!(send_route(true, false, true), SendRoute::FollowUp);
+        assert_eq!(send_route(true, false, false), SendRoute::FollowUp);
+    }
+
+    #[test]
+    fn image_import_finishes_before_either_send_path() {
+        assert_eq!(send_route(true, true, true), SendRoute::WaitForImages);
+        assert_eq!(send_route(false, true, false), SendRoute::WaitForImages);
+        assert_eq!(send_route(false, false, true), SendRoute::WaitForSelection);
+        assert_eq!(send_route(false, false, false), SendRoute::Send);
     }
 }

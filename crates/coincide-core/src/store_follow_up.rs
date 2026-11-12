@@ -189,6 +189,26 @@ impl Store {
         if crate::composer_follow_up::scope(&current)
             != crate::composer_follow_up::scope(expected_scope)
         {
+            // The user may have started a new draft while the provider was
+            // acknowledging this message. Remove only the exact images that
+            // were delivered; preserve all later text, context and images.
+            let submitted = expected_scope["rustDraftImages"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            if let Some(images) = current["rustDraftImages"].as_array_mut() {
+                let before = images.len();
+                images.retain(|image| !submitted.contains(image));
+                if images.len() != before {
+                    tx.execute(
+                        "UPDATE threads SET document=?2 WHERE id=?1",
+                        params![id, current.to_string()],
+                    )?;
+                    cache_thread(&tx, &current, false)?;
+                    tx.commit()?;
+                    self.note_selection_scope(&current);
+                }
+            }
             return Ok(false);
         }
         current["draft"] = json!("");
@@ -369,6 +389,30 @@ mod tests {
         let queued = other.thread(&id).unwrap();
         assert_eq!(queued["draft"], "");
         assert_eq!(crate::message_queue::read(&queued).unwrap().len(), 1);
+    }
+    #[test]
+    fn acknowledged_images_are_removed_without_losing_the_new_draft() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&dir.path().join("state.sqlite")).unwrap();
+        let mut original = store.new_thread("").unwrap();
+        let id = text(&original, "id");
+        let submitted = json!({"id":"image-a", "originalName":"a.png"});
+        let newer = json!({"id":"image-b", "originalName":"b.png"});
+        let changed = json!({"id":"image-a", "originalName":"changed.png"});
+        original["draft"] = json!("sent");
+        original["rustDraftImages"] = json!([submitted]);
+        store.save(&original).unwrap();
+
+        let mut edited = original.clone();
+        edited["draft"] = json!("next message");
+        edited["rustDraftImages"] = json!([submitted, newer, changed]);
+        edited["draftContext"] = json!({"keep":true});
+        store.save(&edited).unwrap();
+        assert!(!store.clear_native_follow_up_draft(&original).unwrap());
+        let actual = store.thread(&id).unwrap();
+        assert_eq!(actual["draft"], "next message");
+        assert_eq!(actual["draftContext"], edited["draftContext"]);
+        assert_eq!(actual["rustDraftImages"], json!([newer, changed]));
     }
     #[test]
     fn uncertainty_is_account_scoped_durable_and_old_nonce_cannot_clear_a_new_reservation() {

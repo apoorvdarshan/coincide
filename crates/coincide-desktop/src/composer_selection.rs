@@ -969,6 +969,7 @@ fn capability_lock(capabilities: &Value, running: bool) -> Option<String> {
     }
     None
 }
+#[cfg(test)]
 fn current_submission_blocked(
     context: Option<&(String, Value, bool)>,
     capabilities: &Value,
@@ -1283,47 +1284,10 @@ fn footer_compaction(widths: [f32; 6], available: f32) -> [bool; 6] {
 }
 
 impl Coincide {
-    pub(super) fn selected_account_wait_status(&self) -> &'static str {
-        if self.selection_ui.capabilities["namedModels"]["accountCatalogReady"] == true
-            && self.selection_ui.capabilities["locked"] == true
-        {
-            "The saved model or options are unavailable for this account. Your message draft is retained."
-        } else {
-            "Checking the selected account. Your message draft is retained."
-        }
-    }
-    pub(super) fn selection_send_blocked(&self) -> bool {
-        if self.selection_ui.pending_native_account.is_some()
+    pub(super) fn selection_change_pending(&self) -> bool {
+        self.selection_ui.pending_native_account.is_some()
             || self.selection_ui.pending_provider.is_some()
             || self.selection_ui.pending_provider_picker.is_some()
-        {
-            return true;
-        }
-        self.selected.as_ref().is_some_and(|thread| {
-            if !coincide_core::provider_preferences::enabled(
-                &self.settings,
-                &text(&thread["selection"], "provider"),
-            )
-            .unwrap_or(false)
-            {
-                return true;
-            }
-            if named_models::named_thread(thread) && !self.running.contains(&text(thread, "id")) {
-                let named = &self.selection_ui.capabilities["namedModels"];
-                if named["threadId"] != thread["id"]
-                    || named["accountID"] != thread["selection"]["accountID"]
-                    || named["accountCatalogReady"] != true
-                {
-                    return true;
-                }
-            }
-            current_submission_blocked(
-                self.selection_ui.context.as_ref(),
-                &self.selection_ui.capabilities,
-                thread,
-                self.running.contains(&text(thread, "id")),
-            )
-        })
     }
     fn switch_provider_from_history(
         &mut self,

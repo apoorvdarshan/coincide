@@ -59,10 +59,11 @@ mod composer_context_view;
 mod composer_file_picker;
 mod composer_follow_up_mount;
 mod composer_history;
+mod composer_pending_images;
 mod composer_plan_card;
 mod composer_selection;
+#[cfg(test)]
 mod composer_steering;
-mod composer_steering_mount;
 mod composer_suggestions;
 mod computer_use;
 mod computer_use_mount;
@@ -451,7 +452,6 @@ struct Coincide {
     keyboard: keyboard_settings::State,
     usage_history: usage_history_mount::Mount,
     codex_limits: codex_limits_mount::Mount,
-    steering: composer_steering::SteeringController,
     computer_use_mount: Option<computer_use_mount::Mount>,
     computer_use_open: bool,
     computer_use_status: String,
@@ -583,7 +583,7 @@ struct Coincide {
     pending_select: Option<String>,
     /// Text a refused send puts back in the composer on the next frame, where
     /// a window is available to edit the field.
-    restore_composer: Option<String>,
+    restore_composer: Option<(String, String)>,
     /// A follow-up whose engine call found the lock busy, retried each tick.
     pending_follow_up: Option<(String, String, bool)>,
     /// A Queue/Steer choice made while the engine was busy, written later.
@@ -591,6 +591,7 @@ struct Coincide {
     /// A just-sent message drawn before the stored thread contains it, with
     /// the item count it was sent from.
     pending_sent: Option<(String, String, usize, u64)>,
+    pending_images: composer_pending_images::PendingImages,
     /// Identity for the optimistic row, so a refresh keeps the same element.
     pending_seq: u64,
     /// The last dispatch the engine reported per conversation, so a busy frame
@@ -1106,7 +1107,6 @@ impl Coincide {
         let remote_panel = cx.new(|_| remote_settings::RemoteSettingsPanel::new(engine.clone()));
         let usage_history = usage_history_mount::Mount::new(engine.clone(), cx);
         let codex_limits = codex_limits_mount::Mount::new(engine.clone(), cx);
-        let steering = composer_steering::SteeringController::new(engine.clone());
         let settings_search = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
         let provider_configuration_panel = cx.new(|cx| {
             provider_configuration_ui::Panel::new(
@@ -1600,7 +1600,6 @@ impl Coincide {
             keyboard,
             usage_history,
             codex_limits,
-            steering,
             computer_use_mount,
             computer_use_open: false,
             computer_use_status,
@@ -1735,6 +1734,7 @@ impl Coincide {
             pending_follow_up: None,
             pending_follow_up_choice: None,
             pending_sent: None,
+            pending_images: Default::default(),
             pending_seq: 0,
             dispatch_cache: Default::default(),
             status: browser_error.unwrap_or_else(|| "Rust preview · separate data store".into()),
@@ -3823,13 +3823,6 @@ impl Coincide {
         }
         self.codex_limits.set_context(self.selected.as_ref(), cx);
         self.codex_limits.poll(cx);
-        if let Some(thread) = &self.selected {
-            let draft = self.committed_composer_draft(cx);
-            self.steering.observe_draft(&text(thread, "id"), &draft);
-        }
-        if self.steering.poll() {
-            cx.notify();
-        }
         self.poll_composer_follow_ups(window, cx);
         self.poll_browser(window, cx);
         self.sync_browser_settings(window, cx);
@@ -4612,9 +4605,10 @@ impl Coincide {
             .collect()
     }
     fn draft_images(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let images = self.selected.as_ref()?["rustDraftImages"]
-            .as_array()?
-            .clone();
+        let thread = self.selected.as_ref()?;
+        let images = self
+            .pending_images
+            .visible(&text(thread, "id"), thread["rustDraftImages"].as_array()?);
         if images.is_empty() {
             return None;
         }
@@ -4677,17 +4671,25 @@ impl Coincide {
     }
     /// Draw the message the user just sent before the stored thread has it, so
     /// a send appears in the conversation at once instead of a second later.
-    pub(crate) fn show_pending_send(&mut self, id: &str, message: &str) {
+    pub(crate) fn show_pending_send(&mut self, id: &str, message: &str) -> Option<u64> {
+        let images = self
+            .selected
+            .as_ref()
+            .and_then(|thread| {
+                thread["rustDraftImages"]
+                    .as_array()
+                    .map(|images| self.pending_images.visible(id, images))
+            })
+            .unwrap_or_default();
         let Some(thread) = self
             .selected
             .as_mut()
             .filter(|thread| text(thread, "id") == id)
         else {
-            return;
+            return None;
         };
-        let images = thread["rustDraftImages"].clone();
         let Some(items) = thread["items"].as_array_mut() else {
-            return;
+            return None;
         };
         let baseline = items.len();
         let seq = self.pending_seq.wrapping_add(1);
@@ -4699,9 +4701,10 @@ impl Coincide {
             "createdAt": 0,
             "pendingSend": true
         });
-        if images.as_array().is_some_and(|images| !images.is_empty()) {
-            pending["rustImages"] = images;
+        if !images.is_empty() {
+            pending["rustImages"] = json!(images);
         }
+        self.pending_images.begin(seq, id, images);
         items.push(pending);
         self.pending_sent = Some((id.to_owned(), message.to_owned(), baseline, seq));
         let count = items.len();
@@ -4709,6 +4712,21 @@ impl Coincide {
         self.splice_transcript(start..self.transcript_count, count - start);
         self.transcript_count = count;
         self.transcript_list.scroll_to_end();
+        Some(seq)
+    }
+    fn finish_pending_images(&mut self, sequence: Option<u64>, delivered: bool) {
+        let Some((id, submitted)) = sequence.and_then(|seq| self.pending_images.finish(seq)) else {
+            return;
+        };
+        if delivered
+            && let Some(thread) = self
+                .selected
+                .as_mut()
+                .filter(|thread| text(thread, "id") == id)
+            && let Some(images) = thread["rustDraftImages"].as_array_mut()
+        {
+            images.retain(|image| !submitted.contains(image));
+        }
     }
     /// Show a failure in the conversation itself: the composer's status row is
     /// gone, and a refused send must not fail silently.
@@ -4793,13 +4811,17 @@ impl Coincide {
         {
             return;
         }
-        items.push(json!({
+        let mut pending = json!({
             "id": format!("pending-send-{seq}"),
             "kind": "user",
             "text": message,
             "createdAt": 0,
             "pendingSend": true
-        }));
+        });
+        if let Some(images) = self.pending_images.images(seq) {
+            pending["rustImages"] = json!(images);
+        }
+        items.push(pending);
     }
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.send_selected(false, window, cx);
@@ -4827,31 +4849,37 @@ impl Coincide {
             let context = thread.get("draftContext").unwrap_or(&Value::Null);
             if let Err(error) = coincide_core::composer_context::validate(context) {
                 self.status = format!("Attached references were retained: {error}");
+                self.show_local_error(&format!("Message not sent: {error}"));
                 cx.notify();
                 return;
             }
-        }
-        if self.selection_send_blocked() {
-            self.retry_selected_account_readiness();
-            self.status = self.selected_account_wait_status().into();
-            cx.notify();
-            return;
-        }
-        if self
-            .selected
-            .as_ref()
-            .is_some_and(|v| self.running.contains(&text(v, "id")))
-        {
-            self.send_follow_up(alternate, window, cx);
-            return;
         }
         if let Some(v) = self.selected.as_ref() {
-            if self.attachment_import_threads.contains(&text(v, "id")) {
-                self.status = "Wait for image imports to finish before sending.".into();
-                cx.notify();
-                return;
-            }
             let id = text(v, "id");
+            match composer_follow_up_mount::send_route(
+                self.running.contains(&id),
+                self.attachment_import_threads.contains(&id),
+                self.selection_change_pending(),
+            ) {
+                composer_follow_up_mount::SendRoute::WaitForImages => {
+                    self.pending_follow_up =
+                        Some((id, self.composer.read(cx).value().to_string(), alternate));
+                    cx.notify();
+                    return;
+                }
+                composer_follow_up_mount::SendRoute::FollowUp => {
+                    self.send_follow_up(alternate, window, cx);
+                    return;
+                }
+                composer_follow_up_mount::SendRoute::WaitForSelection => {
+                    let reason = "Finish changing the account or provider, then send again.";
+                    self.show_local_error(reason);
+                    self.status = reason.into();
+                    cx.notify();
+                    return;
+                }
+                composer_follow_up_mount::SendRoute::Send => {}
+            }
             // Send reads as instant: the draft leaves the composer now, and a
             // refused send puts it back. Waiting for the engine made a plain
             // sentence sit in the field for a second.
@@ -4864,7 +4892,7 @@ impl Coincide {
             }
             // The engine call runs off the UI thread: the window never freezes
             // behind a send, and a refused send still restores the text.
-            self.show_pending_send(&id, &sent);
+            let image_send = self.show_pending_send(&id, &sent);
             let engine = self.engine.clone();
             let sent_for_call = sent.clone();
             let id_for_call = id.clone();
@@ -4882,7 +4910,14 @@ impl Coincide {
                 let _ = this.update(cx, |this, cx| {
                     match result {
                         Ok(_) => {
-                            this.pending_drafts.remove(&id);
+                            this.finish_pending_images(image_send, true);
+                            if this
+                                .pending_drafts
+                                .get(&id)
+                                .is_some_and(|draft| draft.text == sent)
+                            {
+                                this.pending_drafts.remove(&id);
+                            }
                             if !this.running.contains(&id) {
                                 this.running.push(id.clone());
                                 this.splice_transcript(
@@ -4894,13 +4929,11 @@ impl Coincide {
                             this.transcript_list.scroll_to_end();
                         }
                         Err(error) => {
+                            this.finish_pending_images(image_send, false);
                             this.retry_selected_account_readiness();
                             this.drop_pending_send(&id);
-                            this.restore_composer = Some(sent.clone());
+                            this.restore_composer = Some((id.clone(), sent.clone()));
                             this.show_local_error(&format!("Message not sent: {error}"));
-                            if let Some(thread) = this.selected.as_mut() {
-                                thread["draft"] = json!(sent);
-                            }
                             this.status = error.to_string();
                         }
                     }
@@ -5843,15 +5876,30 @@ impl Render for Coincide {
                 // An edited draft is a new intent; never overwrite it with a
                 // previously queued retry or send the stale text in its place.
                 if self.composer.read(cx).value().as_ref() == draft {
-                    self.send_follow_up(alternate, window, cx);
+                    if self.attachment_import_threads.contains(&id) {
+                        self.pending_follow_up = Some((id, draft, alternate));
+                    } else {
+                        self.send_selected(alternate, window, cx);
+                    }
                 }
             } else {
                 self.pending_follow_up = Some((id, draft, alternate));
             }
         }
-        if let Some(text) = self.restore_composer.take() {
-            self.composer
-                .update(cx, |input, cx| input.set_value(text, window, cx));
+        if let Some((id, text)) = self.restore_composer.clone()
+            && self
+                .selected
+                .as_ref()
+                .is_some_and(|thread| thread["id"] == id)
+        {
+            self.restore_composer = None;
+            if self.composer.read(cx).value().is_empty() {
+                self.composer
+                    .update(cx, |input, cx| input.set_value(text.clone(), window, cx));
+                if let Some(thread) = self.selected.as_mut() {
+                    thread["draft"] = json!(text);
+                }
+            }
         }
         if let Some(id) = self.pending_select.clone()
             && let Some(thread) = &self.selected
@@ -6081,10 +6129,6 @@ impl Render for Coincide {
                                                         .when(self.composer_files.opened, |view| view.when_some(self.composer_file_pane(cx), |view, files| view.child(files)))
                                                         .when(!self.composer_files.opened, |view| view
                                                         .when_some(
-                                                            self.composer_steering_pane(cx),
-                                                            |view, steering| view.child(steering),
-                                                        )
-                                                        .when_some(
                                                             self.composer_context_pane(cx),
                                                             |view, context| view.child(context),
                                                         )
@@ -6184,7 +6228,6 @@ impl Render for Coincide {
                                                 .when(implement_button.is_none(), |view| view.child(
                                                     Button::new("send")
                                                         .primary()
-                                                        .disabled(importing_images || self.selection_send_blocked())
                                                         .accessibility_label(composer_follow_up_mount::dispatch_label(self.composer_send_dispatch(false)))
                                                         .tooltip(composer_follow_up_mount::dispatch_label(self.composer_send_dispatch(false)))
                                                         .icon(composer_follow_up_mount::dispatch_icon(self.composer_send_dispatch(false)))

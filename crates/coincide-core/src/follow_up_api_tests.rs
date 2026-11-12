@@ -614,6 +614,45 @@ fn native_image_and_reference_steering_delivers_exact_payload_before_cas_cleanup
     finish_fake(&mut engine, &id, release);
 }
 #[test]
+fn accepted_image_is_removed_even_when_a_new_draft_arrives_during_ack() {
+    let Fixture {
+        _dir,
+        mut engine,
+        id,
+        mut server,
+        release,
+        ..
+    } = fixture();
+    let first = private_image(&engine, _dir.path());
+    let second = private_image(&engine, _dir.path());
+    let mut source = engine.store.thread(&id).unwrap();
+    source["draft"] = json!("First message");
+    source["rustDraftImages"] = json!([first]);
+    engine.store.save(&source).unwrap();
+    let ticket = engine.send_native_follow_up(&source, false).unwrap();
+    let request = server.next_request().unwrap();
+
+    let mut next = engine.store.thread(&id).unwrap();
+    next["draft"] = json!("New message");
+    next["rustDraftImages"] = json!([first, second]);
+    engine.store.save(&next).unwrap();
+    server.response(&json!({"id":request["id"],"result":{"turnId":"native-turn"}}));
+    engine.poll();
+    engine.poll();
+    assert_eq!(
+        engine.native_follow_up_status(&ticket).unwrap(),
+        NativeFollowUpStatus::Delivered {
+            dispatch: Dispatch::Steer,
+            draft_cleared: false,
+        }
+    );
+    let saved = engine.store.thread(&id).unwrap();
+    assert_eq!(saved["draft"], "New message");
+    assert_eq!(saved["rustDraftImages"], json!([second]));
+    engine.collect_native_follow_up(ticket).unwrap();
+    finish_fake(&mut engine, &id, release);
+}
+#[test]
 fn invalid_follow_up_image_is_rejected_before_stop_or_steer() {
     let Fixture {
         _dir,

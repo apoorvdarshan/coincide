@@ -170,7 +170,6 @@ impl Coincide {
         self.composer_suggestions.close();
         self.usage_history.request_shutdown();
         self.codex_limits.request_shutdown();
-        self.steering.request_shutdown();
         self.credential_panel
             .update(cx, |panel, _| panel.request_shutdown());
         self.transcription_panel
@@ -224,7 +223,6 @@ impl Coincide {
             self.composer_files.shutdown_status(),
             self.composer_suggestions.shutdown_status(),
             self.usage_history.shutdown_status(),
-            self.steering.shutdown_status(),
             self.credential_panel
                 .update(cx, |panel, _| panel.shutdown_status()),
             self.transcription_panel

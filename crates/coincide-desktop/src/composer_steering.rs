@@ -1,7 +1,6 @@
 //! Explicit Codex text steering controller. This model never changes a draft,
 //! queues a follow-up, or treats local admission as provider acceptance.
 use crate::worker_owner::{ShutdownStatus, WorkerOwner};
-use coincide_core::api::SharedEngine;
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
@@ -52,22 +51,6 @@ pub struct SteeringController {
     last_poll: Instant,
 }
 impl SteeringController {
-    pub fn new(engine: SharedEngine) -> Self {
-        Self::with_backend(Arc::new(move |method, params| {
-            let mut engine = engine
-                .try_lock()
-                .map_err(|_| "Engine is busy; draft retained".to_owned())?;
-            let reply = engine.dispatch(json!({"method":method,"params":params}));
-            if let Some(error) = reply.get("error") {
-                Err(error["message"]
-                    .as_str()
-                    .unwrap_or("Steering failed")
-                    .to_owned())
-            } else {
-                Ok(reply["result"].clone())
-            }
-        }))
-    }
     fn with_backend(backend: Backend) -> Self {
         Self {
             backend,
