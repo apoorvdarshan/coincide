@@ -20,6 +20,12 @@ fn response(id: &Value, result: Value) -> Value {
     json!({"type":"control_response","response":{"subtype":"success","request_id":id,"response":result}})
 }
 
+fn steering_frame(text: &str) -> Value {
+    json!({"type":"user", "message":{"role":"user","content":text},
+        "parent_tool_use_id":null, "uuid":uuid::Uuid::new_v4().to_string(),
+        "origin":{"kind":"human"}, "priority":"now"})
+}
+
 fn control_error(id: &Value, message: &str) -> Value {
     json!({"type":"control_response","response":{"subtype":"error","request_id":id,"error":message}})
 }
@@ -96,6 +102,12 @@ struct Mapper {
 }
 
 impl Mapper {
+    fn has_foreground_agent(&self) -> bool {
+        self.tools.values().any(|tool| {
+            matches!(tool["name"].as_str(), Some("Agent" | "Task"))
+                && tool["status"] == "inProgress"
+        })
+    }
     fn map(&mut self, frame: &Value, events: &Sender<Event>) -> Result<()> {
         if frame["parent_tool_use_id"].is_string() {
             return Ok(());
@@ -302,6 +314,8 @@ pub(super) fn run(
     let started = Instant::now();
     let mut stopping: Option<Instant> = None;
     let mut completed = false;
+    let mut steering_reply: Option<std::sync::mpsc::SyncSender<std::result::Result<(), String>>> =
+        None;
     loop {
         while let Ok(command) = commands.try_recv() {
             match command {
@@ -332,11 +346,32 @@ pub(super) fn run(
                     }
                 }
                 Control::Reply { .. } => {}
-                Control::Steer { reply, .. } => {
-                    let _ = reply.send(Err(
-                        "This provider does not support active-turn steering".into()
-                    ));
+                Control::Steer { text, reply } => {
+                    // Priority-now may cancel foreground subagents. Until they
+                    // can be moved safely, refuse rather than disrupt them.
+                    let foreground_agent = mapper.has_foreground_agent();
+                    if !initialized || content.is_some() || stopping.is_some() || completed {
+                        let _ = reply.send(Err("Claude's turn is not accepting steering".into()));
+                    } else if foreground_agent {
+                        let _ = reply.send(Err("Claude has a foreground agent; queue this message to avoid interrupting it".into()));
+                    } else if steering_reply.is_some() {
+                        let _ = reply.send(Err(
+                            "A Claude steering message is already being written".into(),
+                        ));
+                    } else {
+                        match transport.write(&steering_frame(&text)) {
+                            Ok(()) => steering_reply = Some(reply),
+                            Err(error) => {
+                                let _ = reply.send(Err(error.to_string()));
+                            }
+                        }
+                    }
                 }
+            }
+        }
+        if steering_reply.is_some() && transport.is_flushed()? {
+            if let Some(reply) = steering_reply.take() {
+                let _ = reply.send(Ok(()));
             }
         }
         if completed {
@@ -493,6 +528,77 @@ pub(super) fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn priority_now_frame_and_foreground_agent_guard() {
+        let frame = steering_frame("synthetic correction");
+        assert_eq!(frame["priority"], "now");
+        assert_eq!(frame["message"]["content"], "synthetic correction");
+        assert_eq!(frame["origin"]["kind"], "human");
+        let (events, _receiver) = std::sync::mpsc::channel();
+        let mut mapper = Mapper::default();
+        mapper.map(&json!({"type":"assistant","message":{"id":"m","content":[{"type":"tool_use","id":"worker","name":"Agent","input":{}}]}}), &events).unwrap();
+        assert!(mapper.has_foreground_agent());
+        mapper.map(&json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"worker","content":"done"}]}}), &events).unwrap();
+        assert!(!mapper.has_foreground_agent());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn real_pipe_transmits_claude_priority_now_follow_up() {
+        use std::{fs, os::unix::fs::PermissionsExt};
+        let dir = tempfile::tempdir().unwrap();
+        let executable = dir.path().join("fake-claude");
+        fs::write(
+            &executable,
+            r#"#!/usr/bin/env python3
+import json,sys
+def read(): return json.loads(sys.stdin.readline())
+def write(x): print(json.dumps(x),flush=True)
+r=read(); assert r['request']['subtype']=='initialize'
+write({'type':'control_response','response':{'subtype':'success','request_id':r['request_id']}})
+r=read(); assert r['message']['content']=='initial message'
+session=sys.argv[sys.argv.index('--session-id')+1]
+write({'type':'system','subtype':'init','session_id':session})
+r=read(); assert r['type']=='user' and r['priority']=='now' and r['message']['content']=='redirect'
+write({'type':'result','subtype':'success','is_error':False,'session_id':session,'result':'done'})
+sys.stdin.readline()
+"#,
+        )
+        .unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+        let session = Session::start_with_images(
+            Provider::Claude,
+            Launch {
+                executable,
+                cwd: dir.path().into(),
+                session: None,
+                prompt: "initial message".into(),
+                model: None,
+                variant: None,
+                full_access: false,
+            },
+            vec![],
+        );
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            assert!(Instant::now() < deadline);
+            match session.events.recv_timeout(Duration::from_secs(1)) {
+                Ok(Event::Session(_)) => break,
+                Ok(Event::Failed(error)) => panic!("{error}"),
+                _ => {}
+            }
+        }
+        let reply = session.begin_steer_text("redirect").unwrap();
+        assert_eq!(reply.recv_timeout(Duration::from_secs(5)).unwrap(), Ok(()));
+        loop {
+            assert!(Instant::now() < deadline);
+            match session.events.recv_timeout(Duration::from_secs(1)) {
+                Ok(Event::Finished) => break,
+                Ok(Event::Failed(error)) => panic!("{error}"),
+                _ => {}
+            }
+        }
+    }
     #[test]
     fn approval_preserves_tool_input_but_never_accepts_permission_updates() {
         let original = json!({"tool_name":"Write","tool_use_id":"tool-1","input":{"file_path":"a","content":"b","future":42}});

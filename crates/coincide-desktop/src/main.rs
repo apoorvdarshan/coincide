@@ -5840,9 +5840,13 @@ impl Render for Coincide {
                 .as_ref()
                 .is_some_and(|thread| text(thread, "id") == id)
             {
-                self.composer
-                    .update(cx, |input, cx| input.set_value(draft, window, cx));
-                self.send_follow_up(alternate, window, cx);
+                // An edited draft is a new intent; never overwrite it with a
+                // previously queued retry or send the stale text in its place.
+                if self.composer.read(cx).value().as_ref() == draft {
+                    self.send_follow_up(alternate, window, cx);
+                }
+            } else {
+                self.pending_follow_up = Some((id, draft, alternate));
             }
         }
         if let Some(text) = self.restore_composer.take() {
