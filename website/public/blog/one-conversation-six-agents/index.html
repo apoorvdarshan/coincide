@@ -58,7 +58,7 @@
 </figure>
 
 <p>I pay for more than one coding agent. They’re good at different things, and sometimes I just want a second opinion on what the first one wrote. The annoying part was never switching tools. It was re-explaining the task every time.</p>
-<p>So in Coincide, a thread isn’t tied to one agent. You type <code>/codex</code> (or pick a Codex model), and Codex continues the conversation Claude Code started, in the same folder. Switch back, and Claude Code picks up its own session again. Everything below is in the <a href="https://github.com/apoorvdarshan/coincide">repository</a>, mostly in <a href="https://github.com/apoorvdarshan/coincide/blob/main/CoincideKit/Providers/Handoff.swift"><code>Handoff.swift</code></a>.</p>
+<p>So in Coincide, a thread isn’t tied to one agent. You type <code>/codex</code> (or pick a Codex model), and Codex continues the conversation Claude Code started, in the same folder. Switch back, and Claude Code picks up its own session again. Everything below is in the <a href="https://github.com/apoorvdarshan/coincide">repository</a>, mostly in <a href="https://github.com/apoorvdarshan/coincide/blob/61452fb00b4213006f8d548bc9b9adee5a67c545/CoincideKit/Providers/Handoff.swift"><code>Handoff.swift</code></a>.</p>
 
 <h2 id="protocols">Six agents, six protocols</h2>
 <p>Coincide doesn’t call model APIs. It drives each agent’s own command-line tool with the login you already have, so your subscriptions keep working and nothing is proxied:</p>
@@ -114,7 +114,7 @@ Continue from here. Files on disk already reflect the work above. The user's new
 </ol>
 
 <h2 id="host">Agents that outlive the app</h2>
-<p>Handoff only works if sessions survive, so agents don’t run inside the app. They run in a small <a href="/features/background-agents">background host</a>, a LaunchAgent the app talks to over XPC (<a href="https://github.com/apoorvdarshan/coincide/blob/main/docs/agent-host.md">design notes</a>). You can quit or update Coincide mid-turn, and the reply is still streaming when you reopen it.</p>
+<p>Handoff only works if sessions survive, so agents don’t run inside the app. They run in a small <a href="/features/background-agents">background host</a>, a LaunchAgent the app talks to over XPC (<a href="https://github.com/apoorvdarshan/coincide/blob/61452fb00b4213006f8d548bc9b9adee5a67c545/docs/agent-host.md">design notes</a>). You can quit or update Coincide mid-turn, and the reply is still streaming when you reopen it.</p>
 <ul>
   <li><strong>One process per session.</strong> Each running session holds an <code>flock(2)</code> lock. The kernel drops it when the process dies, so a held lock always means a live owner, and nothing ever starts the same session twice.</li>
   <li><strong>Attach, don’t resume.</strong> On relaunch, the app attaches to every session the host is still running and replays its log. It only falls back to the tool’s own resume when nothing is running it.</li>

@@ -1,5 +1,7 @@
 # Agent sessions across quits, relaunches and updates
 
+> Historical Swift desktop documentation. The active desktop implementation is Rust.
+
 Coincide runs agents (Claude Code, Codex, Cursor, Grok, OpenCode, Antigravity) in its background agent host, `CoincideAgentHost`: a LaunchAgent (`com.apoorvdarshan.coincide.agent-host`) that launchd starts on demand and that the app talks to over XPC. The host owns the agent processes and logs their events, so agents keep working while Coincide is closed. This applies to every provider in the same way: the host and the app only see `AgentSession`s and `AgentEvent`s.
 
 Sources: `CoincideKit/AgentHost/` (engine, protocol, locks, routing, runtime copies), `CoincideAgentHost/` (the host executable), `Coincide/App/AgentHostController.swift` (the app's side).

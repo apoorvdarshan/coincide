@@ -77,7 +77,7 @@ impl Coincide {
             choice::selected(thread, &self.settings),
             matches!(
                 thread["selection"]["provider"].as_str(),
-                Some("codex" | "opencode")
+                Some("codex" | "opencode" | "claude")
             ),
         );
         Button::new("selection-follow-up-disclosure")
@@ -113,7 +113,7 @@ impl Coincide {
             let unsupported = behavior == Behavior::Steer
                 && !matches!(
                     thread["selection"]["provider"].as_str(),
-                    Some("codex" | "opencode")
+                    Some("codex" | "opencode" | "claude")
                 );
             menu = menu.child(self.picker_menu_row(
                 format!("follow-up-{}", behavior.key()),
@@ -147,7 +147,7 @@ impl Coincide {
             let unsupported = behavior == Behavior::Steer
                 && !matches!(
                     thread["selection"]["provider"].as_str(),
-                    Some("codex" | "opencode")
+                    Some("codex" | "opencode" | "claude")
                 );
             pane = pane.child(
                 Button::new(SharedString::from(format!("follow-up-{}", behavior.key())))
@@ -220,30 +220,40 @@ impl Coincide {
             self.cancel_composer_dictation(cx);
         }
 
-        // The text is in hand, so a draft that is still saving must not hold the
-        // message back; it saves in the background either way.
-        self.flush_pending_drafts();
+        self.record_composer_draft(cx);
         let Some(thread) = self.selected.clone() else {
             return;
         };
         let id = text(&thread, "id");
         if self.attachment_import_threads.contains(&id) {
-            self.status = "Wait for image imports to finish before sending a follow-up.".into();
+            self.show_local_error("Wait for image imports to finish before sending a follow-up.");
             cx.notify();
             return;
         }
         let draft = self.composer.read(cx).value().to_string();
-        // The message shows in the conversation the moment it is sent; keeping
-        // it in the field until delivery is confirmed looked like a failed send.
-        // A withheld follow-up puts it back below.
-        self.show_pending_send(&id, &draft);
-        self.pending_drafts.remove(&id);
-        self.composer
-            .update(cx, |input, cx| input.set_value("", window, cx));
-        if let Some(thread) = self.selected.as_mut()
-            && text(thread, "id") == id
+        // The Engine validates the saved draft and selection atomically. Keep
+        // the visible draft until that exact payload has been saved and admitted.
+        // In particular, never retry by replacing text the user typed meanwhile.
+        self.save_pending_draft(&id);
+        if self
+            .pending_drafts
+            .get(&id)
+            .is_some_and(|draft| draft.failed)
         {
-            thread["draft"] = json!("");
+            self.pending_follow_up = None;
+            self.show_local_error("The draft could not be saved. It remains in the composer; retry saving before sending.");
+            cx.notify();
+            return;
+        }
+        if self.pending_drafts.contains_key(&id)
+            || self
+                .pending_follow_up_choice
+                .as_ref()
+                .is_some_and(|(owner, _)| owner == &id)
+        {
+            self.pending_follow_up = Some((id, draft, alternate));
+            cx.notify();
+            return;
         }
         let result = self
             .engine
@@ -252,6 +262,16 @@ impl Coincide {
             .and_then(|mut engine| engine.send_native_follow_up(&thread, alternate));
         match result {
             Ok(ticket) => {
+                self.pending_follow_up = None;
+                self.show_pending_send(&id, &draft);
+                self.pending_drafts.remove(&id);
+                self.composer
+                    .update(cx, |input, cx| input.set_value("", window, cx));
+                if let Some(thread) = self.selected.as_mut()
+                    && text(thread, "id") == id
+                {
+                    thread["draft"] = json!("");
+                }
                 self.follow_up_deliveries.push(PendingDelivery {
                     ticket: Some(ticket),
                     thread: id,
@@ -259,21 +279,15 @@ impl Coincide {
                     queued: false,
                 });
             }
-            Err(error) if engine_busy(&error) => {
-                // The engine is busy for a moment; keep the message and take it
-                // as soon as the lock is free instead of refusing it.
+            Err(error)
+                if engine_busy(&error)
+                    || error.to_string().contains("Collect the previous follow-up") =>
+            {
                 self.pending_follow_up = Some((id, draft, alternate));
             }
             Err(error) => {
+                self.pending_follow_up = None;
                 let reason = error.to_string();
-                if reason.contains("Collect the previous follow-up") {
-                    // The last steer is still being collected; try again next
-                    // tick rather than refusing this one.
-                    self.pending_follow_up = Some((id, draft, alternate));
-                    return;
-                }
-                self.drop_pending_send(&id);
-                self.restore_follow_up_draft(&id, &draft, window, cx);
                 self.show_local_error(&format!("Message not sent: {reason}"));
                 self.status = reason;
             }
@@ -288,20 +302,21 @@ impl Coincide {
         draft: &str,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
         if !self
             .selected
             .as_ref()
             .is_some_and(|thread| text(thread, "id") == id)
             || !self.composer.read(cx).value().is_empty()
         {
-            return;
+            return false;
         }
         self.composer
             .update(cx, |input, cx| input.set_value(draft, window, cx));
         if let Some(thread) = self.selected.as_mut() {
             thread["draft"] = json!(draft);
         }
+        true
     }
     pub(super) fn poll_composer_follow_ups(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let mut retained = Vec::new();
@@ -326,11 +341,39 @@ impl Coincide {
                 None | Some(NativeFollowUpStatus::Pending) => retained.push(delivery),
                 Some(status) => {
                     let delivered = matches!(status, NativeFollowUpStatus::Delivered { .. });
-                    if let NativeFollowUpStatus::Retained(_) = &status {
-                        self.restore_follow_up_draft(&delivery.thread, &delivery.draft, window, cx);
+                    let restored = matches!(status, NativeFollowUpStatus::Retained(_))
+                        && !delivery.queued
+                        && self.restore_follow_up_draft(
+                            &delivery.thread,
+                            &delivery.draft,
+                            window,
+                            cx,
+                        );
+                    let queued = matches!(
+                        status,
+                        NativeFollowUpStatus::Delivered {
+                            dispatch: Dispatch::Queue,
+                            ..
+                        }
+                    ) && !delivery.queued;
+                    // Queue entries have their own UI, and a restored draft is
+                    // back in the composer. Remove only this optimistic row.
+                    if (restored || queued)
+                        && self
+                            .pending_sent
+                            .as_ref()
+                            .is_some_and(|(thread, draft, ..)| {
+                                thread == &delivery.thread && draft == &delivery.draft
+                            })
+                    {
+                        self.drop_pending_send(&delivery.thread);
                     }
                     if let NativeFollowUpStatus::Retained(reason) = &status {
-                        self.show_local_error(&format!("Message not delivered: {reason}"));
+                        if reason.contains("delivery is unknown") {
+                            self.show_local_error(&format!("Delivery status unknown: {reason}"));
+                        } else {
+                            self.show_local_error(&format!("Message not delivered: {reason}"));
+                        }
                     }
                     self.status = match &status {
                         NativeFollowUpStatus::Retained(reason) => reason.clone(),

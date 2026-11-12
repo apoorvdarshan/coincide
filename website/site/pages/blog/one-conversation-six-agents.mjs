@@ -1,7 +1,7 @@
 import { code, table } from "../../layout.mjs";
 import { shared, video, videoSchema } from "./_blog.mjs";
 
-const SRC = "https://github.com/apoorvdarshan/coincide/blob/main";
+const SRC = "https://github.com/apoorvdarshan/coincide/blob/61452fb00b4213006f8d548bc9b9adee5a67c545";
 
 const short = {
   id: "ht1dvjzqvg0",

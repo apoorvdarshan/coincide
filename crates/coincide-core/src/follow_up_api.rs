@@ -17,17 +17,62 @@ pub struct NativeFollowUpTicket {
 }
 enum Delivery {
     Steering(String),
+    TextSteer {
+        provider: String,
+        reply: std::sync::mpsc::Receiver<std::result::Result<(), String>>,
+        accepted: bool,
+        started: Instant,
+        item_id: String,
+        context: Value,
+    },
     Deferred(agent::WorkerCompletion),
 }
 struct Operation {
     thread: String,
     source: Value,
-    prefix: Vec<Value>,
+    prefix: Option<PrefixProof>,
     text: String,
     dispatch: Dispatch,
     delivery: Option<Delivery>,
     status: NativeFollowUpStatus,
     queue: Option<super::queue_dispatch::QueueClaim>,
+}
+/// Verify the immutable prefix without retaining or limiting a copy of an
+/// arbitrarily long conversation. The digest is private to this Engine.
+struct PrefixProof {
+    len: usize,
+    digest: [u8; 32],
+}
+impl PrefixProof {
+    fn capture(items: &[Value], len: usize) -> Result<Self> {
+        use sha2::{Digest, Sha256};
+        struct Writer<'a>(&'a mut Sha256);
+        impl std::io::Write for Writer<'_> {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                use sha2::Digest;
+                self.0.update(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let prefix = items
+            .get(..len)
+            .context("Conversation prefix is unavailable")?;
+        let mut digest = Sha256::new();
+        serde_json::to_writer(Writer(&mut digest), prefix)?;
+        Ok(Self {
+            len,
+            digest: digest.finalize().into(),
+        })
+    }
+    fn matches(&self, items: &[Value]) -> Result<bool> {
+        if items.len() < self.len {
+            return Ok(false);
+        }
+        Ok(Self::capture(items, self.len)?.digest == self.digest)
+    }
 }
 pub(super) struct State {
     owner: Uuid,
@@ -120,7 +165,7 @@ impl Engine {
             behavior != Behavior::Steer
                 || matches!(
                     expected["selection"]["provider"].as_str(),
-                    Some("codex" | "opencode")
+                    Some("codex" | "opencode" | "claude")
                 ),
             "This provider does not support native steering yet"
         );
@@ -137,7 +182,7 @@ impl Engine {
         let run = self.runs.get(required(thread, "id")?);
         let supports = matches!(
             thread["selection"]["provider"].as_str(),
-            Some("codex" | "opencode")
+            Some("codex" | "opencode" | "claude")
         );
         let behavior = choice::effective(choice::selected(thread, &settings), supports);
         let ready = run.is_some_and(|run| {
@@ -146,7 +191,8 @@ impl Engine {
                 && thread["interactionMode"]
                     .as_str()
                     .is_none_or(|mode| mode == "build")
-                && (run.provider == "opencode" || run.session.can_steer())
+                && (matches!(run.provider.as_str(), "opencode" | "claude")
+                    || run.session.can_steer())
         });
         let approval = run.is_some_and(|run| {
             run.pending
@@ -300,18 +346,18 @@ impl Engine {
             .store
             .document("settings.json")?
             .unwrap_or_else(|| json!({}));
-        let supports_steering = matches!(run.provider.as_str(), "codex" | "opencode");
+        let supports_steering = matches!(run.provider.as_str(), "codex" | "opencode" | "claude");
         let behavior = choice::effective(choice::selected(&current, &settings), supports_steering);
         let can_steer = supports_steering
             && current["interactionMode"]
                 .as_str()
                 .is_none_or(|mode| mode == "build")
-            && (run.provider == "opencode" || run.session.can_steer());
+            && (matches!(run.provider.as_str(), "opencode" | "claude") || run.session.can_steer());
         let approval = run
             .pending
             .values()
             .any(|frame| frame["method"] != "item/tool/requestUserInput");
-        let (dispatch, means_steer) = if is_queue {
+        let (mut dispatch, means_steer) = if is_queue {
             (
                 if can_steer {
                     Dispatch::Steer
@@ -323,18 +369,25 @@ impl Engine {
         } else {
             choice::resolve(true, can_steer, alternate, behavior, approval)
         };
+        // These active-turn channels currently carry text, not image payloads.
+        // Preserve images by sending this follow-up after the running turn.
+        if dispatch == Dispatch::Steer
+            && matches!(run.provider.as_str(), "opencode" | "claude")
+            && !images.is_empty()
+        {
+            dispatch = Dispatch::Queue;
+        }
         let worker = run.session.worker_completion();
-        let prefix: Vec<Value> = current["items"]
-            .as_array()
-            .context("Missing transcript")?
-            .iter()
-            .take(run.transcript_start)
-            .cloned()
-            .collect();
-        ensure!(
-            serde_json::to_vec(&prefix)?.len() <= 8 * 1024 * 1024,
-            "Conversation prefix exceeds safe native follow-up limit"
-        );
+        let prefix = if dispatch == Dispatch::Interrupt
+            || (dispatch == Dispatch::Queue && means_steer && is_queue)
+        {
+            Some(PrefixProof::capture(
+                current["items"].as_array().context("Missing transcript")?,
+                run.transcript_start,
+            )?)
+        } else {
+            None
+        };
         // Validate every denial before replying to any pending request. Never
         // grant an approval, invent a question answer, or use stale UI request IDs.
         let mut denials = Vec::new();
@@ -342,7 +395,7 @@ impl Engine {
             run.pending.len() <= 64,
             "Too many pending requests; respond explicitly first"
         );
-        for (key, frame) in &run.pending {
+        for (key, frame) in run.pending.iter().filter(|_| dispatch != Dispatch::Queue) {
             let result = if frame["method"] == "item/tool/requestUserInput" {
                 json!({"answers":{}})
             } else {
@@ -376,24 +429,50 @@ impl Engine {
         };
         match dispatch {
             Dispatch::Steer => {
-                let result = if self
+                if self
                     .runs
                     .get(&id)
-                    .is_some_and(|run| run.provider == "opencode")
+                    .is_some_and(|run| matches!(run.provider.as_str(), "opencode" | "claude"))
                 {
-                    self.steer_opencode_composer(&current)?
-                } else if let Some(claim) = &op.queue {
-                    self.steer_owned_queue(&id, claim)?
+                    let runtime_text = crate::composer_context::prompt(&text, &context)?;
+                    let reply = self
+                        .runs
+                        .get(&id)
+                        .context("Thread is not running")?
+                        .session
+                        .begin_steer_text(&runtime_text)?;
+                    let provider = self
+                        .runs
+                        .get(&id)
+                        .context("Thread is not running")?
+                        .provider
+                        .clone();
+                    op.delivery = Some(Delivery::TextSteer {
+                        provider,
+                        reply,
+                        accepted: false,
+                        started: Instant::now(),
+                        item_id: Uuid::new_v4().to_string(),
+                        context,
+                    });
                 } else {
-                    self.steer_native_composer(&current)?
-                };
-                op.delivery = Some(Delivery::Steering(required(&result, "operationId")?.into()));
+                    let result = if let Some(claim) = &op.queue {
+                        self.steer_owned_queue(&id, claim)?
+                    } else {
+                        self.steer_native_composer(&current)?
+                    };
+                    op.delivery =
+                        Some(Delivery::Steering(required(&result, "operationId")?.into()));
+                }
             }
             Dispatch::Interrupt => {
                 self.request_provider_stop(&id)?;
                 op.delivery = Some(Delivery::Deferred(worker));
             }
-            Dispatch::Queue if means_steer => {
+            // A queued Send Now already owns a durable row. An ordinary
+            // follow-up that cannot steer yet must first become a durable row,
+            // so the user can safely start another draft while the turn runs.
+            Dispatch::Queue if means_steer && is_queue => {
                 op.delivery = Some(Delivery::Deferred(worker));
             }
             Dispatch::Queue => {
@@ -473,7 +552,7 @@ impl Engine {
                     !self.admissions_frozen() && !self.shutdown,
                     "Application is closing; draft retained"
                 );
-                match op.delivery.as_ref().context("Missing follow-up delivery")? {
+                match op.delivery.as_mut().context("Missing follow-up delivery")? {
                     Delivery::Steering(operation) => {
                         let result = self.steer_command(
                             "agent.steer.result",
@@ -503,6 +582,43 @@ impl Engine {
                             ),
                         }
                     }
+                    Delivery::TextSteer {
+                        provider,
+                        reply,
+                        accepted,
+                        started,
+                        item_id,
+                        context,
+                    } => {
+                        if !*accepted {
+                            match reply.try_recv() {
+                                Ok(Ok(())) => *accepted = true,
+                                Ok(Err(error)) => bail!("{provider} rejected the message: {error}"),
+                                Err(std::sync::mpsc::TryRecvError::Empty)
+                                    if started.elapsed() < Duration::from_secs(10) =>
+                                {
+                                    return Ok(None);
+                                }
+                                Err(_) => bail!(
+                                    "{provider} delivery is unknown; do not resend automatically"
+                                ),
+                            }
+                        }
+                        if let Err(error) = self
+                            .persist_text_steer(&op.thread, item_id, &op.text, context, provider)
+                        {
+                            self.schedule_error = Some(format!(
+                                "Accepted provider message could not be saved yet: {error}"
+                            ));
+                            return Ok(None);
+                        }
+                        if let Some(claim) = &op.queue {
+                            self.complete_native_queue_steer(claim)?;
+                            Ok(Some(false))
+                        } else {
+                            Ok(Some(self.store.clear_native_follow_up_draft(&op.source)?))
+                        }
+                    }
                     Delivery::Deferred(worker) => {
                         match worker.status() {
                             agent::WorkerThreadStatus::Running => return Ok(None),
@@ -522,9 +638,12 @@ impl Engine {
                             );
                         }
                         ensure!(
-                            current["items"]
-                                .as_array()
-                                .is_some_and(|items| items.starts_with(&op.prefix)),
+                            op.prefix
+                                .as_ref()
+                                .context("Missing conversation prefix proof")?
+                                .matches(
+                                    current["items"].as_array().context("Missing transcript")?
+                                )?,
                             "Conversation prefix changed; draft retained"
                         );
                         if let Some(claim) = op.queue.as_ref() {

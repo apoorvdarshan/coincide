@@ -1,1 +1,0 @@
-../../../CoincideKit/Git/SplitDiff.swift

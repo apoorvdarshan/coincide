@@ -1,6 +1,6 @@
 # Fails a pull request that adds a dependency with a known high or critical vulnerability, using
 # GitHub's dependency graph diff for the pull request. The graph covers the pinned GitHub Actions;
-# SwiftTerm is declared in project.yml, which the dependency graph does not read.
+# Dependency review covers the repository dependency graph.
 
 name: Dependency review
 

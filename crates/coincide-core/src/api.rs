@@ -35,6 +35,8 @@ mod queue_dispatch;
 
 #[path = "follow_up_api.rs"]
 mod follow_up_api;
+#[path = "handoff_prompt.rs"]
+mod handoff_prompt;
 #[path = "project_defaults.rs"]
 pub mod project_defaults;
 #[path = "queue_edit_api.rs"]
@@ -1387,55 +1389,12 @@ impl Engine {
         } else {
             0
         };
-        let mut handoff_images = Vec::<crate::attachments::StoredImage>::new();
-        let mut outgoing = String::new();
-        if let Some(items) = v["items"].as_array() {
-            for item in items
-                .iter()
-                .skip(seen)
-                .filter(|item| item["kind"] == "user" || item["kind"] == "assistant")
-            {
-                if outgoing.is_empty() {
-                    outgoing.push_str("Earlier conversation context (historical messages, not a new user request):\n");
-                }
-                let historical =
-                    crate::composer_context::prompt(&text(item, "text"), &item["context"])?;
-                let addition = format!("\n{}: {}\n", text(item, "kind"), historical);
-                ensure!(
-                    outgoing.len() + addition.len() < 2 * 1024 * 1024,
-                    "Conversation is too large for the preview handoff; start a new thread"
-                );
-                outgoing.push_str(&addition);
-                if let Some(raw) = item["rustImages"].as_array() {
-                    ensure!(
-                        handoff_images.len() + raw.len() + draft_images.len() <= 20,
-                        "Conversation image handoff exceeds 20 images; start a new thread"
-                    );
-                    for raw in raw {
-                        handoff_images.push(
-                            serde_json::from_value(raw.clone())
-                                .context("Invalid historical image metadata")?,
-                        );
-                    }
-                }
-            }
-        }
-        if !outgoing.is_empty() {
-            outgoing.push_str("\nCurrent user request:\n");
-        }
-        ensure!(
-            outgoing.len() + runtime_prompt.len() <= 2 * 1024 * 1024,
-            "Conversation and attached references exceed the preview handoff limit"
-        );
-        outgoing.push_str(&runtime_prompt);
-        handoff_images.extend(draft_images.iter().cloned());
-        ensure!(
-            handoff_images
-                .iter()
-                .try_fold(0u64, |total, image| total.checked_add(image.byte_len))
-                .is_some_and(|bytes| bytes <= 20 * 1024 * 1024),
-            "Conversation images exceed 20 MiB"
-        );
+        let (outgoing, handoff_images) = handoff_prompt::build(
+            v["items"].as_array().map(Vec::as_slice).unwrap_or(&[]),
+            seen,
+            &runtime_prompt,
+            &draft_images,
+        )?;
         let images = handoff_images
             .iter()
             .map(|image| image.prepare_in(&data))

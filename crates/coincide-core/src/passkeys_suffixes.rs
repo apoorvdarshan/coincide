@@ -263,13 +263,10 @@ mod tests {
     }
 
     #[test]
-    fn the_rust_copy_is_the_swift_apps() {
-        // Rust CI checks out crates only; full checkouts compare both copies.
-        let swift = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../CoincideKit/Preview/WebAuthn/public_suffix_list.dat");
-        if let Ok(swift) = std::fs::read_to_string(swift) {
-            assert!(swift == BUNDLED, "run scripts/update-public-suffix-list.sh");
-        }
+    fn bundled_list_contains_both_sections() {
+        assert!(BUNDLED.contains("===BEGIN ICANN DOMAINS==="));
+        assert!(BUNDLED.contains("===END PRIVATE DOMAINS==="));
+        assert!(PublicSuffixList::parse(BUNDLED).is_complete());
     }
 
     #[test]

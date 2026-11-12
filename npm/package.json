@@ -1,6 +1,7 @@
 {
   "name": "coincide-dev",
   "version": "0.1.0",
+  "coincideLegacyMinimumMacOS": 26,
   "description": "Installs Coincide, the native Mac app for Claude Code, Codex, Cursor and other coding agents",
   "keywords": [
     "coincide",
