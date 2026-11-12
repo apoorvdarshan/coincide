@@ -609,6 +609,7 @@ mod send_route_tests {
         thread["draft"] = json!("next message");
         thread["rustDraftImages"] = json!([{"id":"before"},{"id":"imported"}]);
         pending.finish_import(&thread);
+        thread["rustDraftImages"] = json!([{"id":"before"},{"id":"imported"},{"id":"next-import"}]);
         thread["selection"]["modelID"] = json!("two");
         assert!(!pending.matches(&thread, "next message"));
         assert_eq!(pending.captured["draft"], "original");

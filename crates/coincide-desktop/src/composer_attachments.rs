@@ -36,6 +36,14 @@ impl Coincide {
 
     fn reserve_image_import(&mut self, cx: &mut Context<Self>) -> Option<String> {
         let id = self.selected.as_ref().map(|thread| text(thread, "id"))?;
+        if self.pending_follow_up.as_ref().is_some_and(|pending| {
+            pending.thread == id && pending.waiting_for_import && !pending.import_failed
+        }) && !self.attachment_import_threads.contains(&id)
+        {
+            self.status = "The previous image is still being prepared for sending.".into();
+            cx.notify();
+            return None;
+        }
         if !self.attachment_import_threads.insert(id.clone()) {
             self.status = "Wait for the current image import to finish.".into();
             cx.notify();
@@ -294,6 +302,13 @@ impl Coincide {
         if is_selected
             && let Ok(value) = call(&self.engine, "threads.read", json!({"threadId":thread}))
         {
+            if !import_failed
+                && let Some(pending) = self.pending_follow_up.as_mut()
+                && pending.thread == thread
+                && pending.waiting_for_import
+            {
+                pending.finish_import(&value);
+            }
             self.selected = Some(value);
         }
         cx.notify();
