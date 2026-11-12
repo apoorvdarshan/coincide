@@ -3,7 +3,7 @@ use std::{fs, os::unix::fs::PermissionsExt};
 
 #[test]
 fn compact_control_waits_for_the_owned_turn_in_either_response_order() {
-    for order in ["early", "late", "refused"] {
+    for order in ["early", "late", "refused", "unconfirmed"] {
         let directory = tempfile::tempdir().unwrap();
         let executable = directory.path().join(order);
         fs::write(&executable, r#"#!/usr/bin/env python3
@@ -21,10 +21,13 @@ if order=='refused':
 else:
     started={'method':'turn/started','params':{'threadId':'native-thread','turn':{'id':'compact-turn'}}}
     completed={'method':'turn/completed','params':{'threadId':'native-thread','turn':{'id':'compact-turn','status':'completed'}}}
+    compacted={'method':'item/completed','params':{'threadId':'native-thread','turnId':'compact-turn','item':{'type':'contextCompaction','id':'item'}}}
     if order=='early':
-        write(started); write(completed); write({'id':r['id'],'result':{}})
+        write(started); write(compacted); write(completed); write({'id':r['id'],'result':{}})
     else:
-        write({'id':r['id'],'result':{}}); write(started); write(completed)
+        write({'id':r['id'],'result':{}}); write(started)
+        if order!='unconfirmed': write(compacted)
+        write(completed)
 sys.stdin.readline()
 "#).unwrap();
         fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
@@ -50,9 +53,13 @@ sys.stdin.readline()
         assert!(session.is_provider_control());
         loop {
             match session.events.recv_timeout(Duration::from_secs(5)).unwrap() {
-                Event::Finished if order != "refused" => break,
+                Event::Finished if order == "early" || order == "late" => break,
                 Event::Failed(error) if order == "refused" => {
                     assert!(error.contains("compaction refused"));
+                    break;
+                }
+                Event::Failed(error) if order == "unconfirmed" => {
+                    assert!(error.contains("did not report completed context compaction"));
                     break;
                 }
                 Event::Finished => panic!("refused compaction was reported as complete"),

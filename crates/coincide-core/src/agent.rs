@@ -783,6 +783,7 @@ fn run(
     let mut provisional_turn = false;
     let mut early_steering_frames = Vec::new();
     let mut compact_requested = None::<Instant>;
+    let mut compact_confirmed = false;
     loop {
         while let Ok(command) = commands.try_recv() {
             match command {
@@ -897,6 +898,15 @@ fn run(
                 early_steering_frames.push(frame.clone());
             }
             steering.observe(&frame);
+            if compact
+                && frame["method"] == "item/completed"
+                && frame["params"]["item"]["type"] == "contextCompaction"
+                && capture.identity().is_some_and(|(thread, turn)| {
+                    frame["params"]["threadId"] == thread && frame["params"]["turnId"] == turn
+                })
+            {
+                compact_confirmed = true;
+            }
             if frame.get("error").is_some() && frame.get("id").is_some() {
                 bail!("Codex rejected request: {}", frame["error"]);
             }
@@ -1052,6 +1062,16 @@ fn run(
                 }
                 if frame["params"]["turn"]["status"] == "failed" {
                     bail!("Codex turn failed: {}", frame["params"]["turn"]["error"]);
+                }
+                if compact {
+                    ensure!(
+                        frame["params"]["turn"]["status"] == "completed",
+                        "Codex compaction was interrupted"
+                    );
+                    ensure!(
+                        compact_confirmed,
+                        "Codex did not report completed context compaction"
+                    );
                 }
                 ensure!(
                     matches!(
