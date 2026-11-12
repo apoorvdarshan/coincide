@@ -177,21 +177,28 @@ impl Coincide {
             return;
         }
         let engine = self.engine.clone();
+        // The data directory is stable for this app instance and is already
+        // cached for image previews. Clipboard staging must not wait for the
+        // agent's shared engine merely to rediscover that same path.
+        let cached_root = self.attachment_root.clone();
         self.status = "Importing images into the draft…".into();
         cx.notify();
         cx.spawn(async move |this, cx| {
             let outcome: Result<usize> = async {
-                let data_engine = engine.clone();
-                let data_directory = cx
-                    .background_executor()
-                    .spawn(async move {
-                        data_engine
-                            .lock()
-                            .map_err(|_| anyhow::anyhow!("Application state is unavailable"))?
-                            .store
-                            .data_directory()
-                    })
-                    .await?;
+                let data_directory = if let Some(root) = cached_root {
+                    root
+                } else {
+                    let data_engine = engine.clone();
+                    cx.background_executor()
+                        .spawn(async move {
+                            data_engine
+                                .lock()
+                                .map_err(|_| anyhow::anyhow!("Application state is unavailable"))?
+                                .store
+                                .data_directory()
+                        })
+                        .await?
+                };
                 let mut imported = 0;
                 for image in images {
                     this.update(cx, |_, _| ())?;

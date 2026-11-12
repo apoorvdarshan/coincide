@@ -610,6 +610,7 @@ struct Coincide {
     /// A follow-up whose engine call found the lock busy, retried each tick.
     pending_follow_up: Option<composer_follow_up_mount::PendingSend>,
     pending_follow_up_backlog: std::collections::VecDeque<composer_follow_up_mount::PendingSend>,
+    pending_queue_actions: std::collections::VecDeque<queue::PendingQueueAction>,
     buffered_send_lease: coincide_core::native_ui_edits::NativeUiEditLease,
     quit_after_pending_sends: bool,
     /// A Queue/Steer choice made while the engine was busy, written later.
@@ -1774,6 +1775,7 @@ impl Coincide {
             restore_composer: None,
             pending_follow_up: None,
             pending_follow_up_backlog: Default::default(),
+            pending_queue_actions: Default::default(),
             buffered_send_lease: native_editors.editor(),
             quit_after_pending_sends: false,
             pending_follow_up_choice: None,
@@ -6150,6 +6152,7 @@ impl Render for Coincide {
                 self.continue_quit(window, cx);
             }
         }
+        self.poll_queue_action(window, cx);
         if let Some((id, text)) = self.restore_composer.clone()
             && self
                 .selected
@@ -6361,6 +6364,11 @@ impl Render for Coincide {
                                             .child(pane),
                                     )
                                 })
+                                .when_some(queue_pane, |view, queue| {
+                                    view.child(
+                                        div().w_full().max_w(px(presentation::CONTENT_WIDTH)).mb_1().child(queue),
+                                    )
+                                })
                                 .child(
                                     self.composer_file_key_scope(div(), cx)
                                         .w_full()
@@ -6405,9 +6413,6 @@ impl Render for Coincide {
                                                             self.composer_context_pane(cx),
                                                             |view, context| view.child(context),
                                                         )
-                                                        .when_some(queue_pane, |view, queue| {
-                                                            view.child(queue)
-                                                        })
                                                         .when_some(draft_images, |view, images| {
                                                             view.child(images)
                                                         }))
