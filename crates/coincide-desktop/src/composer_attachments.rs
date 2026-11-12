@@ -548,6 +548,7 @@ impl Coincide {
         {
             self.selected = Some(value);
         }
+        self.reconcile_buffered_sends();
         self.pump_image_imports(cx);
         cx.notify();
     }

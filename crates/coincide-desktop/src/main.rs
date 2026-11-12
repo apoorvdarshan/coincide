@@ -4974,18 +4974,9 @@ impl Coincide {
                 self.selection_change_pending(),
             ) {
                 composer_follow_up_mount::SendRoute::WaitForImages => {
-                    let behavior = self.captured_follow_up_behavior(v);
-                    let jobs = self.attachment_imports.claim(&id);
-                    let mut pending = composer_follow_up_mount::PendingSend::during_import(
-                        v,
-                        self.composer.read(cx).value().to_string(),
-                        alternate,
-                    )
-                    .with_behavior(behavior);
-                    self.exclude_submitted_images(&mut pending);
-                    pending.add_imports(jobs);
-                    self.pending_follow_up = Some(pending);
-                    cx.notify();
+                    // Claim the import jobs and move the submission out of
+                    // the editor now. Its own snapshot waits for those jobs.
+                    self.buffer_composer_send(alternate, window, cx);
                     return;
                 }
                 composer_follow_up_mount::SendRoute::FollowUp => {

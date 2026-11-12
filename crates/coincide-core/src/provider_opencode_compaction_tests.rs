@@ -1,6 +1,24 @@
 use super::*;
 use std::{fs, os::unix::fs::PermissionsExt};
 
+fn fixture_diagnostics(directory: &std::path::Path, session: &Session) -> String {
+    let mut limit: libc::rlimit = unsafe { std::mem::zeroed() };
+    let nofile = if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } == 0 {
+        Some(limit.rlim_cur)
+    } else {
+        None
+    };
+    let open_files = fs::read_dir("/dev/fd").ok().map(|entries| entries.count());
+    format!(
+        "worker={:?}, prelude={}, python={}, imports={}, open_files={open_files:?}, nofile={nofile:?}, stderr={:?}",
+        session.worker_completion().status(),
+        directory.join("worker-started").is_file(),
+        directory.join("python-started").is_file(),
+        directory.join("python-imported").is_file(),
+        fs::read_to_string(directory.join("fixture-stderr")).ok(),
+    )
+}
+
 #[test]
 fn compact_uses_the_session_endpoint_and_waits_for_execution() {
     for mode in ["accepted", "wrong-receipt", "goal-command"] {
@@ -8,7 +26,9 @@ fn compact_uses_the_session_endpoint_and_waits_for_execution() {
         let executable = directory.path().join(mode);
         fs::write(&executable, r#"#!/usr/bin/env python3
 open('python-started','w').write('ready')
-import http.server,json,os,queue,sys
+import sys
+sys.stderr=open('fixture-stderr','w',buffering=1)
+import http.server,json,os,queue
 open('python-imported','w').write('ready')
 events=queue.Queue()
 def mark(name):
@@ -94,18 +114,21 @@ server.serve_forever()
             while !directory.path().join(marker).is_file() {
                 if let Ok(event) = session.events.try_recv() {
                     match event {
-                        Event::Failed(error) => panic!("{mode} failed before {marker}: {error}"),
-                        Event::Finished => panic!("{mode} finished before {marker}"),
+                        Event::Failed(error) => panic!(
+                            "{mode} failed before {marker}: {error}; {}",
+                            fixture_diagnostics(directory.path(), &session)
+                        ),
+                        Event::Finished => panic!(
+                            "{mode} finished before {marker}; {}",
+                            fixture_diagnostics(directory.path(), &session)
+                        ),
                         _ => {}
                     }
                 }
                 assert!(
                     Instant::now() < deadline,
-                    "{mode} did not reach {marker}; worker={:?}, prelude={}, python={}, imports={}",
-                    session.worker_completion().status(),
-                    directory.path().join("worker-started").is_file(),
-                    directory.path().join("python-started").is_file(),
-                    directory.path().join("python-imported").is_file()
+                    "{mode} did not reach {marker}; {}",
+                    fixture_diagnostics(directory.path(), &session)
                 );
                 std::thread::sleep(Duration::from_millis(10));
             }

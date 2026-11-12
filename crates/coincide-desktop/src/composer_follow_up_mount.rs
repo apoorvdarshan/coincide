@@ -103,6 +103,7 @@ impl PendingSend {
         self.waiting_for_import = !self.import_jobs.is_empty();
         true
     }
+    #[cfg(test)]
     pub fn during_import(thread: &Value, draft: String, alternate: bool) -> Self {
         let mut pending = Self::new(thread, draft, alternate);
         pending.selection = pending_scope(thread, true);
@@ -332,7 +333,7 @@ impl Coincide {
             self.transcript_count = count;
             self.transcript_list.scroll_to_end();
         }
-        self.status = "Message queued while the previous send is prepared.".into();
+        self.status = "Preparing your message.".into();
         cx.notify();
     }
 
@@ -352,7 +353,13 @@ impl Coincide {
             let Some(buffer_id) = entry.buffer_id.as_ref().filter(|_| entry.thread == id) else {
                 continue;
             };
-            if items.iter().any(|item| item["id"] == *buffer_id) {
+            if let Some(item) = items.iter_mut().find(|item| item["id"] == *buffer_id) {
+                if entry.captured["rustDraftImages"]
+                    .as_array()
+                    .is_some_and(|images| !images.is_empty())
+                {
+                    item["rustImages"] = entry.captured["rustDraftImages"].clone();
+                }
                 continue;
             }
             let mut item = json!({"id":buffer_id,"kind":"user","text":entry.draft,"createdAt":0,"bufferedSend":true});
