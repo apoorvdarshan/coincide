@@ -67,6 +67,30 @@ fn explicit_attach_preserves_text_context_unknowns_session_and_file_bytes_and_on
     assert!(!prompt.contains("@src/café.rs"));
     assert!(prompt.contains("literal path references only"));
 }
+
+#[test]
+fn long_streaming_conversation_can_search_and_attach_without_losing_new_messages() {
+    let (_root, mut engine, id) = fixture();
+    let mut thread = engine.store.thread(&id).unwrap();
+    thread["items"] = json!([{"kind":"assistant","text":"x".repeat(9 * 1024 * 1024)}]);
+    engine.store.save(&thread).unwrap();
+    let captured = scope(&engine, &id);
+    let candidate = list(&captured).files.remove(0);
+    let mut streamed = engine.store.thread(&id).unwrap();
+    streamed["items"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"kind":"assistant","text":"new streaming reply"}));
+    streamed["updatedAt"] = json!(12345);
+    engine.store.save(&streamed).unwrap();
+    engine.revision += 1;
+    let result = engine.attach_file_reference(&candidate).unwrap();
+    assert!(result.changed);
+    let saved = engine.store.thread(&id).unwrap();
+    assert_eq!(saved["items"], streamed["items"]);
+    assert_eq!(saved["updatedAt"], streamed["updatedAt"]);
+    assert_eq!(saved["draftContext"][1]["path"], "src/café.rs");
+}
 #[test]
 fn changed_thread_draft_context_project_and_foreign_engine_refuse_without_overwrite() {
     let (root, mut engine, id) = fixture();

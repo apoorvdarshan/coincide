@@ -58,7 +58,6 @@ fn path_identity(root: &Path, path: &str) -> Result<(Identity, bool)> {
 #[derive(Clone)]
 pub struct FileReferenceScope {
     owner: Uuid,
-    revision: u64,
     thread: String,
     source: Arc<String>,
     projects: Arc<Value>,
@@ -174,10 +173,10 @@ impl Engine {
             !self.store.is_imported(thread)?,
             "Fork an imported conversation before attaching references"
         );
-        let source = self.store.file_reference_source(thread)?;
+        let source = self.store.file_reference_scope_source(thread)?;
         ensure!(
             source.len() <= MAX_ROW,
-            "Conversation exceeds the 8 MiB reference-picker limit"
+            "File-reference context exceeds its size limit"
         );
         let value: Value = serde_json::from_str(&source)?;
         ensure!(
@@ -210,7 +209,6 @@ impl Engine {
         );
         Ok(Arc::new(FileReferenceScope {
             owner: self.composer_file_owner,
-            revision: self.revision,
             thread: thread.into(),
             source: Arc::new(source),
             projects: Arc::new(projects),
@@ -234,14 +232,13 @@ impl Engine {
         ensure!(
             file.directory
                 && scope.owner == self.composer_file_owner
-                && scope.revision == self.revision
                 && self.active_thread() == Some(scope.thread.as_str())
                 && !self.unsaved_threads.contains_key(&scope.thread)
                 && !self.store.is_imported(&scope.thread)?,
             "Selected conversation changed; search again"
         );
         ensure!(
-            self.store.file_reference_source(&scope.thread)? == *scope.source
+            self.store.file_reference_scope_source(&scope.thread)? == *scope.source
                 && self.store.projects()? == *scope.projects,
             "Conversation or project changed; search again"
         );
@@ -251,7 +248,7 @@ impl Engine {
         self.require_admissions()?;
         let scope = &file.scope;
         ensure!(
-            scope.owner == self.composer_file_owner && scope.revision == self.revision,
+            scope.owner == self.composer_file_owner,
             "Conversation changed; search again"
         );
         ensure!(
@@ -277,7 +274,7 @@ impl Engine {
             "Project file metadata changed; search again"
         );
         ensure!(
-            self.store.file_reference_source(&scope.thread)? == *scope.source
+            self.store.file_reference_scope_source(&scope.thread)? == *scope.source
                 && self.store.projects()? == *scope.projects,
             "Conversation or project changed; search again"
         );

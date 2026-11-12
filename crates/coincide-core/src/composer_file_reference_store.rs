@@ -23,12 +23,22 @@ fn projects(db: &Connection) -> Result<Value> {
         .unwrap_or_else(|| Ok(json!([])))
 }
 impl Store {
+    #[cfg(test)]
     pub(crate) fn file_reference_source(&self, id: &str) -> Result<String> {
         Ok(self
             .connection()?
             .query_row("SELECT document FROM threads WHERE id=?1", [id], |r| {
                 r.get(0)
             })?)
+    }
+    /// Transcript items and their update time may change while an agent is
+    /// responding. They do not change which project paths the composer owns.
+    pub(crate) fn file_reference_scope_source(&self, id: &str) -> Result<String> {
+        Ok(self.connection()?.query_row(
+            "SELECT json_remove(document,'$.items','$.updatedAt') FROM threads WHERE id=?1",
+            [id],
+            |r| r.get(0),
+        )?)
     }
     pub(crate) fn commit_file_reference(
         &mut self,
@@ -41,12 +51,13 @@ impl Store {
         let tx = self
             .connection_mut()?
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        let current: String =
-            tx.query_row("SELECT document FROM threads WHERE id=?1", [id], |r| {
-                r.get(0)
-            })?;
+        let (current, current_scope): (String, String) = tx.query_row(
+            "SELECT document,json_remove(document,'$.items','$.updatedAt') FROM threads WHERE id=?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
         ensure!(
-            current == source && projects(&tx)? == *expected_projects,
+            current_scope == source && projects(&tx)? == *expected_projects,
             "Conversation or project changed; search again"
         );
         let mut value: Value = serde_json::from_str(&current)?;
