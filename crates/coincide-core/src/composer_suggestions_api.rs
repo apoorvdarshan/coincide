@@ -125,6 +125,9 @@ impl Engine {
             .filter(|item| {
                 request.provider == "codex"
                     && item.kind != crate::composer_suggestions::CommandKind::Skill
+                    && !receipt.commands.iter().any(|new| {
+                        new.kind == item.kind && new.name.eq_ignore_ascii_case(&item.name)
+                    })
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -214,9 +217,11 @@ write({'id':r['id'],'result':{'data':[{'cwd':cwd,'skills':skills}]}})
         let commands = engine
             .execute("composer.commands", &json!({"threadId":id}))
             .unwrap();
-        assert_eq!(commands["commands"].as_array().unwrap().len(), 1);
+        assert_eq!(commands["commands"].as_array().unwrap().len(), 2);
         assert_eq!(commands["commands"][0]["name"], "plugin:review");
         assert_eq!(commands["commands"][0]["isSlashCommand"], false);
+        assert_eq!(commands["commands"][1]["name"], "compact");
+        assert_eq!(commands["commands"][1]["isSlashCommand"], true);
 
         // Installing or removing a skill in this workspace must change the
         // next provider-reported list without restarting Coincide.
@@ -238,8 +243,21 @@ write({'id':r['id'],'result':{'data':[{'cwd':cwd,'skills':skills}]}})
         let refreshed = engine
             .execute("composer.commands", &json!({"threadId":id}))
             .unwrap();
-        assert_eq!(refreshed["commands"].as_array().unwrap().len(), 1);
-        assert_eq!(refreshed["commands"][0]["name"], "new-plugin:custom-skill");
+        assert_eq!(refreshed["commands"].as_array().unwrap().len(), 2);
+        assert!(
+            refreshed["commands"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| entry["name"] == "new-plugin:custom-skill")
+        );
+        assert!(
+            refreshed["commands"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|entry| entry["name"] == "compact")
+        );
 
         let request = engine
             .prepare_native_command_discovery(&id)
@@ -363,6 +381,82 @@ write({'id':r['id'],'result':{'data':[{'cwd':cwd,'skills':skills}]}})
                 .lookup(&id, "codex", &Value::Null, None)
                 .1,
             "none"
+        );
+    }
+
+    #[test]
+    fn early_acp_commands_are_bound_only_after_the_session_is_acknowledged() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut engine =
+            Engine::fixture(Store::open(&directory.path().join("state.sqlite")).unwrap());
+        let thread = engine
+            .execute("threads.create", &json!({"cwd":directory.path()}))
+            .unwrap();
+        let id = text(&thread, "id");
+        let mut thread = engine.store.thread(&id).unwrap();
+        thread["selection"] = json!({"provider":"cursor","modelID":"default"});
+        engine.store.save(&thread).unwrap();
+        let mut session = Session::fixture_worker(|commands, _| {
+            let _ = commands.recv();
+        });
+        let (sender, receiver) = mpsc::channel();
+        session.events = receiver;
+        engine.insert_running(
+            id.clone(),
+            Running {
+                configuration: None,
+                resume_safe: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+                usage_context: None,
+                session,
+                provider: "cursor".into(),
+                transcript_start: 0,
+                pending: HashMap::new(),
+                schedule_claim: None,
+                queue_claim: None,
+                cancelled: false,
+                events: VecDeque::new(),
+                persistence_error: None,
+            },
+        );
+        let report = |session: &str, name: &str| {
+            Event::Frame(
+                json!({"method":"provider/event","params":{"provider":"cursor","providerFrame":{"method":"session/update","params":{"sessionId":session,"update":{"sessionUpdate":"available_commands_update","availableCommands":[{"name":name}]}}}}}),
+            )
+        };
+        sender.send(report("another-session", "wrong")).unwrap();
+        sender
+            .send(report("owned-session", "plugin-command"))
+            .unwrap();
+        engine.poll();
+        let folder = directory.path().canonicalize().unwrap();
+        assert!(
+            engine
+                .composer_commands
+                .lookup(&id, "cursor", &Value::Null, Some(&folder))
+                .0
+                .is_empty()
+        );
+        sender.send(Event::Session("owned-session".into())).unwrap();
+        engine.poll();
+        assert_eq!(
+            engine
+                .composer_commands
+                .lookup(&id, "cursor", &Value::Null, Some(&folder))
+                .0[0]
+                .name,
+            "plugin-command"
+        );
+        sender
+            .send(report("another-session", "wrong-again"))
+            .unwrap();
+        engine.poll();
+        assert_eq!(
+            engine
+                .composer_commands
+                .lookup(&id, "cursor", &Value::Null, Some(&folder))
+                .0[0]
+                .name,
+            "plugin-command"
         );
     }
 }

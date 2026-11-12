@@ -230,6 +230,7 @@ pub struct Session {
     steering: Option<codex_steering::Client>,
     codex_profile_account: Option<String>,
     named_completion: Arc<Mutex<Option<crate::named_profile_resume::Acknowledged>>>,
+    provider_control: Arc<std::sync::atomic::AtomicBool>,
 }
 #[cfg(test)]
 mod completion_owner_tests {
@@ -254,6 +255,13 @@ pub(crate) struct NamedProfileLaunch {
     pub profile: crate::codex_login_profiles::LaunchContext,
     pub model: Option<crate::model_catalog::NamedModelProof>,
     pub resume: crate::named_profile_resume::Authority,
+}
+#[derive(Default)]
+pub(crate) struct LaunchOptions {
+    pub named: Option<NamedProfileLaunch>,
+    pub prelude: Option<Box<dyn FnOnce() + Send>>,
+    pub compact: bool,
+    pub opencode_command: Option<String>,
 }
 impl Session {
     pub fn start(launch: Launch) -> Self {
@@ -297,8 +305,7 @@ impl Session {
             images,
             instructions,
             policy,
-            None,
-            None,
+            LaunchOptions::default(),
         )
     }
     pub(crate) fn start_with_mode_policy_and_profile(
@@ -307,9 +314,14 @@ impl Session {
         images: Vec<ImageAttachment>,
         instructions: Option<String>,
         policy: Option<crate::composer_policy::Policy>,
-        named: Option<NamedProfileLaunch>,
-        prelude: Option<Box<dyn FnOnce() + Send>>,
+        options: LaunchOptions,
     ) -> Self {
+        let LaunchOptions {
+            named,
+            prelude,
+            compact,
+            opencode_command,
+        } = options;
         let (profile, named_model, named_resume) = match named {
             Some(named) => (Some(named.profile), named.model, Some(named.resume)),
             None => (None, None, None),
@@ -321,6 +333,8 @@ impl Session {
         let output = usage.clone();
         let named_completion = Arc::new(Mutex::new(None));
         let completed_output = named_completion.clone();
+        let provider_control = Arc::new(std::sync::atomic::AtomicBool::new(compact));
+        let control_receipt = provider_control.clone();
         let configuration = crate::provider_configuration::current();
         let mut session = Self::spawn_worker(move |commands, events_tx| {
             // Work that must finish before the agent can change anything, such
@@ -372,13 +386,21 @@ impl Session {
                             named_model,
                             named_resume,
                             completed_output,
+                            compact,
                         },
                     ),
                     Provider::Claude => {
                         claude::run(launch, images, instructions, commands, events_tx)
                     }
                     Provider::Grok => grok::run(launch, images, commands, events_tx),
-                    Provider::OpenCode => opencode::run(launch, images, commands, events_tx),
+                    Provider::OpenCode => opencode::run(
+                        launch,
+                        images,
+                        commands,
+                        events_tx,
+                        opencode_command,
+                        control_receipt,
+                    ),
                     Provider::Antigravity {
                         profile,
                         source_profile,
@@ -406,6 +428,7 @@ impl Session {
         session.usage = usage;
         session.codex_profile_account = profile_account;
         session.named_completion = named_completion;
+        session.provider_control = provider_control;
         if codex {
             session.steering = Some(steer_client);
         }
@@ -413,6 +436,9 @@ impl Session {
     }
     pub(crate) fn codex_profile_account(&self) -> Option<&str> {
         self.codex_profile_account.as_deref()
+    }
+    pub(crate) fn is_provider_control(&self) -> bool {
+        self.provider_control.load(Ordering::Acquire)
     }
     pub(crate) fn take_named_completion(
         &self,
@@ -499,6 +525,7 @@ impl Session {
             steering: None,
             codex_profile_account: None,
             named_completion: Arc::new(Mutex::new(None)),
+            provider_control: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
     #[cfg(test)]
@@ -662,6 +689,13 @@ impl Drop for OwnedChild {
 fn request(id: u64, method: &str, params: Value) -> Value {
     json!({"id":id,"method":method,"params":params})
 }
+pub(crate) fn codex_compact_command(text: &str) -> bool {
+    text.trim() == "/compact"
+}
+
+#[cfg(all(test, unix))]
+#[path = "codex_compaction_tests.rs"]
+mod codex_compaction_tests;
 
 struct CodexOptions {
     usage: Arc<Mutex<Option<usage_capture::Snapshot>>>,
@@ -671,6 +705,7 @@ struct CodexOptions {
     named_model: Option<crate::model_catalog::NamedModelProof>,
     named_resume: Option<crate::named_profile_resume::Authority>,
     completed_output: Arc<Mutex<Option<crate::named_profile_resume::Acknowledged>>>,
+    compact: bool,
 }
 fn run(
     launch: Launch,
@@ -688,6 +723,7 @@ fn run(
         named_model,
         named_resume,
         completed_output,
+        compact,
     } = options;
     if let Some(policy) = &policy {
         policy.preflight()?;
@@ -746,6 +782,7 @@ fn run(
     let mut early_completions = std::collections::VecDeque::new();
     let mut provisional_turn = false;
     let mut early_steering_frames = Vec::new();
+    let mut compact_requested = None::<Instant>;
     loop {
         while let Ok(command) = commands.try_recv() {
             match command {
@@ -779,6 +816,11 @@ fn run(
         }
         if stage < 4 && started.elapsed() > Duration::from_secs(120) {
             bail!("Codex startup timed out");
+        }
+        if compact_requested.is_some_and(|requested| {
+            !provisional_turn && requested.elapsed() > Duration::from_secs(120)
+        }) {
+            bail!("Codex did not start the requested context compaction");
         }
         if let Some(request) = steering.next_request() {
             transport.write(&request)?;
@@ -944,16 +986,26 @@ fn run(
                                 params["serviceTier"] = json!(tier);
                             }
                         }
-                        transport.write(&request(3, "turn/start", params))?;
+                        if compact {
+                            compact_requested = Some(Instant::now());
+                            transport.write(&request(
+                                3,
+                                "thread/compact/start",
+                                json!({"threadId":id}),
+                            ))?;
+                        } else {
+                            transport.write(&request(3, "turn/start", params))?;
+                        }
                     }
-                    3 => ensure!(
+                    3 if !compact => ensure!(
                         capture.bind_turn(&frame["result"]["turn"]["id"]),
                         "Codex returned a missing, invalid or duplicate turn identity"
                     ),
                     _ => {}
                 }
                 stage += 1;
-                if stage == 4
+                if !compact
+                    && stage == 4
                     && !early_completions
                         .iter()
                         .any(|frame: &Value| capture.matches_completion(&frame["params"]))
@@ -969,7 +1021,8 @@ fn run(
             {
                 bail!("Codex returned a duplicate or out-of-order startup response");
             } else if frame["method"] == "turn/started" {
-                if stage == 3 && capture.owns_thread(&frame["params"]) {
+                if (stage == 3 || (compact && stage == 4)) && capture.owns_thread(&frame["params"])
+                {
                     ensure!(
                         !provisional_turn,
                         "Codex returned a duplicate provisional turn identity"

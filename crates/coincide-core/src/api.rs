@@ -1383,6 +1383,23 @@ impl Engine {
         } else {
             allowed_session
         };
+        // Codex slash controls are client commands, not chat text. Only the
+        // exact, attachment-free user command has authority to compact the
+        // existing provider session; quoted history is never interpreted.
+        let native_compact = matches!(provider.as_str(), "codex" | "opencode")
+            && agent::codex_compact_command(prompt)
+            && draft_images.is_empty()
+            && !crate::composer_context::has_context(&context)
+            && bot_instructions.is_none();
+        ensure!(
+            !native_compact || session.is_some(),
+            "Start a provider conversation before compacting its context"
+        );
+        let opencode_command = (provider == "opencode"
+            && prompt.trim_start().starts_with('/')
+            && draft_images.is_empty()
+            && !crate::composer_context::has_context(&context))
+        .then(|| prompt.to_owned());
         let seen = if let Some(authority) = &named_resume {
             authority.seen()
         } else if session.is_some() {
@@ -1510,8 +1527,12 @@ impl Engine {
                     images,
                     bot_instructions,
                     mode_policy,
-                    named_launch,
-                    checkpoint,
+                    agent::LaunchOptions {
+                        named: named_launch,
+                        prelude: checkpoint,
+                        compact: native_compact,
+                        opencode_command,
+                    },
                 ),
                 provider,
                 transcript_start: v["items"].as_array().map_or(0, Vec::len),
@@ -1528,6 +1549,7 @@ impl Engine {
     }
     fn insert_running(&mut self, id: String, run: Running) {
         self.answered_runs.remove(&id);
+        self.composer_commands.begin_run(&id);
         self.provider_workers.push(run.session.worker_completion());
         self.run_clocks.insert(
             id.clone(),
@@ -2132,6 +2154,27 @@ impl Engine {
                         } else {
                             agent::set_provider_session(&mut v, &self.runs[&id].provider, &session);
                         }
+                        let provider = self.runs[&id].provider.clone();
+                        if let Some(commands) =
+                            self.composer_commands.bind_run(&id, &provider, &session)
+                        {
+                            let account = if v["selection"]["provider"] == provider {
+                                v["selection"]["accountID"].clone()
+                            } else {
+                                Value::Null
+                            };
+                            let folder = self
+                                .working_directory(&v)
+                                .ok()
+                                .and_then(|path| path.canonicalize().ok());
+                            self.composer_commands.record(
+                                &id,
+                                &provider,
+                                &account,
+                                folder.as_deref(),
+                                commands,
+                            );
+                        }
                     }
                     Event::Finished => {
                         finished = true;
@@ -2264,6 +2307,18 @@ impl Engine {
                                     crate::composer_suggestions::reported_commands(p)
                                 {
                                     let provider = self.runs[&id].provider.clone();
+                                    let frame = &p["providerFrame"];
+                                    let commands = if frame["method"] == "session/update" {
+                                        frame["params"]["sessionId"].as_str().and_then(|session| {
+                                            self.composer_commands
+                                                .acp_report(&id, &provider, session, commands)
+                                        })
+                                    } else {
+                                        Some(commands)
+                                    };
+                                    let Some(commands) = commands else {
+                                        continue;
+                                    };
                                     let account = if v["selection"]["provider"] == provider {
                                         v["selection"]["accountID"].clone()
                                     } else {
@@ -2295,7 +2350,12 @@ impl Engine {
                             }
                             "item/started" | "item/completed" => {
                                 let item = &p["item"];
-                                if let Some(kind) = completed_message_kind(item, method) {
+                                if self.runs[&id].provider == "codex"
+                                    && apply_compaction_item(&mut v, item, method, transcript_start)
+                                {
+                                    // Manual and automatic compaction are provider events;
+                                    // keep one status row instead of showing raw JSON as a tool.
+                                } else if let Some(kind) = completed_message_kind(item, method) {
                                     let external = text(item, "id");
                                     let items = v["items"].as_array_mut().unwrap();
                                     if let Some(existing) = items
@@ -2383,6 +2443,7 @@ impl Engine {
                 && failure.is_none()
                 && !self.runs[&id].cancelled
                 && self.runs[&id].persistence_error.is_none()
+                && !self.runs[&id].session.is_provider_control()
             {
                 if let Some(account) = self.runs[&id].session.codex_profile_account() {
                     agent::mark_provider_seen_for_account(
@@ -2458,6 +2519,7 @@ impl Engine {
             }
             self.revision += 1;
             if finished {
+                self.composer_commands.end_run(&id);
                 self.record_turn_result(&id, failure.is_some());
                 self.finish_turn_checkpoint(&id);
             }
@@ -2538,6 +2600,53 @@ fn import_attachment(
 fn required<'a>(p: &'a Value, key: &str) -> Result<&'a str> {
     p[key].as_str().with_context(|| format!("Missing {key}"))
 }
+/// Display Codex's own compaction events without changing its compaction policy.
+fn apply_compaction_item(thread: &mut Value, item: &Value, method: &str, start: usize) -> bool {
+    if item["type"] != "contextCompaction" || !matches!(method, "item/started" | "item/completed") {
+        return false;
+    }
+    let Some(id) = item["id"]
+        .as_str()
+        .filter(|id| !id.is_empty() && id.len() <= 512 && !id.chars().any(char::is_control))
+    else {
+        return false;
+    };
+    let external = format!("compaction:{id}");
+    let label = if method == "item/completed" {
+        "Context compacted"
+    } else {
+        "Compacting context"
+    };
+    let existing = thread["items"].as_array_mut().and_then(|items| {
+        items
+            .iter_mut()
+            .skip(start)
+            .rev()
+            .find(|entry| entry["externalID"] == external)
+    });
+    if let Some(existing) = existing {
+        existing["text"] = json!(label);
+        existing["status"] = json!(if method == "item/completed" {
+            "completed"
+        } else {
+            "running"
+        });
+    } else {
+        append(thread, "notice", label, Some(&external));
+        if let Some(row) = thread["items"]
+            .as_array_mut()
+            .and_then(|items| items.last_mut())
+        {
+            row["status"] = json!(if method == "item/completed" {
+                "completed"
+            } else {
+                "running"
+            });
+        }
+    }
+    true
+}
+
 /// Completed assistant text and reasoning both stream as message items. A
 /// reasoning completion must update the existing reasoning row, never append a
 /// duplicate tool row containing the provider's JSON payload.
@@ -2581,6 +2690,28 @@ pub fn call(engine: &SharedEngine, method: &str, params: Value) -> Result<Value>
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn codex_automatic_and_manual_compaction_update_one_status_row() {
+        let mut thread = json!({"selection":{"provider":"codex","modelID":"model"},"items":[]});
+        let item = json!({"type":"contextCompaction","id":"compaction-1"});
+        assert!(apply_compaction_item(&mut thread, &item, "item/started", 0));
+        assert_eq!(thread["items"][0]["text"], "Compacting context");
+        assert!(apply_compaction_item(
+            &mut thread,
+            &item,
+            "item/completed",
+            0
+        ));
+        assert_eq!(thread["items"].as_array().unwrap().len(), 1);
+        assert_eq!(thread["items"][0]["text"], "Context compacted");
+        assert_eq!(thread["items"][0]["status"], "completed");
+        assert!(!apply_compaction_item(
+            &mut thread,
+            &json!({"type":"other","id":"x"}),
+            "item/completed",
+            0
+        ));
+    }
     #[test]
     fn completed_reasoning_is_a_reasoning_row_not_a_tool_payload() {
         assert_eq!(

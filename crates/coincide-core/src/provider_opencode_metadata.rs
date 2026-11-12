@@ -335,8 +335,22 @@ pub(super) fn commands(
                 && crate::composer_suggestions::opencode_location_matches(&skills, cwd),
             "OpenCode returned another workspace's commands"
         );
-        let found =
+        let mut found =
             crate::composer_suggestions::ProviderCommand::from_opencode(&commands, &skills, cwd);
+        if !found
+            .iter()
+            .any(|entry| entry.is_slash_command && entry.name == "compact")
+        {
+            found.push(crate::composer_suggestions::ProviderCommand {
+                name: "compact".into(),
+                description: Some("Compact the current OpenCode conversation".into()),
+                argument_hint: None,
+                aliases: Vec::new(),
+                kind: crate::composer_suggestions::CommandKind::Command,
+                is_built_in: true,
+                is_slash_command: true,
+            });
+        }
         if (!found.is_empty() && previous.as_ref() == Some(&found)) || Instant::now() >= deadline {
             return Ok(found);
         }

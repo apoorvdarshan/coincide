@@ -110,6 +110,41 @@ fn native_steer_requires_actual_ack_and_persistence_before_clearing_draft() {
 }
 
 #[test]
+fn codex_compact_during_a_turn_is_queued_instead_of_steered_as_text() {
+    let Fixture {
+        _dir,
+        mut engine,
+        id,
+        mut server,
+        release,
+        ..
+    } = fixture();
+    engine
+        .store
+        .patch_thread(&id, &json!({"draft":"/compact"}))
+        .unwrap();
+    let source = engine.store.thread(&id).unwrap();
+    assert_eq!(
+        engine.native_follow_up_dispatch(&source, false).unwrap(),
+        Dispatch::Queue
+    );
+    let ticket = engine.send_native_follow_up(&source, false).unwrap();
+    assert_eq!(
+        engine.native_follow_up_status(&ticket).unwrap(),
+        NativeFollowUpStatus::Delivered {
+            dispatch: Dispatch::Queue,
+            draft_cleared: true,
+        }
+    );
+    assert!(server.next_request().is_none());
+    let queue = crate::message_queue::read(&engine.store.thread(&id).unwrap()).unwrap();
+    assert_eq!(queue[0].text, "/compact");
+    engine.collect_native_follow_up(ticket).unwrap();
+    engine.freeze_admissions();
+    finish_fake(&mut engine, &id, release);
+}
+
+#[test]
 fn live_turn_accepts_follow_up_without_a_new_model_catalog() {
     let Fixture {
         _dir,
@@ -952,6 +987,19 @@ fn text_steer_waits_for_ack_without_blocking_and_preserves_new_draft(provider: &
         observed.recv_timeout(Duration::from_secs(5)).unwrap(),
         "first steering message"
     );
+    if provider == "opencode"
+        && let Some(Delivery::TextSteer { started, .. }) = engine
+            .native_follow_up
+            .operations
+            .get_mut(&ticket.id)
+            .unwrap()
+            .delivery
+            .as_mut()
+    {
+        // A catalog read can legitimately take longer than the old 10-second
+        // limit. Its eventual ACK must still deliver exactly this message.
+        *started = Instant::now() - Duration::from_secs(11);
+    }
     engine.poll();
     assert_eq!(
         engine.native_follow_up_status(&ticket).unwrap(),

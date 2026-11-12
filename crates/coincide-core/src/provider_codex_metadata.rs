@@ -107,9 +107,19 @@ pub(crate) fn skills(
     if let Some(profile) = profile {
         profile.validate()?;
     }
-    Ok(crate::composer_suggestions::ProviderCommand::from_codex(
-        &result, cwd,
-    ))
+    let mut commands = crate::composer_suggestions::ProviderCommand::from_codex(&result, cwd);
+    // App-server exposes this built-in as a session control rather than in
+    // skills/list. User and plugin skills still come from the live response.
+    commands.push(crate::composer_suggestions::ProviderCommand {
+        name: "compact".into(),
+        description: Some("Compact the current Codex conversation".into()),
+        argument_hint: None,
+        aliases: Vec::new(),
+        kind: crate::composer_suggestions::CommandKind::Command,
+        is_built_in: true,
+        is_slash_command: true,
+    });
+    Ok(commands)
 }
 fn response(frame: &Value, id: u64) -> Result<Option<Value>> {
     if frame.get("method").is_some() {

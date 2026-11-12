@@ -935,6 +935,18 @@ fn default_account_id(raw: &Value) -> Option<&str> {
         _ => None,
     }
 }
+/// Account IDs are provider-scoped. Browsing another provider must not query
+/// it with the active provider's account, and returning to the original tab
+/// should restore that provider's original account.
+fn picker_account(draft: &SelectionDraft, provider: &str) -> Value {
+    if provider == draft.provider {
+        draft.account.clone()
+    } else if draft.original["provider"] == provider {
+        draft.original["accountID"].clone()
+    } else {
+        Value::Null
+    }
+}
 fn catalog_response_matches(value: &Value, request: &CatalogRequest) -> bool {
     value["requestId"].as_str() == Some(request.request_id.as_str())
         && value["provider"].as_str() == Some(request.provider.as_str())
@@ -2408,7 +2420,8 @@ impl Coincide {
             .clone()
             .unwrap_or_else(|| draft.provider.clone());
         let catalog = &self.selection_ui.catalog;
-        let account = default_account_id(&draft.account).unwrap_or("default");
+        let account = picker_account(draft, &provider);
+        let account = default_account_id(&account).unwrap_or("default");
         if self
             .selection_ui
             .catalog_attempted
@@ -2453,19 +2466,20 @@ impl Coincide {
         else {
             return;
         };
+        let target_account = picker_account(draft, &tab_provider);
         if provider["modelDiscovery"]["supported"] != true
-            || account_problem(provider, &draft.account, &self.selection_ui.accounts).is_some()
+            || account_problem(provider, &target_account, &self.selection_ui.accounts).is_some()
         {
             return;
         }
         let provider = tab_provider;
-        let account_id = default_account_id(&draft.account)
+        let account_id = default_account_id(&target_account)
             .unwrap_or("default")
             .to_owned();
         if self.selection_ui.catalog["state"] != "ready"
             || self.selection_ui.catalog["provider"] != provider.as_str()
         {
-            if let Some(cached) = self.cached_catalog(&provider, &draft.account) {
+            if let Some(cached) = self.cached_catalog(&provider, &target_account) {
                 self.selection_ui.catalog = cached;
             }
         }
@@ -2477,7 +2491,7 @@ impl Coincide {
             selection_response(
                 &mut engine,
                 "agent.models.refresh",
-                json!({"provider":provider,"accountId":draft.account}),
+                json!({"provider":provider,"accountId":target_account}),
             )
         })();
         match response {
@@ -2642,12 +2656,13 @@ impl Coincide {
             return;
         }
         let catalog = &self.selection_ui.catalog;
+        let target_account = picker_account(draft, provider);
         if draft.original != thread["selection"]
             || catalog["state"] != "ready"
             || catalog["provenance"] != "provider_model_list"
             || catalog["requestId"].as_str() != Some(request_id)
             || catalog["provider"].as_str() != Some(provider)
-            || catalog["accountID"].as_str() != default_account_id(&draft.account)
+            || catalog["accountID"].as_str() != default_account_id(&target_account)
             || !catalog["models"]
                 .as_array()
                 .is_some_and(|rows| rows.iter().any(|row| row["id"] == model))
@@ -2660,6 +2675,7 @@ impl Coincide {
             return;
         };
         draft.provider = chosen_provider.clone();
+        draft.account = target_account;
         draft.custom = chosen_model.clone();
         draft.use_custom = true;
         draft.proposed_effort = Value::Null;
@@ -2673,7 +2689,17 @@ impl Coincide {
                 && thread["selection"]["provider"] == chosen_provider.as_str()
                 && thread["selection"]["modelID"] == chosen_model.as_str()
         });
-        if applied {
+        let staged = self.running.iter().any(|id| id == thread_id)
+            && self
+                .selection_ui
+                .drafts
+                .get(thread_id)
+                .is_some_and(|draft| {
+                    draft.provider == chosen_provider
+                        && draft.custom == chosen_model
+                        && draft.has_edits()
+                });
+        if applied || staged {
             self.selection_ui.expanded = false;
             self.selection_ui.tab_provider = None;
         }
@@ -3329,7 +3355,6 @@ impl Coincide {
                     .when(chat_layout::provider_logo(&id).is_none(), |button| {
                         button.icon(gpui_kit::assets::IconName::Cpu)
                     })
-                    .disabled(self.running.contains(&text(thread, "id")))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if !this
                             .selected
@@ -3529,7 +3554,13 @@ impl Coincide {
         let Some(thread) = &self.selected else {
             return div().into_any_element();
         };
-        if named_models::named_thread(thread) {
+        if named_models::named_thread(thread)
+            && self
+                .selection_ui
+                .tab_provider
+                .as_deref()
+                .is_none_or(|provider| provider == "codex")
+        {
             let pane = self.named_profile_model_pane(thread, cx);
             return if self.selection_ui.facet == PickerFacet::Model {
                 div()
@@ -3787,8 +3818,9 @@ impl Coincide {
             String::new()
         };
         let catalog = &self.selection_ui.catalog;
+        let target_account = picker_account(draft, &tab_provider);
         let same_scope = catalog["provider"].as_str() == Some(tab_provider.as_str())
-            && catalog["accountID"].as_str() == default_account_id(&draft.account);
+            && catalog["accountID"].as_str() == default_account_id(&target_account);
         let state = if same_scope {
             catalog["state"].as_str().unwrap_or("")
         } else {
@@ -4198,6 +4230,18 @@ mod tests {
         catalog["threadId"] = json!("A");
         catalog["state"] = json!("loading");
         assert_eq!(reported_picker_model_label(&thread, &catalog), None);
+    }
+    #[::core::prelude::v1::test]
+    fn picker_catalog_accounts_follow_the_target_provider() {
+        let thread = json!({"id":"A","selection":{"provider":"codex","accountID":"private-account","modelID":"model"},"accessMode":"approval","interactionMode":"build"});
+        let mut draft = SelectionDraft::from_thread(&thread);
+        assert_eq!(picker_account(&draft, "codex"), "private-account");
+        assert_eq!(picker_account(&draft, "claude"), Value::Null);
+        draft.provider = "claude".into();
+        draft.account = Value::Null;
+        assert_eq!(picker_account(&draft, "claude"), Value::Null);
+        assert_eq!(picker_account(&draft, "codex"), "private-account");
+        assert_eq!(picker_account(&draft, "opencode"), Value::Null);
     }
     #[::core::prelude::v1::test]
     fn effort_labels_follow_the_swift_menu_without_changing_saved_values() {

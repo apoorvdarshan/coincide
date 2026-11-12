@@ -599,13 +599,62 @@ fn native_command_idle(active: &Value, inbox: &Value, session: &str) -> bool {
         && inbox["data"].as_array().is_some_and(Vec::is_empty)
 }
 
+fn follow_up_request(
+    text: &str,
+    catalog: Option<&Value>,
+    cwd: &std::path::Path,
+    root: &str,
+    id: &str,
+) -> (String, Value, bool) {
+    if super::codex_compact_command(text) {
+        (
+            format!("{root}/compact"),
+            json!({"id":id,"delivery":"steer"}),
+            true,
+        )
+    } else if let Some((name, arguments)) =
+        catalog.and_then(|catalog| native_command(text, catalog, cwd))
+    {
+        (
+            format!("{root}/command"),
+            json!({"name":name,"text":arguments,"delivery":"steer"}),
+            false,
+        )
+    } else {
+        (
+            format!("{root}/prompt"),
+            json!({"id":id,"text":text,"delivery":"steer"}),
+            false,
+        )
+    }
+}
+
+fn compact_receipt(response: &Value, id: &str, session: &str) -> Result<()> {
+    ensure!(
+        response["data"]["id"] == id
+            && response["data"]["sessionID"] == session
+            && response["data"]["type"] == "compaction",
+        "OpenCode did not acknowledge this compaction request"
+    );
+    Ok(())
+}
+
 pub(super) fn run(
     launch: Launch,
     images: Vec<ImageAttachment>,
     commands: Receiver<Control>,
     events: &Sender<Event>,
+    native_input: Option<String>,
+    control_receipt: Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<()> {
-    let result = run_inner(launch, images, commands, events);
+    let result = run_inner(
+        launch,
+        images,
+        commands,
+        events,
+        native_input,
+        control_receipt,
+    );
     match result {
         Err(error) if error.is::<Stopped>() => {
             events.send(Event::Finished)?;
@@ -619,6 +668,8 @@ fn run_inner(
     images: Vec<ImageAttachment>,
     commands: Receiver<Control>,
     events: &Sender<Event>,
+    native_input: Option<String>,
+    control_receipt: Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<()> {
     let model = model(launch.model.as_deref(), launch.variant.as_deref())?;
     // Declaration order is ownership-critical: Server (or its local child on
@@ -781,13 +832,27 @@ fn run_inner(
         pending: HashMap::new(),
         tools: HashMap::new(),
     };
-    let command = if text.trim_start().starts_with('/')
+    let command_text = native_input.as_deref().unwrap_or(&text);
+    let compact = native_input
+        .as_deref()
+        .is_some_and(super::codex_compact_command);
+    let command = if !compact
+        && command_text.trim_start().starts_with('/')
         && let Some(directory) = launch.cwd.to_str()
     {
         match runtime.catalog(&server.http, "/api/command", directory) {
-            Ok(catalog) => native_command(&text, &catalog, &launch.cwd),
+            Ok(catalog) => {
+                ensure!(
+                    crate::composer_suggestions::opencode_location_matches(&catalog, &launch.cwd),
+                    "OpenCode returned commands for another workspace"
+                );
+                native_command(command_text, &catalog, &launch.cwd)
+            }
             Err(error) if error.is::<Stopped>() || error.is::<OperationTimedOut>() => {
                 return Err(error);
+            }
+            Err(error) if native_input.is_some() => {
+                return Err(error.context("OpenCode command discovery failed"));
             }
             Err(_) => None,
         }
@@ -795,7 +860,15 @@ fn run_inner(
         None
     };
     let mut command_idle_check = None;
-    if let Some((name, arguments)) = command {
+    if compact {
+        let response = runtime.request(
+            &server.http,
+            "POST",
+            format!("{root}/compact"),
+            Some(json!({"id":mapper.prompt,"delivery":"steer"})),
+        )?;
+        compact_receipt(&response, &mapper.prompt, &session)?;
+    } else if let Some((name, arguments)) = command {
         let mut command_body = json!({"name":name,"text":arguments});
         for field in ["files", "skills"] {
             if let Some(value) = body.get(field) {
@@ -808,6 +881,7 @@ fn run_inner(
             format!("{root}/command"),
             Some(command_body),
         )?;
+        control_receipt.store(true, Ordering::Release);
         // Some native callbacks do not start a turn. Their 204 response is
         // followed by an authoritative active-session and inbox check below.
         command_idle_check = Some(Instant::now() + Duration::from_secs(1));
@@ -821,12 +895,32 @@ fn run_inner(
                 Control::Steer { text, reply } => {
                     let result = (|| -> Result<()> {
                         let id = format!("msg_coincide_{}", uuid::Uuid::new_v4().simple());
-                        runtime.request(
-                            &server.http,
-                            "POST",
-                            format!("{root}/prompt"),
-                            Some(json!({"id":id,"text":text,"delivery":"steer"})),
-                        )?;
+                        let catalog = if text.trim_start().starts_with('/')
+                            && !super::codex_compact_command(&text)
+                        {
+                            let directory = launch
+                                .cwd
+                                .to_str()
+                                .context("OpenCode directory is not text")?;
+                            let catalog =
+                                runtime.catalog(&server.http, "/api/command", directory)?;
+                            ensure!(
+                                crate::composer_suggestions::opencode_location_matches(
+                                    &catalog,
+                                    &launch.cwd
+                                ),
+                                "OpenCode returned commands for another workspace"
+                            );
+                            Some(catalog)
+                        } else {
+                            None
+                        };
+                        let (path, body, compact) =
+                            follow_up_request(&text, catalog.as_ref(), &launch.cwd, &root, &id);
+                        let response = runtime.request(&server.http, "POST", path, Some(body))?;
+                        if compact {
+                            compact_receipt(&response, &id, &session)?;
+                        }
                         Ok(())
                     })();
                     let _ = reply.send(result.map_err(|error| error.to_string()));
@@ -948,10 +1042,15 @@ fn run_inner(
 #[path = "provider_opencode_request_tests.rs"]
 mod request_owner_tests;
 
+#[cfg(all(test, unix))]
+#[path = "provider_opencode_compaction_tests.rs"]
+mod compaction_tests;
+
 #[cfg(test)]
 mod model_reference_tests {
     use super::model;
     use serde_json::json;
+    use std::path::Path;
     #[test]
     fn reasoning_variant_is_carried_in_the_model_reference() {
         assert_eq!(
@@ -1046,5 +1145,50 @@ mod model_reference_tests {
             &json!({"data":[]}),
             "s"
         ));
+    }
+
+    #[test]
+    fn active_follow_up_routes_reported_commands_and_compaction_to_native_endpoints() {
+        let catalog = json!({"location":{"directory":"/project"},"data":[{"name":"goal"},{"name":"new-plugin:run"}]});
+        let cwd = Path::new("/project");
+        let root = "/api/session/synthetic";
+        let (path, body, compact) =
+            super::follow_up_request("/goal finish this", Some(&catalog), cwd, root, "msg-one");
+        assert_eq!(path, format!("{root}/command"));
+        assert_eq!(
+            body,
+            json!({"name":"goal","text":"finish this","delivery":"steer"})
+        );
+        assert!(!compact);
+        let (path, body, compact) =
+            super::follow_up_request("/compact", None, cwd, root, "msg-two");
+        assert_eq!(path, format!("{root}/compact"));
+        assert_eq!(body, json!({"id":"msg-two","delivery":"steer"}));
+        assert!(compact);
+        assert!(
+            super::compact_receipt(
+                &json!({"data":{"id":"msg-two","sessionID":"synthetic","type":"compaction"}}),
+                "msg-two",
+                "synthetic"
+            )
+            .is_ok()
+        );
+        assert!(
+            super::compact_receipt(
+                &json!({"data":{"id":"other","sessionID":"synthetic","type":"compaction"}}),
+                "msg-two",
+                "synthetic"
+            )
+            .is_err()
+        );
+        let (path, _, compact) = super::follow_up_request(
+            "/goal extra",
+            Some(&catalog),
+            Path::new("/other"),
+            root,
+            "msg-three",
+        );
+        assert_eq!(path, format!("{root}/prompt"));
+        assert!(!compact);
     }
 }

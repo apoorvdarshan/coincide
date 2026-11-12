@@ -470,6 +470,8 @@ pub struct ReportedCommands {
     session_order: VecDeque<String>,
     folders: HashMap<(String, String, String), Vec<ProviderCommand>>,
     folder_order: VecDeque<(String, String, String)>,
+    running: HashMap<String, (String, String)>,
+    pending_acp: HashMap<String, VecDeque<(String, String, Vec<ProviderCommand>)>>,
 }
 const MAX_THREADS: usize = 256;
 const MAX_FOLDERS: usize = 64;
@@ -480,6 +482,50 @@ fn account_key(account: &Value) -> String {
     }
 }
 impl ReportedCommands {
+    pub(crate) fn begin_run(&mut self, thread: &str) {
+        self.running.remove(thread);
+        self.pending_acp.remove(thread);
+    }
+    pub(crate) fn end_run(&mut self, thread: &str) {
+        self.running.remove(thread);
+        self.pending_acp.remove(thread);
+    }
+    /// ACP can publish its command list before session/new returns. Hold only
+    /// bounded early reports until the worker confirms the native session ID.
+    pub(crate) fn acp_report(
+        &mut self,
+        thread: &str,
+        provider: &str,
+        session: &str,
+        commands: Vec<ProviderCommand>,
+    ) -> Option<Vec<ProviderCommand>> {
+        if session.is_empty() || session.len() > 512 || session.chars().any(char::is_control) {
+            return None;
+        }
+        if let Some(bound) = self.running.get(thread) {
+            return (bound.0 == provider && bound.1 == session).then_some(commands);
+        }
+        let pending = self.pending_acp.entry(thread.into()).or_default();
+        if pending.len() >= 8 {
+            pending.pop_front();
+        }
+        pending.push_back((provider.into(), session.into(), commands));
+        None
+    }
+    pub(crate) fn bind_run(
+        &mut self,
+        thread: &str,
+        provider: &str,
+        session: &str,
+    ) -> Option<Vec<ProviderCommand>> {
+        self.running
+            .insert(thread.into(), (provider.into(), session.into()));
+        self.pending_acp.remove(thread)?.into_iter().rev().find_map(
+            |(source_provider, source_session, commands)| {
+                (source_provider == provider && source_session == session).then_some(commands)
+            },
+        )
+    }
     pub fn record(
         &mut self,
         thread: &str,
@@ -1030,6 +1076,82 @@ mod tests {
         assert!(
             ProviderCommand::from_opencode(&commands, &skills, Path::new("/synthetic/other"))
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn acp_commands_wait_for_the_exact_native_session() {
+        let mut reported = ReportedCommands::default();
+        reported.begin_run("thread");
+        assert!(
+            reported
+                .acp_report(
+                    "thread",
+                    "cursor",
+                    "other-session",
+                    vec![command("wrong", None)]
+                )
+                .is_none()
+        );
+        assert!(
+            reported
+                .acp_report(
+                    "thread",
+                    "cursor",
+                    "actual-session",
+                    vec![command("custom", None)]
+                )
+                .is_none()
+        );
+        let commands = reported
+            .bind_run("thread", "cursor", "actual-session")
+            .unwrap();
+        assert_eq!(commands[0].name, "custom");
+        assert!(
+            reported
+                .acp_report(
+                    "thread",
+                    "cursor",
+                    "other-session",
+                    vec![command("wrong", None)]
+                )
+                .is_none()
+        );
+        assert!(
+            reported
+                .acp_report(
+                    "thread",
+                    "grok",
+                    "actual-session",
+                    vec![command("wrong", None)]
+                )
+                .is_none()
+        );
+        let changed = reported
+            .acp_report(
+                "thread",
+                "cursor",
+                "actual-session",
+                vec![command("new-plugin", None)],
+            )
+            .unwrap();
+        assert_eq!(changed[0].name, "new-plugin");
+        reported.end_run("thread");
+        reported.begin_run("thread");
+        assert!(
+            reported
+                .acp_report(
+                    "thread",
+                    "cursor",
+                    "actual-session",
+                    vec![command("prior", None)]
+                )
+                .is_none()
+        );
+        assert!(
+            reported
+                .bind_run("thread", "cursor", "replacement-session")
+                .is_none()
         );
     }
 

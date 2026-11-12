@@ -2,6 +2,15 @@
 //! can schedule an interrupt. Crash/Quit loses pending delivery and keeps draft.
 use super::*;
 use crate::composer_follow_up::{self as choice, Behavior, Dispatch};
+fn text_steer_timeout(provider: &str) -> Duration {
+    // OpenCode can first read the workspace command catalog (up to 11 s)
+    // and then await its HTTP acknowledgement (up to 16 s).
+    if provider == "opencode" {
+        Duration::from_secs(30)
+    } else {
+        Duration::from_secs(10)
+    }
+}
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NativeFollowUpStatus {
     Pending,
@@ -205,6 +214,19 @@ impl Engine {
                 .values()
                 .any(|frame| frame["method"] != "item/tool/requestUserInput")
         });
+        if run.is_some()
+            && matches!(
+                thread["selection"]["provider"].as_str(),
+                Some("codex" | "opencode")
+            )
+            && agent::codex_compact_command(thread["draft"].as_str().unwrap_or(""))
+            && thread["rustDraftImages"]
+                .as_array()
+                .is_none_or(Vec::is_empty)
+            && !crate::composer_context::has_context(&thread["draftContext"])
+        {
+            return Ok(Dispatch::Queue);
+        }
         Ok(choice::resolve(run.is_some(), ready, alternate, behavior, approval).0)
     }
     pub fn send_native_follow_up(
@@ -375,6 +397,13 @@ impl Engine {
         } else {
             choice::resolve(true, can_steer, alternate, behavior, approval)
         };
+        if matches!(run.provider.as_str(), "codex" | "opencode")
+            && agent::codex_compact_command(&text)
+            && images.is_empty()
+            && !crate::composer_context::has_context(&context)
+        {
+            dispatch = Dispatch::Queue;
+        }
         // These active-turn channels currently carry text, not image payloads.
         // Preserve images by sending this follow-up after the running turn.
         if dispatch == Dispatch::Steer
@@ -601,7 +630,7 @@ impl Engine {
                                 Ok(Ok(())) => *accepted = true,
                                 Ok(Err(error)) => bail!("{provider} rejected the message: {error}"),
                                 Err(std::sync::mpsc::TryRecvError::Empty)
-                                    if started.elapsed() < Duration::from_secs(10) =>
+                                    if started.elapsed() < text_steer_timeout(provider) =>
                                 {
                                     return Ok(None);
                                 }
