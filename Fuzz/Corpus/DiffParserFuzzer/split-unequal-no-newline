@@ -1,9 +1,0 @@
-Ddiff --git a/one.txt b/one.txt
---- a/one.txt
-+++ b/one.txt
-@@ -1,1 +1,2 @@
--old
-\ No newline at end of file
-+new first
-+new last
-\ No newline at end of file

@@ -2,10 +2,10 @@ name: Windows
 
 on:
   pull_request:
-    paths: ['windows/**', 'Coincide/Resources/Localizable.xcstrings', '.github/workflows/windows.yml']
+    paths: ['windows/**', 'windows/Resources/Localizable.xcstrings', '.github/workflows/windows.yml']
   push:
     branches: [main]
-    paths: ['windows/**', 'Coincide/Resources/Localizable.xcstrings', '.github/workflows/windows.yml']
+    paths: ['windows/**', 'windows/Resources/Localizable.xcstrings', '.github/workflows/windows.yml']
   workflow_dispatch:
 
 permissions:

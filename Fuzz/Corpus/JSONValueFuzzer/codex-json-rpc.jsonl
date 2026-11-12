@@ -1,3 +1,0 @@
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"coincide","version":"0.1.0"}}}
-{"jsonrpc":"2.0","method":"item/agentMessage/delta","params":{"threadId":"t1","turnId":"u1","itemId":"i1","delta":"hi"}}
-{"jsonrpc":"2.0","id":7,"method":"item/commandExecution/requestApproval","params":{"command":["ls","-la"],"cwd":"/tmp/repo"}}

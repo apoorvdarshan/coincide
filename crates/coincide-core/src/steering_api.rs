@@ -134,15 +134,36 @@ impl Engine {
             "Stored selection or project differs from the running turn"
         );
         run.session.steer_text(&runtime_text)?;
-        let mut saved = stored.clone();
         let item_id = Uuid::new_v4().to_string();
-        append(&mut saved, "user", &text, None);
-        let item = saved["items"].as_array_mut().unwrap().last_mut().unwrap();
-        item["id"] = json!(item_id);
-        item["steered"] = json!(true);
-        item["provider"] = json!("opencode");
-        if crate::composer_context::has_context(&context) {
-            item["context"] = context;
+        self.persist_text_steer(thread, &item_id, &text, &context, "opencode")?;
+        Ok(json!({"operationId":item_id,"threadId":thread,"status":"delivered","persisted":true}))
+    }
+
+    /// Persist an acknowledged provider message exactly once. A failed save is
+    /// retained for recovery; it must never cause the provider input to be replayed.
+    pub(super) fn persist_text_steer(
+        &mut self,
+        thread: &str,
+        item_id: &str,
+        text: &str,
+        context: &Value,
+        provider: &str,
+    ) -> Result<()> {
+        let mut saved = if let Some(unsaved) = self.unsaved_threads.get(thread) {
+            unsaved.clone()
+        } else {
+            self.store.thread(thread)?
+        };
+        let items = saved["items"].as_array().context("Invalid transcript")?;
+        if !items.iter().any(|item| item["id"] == item_id) {
+            append(&mut saved, "user", text, None);
+            let item = saved["items"].as_array_mut().unwrap().last_mut().unwrap();
+            item["id"] = json!(item_id);
+            item["steered"] = json!(true);
+            item["provider"] = json!(provider);
+            if crate::composer_context::has_context(context) {
+                item["context"] = context.clone();
+            }
         }
         if let Err(error) = self.store.save_with_usage(
             &saved,
@@ -151,9 +172,10 @@ impl Engine {
             self.unsaved_threads.insert(thread.into(), saved);
             return Err(error);
         }
+        self.unsaved_threads.remove(thread);
         self.pending_usage.remove(thread);
         self.revision += 1;
-        Ok(json!({"operationId":item_id,"threadId":thread,"status":"delivered","persisted":true}))
+        Ok(())
     }
     fn begin_steering(
         &mut self,

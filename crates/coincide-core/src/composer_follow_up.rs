@@ -62,16 +62,11 @@ pub fn resolve(
     can_steer: bool,
     alternate: bool,
     behavior: Behavior,
-    approval_shown: bool,
+    _approval_shown: bool,
 ) -> (Dispatch, bool) {
     if !running {
         return (Dispatch::Send, false);
     }
-    let behavior = if approval_shown {
-        Behavior::Steer
-    } else {
-        behavior
-    };
     let chosen = if alternate {
         behavior.opposite()
     } else {
@@ -112,7 +107,7 @@ pub(crate) fn scope(thread: &Value) -> Value {
 mod tests {
     use super::*;
     #[test]
-    fn swift_dispatch_truth_table_preserves_approval_and_alternate_priority() {
+    fn dispatch_respects_selected_behavior_even_during_approval() {
         for behavior in [Behavior::Steer, Behavior::Queue, Behavior::Interrupt] {
             for alternate in [false, true] {
                 assert_eq!(
@@ -121,10 +116,14 @@ mod tests {
                 );
                 assert_eq!(
                     resolve(true, true, alternate, behavior, true),
-                    if alternate {
-                        (Dispatch::Queue, false)
+                    match if alternate {
+                        behavior.opposite()
                     } else {
-                        (Dispatch::Steer, true)
+                        behavior
+                    } {
+                        Behavior::Steer => (Dispatch::Steer, true),
+                        Behavior::Queue => (Dispatch::Queue, false),
+                        Behavior::Interrupt => (Dispatch::Interrupt, false),
                     }
                 );
             }
