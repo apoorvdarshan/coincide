@@ -871,7 +871,24 @@ fn queued_send_now_requires_real_steering_ack_and_keeps_separate_composer() {
     engine.store.save(&source).unwrap();
     engine.enabled_queues.remove(&id);
     let visible = serde_json::to_value(&crate::message_queue::read(&source).unwrap()[0]).unwrap();
-    let ticket = engine.native_send_queued_now(&source, &visible).unwrap();
+    let expected = Value::Object(
+        [
+            "id",
+            "rustMessageQueue",
+            "selection",
+            "projectID",
+            "projectPath",
+            "worktreePath",
+            "botID",
+            "rustBotContext",
+            "accessMode",
+            "interactionMode",
+        ]
+        .into_iter()
+        .filter_map(|key| source.get(key).map(|value| (key.into(), value.clone())))
+        .collect(),
+    );
+    let ticket = engine.native_send_queued_now(&expected, &visible).unwrap();
     engine.poll();
     assert_eq!(
         engine.native_follow_up_status(&ticket).unwrap(),

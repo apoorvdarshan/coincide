@@ -1550,11 +1550,7 @@ impl Engine {
                 });
             }
         }
-        if let Some(expected) = original.as_ref() {
-            self.store.save_native_follow_up_turn(expected, &v)?;
-        } else {
-            self.store.save(&v)?;
-        }
+        self.store.save_starting_turn(&v, original.as_ref())?;
         // The durable claim and this exact runtime owner are both selected
         // before Session starts its worker. No post-launch claim lookup exists.
         let queue_claim = match origin {
@@ -2743,10 +2739,11 @@ impl Engine {
                     self.notification_events.stage(&v, &item, kind, None);
                 }
             }
-            if let Err(error) = self
-                .store
-                .save_with_usage(&v, self.pending_usage.get(&id).map(|record| &record.0))
-            {
+            if let Err(error) = self.store.save_streaming_with_usage(
+                &v,
+                self.pending_usage.get(&id).map(|record| &record.0),
+                finished,
+            ) {
                 let message = format!("Transcript could not be saved: {error}");
                 self.enabled_queues.remove(&id);
                 self.unsaved_threads.insert(id.clone(), v);
@@ -2804,7 +2801,11 @@ impl Engine {
             self.unsaved_threads.retain(|id, thread| {
                 if self
                     .store
-                    .save_with_usage(thread, self.pending_usage.get(id).map(|record| &record.0))
+                    .save_streaming_with_usage(
+                        thread,
+                        self.pending_usage.get(id).map(|record| &record.0),
+                        !self.runs.contains_key(id),
+                    )
                     .is_err()
                 {
                     true

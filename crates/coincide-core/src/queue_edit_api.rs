@@ -32,10 +32,6 @@ impl Engine {
             expected["isArchived"] != true,
             "Restore this conversation before editing its queue"
         );
-        ensure!(
-            serde_json::to_vec(expected)?.len() <= 8 * 1024 * 1024,
-            "Conversation exceeds the safe edit limit"
-        );
         let message_id = required(visible_message, "id")?;
         let messages = message_queue::read(expected)?;
         let (index, message) = messages
@@ -197,6 +193,22 @@ mod tests {
         );
         assert_eq!(engine.store.thread(&text(&source, "id")).unwrap(), result);
         engine.store.close_for_shutdown().unwrap();
+    }
+    #[test]
+    fn queue_edit_works_in_a_long_conversation_without_changing_its_transcript() {
+        let (_directory, mut engine, mut source, message) = fixture();
+        source["items"] = json!([{"id":"large","kind":"tool","text":"preserved","opaque":"x".repeat(9 * 1024 * 1024)}]);
+        engine.store.save(&source).unwrap();
+        let result = engine
+            .edit_native_queued_message(&source, &message)
+            .unwrap();
+        assert_eq!(result["items"], source["items"]);
+        assert_eq!(result["rustMessageQueue"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            result["draft"],
+            "existing draft\n\n\nqueued é 👩‍💻\nsecond line"
+        );
+        assert_eq!(engine.store.thread(&text(&source, "id")).unwrap(), result);
     }
     #[test]
     fn queue_edit_refuses_external_source_and_visible_message_changes_atomically() {
