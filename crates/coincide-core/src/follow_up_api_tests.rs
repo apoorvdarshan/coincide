@@ -37,6 +37,134 @@ fn captured_pending_send_is_queued_without_consuming_a_new_draft() {
 }
 
 #[test]
+fn captured_sends_keep_order_for_every_provider_without_consuming_the_next_draft() {
+    for provider in [
+        "codex",
+        "claude",
+        "opencode",
+        "cursor",
+        "grok",
+        "antigravity",
+    ] {
+        let Fixture {
+            _dir,
+            mut engine,
+            id,
+            release,
+            ..
+        } = fixture();
+        let mut first = engine.store.thread(&id).unwrap();
+        first["selection"] = json!({"provider":provider,"modelID":"default"});
+        first["draft"] = json!("first submitted message");
+        engine.store.save(&first).unwrap();
+        let run = engine.runs.get_mut(&id).unwrap();
+        run.provider = provider.into();
+        run.usage_context = Some(agent::usage_capture::TurnContext::new(&first));
+        let mut second = first.clone();
+        second["draft"] = json!("second submitted message");
+        let mut newer = first.clone();
+        newer["draft"] = json!("still typing");
+        engine.store.save(&newer).unwrap();
+
+        assert_eq!(
+            engine.queue_captured_native_send(&first, false).unwrap(),
+            (true, false)
+        );
+        assert_eq!(
+            engine.queue_captured_native_send(&second, false).unwrap(),
+            (true, false)
+        );
+        let saved = engine.store.thread(&id).unwrap();
+        let queue = crate::message_queue::read(&saved).unwrap();
+        assert_eq!(
+            queue
+                .iter()
+                .map(|message| message.text.as_str())
+                .collect::<Vec<_>>(),
+            vec!["first submitted message", "second submitted message"],
+            "{provider}"
+        );
+        assert!(
+            queue
+                .iter()
+                .all(|message| message.selection == first["selection"])
+        );
+        assert_eq!(saved["draft"], "still typing", "{provider}");
+        release.send(()).unwrap();
+    }
+}
+
+#[test]
+fn captured_send_follows_its_original_conversation_after_a_thread_switch() {
+    let Fixture {
+        _dir,
+        mut engine,
+        id,
+        release,
+        ..
+    } = fixture();
+    let captured = engine.store.thread(&id).unwrap();
+    let other = engine
+        .execute("threads.create", &json!({"cwd":_dir.path()}))
+        .unwrap();
+    let other_id = text(&other, "id");
+    engine
+        .store
+        .patch_thread(&other_id, &json!({"draft":"other draft"}))
+        .unwrap();
+    engine.set_active_thread(Some(other_id.clone())).unwrap();
+
+    assert_eq!(
+        engine.queue_captured_native_send(&captured, false).unwrap(),
+        (true, false)
+    );
+    let queue = crate::message_queue::read(&engine.store.thread(&id).unwrap()).unwrap();
+    assert_eq!(queue.len(), 1);
+    assert_eq!(queue[0].text, "synthetic redirect");
+    assert_eq!(
+        engine.store.thread(&other_id).unwrap()["draft"],
+        "other draft"
+    );
+    assert!(
+        crate::message_queue::read(&engine.store.thread(&other_id).unwrap())
+            .unwrap()
+            .is_empty()
+    );
+    release.send(()).unwrap();
+}
+
+#[test]
+fn captured_send_continues_an_enabled_queue_with_a_dispatch_in_flight() {
+    for enabled in [true, false] {
+        let Fixture {
+            _dir,
+            mut engine,
+            id,
+            release,
+            ..
+        } = fixture();
+        let captured = engine.store.thread(&id).unwrap();
+        let mut current = captured.clone();
+        crate::message_queue::add(&mut current, "earlier message").unwrap();
+        current["rustMessageQueue"][0]["state"] = json!("dispatching");
+        engine.store.save(&current).unwrap();
+        if enabled {
+            engine.enabled_queues.insert(id.clone());
+        }
+
+        assert_eq!(
+            engine.queue_captured_native_send(&captured, false).unwrap(),
+            (enabled, false)
+        );
+        assert_eq!(engine.enabled_queues.contains(&id), enabled);
+        let queue = crate::message_queue::read(&engine.store.thread(&id).unwrap()).unwrap();
+        assert_eq!(queue.len(), 2);
+        assert_eq!(queue[1].text, "synthetic redirect");
+        release.send(()).unwrap();
+    }
+}
+
+#[test]
 fn captured_send_with_changed_model_is_saved_but_not_auto_dispatched() {
     let Fixture {
         _dir,

@@ -63,7 +63,14 @@ impl Coincide {
             .ok();
         }));
     }
-    fn continue_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn continue_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pending_follow_up.is_some() || !self.pending_follow_up_backlog.is_empty() {
+            // Keep normal admission open until submitted messages are in the
+            // durable queue. Freezing it first would strand the buffer.
+            self.quit_after_pending_sends = true;
+            self.status = "Saving submitted messages before quitting…".into();
+            return;
+        }
         if self.instructions_panel.read(cx).has_unsaved_edits(cx) {
             self.prompt_instruction_close(true, window, cx);
         } else {

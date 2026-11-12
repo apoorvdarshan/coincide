@@ -127,10 +127,9 @@ impl Engine {
         self.require_admissions()?;
         ensure!(!self.shutdown, "Application is closing");
         let id = required(captured, "id")?;
-        ensure!(
-            self.active_thread.as_deref() == Some(id),
-            "Composer is no longer active"
-        );
+        // This is a native-only captured submission. The user may have moved
+        // to another conversation after pressing Send; its original thread and
+        // execution context are revalidated below before queueing.
         ensure!(
             !self.unsaved_threads.contains_key(id),
             "Transcript persistence is recovering"
@@ -174,13 +173,14 @@ impl Engine {
         agent::validate_images(&Provider::from_name(&provider)?, &prepared)?;
         let existing = crate::message_queue::read(&current)?;
         let can_enable = captured["selection"] == current["selection"]
-            && existing
-                .iter()
-                .all(|message| message.state != crate::message_queue::State::Dispatching)
             && (self.enabled_queues.contains(id)
-                || existing
-                    .iter()
-                    .all(|message| message.state != crate::message_queue::State::Pending));
+                || existing.iter().all(|message| {
+                    !matches!(
+                        message.state,
+                        crate::message_queue::State::Pending
+                            | crate::message_queue::State::Dispatching
+                    )
+                }));
         let mut target = current.clone();
         target["selection"] = captured["selection"].clone();
         crate::message_queue::add_payload(

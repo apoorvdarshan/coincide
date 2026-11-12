@@ -609,6 +609,9 @@ struct Coincide {
     restore_composer: Option<(String, String)>,
     /// A follow-up whose engine call found the lock busy, retried each tick.
     pending_follow_up: Option<composer_follow_up_mount::PendingSend>,
+    pending_follow_up_backlog: std::collections::VecDeque<composer_follow_up_mount::PendingSend>,
+    buffered_send_lease: coincide_core::native_ui_edits::NativeUiEditLease,
+    quit_after_pending_sends: bool,
     /// A Queue/Steer choice made while the engine was busy, written later.
     pending_follow_up_choice: Option<(String, coincide_core::composer_follow_up::Behavior)>,
     /// A just-sent message drawn before the stored thread contains it, with
@@ -1001,6 +1004,9 @@ impl Coincide {
         }
     }
     fn save_pending_draft(&mut self, id: &str) {
+        if self.pending_successor_waiting(id) {
+            return;
+        }
         let engine = self.engine.clone();
         if let Some(error) = draft_close::save_one(&mut self.pending_drafts, id, |id, text| {
             persist_pending_draft(&engine, id, text)
@@ -1012,6 +1018,15 @@ impl Coincide {
                 self.status = format!("Draft remains in this window; not yet saved: {error}");
             }
         }
+    }
+    fn pending_successor_waiting(&self, id: &str) -> bool {
+        self.pending_follow_up
+            .as_ref()
+            .is_some_and(|pending| pending.thread == id && pending.edited)
+            || self
+                .pending_follow_up_backlog
+                .iter()
+                .any(|pending| pending.thread == id)
     }
     fn flush_native_selection(&mut self) -> bool {
         let Some(selected) = self.pending_native_selection.as_ref() else {
@@ -1758,6 +1773,9 @@ impl Coincide {
             pending_select: None,
             restore_composer: None,
             pending_follow_up: None,
+            pending_follow_up_backlog: Default::default(),
+            buffered_send_lease: native_editors.editor(),
+            quit_after_pending_sends: false,
             pending_follow_up_choice: None,
             pending_sent: None,
             pending_images: Default::default(),
@@ -3914,6 +3932,7 @@ impl Coincide {
                         self.transcript_count = count;
                         self.selected = Some(v);
                         self.reconcile_pending_send();
+                        self.reconcile_buffered_sends();
                         let count = self
                             .selected
                             .as_ref()
@@ -4344,7 +4363,11 @@ impl Coincide {
             pending.edited = true;
         }
         self.submitted_drafts.changed(&id, &draft);
-        self.draft_saver.record(&id, &draft);
+        if self.pending_successor_waiting(&id) {
+            self.draft_saver.invalidate();
+        } else {
+            self.draft_saver.record(&id, &draft);
+        }
         self.pending_drafts.insert(
             id,
             PendingDraft {
@@ -4889,6 +4912,15 @@ impl Coincide {
         self.send_selected(false, window, cx);
     }
     fn send_selected(&mut self, alternate: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.send_selected_inner(alternate, window, cx, false);
+    }
+    fn send_selected_inner(
+        &mut self,
+        alternate: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        from_pending: bool,
+    ) {
         if self.voice.preview.is_some() {
             self.cancel_composer_dictation(cx);
         }
@@ -4896,10 +4928,20 @@ impl Coincide {
         if !self.chat_visible() {
             return;
         }
-        if self.pending_follow_up.is_some() {
-            self.status = "Preparing the previous message; your current draft is preserved.".into();
-            self.show_local_error("The previous message is still being prepared. Your current draft is preserved; send it after the earlier message is queued or sent.");
-            cx.notify();
+        if !from_pending
+            && (self.pending_follow_up.is_some() || !self.pending_follow_up_backlog.is_empty())
+        {
+            if let Some(thread) = &self.selected {
+                let draft = self.composer.read(cx).value().to_string();
+                if let Some(command) =
+                    composer_commands::intercept(thread, &draft, |command| command)
+                {
+                    let submission = composer_commands::Submission::new(thread, &draft);
+                    self.perform_composer_command(command, submission, window, cx);
+                    return;
+                }
+            }
+            self.buffer_composer_send(alternate, window, cx);
             return;
         }
         // Sending nothing while a plan is offered implements it, as in Swift.
@@ -5954,6 +5996,9 @@ impl Render for Coincide {
             self.pending_follow_up_choice = None;
             self.choose_follow_up(behavior, cx);
         }
+        if self.pending_follow_up.is_none() {
+            self.pending_follow_up = self.pending_follow_up_backlog.pop_front();
+        }
         if let Some(mut pending) = self.pending_follow_up.take() {
             if pending.waiting_for_import
                 && !pending.import_failed
@@ -5984,8 +6029,10 @@ impl Render for Coincide {
                     || self.attachment_import_threads.contains(&pending.thread)
                 {
                     self.pending_follow_up = Some(pending);
-                } else if pending.matches(thread, self.composer.read(cx).value().as_ref()) {
-                    self.send_selected(pending.alternate, window, cx);
+                } else if pending.buffer_id.is_none()
+                    && pending.matches(thread, self.composer.read(cx).value().as_ref())
+                {
+                    self.send_selected_inner(pending.alternate, window, cx, true);
                 } else {
                     let clear_original =
                         !pending.edited && self.composer.read(cx).value().as_ref() == pending.draft;
@@ -6024,6 +6071,8 @@ impl Render for Coincide {
                                 self.composer
                                     .update(cx, |input, cx| input.set_value("", window, cx));
                             }
+                            self.finish_pending_images(pending.image_send, true);
+                            self.remove_buffered_send(&pending);
                             self.status = if enabled {
                                 "Previous message queued; your current draft is preserved."
                             } else if same_selection {
@@ -6056,8 +6105,41 @@ impl Render for Coincide {
                         }
                     }
                 }
-            } else {
+            } else if pending.waiting_for_import
+                || self.attachment_import_threads.contains(&pending.thread)
+            {
                 self.pending_follow_up = Some(pending);
+            } else {
+                let result = try_state(&self.engine).and_then(|mut engine| {
+                    engine.queue_captured_native_send(
+                        &pending.captured,
+                        !pending.edited && pending.buffer_id.is_none(),
+                    )
+                });
+                match result {
+                    Ok((enabled, _)) => {
+                        self.finish_pending_images(pending.image_send, true);
+                        self.status = if enabled {
+                            "The earlier conversation's message is queued."
+                        } else {
+                            "The earlier conversation's message is saved in its paused queue."
+                        }
+                        .into();
+                    }
+                    Err(error) => {
+                        if !engine_busy(&error) {
+                            self.status = format!("Earlier message is still waiting: {error}");
+                        }
+                        self.pending_follow_up = Some(pending);
+                    }
+                }
+            }
+        }
+        if self.pending_follow_up.is_none() && self.pending_follow_up_backlog.is_empty() {
+            self.buffered_send_lease.set_dirty(false);
+            if self.quit_after_pending_sends {
+                self.quit_after_pending_sends = false;
+                self.continue_quit(window, cx);
             }
         }
         if let Some((id, text)) = self.restore_composer.clone()
