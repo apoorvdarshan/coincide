@@ -40,6 +40,7 @@ pub(super) struct PendingSend {
     pub selection: Value,
     pub waiting_for_import: bool,
     pub import_failed: bool,
+    pub edited: bool,
     pub captured: Value,
     pub last_error: Option<String>,
 }
@@ -56,6 +57,7 @@ impl PendingSend {
             selection: pending_scope(thread, false),
             waiting_for_import: false,
             import_failed: false,
+            edited: false,
             captured,
             last_error: None,
         }

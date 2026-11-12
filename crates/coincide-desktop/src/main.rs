@@ -4338,6 +4338,11 @@ impl Coincide {
         }
         thread["draft"] = json!(draft);
         let id = text(thread, "id");
+        if let Some(pending) = self.pending_follow_up.as_mut()
+            && pending.thread == id
+        {
+            pending.edited = true;
+        }
         self.submitted_drafts.changed(&id, &draft);
         self.draft_saver.record(&id, &draft);
         self.pending_drafts.insert(
@@ -5982,14 +5987,22 @@ impl Render for Coincide {
                 } else if pending.matches(thread, self.composer.read(cx).value().as_ref()) {
                     self.send_selected(pending.alternate, window, cx);
                 } else {
+                    let clear_original =
+                        !pending.edited && self.composer.read(cx).value().as_ref() == pending.draft;
+                    if clear_original {
+                        self.draft_saver.invalidate();
+                    }
                     let result = try_state(&self.engine).and_then(|mut engine| {
-                        engine.queue_captured_native_send(&pending.captured)
+                        engine.queue_captured_native_send(&pending.captured, clear_original)
                     });
                     match result {
-                        Ok(enabled) => {
+                        Ok((enabled, cleared)) => {
                             let same_selection =
                                 pending.captured["selection"] == thread["selection"];
                             if let Some(selected) = self.selected.as_mut() {
+                                if cleared {
+                                    selected["draft"] = json!("");
+                                }
                                 if let (Some(submitted), Some(images)) = (
                                     pending.captured["rustDraftImages"].as_array(),
                                     selected["rustDraftImages"].as_array_mut(),
@@ -5999,6 +6012,17 @@ impl Render for Coincide {
                                 if selected["draftContext"] == pending.captured["draftContext"] {
                                     selected.as_object_mut().unwrap().remove("draftContext");
                                 }
+                            }
+                            if cleared {
+                                if self
+                                    .pending_drafts
+                                    .get(&pending.thread)
+                                    .is_some_and(|draft| draft.text == pending.draft)
+                                {
+                                    self.pending_drafts.remove(&pending.thread);
+                                }
+                                self.composer
+                                    .update(cx, |input, cx| input.set_value("", window, cx));
                             }
                             self.status = if enabled {
                                 "Previous message queued; your current draft is preserved."
@@ -6011,7 +6035,7 @@ impl Render for Coincide {
                                 self.show_local_error(if same_selection {
                                     "Your previous message is saved in the paused queue. Resume the queue to send it."
                                 } else {
-                                    "Your previous message is saved in the queue. Select its original provider and model before sending it."
+                                    "Your previous message is saved in the queue. Select its original provider and model, then resume the queue to send it."
                                 });
                             }
                             self.refresh_queue(cx);

@@ -23,7 +23,10 @@ fn captured_pending_send_is_queued_without_consuming_a_new_draft() {
     let mut newer = captured.clone();
     newer["draft"] = json!("new independent draft");
     engine.store.save(&newer).unwrap();
-    assert!(engine.queue_captured_native_send(&captured).unwrap());
+    assert_eq!(
+        engine.queue_captured_native_send(&captured, false).unwrap(),
+        (true, false)
+    );
     let saved = engine.store.thread(&id).unwrap();
     assert_eq!(saved["draft"], "new independent draft");
     let queued = crate::message_queue::read(&saved).unwrap();
@@ -47,7 +50,10 @@ fn captured_send_with_changed_model_is_saved_but_not_auto_dispatched() {
     newer["draft"] = json!("new draft");
     newer["selection"]["modelID"] = json!("other-model");
     engine.store.save(&newer).unwrap();
-    assert!(!engine.queue_captured_native_send(&captured).unwrap());
+    assert_eq!(
+        engine.queue_captured_native_send(&captured, false).unwrap(),
+        (false, false)
+    );
     let saved = engine.store.thread(&id).unwrap();
     assert_eq!(saved["draft"], "new draft");
     assert_eq!(saved["selection"], newer["selection"]);
@@ -56,6 +62,56 @@ fn captured_send_with_changed_model_is_saved_but_not_auto_dispatched() {
         captured["selection"]
     );
     assert!(!engine.enabled_queues.contains(&id));
+    release.send(()).unwrap();
+}
+
+#[test]
+fn captured_send_clears_only_the_unchanged_submitted_draft() {
+    let Fixture {
+        _dir,
+        mut engine,
+        id,
+        release,
+        ..
+    } = fixture();
+    let captured = engine.store.thread(&id).unwrap();
+    let mut newer = captured.clone();
+    newer["selection"]["modelID"] = json!("other-model");
+    engine.store.save(&newer).unwrap();
+    assert_eq!(
+        engine.queue_captured_native_send(&captured, true).unwrap(),
+        (false, true)
+    );
+    let saved = engine.store.thread(&id).unwrap();
+    assert_eq!(saved["draft"], "");
+    assert_eq!(
+        crate::message_queue::read(&saved).unwrap()[0].text,
+        "synthetic redirect"
+    );
+    release.send(()).unwrap();
+}
+
+#[test]
+fn captured_send_preserves_an_identical_retyped_draft() {
+    let Fixture {
+        _dir,
+        mut engine,
+        id,
+        release,
+        ..
+    } = fixture();
+    let captured = engine.store.thread(&id).unwrap();
+    let mut retyped = captured.clone();
+    retyped["selection"]["modelID"] = json!("other-model");
+    engine.store.save(&retyped).unwrap();
+    assert_eq!(
+        engine.queue_captured_native_send(&captured, false).unwrap(),
+        (false, false)
+    );
+    assert_eq!(
+        engine.store.thread(&id).unwrap()["draft"],
+        "synthetic redirect"
+    );
     release.send(()).unwrap();
 }
 
@@ -72,12 +128,15 @@ fn captured_send_never_borrows_changed_access_or_restarts_a_paused_queue() {
     let mut newer = captured.clone();
     newer["accessMode"] = json!("fullAccess");
     engine.store.save(&newer).unwrap();
-    assert!(engine.queue_captured_native_send(&captured).is_err());
+    assert!(engine.queue_captured_native_send(&captured, false).is_err());
     assert_eq!(engine.store.thread(&id).unwrap(), newer);
     newer["accessMode"] = captured["accessMode"].clone();
     crate::message_queue::add(&mut newer, "previous paused item").unwrap();
     engine.store.save(&newer).unwrap();
-    assert!(!engine.queue_captured_native_send(&captured).unwrap());
+    assert_eq!(
+        engine.queue_captured_native_send(&captured, false).unwrap(),
+        (false, false)
+    );
     assert!(!engine.enabled_queues.contains(&id));
     assert_eq!(
         crate::message_queue::read(&engine.store.thread(&id).unwrap())
@@ -808,7 +867,10 @@ fn captured_send_preserves_new_images_and_references() {
     newer["rustDraftImages"] = json!([original_image, next_image]);
     newer["draftContext"] = next_context.clone();
     engine.store.save(&newer).unwrap();
-    assert!(engine.queue_captured_native_send(&captured).unwrap());
+    assert_eq!(
+        engine.queue_captured_native_send(&captured, false).unwrap(),
+        (true, false)
+    );
     let saved = engine.store.thread(&id).unwrap();
     assert_eq!(saved["draft"], "next draft");
     assert_eq!(saved["rustDraftImages"], json!([next_image]));

@@ -119,7 +119,11 @@ impl Engine {
     /// Preserve a native send which was waiting for local admission while the
     /// editor moved on. The captured payload owns its own queue entry; it must
     /// never clear or adopt the newer draft, images, or provider selection.
-    pub fn queue_captured_native_send(&mut self, captured: &Value) -> Result<bool> {
+    pub fn queue_captured_native_send(
+        &mut self,
+        captured: &Value,
+        clear_original: bool,
+    ) -> Result<(bool, bool)> {
         self.require_admissions()?;
         ensure!(!self.shutdown, "Application is closing");
         let id = required(captured, "id")?;
@@ -186,6 +190,10 @@ impl Engine {
             images,
         )?;
         target["selection"] = current["selection"].clone();
+        let cleared = clear_original && current["draft"] == captured["draft"];
+        if cleared {
+            target["draft"] = json!("");
+        }
         if let (Some(submitted), Some(draft_images)) = (
             captured["rustDraftImages"].as_array(),
             target["rustDraftImages"].as_array_mut(),
@@ -202,7 +210,7 @@ impl Engine {
         }
         self.sync_goal_queue_waiting(id);
         self.revision += 1;
-        Ok(can_enable)
+        Ok((can_enable, cleared))
     }
     /// Named follow-ups use the selected account's actual private catalog and
     /// policy, just like normal turn admission; never borrow a default proof.
