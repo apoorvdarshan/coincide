@@ -78,6 +78,16 @@ fn mark_draft_write(tx: &rusqlite::Transaction<'_>, id: &str) -> Result<()> {
     Ok(())
 }
 
+fn draft_revision(db: &Connection, id: &str) -> Result<Option<Vec<u8>>> {
+    Ok(db
+        .query_row(
+            "SELECT revision FROM native_draft_revisions WHERE id=?1 COLLATE NOCASE",
+            [id],
+            |row| row.get(0),
+        )
+        .optional()?)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThreadSummary {
     pub id: String,
@@ -1034,11 +1044,7 @@ impl Store {
         ensure!(draft.len() <= 1_048_576, "Draft exceeds 1 MiB");
         self.connection()?;
         let tx = self.connection_mut()?.transaction()?;
-        let same_draft: bool = tx.query_row(
-            "SELECT coalesce(json_type(document,'$.draft')='text' AND json_extract(document,'$.draft')=?2,0) FROM threads WHERE id=?1 COLLATE NOCASE",
-            params![id, draft],
-            |row| row.get(0),
-        )?;
+        let previous_revision = draft_revision(&tx, id)?;
         let navigation = tx
             .query_row(
                 "SELECT metadata FROM thread_navigation WHERE id=?1 COLLATE NOCASE",
@@ -1057,7 +1063,7 @@ impl Store {
             params![id, draft],
         )?;
         ensure!(changed == 1, "Thread not found");
-        if same_draft {
+        if draft_revision(&tx, id)? == previous_revision {
             // The change trigger handles different text; an explicit rewrite
             // of the same text still represents a new editing intent.
             mark_draft_write(&tx, id)?;
@@ -1086,19 +1092,23 @@ impl Store {
             return self.thread(id);
         }
         let mut value = self.thread(id)?;
-        let same_draft = patch
-            .get("draft")
-            .is_some_and(|draft| value.get("draft") == Some(draft));
         for (key, next) in patch {
             value[key] = next.clone();
         }
         let reindex = patch.contains_key("title");
         let tx = self.connection_mut()?.transaction()?;
+        let previous_revision = if patch.contains_key("draft") {
+            Some(draft_revision(&tx, id)?)
+        } else {
+            None
+        };
         tx.execute(
             "UPDATE threads SET document=?2 WHERE id=?1",
             params![id, value.to_string()],
         )?;
-        if same_draft {
+        if let Some(previous_revision) = previous_revision
+            && draft_revision(&tx, id)? == previous_revision
+        {
             mark_draft_write(&tx, id)?;
         }
         cache_thread(&tx, &value, reindex)?;

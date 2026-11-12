@@ -190,13 +190,7 @@ impl Store {
             )?,
             "Imported conversation is read-only"
         );
-        let revision: Option<Vec<u8>> = tx
-            .query_row(
-                "SELECT revision FROM native_draft_revisions WHERE id=?1 COLLATE NOCASE",
-                [id],
-                |row| row.get(0),
-            )
-            .optional()?;
+        let revision = draft_revision(&tx, id)?;
         // Settings, context or images can change while the provider is
         // acknowledging a message. They must not resurrect its text, but a
         // later draft write (even an identical retype) belongs to the user.
