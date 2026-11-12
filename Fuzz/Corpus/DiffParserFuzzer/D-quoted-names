@@ -1,7 +1,0 @@
-Ddiff --git "a/tab\there.txt" "b/tab\there.txt"
---- "a/tab\there.txt"
-+++ "b/tab\there.txt"
-@@ -1,2 +1,2 @@
--a
-+b
- c
