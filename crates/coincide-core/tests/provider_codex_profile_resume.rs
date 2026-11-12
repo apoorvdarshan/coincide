@@ -51,7 +51,8 @@ if r['method']=='model/list':
  sys.stdin.readline();sys.exit(0)
 assert r['method']==cfg['method'],r
 assert r['params']['cwd']==os.getcwd()
-assert r['params']['approvalPolicy']=='untrusted' and r['params']['sandbox']=='read-only'
+assert r['params']['approvalPolicy']==('never' if cfg.get('access')=='fullAccess' else 'untrusted')
+assert r['params']['sandbox']==('danger-full-access' if cfg.get('access')=='fullAccess' else 'read-only')
 if cfg['model']=='default':assert 'model' not in r['params']
 else:assert r['params']['model']==cfg['model']
 if cfg['method']=='thread/resume':
