@@ -534,7 +534,16 @@ fn skill_attachments(prompt: &str, catalog: &Value, cwd: &std::path::Path) -> Ve
     if !crate::composer_suggestions::opencode_location_matches(catalog, cwd) {
         return Vec::new();
     }
-    let requested = prompt
+    // Reference and capability envelopes are context, not skill selections.
+    // Do not promote a `$name` found inside attached material to a tool action.
+    let visible_message = prompt
+        .split("\n\n<coincide_context version=\"1\">")
+        .next()
+        .unwrap_or(prompt)
+        .split("\n\n<coincide_computer_use>")
+        .next()
+        .unwrap_or(prompt);
+    let requested = visible_message
         .split_whitespace()
         .filter_map(|word| word.strip_prefix('$'))
         .filter(|name| !name.is_empty() && name.len() <= 256 && !name.chars().any(char::is_control))
@@ -993,6 +1002,14 @@ mod model_reference_tests {
         );
         assert!(super::skill_attachments("$review", &catalog, Path::new("/other")).is_empty());
         assert!(super::skill_attachments("$unknown", &catalog, Path::new("/project")).is_empty());
+        assert!(
+            super::skill_attachments(
+                "Please inspect this\n\n<coincide_context version=\"1\">\n$review",
+                &catalog,
+                Path::new("/project")
+            )
+            .is_empty()
+        );
     }
     #[test]
     fn slash_commands_use_only_the_current_workspace_and_finish_when_idle() {
