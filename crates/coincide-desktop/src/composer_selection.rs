@@ -1287,6 +1287,9 @@ enum SendCatalogAction {
     Refresh,
     Unavailable,
 }
+fn observed_discovery(capabilities: &Value, supported: Option<bool>) -> Option<bool> {
+    supported.or_else(|| (!capabilities.is_null()).then_some(false))
+}
 fn send_catalog_action(
     selection: &Value,
     running: bool,
@@ -1362,11 +1365,10 @@ impl Coincide {
         if named_models::named_thread(thread) {
             let named = &self.selection_ui.capabilities["namedModels"];
             if named.is_null() {
-                return self.selection_ui.error.is_empty()
-                    || !self
-                        .selection_ui
-                        .error
-                        .starts_with("Capabilities unavailable:");
+                // Wait only while capabilities have not arrived. A completed
+                // response without named metadata cannot become ready by
+                // waiting forever; let normal admission report the failure.
+                return self.selection_ui.capabilities.is_null();
             }
             if named["refreshAllowed"] == true && named["accountCatalogReady"] != true {
                 if self.selection_ui.pending_provider_picker.is_some()
@@ -1392,14 +1394,10 @@ impl Coincide {
         }) {
             return false;
         }
-        let discovery = provider
-            .and_then(|provider| provider["modelDiscovery"]["supported"].as_bool())
-            .or_else(|| {
-                self.selection_ui
-                    .error
-                    .starts_with("Capabilities unavailable:")
-                    .then_some(false)
-            });
+        let discovery = observed_discovery(
+            &self.selection_ui.capabilities,
+            provider.and_then(|provider| provider["modelDiscovery"]["supported"].as_bool()),
+        );
         match send_catalog_action(
             selection,
             false,
@@ -4029,6 +4027,15 @@ mod tests {
     #[::core::prelude::v1::test]
     fn sending_waits_for_one_live_catalog_without_blocking_other_providers_or_running_turns() {
         let codex = json!({"provider":"codex", "modelID":"synthetic", "effort":"high"});
+        assert_eq!(observed_discovery(&Value::Null, None), None);
+        assert_eq!(
+            observed_discovery(&json!({"providers":[]}), None),
+            Some(false)
+        );
+        assert_eq!(
+            observed_discovery(&json!({"providers":[]}), Some(true)),
+            Some(true)
+        );
         assert_eq!(
             send_catalog_action(&codex, false, false, false, None),
             SendCatalogAction::Wait
