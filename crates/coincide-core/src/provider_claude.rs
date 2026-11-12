@@ -369,10 +369,11 @@ pub(super) fn run(
                 }
             }
         }
-        if steering_reply.is_some() && transport.is_flushed()? {
-            if let Some(reply) = steering_reply.take() {
-                let _ = reply.send(Ok(()));
-            }
+        if steering_reply.is_some()
+            && transport.is_flushed()?
+            && let Some(reply) = steering_reply.take()
+        {
+            let _ = reply.send(Ok(()));
         }
         if completed {
             if stopping.is_some() || transport.is_flushed()? {
