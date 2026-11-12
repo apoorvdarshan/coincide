@@ -6117,7 +6117,15 @@ impl Render for Coincide {
                     )
                 });
                 match result {
-                    Ok((enabled, _)) => {
+                    Ok((enabled, cleared)) => {
+                        if cleared
+                            && self
+                                .pending_drafts
+                                .get(&pending.thread)
+                                .is_some_and(|draft| draft.text == pending.draft)
+                        {
+                            self.pending_drafts.remove(&pending.thread);
+                        }
                         self.finish_pending_images(pending.image_send, true);
                         self.status = if enabled {
                             "The earlier conversation's message is queued."
