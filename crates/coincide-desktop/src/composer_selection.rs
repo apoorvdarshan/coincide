@@ -1290,6 +1290,13 @@ enum SendCatalogAction {
 fn observed_discovery(capabilities: &Value, supported: Option<bool>) -> Option<bool> {
     supported.or_else(|| (!capabilities.is_null()).then_some(false))
 }
+fn named_catalog_needs_observation(named: &Value, pending: bool, observed: bool) -> bool {
+    named["nativeApiKey"] != true
+        && named["nativeAccount"] != true
+        && named["refreshAllowed"] == true
+        && named["accountCatalogReady"] != true
+        && (pending || !observed)
+}
 fn send_catalog_action(
     selection: &Value,
     running: bool,
@@ -1370,13 +1377,13 @@ impl Coincide {
                 // waiting forever; let normal admission report the failure.
                 return self.selection_ui.capabilities.is_null();
             }
-            if named["refreshAllowed"] == true && named["accountCatalogReady"] != true {
-                if self.selection_ui.pending_provider_picker.is_some()
-                    || self.selection_ui.automatic_profile_context.is_none()
-                {
-                    self.observe_saved_profile_once(cx);
-                    return true;
-                }
+            if named_catalog_needs_observation(
+                named,
+                self.selection_ui.pending_provider_picker.is_some(),
+                self.selection_ui.automatic_profile_context.is_some(),
+            ) {
+                self.observe_saved_profile_once(cx);
+                return true;
             }
             return false;
         }
@@ -4036,6 +4043,19 @@ mod tests {
             observed_discovery(&json!({"providers":[]}), Some(true)),
             Some(true)
         );
+        let named = json!({"refreshAllowed":true,"accountCatalogReady":false});
+        assert!(named_catalog_needs_observation(&named, false, false));
+        assert!(!named_catalog_needs_observation(&named, false, true));
+        assert!(!named_catalog_needs_observation(
+            &json!({"nativeApiKey":true,"refreshAllowed":true}),
+            false,
+            false
+        ));
+        assert!(!named_catalog_needs_observation(
+            &json!({"nativeAccount":true,"refreshAllowed":true}),
+            false,
+            false
+        ));
         assert_eq!(
             send_catalog_action(&codex, false, false, false, None),
             SendCatalogAction::Wait
