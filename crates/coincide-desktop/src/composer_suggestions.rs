@@ -1,7 +1,7 @@
 //! The `/` command, `$` skill and `#` pull-request list above the composer (Swift's
 //! `ComposerSuggestionPanel`). It never takes focus: typing stays in the composer while Up and
 //! Down move the highlight, Return or Tab choose and Escape hides it until the caret leaves the
-//! word. `@` paths stay with the file picker.
+//! word. `@` paths use the same floating surface through the file picker.
 use super::*;
 use crate::worker_owner::{Admission, ShutdownStatus, WorkerOwner};
 use coincide_core::composer_suggestions::{
@@ -1011,7 +1011,12 @@ impl Coincide {
     /// and floats the list over it.
     pub(super) fn composer_suggestion_surface(&self, surface: Div, cx: &mut Context<Self>) -> Div {
         let anchor = self.composer_suggestions.anchor.clone();
-        let visible = self.composer_suggestions.visible;
+        let visible = self.composer_suggestions.visible || self.composer_files.opened;
+        let file_popup = self
+            .composer_suggestions
+            .anchor
+            .get()
+            .and_then(|bounds| self.composer_file_popup(bounds, cx));
         surface
             .on_prepaint(move |bounds, window, _| {
                 if anchor.replace(Some(bounds)) != Some(bounds) && visible {
@@ -1021,6 +1026,7 @@ impl Coincide {
             .when_some(self.composer_suggestion_popup(cx), |surface, popup| {
                 surface.child(popup)
             })
+            .when_some(file_popup, |surface, popup| surface.child(popup))
     }
 
     fn suggestion_icon(&self, item: &Suggestion, selected: bool) -> AnyElement {

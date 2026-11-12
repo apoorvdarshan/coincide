@@ -24,6 +24,17 @@ pub struct NativeFollowUpTicket {
     owner: Uuid,
     id: Uuid,
 }
+/// A captured send is either still waiting for an earlier provider receipt, or
+/// has been saved exactly once. A receipt owns any immediate provider action.
+pub enum CapturedNativeSend {
+    Waiting,
+    Saved {
+        enabled: bool,
+        cleared: bool,
+        ticket: Option<NativeFollowUpTicket>,
+        error: Option<String>,
+    },
+}
 enum Delivery {
     Steering(String),
     TextSteer {
@@ -124,6 +135,17 @@ impl Engine {
         captured: &Value,
         clear_original: bool,
     ) -> Result<(bool, bool)> {
+        let (enabled, cleared, _) =
+            self.queue_captured_native_send_inner(captured, clear_original, true, None)?;
+        Ok((enabled, cleared))
+    }
+    fn queue_captured_native_send_inner(
+        &mut self,
+        captured: &Value,
+        clear_original: bool,
+        notify_goal: bool,
+        failure: Option<&str>,
+    ) -> Result<(bool, bool, crate::message_queue::Message)> {
         self.require_admissions()?;
         ensure!(!self.shutdown, "Application is closing");
         let id = required(captured, "id")?;
@@ -172,7 +194,8 @@ impl Engine {
             .collect::<Result<Vec<_>>>()?;
         agent::validate_images(&Provider::from_name(&provider)?, &prepared)?;
         let existing = crate::message_queue::read(&current)?;
-        let can_enable = captured["selection"] == current["selection"]
+        let can_enable = failure.is_none()
+            && captured["selection"] == current["selection"]
             && (self.enabled_queues.contains(id)
                 || existing.iter().all(|message| {
                     !matches!(
@@ -183,13 +206,21 @@ impl Engine {
                 }));
         let mut target = current.clone();
         target["selection"] = captured["selection"].clone();
-        crate::message_queue::add_payload(
+        let message = crate::message_queue::add_payload(
             &mut target,
             captured["draft"].as_str().unwrap_or(""),
             context,
             images,
         )?;
         target["selection"] = current["selection"].clone();
+        if let Some(reason) = failure {
+            let row = target["rustMessageQueue"]
+                .as_array_mut()
+                .and_then(|rows| rows.iter_mut().find(|row| row["id"] == message.id))
+                .context("Captured message disappeared before it was saved")?;
+            row["state"] = json!("failed");
+            row["error"] = json!(reason);
+        }
         let cleared = clear_original && current["draft"] == captured["draft"];
         if cleared {
             target["draft"] = json!("");
@@ -208,9 +239,113 @@ impl Engine {
         if can_enable {
             self.enabled_queues.insert(id.into());
         }
-        self.sync_goal_queue_waiting(id);
+        if notify_goal {
+            self.sync_goal_queue_waiting(id);
+        }
         self.revision += 1;
-        Ok((can_enable, cleared))
+        Ok((can_enable, cleared, message))
+    }
+    /// Admit an independent snapshot after an earlier send, preserving the
+    /// mode selected when the user pressed Send and the order of older rows.
+    pub fn admit_captured_native_send(
+        &mut self,
+        captured: &Value,
+        clear_original: bool,
+        behavior: Behavior,
+        alternate: bool,
+    ) -> Result<CapturedNativeSend> {
+        let id = required(captured, "id")?;
+        let current = self.store.thread(id)?;
+        let provider = text(&captured["selection"], "provider");
+        let chosen = if alternate {
+            behavior.opposite()
+        } else {
+            behavior
+        };
+        let chosen = choice::effective(
+            chosen,
+            matches!(provider.as_str(), "codex" | "claude" | "opencode"),
+        );
+        let has_images = captured["rustDraftImages"]
+            .as_array()
+            .is_some_and(|images| !images.is_empty());
+        let has_context = crate::composer_context::has_context(&captured["draftContext"]);
+        let command = captured["draft"].as_str().unwrap_or("");
+        let goal_control = provider == "codex"
+            && !has_images
+            && !has_context
+            && agent::codex_goals::parse(command).is_some();
+        let compact_control = matches!(provider.as_str(), "codex" | "opencode")
+            && !has_images
+            && !has_context
+            && agent::codex_compact_command(command);
+        let can_steer = self.runs.get(id).is_some_and(|run| {
+            matches!(provider.as_str(), "codex" | "claude" | "opencode")
+                && current["interactionMode"]
+                    .as_str()
+                    .is_none_or(|mode| mode == "build")
+                && (provider != "codex" || run.session.can_steer())
+                && !(has_images && matches!(provider.as_str(), "claude" | "opencode"))
+        });
+        let prior = crate::message_queue::read(&current)?;
+        let eligible = chosen != Behavior::Queue
+            && !compact_control
+            && (chosen != Behavior::Steer || can_steer || goal_control)
+            && self.active_thread.as_deref() == Some(id)
+            && self.runs.contains_key(id)
+            && captured["selection"] == current["selection"];
+        if eligible && self.native_follow_up.pending_thread(id) {
+            return Ok(CapturedNativeSend::Waiting);
+        }
+        let auto = eligible
+            && !prior.iter().any(|message| {
+                matches!(
+                    message.state,
+                    crate::message_queue::State::Pending | crate::message_queue::State::Dispatching
+                )
+            });
+        let (enabled, cleared, message) =
+            self.queue_captured_native_send_inner(captured, clear_original, !auto, None)?;
+        if !auto {
+            return Ok(CapturedNativeSend::Saved {
+                enabled,
+                cleared,
+                ticket: None,
+                error: None,
+            });
+        }
+        // From here the snapshot is already durable. Never return Err to a
+        // caller that would retry it and create a duplicate queue row.
+        let result = (|| {
+            let current = self.store.thread(id)?;
+            let visible = serde_json::to_value(message)?;
+            self.native_send_queued_with_behavior(&current, &visible, Some(chosen))
+        })();
+        if result.is_err() {
+            self.enabled_queues.remove(id);
+        }
+        self.sync_goal_queue_waiting(id);
+        let (ticket, error) = match result {
+            Ok(ticket) => (Some(ticket), None),
+            Err(error) => (None, Some(error.to_string())),
+        };
+        Ok(CapturedNativeSend::Saved {
+            enabled,
+            cleared,
+            ticket,
+            error,
+        })
+    }
+    /// Preserve a buffered message whose image import failed for manual edit;
+    /// an incomplete image payload must never be sent automatically.
+    pub fn retain_failed_captured_native_send(&mut self, captured: &Value) -> Result<()> {
+        self.queue_captured_native_send_inner(
+            captured,
+            false,
+            true,
+            Some("Image import failed; edit this message and attach the image again."),
+        )?;
+        Ok(())
     }
     /// Named follow-ups use the selected account's actual private catalog and
     /// policy, just like normal turn admission; never borrow a default proof.
@@ -342,13 +477,14 @@ impl Engine {
         expected: &Value,
         alternate: bool,
     ) -> Result<NativeFollowUpTicket> {
-        self.begin_native_follow_up(expected, alternate, &mut None)
+        self.begin_native_follow_up(expected, alternate, &mut None, None)
     }
     fn begin_native_follow_up(
         &mut self,
         expected: &Value,
         alternate: bool,
         queue: &mut Option<super::queue_dispatch::QueueClaim>,
+        queued_behavior: Option<Behavior>,
     ) -> Result<NativeFollowUpTicket> {
         self.require_admissions()?;
         ensure!(!self.shutdown, "Application is closing");
@@ -494,7 +630,9 @@ impl Engine {
             .pending
             .values()
             .any(|frame| frame["method"] != "item/tool/requestUserInput");
-        let (mut dispatch, means_steer) = if is_queue {
+        let (mut dispatch, _) = if let Some(behavior) = queued_behavior.filter(|_| is_queue) {
+            choice::resolve(true, can_steer, false, behavior, approval)
+        } else if is_queue {
             (
                 if can_steer {
                     Dispatch::Steer
@@ -506,8 +644,7 @@ impl Engine {
         } else {
             choice::resolve(true, can_steer, alternate, behavior, approval)
         };
-        let goal_control = !is_queue
-            && run.provider == "codex"
+        let goal_control = run.provider == "codex"
             && images.is_empty()
             && !crate::composer_context::has_context(&context)
             && bot_instructions.is_none()
@@ -533,8 +670,7 @@ impl Engine {
             dispatch = Dispatch::Queue;
         }
         let worker = run.session.worker_completion();
-        let prefix = if dispatch == Dispatch::Interrupt
-            || (dispatch == Dispatch::Queue && means_steer && is_queue)
+        let prefix = if dispatch == Dispatch::Interrupt || (dispatch == Dispatch::Queue && is_queue)
         {
             Some(PrefixProof::capture(
                 current["items"].as_array().context("Missing transcript")?,
@@ -649,7 +785,7 @@ impl Engine {
             // A queued Send Now already owns a durable row. An ordinary
             // follow-up that cannot steer yet must first become a durable row,
             // so the user can safely start another draft while the turn runs.
-            Dispatch::Queue if means_steer && is_queue => {
+            Dispatch::Queue if is_queue => {
                 op.delivery = Some(Delivery::Deferred(worker));
             }
             Dispatch::Queue => {
@@ -777,7 +913,15 @@ impl Engine {
                         if !*accepted {
                             match reply.try_recv() {
                                 Ok(Ok(())) => *accepted = true,
-                                Ok(Err(error)) => bail!("{provider} rejected the message: {error}"),
+                                Ok(Err(error)) => {
+                                    if let Some(claim) = &op.queue {
+                                        self.fail_queue_claim(
+                                            claim,
+                                            &format!("{provider} rejected the message: {error}"),
+                                        )?;
+                                    }
+                                    bail!("{provider} rejected the message: {error}")
+                                }
                                 Err(std::sync::mpsc::TryRecvError::Empty)
                                     if started.elapsed() < *timeout =>
                                 {

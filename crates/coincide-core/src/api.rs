@@ -41,7 +41,7 @@ mod handoff_prompt;
 pub mod project_defaults;
 #[path = "queue_edit_api.rs"]
 mod queue_edit_api;
-pub use follow_up_api::{NativeFollowUpStatus, NativeFollowUpTicket};
+pub use follow_up_api::{CapturedNativeSend, NativeFollowUpStatus, NativeFollowUpTicket};
 #[path = "active_thread.rs"]
 mod active_thread;
 #[path = "admission_freeze.rs"]

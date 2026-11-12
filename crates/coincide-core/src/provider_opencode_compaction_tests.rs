@@ -7,7 +7,9 @@ fn compact_uses_the_session_endpoint_and_waits_for_execution() {
         let directory = tempfile::tempdir().unwrap();
         let executable = directory.path().join(mode);
         fs::write(&executable, r#"#!/usr/bin/env python3
+open('python-started','w').write('ready')
 import http.server,json,os,queue,sys
+open('python-imported','w').write('ready')
 events=queue.Queue()
 def mark(name):
   with open(name,'w') as marker: marker.write('ready')
@@ -65,6 +67,12 @@ server.serve_forever()
             None,
             None,
             LaunchOptions {
+                prelude: Some(Box::new({
+                    let path = directory.path().join("worker-started");
+                    move || {
+                        fs::write(path, "ready").unwrap();
+                    }
+                })),
                 compact: mode != "goal-command",
                 opencode_command: Some(
                     if mode == "goal-command" {
@@ -91,7 +99,14 @@ server.serve_forever()
                         _ => {}
                     }
                 }
-                assert!(Instant::now() < deadline, "{mode} did not reach {marker}");
+                assert!(
+                    Instant::now() < deadline,
+                    "{mode} did not reach {marker}; worker={:?}, prelude={}, python={}, imports={}",
+                    session.worker_completion().status(),
+                    directory.path().join("worker-started").is_file(),
+                    directory.path().join("python-started").is_file(),
+                    directory.path().join("python-imported").is_file()
+                );
                 std::thread::sleep(Duration::from_millis(10));
             }
         }

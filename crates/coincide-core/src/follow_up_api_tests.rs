@@ -11,6 +11,264 @@ struct Fixture {
 }
 
 #[test]
+fn captured_compaction_and_unavailable_steer_wait_in_the_queue() {
+    for kind in ["compact", "unavailable"] {
+        let Fixture {
+            _dir,
+            mut engine,
+            id,
+            mut server,
+            release,
+            control,
+            ..
+        } = fixture();
+        let mut captured = engine.store.thread(&id).unwrap();
+        if kind == "compact" {
+            captured["draft"] = json!("/compact");
+        } else {
+            server.observe(&json!({"method":"item/started","params":{"threadId":"native-thread","turnId":"native-turn","item":{"type":"agentMessage","id":"reply"}}}));
+        }
+        assert!(matches!(
+            engine
+                .admit_captured_native_send(&captured, false, Behavior::Steer, false)
+                .unwrap(),
+            CapturedNativeSend::Saved {
+                ticket: None,
+                error: None,
+                ..
+            }
+        ));
+        assert_eq!(
+            engine.store.thread(&id).unwrap()["rustMessageQueue"][0]["state"],
+            "pending"
+        );
+        assert!(engine.runs[&id].session.goal_queue_is_waiting());
+        assert!(control.try_recv().is_err());
+        engine.freeze_admissions();
+        finish_fake(&mut engine, &id, release);
+    }
+}
+
+#[test]
+fn failed_image_import_keeps_the_captured_message_for_editing_without_auto_delivery() {
+    let Fixture {
+        _dir,
+        mut engine,
+        id,
+        release,
+        control,
+        ..
+    } = fixture();
+    let captured = engine.store.thread(&id).unwrap();
+    engine
+        .store
+        .patch_draft(&id, "new independent draft")
+        .unwrap();
+    engine
+        .retain_failed_captured_native_send(&captured)
+        .unwrap();
+    let saved = engine.store.thread(&id).unwrap();
+    assert_eq!(saved["draft"], "new independent draft");
+    let messages = crate::message_queue::read(&saved).unwrap();
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].text, captured["draft"]);
+    assert_eq!(messages[0].state, crate::message_queue::State::Failed);
+    assert!(
+        messages[0]
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("Image import failed")
+    );
+    assert!(!engine.enabled_queues.contains(&id));
+    assert!(control.try_recv().is_err());
+    finish_fake(&mut engine, &id, release);
+}
+
+#[test]
+fn captured_steer_waits_for_previous_ack_and_then_steers_without_overwriting_new_text() {
+    let Fixture {
+        _dir,
+        mut engine,
+        id,
+        mut server,
+        release,
+        ..
+    } = fixture();
+    let first_source = engine.store.thread(&id).unwrap();
+    let first = engine.send_native_follow_up(&first_source, false).unwrap();
+    let first_request = server.next_request().unwrap();
+    let mut second = first_source.clone();
+    second["draft"] = json!("second message");
+    engine.store.patch_draft(&id, "new draft").unwrap();
+    assert!(matches!(
+        engine
+            .admit_captured_native_send(&second, false, Behavior::Steer, false)
+            .unwrap(),
+        CapturedNativeSend::Waiting
+    ));
+    assert!(
+        crate::message_queue::read(&engine.store.thread(&id).unwrap())
+            .unwrap()
+            .is_empty()
+    );
+    server.response(&json!({"id":first_request["id"],"result":{"turnId":"native-turn"}}));
+    engine.poll();
+    engine.poll();
+    engine.collect_native_follow_up(first).unwrap();
+    let second_ticket = match engine
+        .admit_captured_native_send(&second, false, Behavior::Steer, false)
+        .unwrap()
+    {
+        CapturedNativeSend::Saved {
+            ticket: Some(ticket),
+            error: None,
+            ..
+        } => ticket,
+        _ => panic!("Second message was not steered"),
+    };
+    let second_request = server.next_request().unwrap();
+    assert_eq!(
+        second_request["params"]["input"][0]["text"],
+        "second message"
+    );
+    server.response(&json!({"id":second_request["id"],"result":{"turnId":"native-turn"}}));
+    engine.poll();
+    engine.poll();
+    assert!(matches!(
+        engine.native_follow_up_status(&second_ticket).unwrap(),
+        NativeFollowUpStatus::Delivered {
+            dispatch: Dispatch::Steer,
+            ..
+        }
+    ));
+    let saved = engine.store.thread(&id).unwrap();
+    assert_eq!(saved["draft"], "new draft");
+    assert_eq!(saved["rustMessageQueue"][0]["state"], "completed");
+    assert_eq!(
+        saved["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| item["text"] == "second message")
+            .count(),
+        1
+    );
+    engine.collect_native_follow_up(second_ticket).unwrap();
+    finish_fake(&mut engine, &id, release);
+}
+
+#[test]
+fn captured_queue_and_interrupt_respect_mode_for_every_provider() {
+    for provider in [
+        "codex",
+        "claude",
+        "opencode",
+        "cursor",
+        "grok",
+        "antigravity",
+    ] {
+        for behavior in [Behavior::Queue, Behavior::Interrupt] {
+            let Fixture {
+                _dir,
+                mut engine,
+                id,
+                release,
+                control,
+                ..
+            } = fixture();
+            let mut captured = engine.store.thread(&id).unwrap();
+            captured["selection"] = json!({"provider":provider,"modelID":"default"});
+            engine.store.save(&captured).unwrap();
+            let run = engine.runs.get_mut(&id).unwrap();
+            run.provider = provider.into();
+            run.usage_context = Some(agent::usage_capture::TurnContext::new(&captured));
+            let result = engine
+                .admit_captured_native_send(&captured, false, behavior, false)
+                .unwrap();
+            match (behavior, result) {
+                (
+                    Behavior::Queue,
+                    CapturedNativeSend::Saved {
+                        ticket: None,
+                        error: None,
+                        ..
+                    },
+                ) => {
+                    assert!(control.try_recv().is_err(), "queue stopped {provider}");
+                }
+                (
+                    Behavior::Interrupt,
+                    CapturedNativeSend::Saved {
+                        ticket: Some(ticket),
+                        error: None,
+                        ..
+                    },
+                ) => {
+                    assert!(
+                        matches!(
+                            control.recv_timeout(Duration::from_secs(5)).unwrap(),
+                            agent::Control::Stop
+                        ),
+                        "{provider}"
+                    );
+                    assert_eq!(
+                        engine.native_follow_up_status(&ticket).unwrap(),
+                        NativeFollowUpStatus::Pending
+                    );
+                }
+                _ => panic!("{provider} {behavior:?} did not retain its mode"),
+            }
+            let saved = engine.store.thread(&id).unwrap();
+            assert_eq!(saved["draft"], captured["draft"], "{provider}");
+            assert_eq!(crate::message_queue::read(&saved).unwrap().len(), 1);
+            engine.freeze_admissions();
+            finish_fake(&mut engine, &id, release);
+        }
+    }
+}
+
+#[test]
+fn captured_sends_do_not_overtake_an_older_queued_message_or_a_model_change() {
+    for change in ["older queue", "model"] {
+        let Fixture {
+            _dir,
+            mut engine,
+            id,
+            release,
+            control,
+            ..
+        } = fixture();
+        let captured = engine.store.thread(&id).unwrap();
+        let mut current = captured.clone();
+        if change == "model" {
+            current["selection"]["modelID"] = json!("different");
+        } else {
+            crate::message_queue::add(&mut current, "older queued message").unwrap();
+        }
+        engine.store.save(&current).unwrap();
+        assert!(matches!(
+            engine
+                .admit_captured_native_send(&captured, false, Behavior::Interrupt, false)
+                .unwrap(),
+            CapturedNativeSend::Saved {
+                ticket: None,
+                error: None,
+                ..
+            }
+        ));
+        assert!(control.try_recv().is_err());
+        let queue = crate::message_queue::read(&engine.store.thread(&id).unwrap()).unwrap();
+        assert_eq!(queue.last().unwrap().selection, captured["selection"]);
+        if change == "older queue" {
+            assert_eq!(queue[0].text, "older queued message");
+        }
+        engine.freeze_admissions();
+        finish_fake(&mut engine, &id, release);
+    }
+}
+
+#[test]
 fn captured_pending_send_is_queued_without_consuming_a_new_draft() {
     let Fixture {
         _dir,
@@ -1501,6 +1759,14 @@ fn text_steer_waits_for_ack_without_blocking_and_preserves_new_draft(provider: &
         .store
         .patch_thread(&id, &json!({"draft":"new draft"}))
         .unwrap();
+    let mut next = thread.clone();
+    next["draft"] = json!("second steering message");
+    assert!(matches!(
+        engine
+            .admit_captured_native_send(&next, false, Behavior::Steer, false)
+            .unwrap(),
+        CapturedNativeSend::Waiting
+    ));
     ack_tx.send(()).unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
     while engine.native_follow_up_status(&ticket).unwrap() == NativeFollowUpStatus::Pending {
@@ -1528,11 +1794,43 @@ fn text_steer_waits_for_ack_without_blocking_and_preserves_new_draft(provider: &
     );
     engine.collect_native_follow_up(ticket).unwrap();
 
+    let second = match engine
+        .admit_captured_native_send(&next, false, Behavior::Steer, false)
+        .unwrap()
+    {
+        CapturedNativeSend::Saved {
+            ticket: Some(ticket),
+            error: None,
+            ..
+        } => ticket,
+        _ => panic!("{provider} did not start the second steer"),
+    };
+    assert_eq!(
+        observed.recv_timeout(Duration::from_secs(5)).unwrap(),
+        "second steering message"
+    );
+    ack_tx.send(()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while engine.native_follow_up_status(&second).unwrap() == NativeFollowUpStatus::Pending {
+        engine.poll();
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    assert!(matches!(
+        engine.native_follow_up_status(&second).unwrap(),
+        NativeFollowUpStatus::Delivered {
+            dispatch: Dispatch::Steer,
+            ..
+        }
+    ));
+    engine.collect_native_follow_up(second).unwrap();
+
     // Sending a queued row now must steer that row, never the separate draft.
     let mut queued = engine.store.thread(&id).unwrap();
     crate::message_queue::add(&mut queued, "queued OpenCode message").unwrap();
     engine.store.save(&queued).unwrap();
-    let visible = serde_json::to_value(&crate::message_queue::read(&queued).unwrap()[0]).unwrap();
+    let visible =
+        serde_json::to_value(crate::message_queue::read(&queued).unwrap().last().unwrap()).unwrap();
     let ticket = engine.native_send_queued_now(&queued, &visible).unwrap();
     assert_eq!(
         observed.recv_timeout(Duration::from_secs(5)).unwrap(),
@@ -1554,7 +1852,14 @@ fn text_steer_waits_for_ack_without_blocking_and_preserves_new_draft(provider: &
     );
     let saved = engine.store.thread(&id).unwrap();
     assert_eq!(saved["draft"], "new draft");
-    assert_eq!(saved["rustMessageQueue"][0]["state"], "completed");
+    assert_eq!(
+        saved["rustMessageQueue"]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap()["state"],
+        "completed"
+    );
     engine.collect_native_follow_up(ticket).unwrap();
     engine.request_provider_stop(&id).unwrap();
 }

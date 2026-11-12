@@ -583,7 +583,7 @@ struct Coincide {
     composer_suggestions: composer_suggestions::Suggestions,
     /// The prompt an Up/Down walk is showing, and the text it placed.
     composer_history: Option<composer_history::Recall>,
-    attachment_import_threads: std::collections::HashSet<String>,
+    attachment_imports: composer_attachments::ImageImports,
     attachment_root: Option<std::path::PathBuf>,
     image_previews: std::collections::HashMap<String, ImagePreview>,
     image_preview_order: std::collections::VecDeque<String>,
@@ -1758,7 +1758,7 @@ impl Coincide {
             composer_files,
             composer_suggestions: Default::default(),
             composer_history: None,
-            attachment_import_threads: Default::default(),
+            attachment_imports: Default::default(),
             attachment_root,
             image_previews: Default::default(),
             image_preview_order: Default::default(),
@@ -4970,16 +4970,21 @@ impl Coincide {
             let id = text(v, "id");
             match composer_follow_up_mount::send_route(
                 self.running.contains(&id),
-                self.attachment_import_threads.contains(&id),
+                self.attachment_imports.contains(&id),
                 self.selection_change_pending(),
             ) {
                 composer_follow_up_mount::SendRoute::WaitForImages => {
-                    self.pending_follow_up =
-                        Some(composer_follow_up_mount::PendingSend::during_import(
-                            v,
-                            self.composer.read(cx).value().to_string(),
-                            alternate,
-                        ));
+                    let behavior = self.captured_follow_up_behavior(v);
+                    let jobs = self.attachment_imports.claim(&id);
+                    let mut pending = composer_follow_up_mount::PendingSend::during_import(
+                        v,
+                        self.composer.read(cx).value().to_string(),
+                        alternate,
+                    )
+                    .with_behavior(behavior);
+                    self.exclude_submitted_images(&mut pending);
+                    pending.add_imports(jobs);
+                    self.pending_follow_up = Some(pending);
                     cx.notify();
                     return;
                 }
@@ -4996,11 +5001,13 @@ impl Coincide {
                 }
                 composer_follow_up_mount::SendRoute::Send => {}
             }
-            let pending = composer_follow_up_mount::PendingSend::new(
+            let mut pending = composer_follow_up_mount::PendingSend::new(
                 v,
                 self.composer.read(cx).value().to_string(),
                 alternate,
-            );
+            )
+            .with_behavior(self.captured_follow_up_behavior(v));
+            self.exclude_submitted_images(&mut pending);
             if self.wait_for_send_catalog(cx) {
                 self.pending_follow_up = Some(pending);
                 return;
@@ -6002,38 +6009,70 @@ impl Render for Coincide {
             self.pending_follow_up = self.pending_follow_up_backlog.pop_front();
         }
         if let Some(mut pending) = self.pending_follow_up.take() {
-            if pending.waiting_for_import
-                && !pending.import_failed
-                && !self.attachment_import_threads.contains(&pending.thread)
-            {
-                let current = self
-                    .engine
-                    .try_lock()
-                    .ok()
-                    .and_then(|engine| engine.store.thread(&pending.thread).ok());
-                if let Some(current) = current {
-                    pending.finish_import(&current);
-                    if let Some(selected) = self
-                        .selected
-                        .as_mut()
-                        .filter(|thread| text(thread, "id") == pending.thread)
-                    {
-                        selected["rustDraftImages"] = current["rustDraftImages"].clone();
+            if pending.import_failed && !pending.waiting_for_import && !pending.original_visible {
+                let has_payload = !pending.draft.trim().is_empty()
+                    || coincide_core::composer_context::has_context(
+                        &pending.captured["draftContext"],
+                    )
+                    || pending.captured["rustDraftImages"]
+                        .as_array()
+                        .is_some_and(|images| !images.is_empty());
+                if !has_payload {
+                    self.finish_pending_images(pending.image_send, false);
+                    self.remove_buffered_send(&pending);
+                    self.status =
+                        "The image could not be imported; paste it again to send it.".into();
+                    cx.notify();
+                } else {
+                    let result = try_state(&self.engine).and_then(|mut engine| {
+                        engine.retain_failed_captured_native_send(&pending.captured)
+                    });
+                    match result {
+                        Ok(()) => {
+                            if let Some(selected) = self
+                                .selected
+                                .as_mut()
+                                .filter(|thread| text(thread, "id") == pending.thread)
+                                && let (Some(submitted), Some(images)) = (
+                                    pending.captured["rustDraftImages"].as_array(),
+                                    selected["rustDraftImages"].as_array_mut(),
+                                )
+                            {
+                                images.retain(|image| !submitted.contains(image));
+                            }
+                            self.finish_pending_images(pending.image_send, true);
+                            self.remove_buffered_send(&pending);
+                            self.status =
+                                "Message saved for editing after an image import failed.".into();
+                            self.refresh_queue(cx);
+                            cx.notify();
+                        }
+                        Err(error) => {
+                            let reason = error.to_string();
+                            if !engine_busy(&error)
+                                && pending.last_error.as_deref() != Some(reason.as_str())
+                            {
+                                pending.last_error = Some(reason);
+                                self.show_local_error("The image failed to import; your earlier message is retained and was not sent.");
+                            }
+                            self.pending_follow_up = Some(pending);
+                        }
                     }
                 }
-            }
-            if let Some(thread) = self
+            } else if let Some(thread) = self
                 .selected
                 .as_ref()
                 .filter(|thread| text(thread, "id") == pending.thread)
             {
-                if pending.waiting_for_import
-                    || self.attachment_import_threads.contains(&pending.thread)
-                {
+                if pending.waiting_for_import || pending.import_failed {
                     self.pending_follow_up = Some(pending);
                 } else if pending.buffer_id.is_none()
+                    && !self.attachment_imports.contains(&pending.thread)
                     && pending.matches(thread, self.composer.read(cx).value().as_ref())
                 {
+                    if let Some(sequence) = pending.image_send {
+                        self.pending_images.finish(sequence);
+                    }
                     self.send_selected_inner(pending.alternate, window, cx, true);
                 } else {
                     let clear_original =
@@ -6042,10 +6081,23 @@ impl Render for Coincide {
                         self.draft_saver.invalidate();
                     }
                     let result = try_state(&self.engine).and_then(|mut engine| {
-                        engine.queue_captured_native_send(&pending.captured, clear_original)
+                        engine.admit_captured_native_send(
+                            &pending.captured,
+                            clear_original,
+                            pending.behavior,
+                            pending.alternate,
+                        )
                     });
                     match result {
-                        Ok((enabled, cleared)) => {
+                        Ok(coincide_core::api::CapturedNativeSend::Waiting) => {
+                            self.pending_follow_up = Some(pending);
+                        }
+                        Ok(coincide_core::api::CapturedNativeSend::Saved {
+                            enabled,
+                            cleared,
+                            ticket,
+                            error,
+                        }) => {
                             let same_selection =
                                 pending.captured["selection"] == thread["selection"];
                             if let Some(selected) = self.selected.as_mut() {
@@ -6075,14 +6127,24 @@ impl Render for Coincide {
                             }
                             self.finish_pending_images(pending.image_send, true);
                             self.remove_buffered_send(&pending);
-                            self.status = if enabled {
+                            let delivering = ticket.is_some();
+                            if let Some(ticket) = ticket {
+                                self.track_queued_delivery(ticket, pending.thread.clone());
+                            }
+                            self.status = if delivering {
+                                "Delivering your message."
+                            } else if enabled {
                                 "Previous message queued; your current draft is preserved."
                             } else if same_selection {
                                 "Previous message saved in the paused queue; resume it to send."
                             } else {
                                 "Previous message saved in the queue; its original model must be selected before sending."
                             }.into();
-                            if !enabled {
+                            if let Some(error) = error {
+                                self.show_local_error(&format!(
+                                    "Message saved, but delivery could not start: {error}"
+                                ));
+                            } else if !enabled {
                                 self.show_local_error(if same_selection {
                                     "Your previous message is saved in the paused queue. Resume the queue to send it."
                                 } else {
@@ -6107,19 +6169,27 @@ impl Render for Coincide {
                         }
                     }
                 }
-            } else if pending.waiting_for_import
-                || self.attachment_import_threads.contains(&pending.thread)
-            {
+            } else if pending.waiting_for_import || pending.import_failed {
                 self.pending_follow_up = Some(pending);
             } else {
                 let result = try_state(&self.engine).and_then(|mut engine| {
-                    engine.queue_captured_native_send(
+                    engine.admit_captured_native_send(
                         &pending.captured,
                         !pending.edited && pending.buffer_id.is_none(),
+                        pending.behavior,
+                        pending.alternate,
                     )
                 });
                 match result {
-                    Ok((enabled, cleared)) => {
+                    Ok(coincide_core::api::CapturedNativeSend::Waiting) => {
+                        self.pending_follow_up = Some(pending);
+                    }
+                    Ok(coincide_core::api::CapturedNativeSend::Saved {
+                        enabled,
+                        cleared,
+                        ticket,
+                        error,
+                    }) => {
                         if cleared
                             && self
                                 .pending_drafts
@@ -6129,6 +6199,14 @@ impl Render for Coincide {
                             self.pending_drafts.remove(&pending.thread);
                         }
                         self.finish_pending_images(pending.image_send, true);
+                        if let Some(ticket) = ticket {
+                            self.track_queued_delivery(ticket, pending.thread.clone());
+                        }
+                        if let Some(error) = error {
+                            self.show_local_error(&format!(
+                                "Message saved, but delivery could not start: {error}"
+                            ));
+                        }
                         self.status = if enabled {
                             "The earlier conversation's message is queued."
                         } else {
@@ -6298,7 +6376,7 @@ impl Render for Coincide {
             None
         };
         let show_composer = self.chat_visible();
-        let importing_images = self.attachment_import_threads.contains(&selected_id);
+        let importing_images = self.attachment_imports.contains(&selected_id);
         let queue_pane = self.queue_pane(cx);
         let plan_card = if self.chat_visible() {
             self.plan_card(window, cx)
@@ -6393,7 +6471,6 @@ impl Render for Coincide {
                                                 .min_h_0()
                                                 .max_h(px(160.))
                                                 .flex_shrink_1()
-                                                .when(self.composer_files.opened, |view| view.flex_shrink_0())
                                                 .flex()
                                                 .flex_col()
                                                 .overflow_hidden()
@@ -6405,17 +6482,14 @@ impl Render for Coincide {
                                                         .min_h_0()
                                                         .max_h(px(160.))
                                                         .flex_shrink_1()
-                                                        .when(self.composer_files.opened, |view| view.flex_shrink_0())
                                                         .overflow_y_scroll()
-                                                        .when(self.composer_files.opened, |view| view.when_some(self.composer_file_pane(cx), |view, files| view.child(files)))
-                                                        .when(!self.composer_files.opened, |view| view
                                                         .when_some(
                                                             self.composer_context_pane(cx),
                                                             |view, context| view.child(context),
                                                         )
                                                         .when_some(draft_images, |view, images| {
                                                             view.child(images)
-                                                        }))
+                                                        })
                                                 )
                                                 .child(
                                                     gpui_kit::component::scroll::Scrollbar::vertical(
@@ -6483,7 +6557,7 @@ impl Render for Coincide {
                                                 .gap_1()
                                                 .gap(px(6.))
                                                 .mt_2()
-                                                .when(!self.composer_files.opened, |view| view.child(self.composer_selection_footer(window, cx)))
+                                                .child(self.composer_selection_footer(window, cx))
                                                 .child(
                                                     Button::new("attach-images")
                                                         .icon(gpui_kit::assets::IconName::Paperclip)

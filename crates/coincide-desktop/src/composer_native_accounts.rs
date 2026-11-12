@@ -44,8 +44,7 @@ impl Coincide {
                     selected,
                     account.as_deref(),
                     self.running.contains(&text(selected, "id")),
-                    self.attachment_import_threads
-                        .contains(&text(selected, "id")),
+                    self.attachment_imports.contains(&text(selected, "id")),
                 )
             });
         match result {

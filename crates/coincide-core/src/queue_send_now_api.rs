@@ -7,12 +7,20 @@ impl Engine {
         expected: &Value,
         visible: &Value,
     ) -> Result<NativeFollowUpTicket> {
+        self.native_send_queued_with_behavior(expected, visible, None)
+    }
+    pub(super) fn native_send_queued_with_behavior(
+        &mut self,
+        expected: &Value,
+        visible: &Value,
+        behavior: Option<Behavior>,
+    ) -> Result<NativeFollowUpTicket> {
         self.require_admissions()?;
         let id = required(expected, "id")?.to_owned();
         let mut claim = Some(self.claim_native_queue_now(expected, visible)?);
         let current = self.store.thread(&id)?;
         if self.runs.contains_key(&id) {
-            let result = self.begin_native_follow_up(&current, false, &mut claim);
+            let result = self.begin_native_follow_up(&current, false, &mut claim, behavior);
             if result.is_err() {
                 if let Some(claim) = claim.as_ref() {
                     self.fail_queue_claim(claim, "Send now admission was refused")?;

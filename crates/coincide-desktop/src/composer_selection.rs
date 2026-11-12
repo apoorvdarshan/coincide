@@ -1469,7 +1469,7 @@ impl Coincide {
                 .context("Select a conversation first")?;
             let id = text(selected, "id");
             anyhow::ensure!(
-                !self.running.contains(&id) && !self.attachment_import_threads.contains(&id),
+                !self.running.contains(&id) && !self.attachment_imports.contains(&id),
                 "Finish the current turn or attachment import before switching provider"
             );
             let ui_draft = self.committed_composer_draft(cx);
@@ -1624,7 +1624,7 @@ impl Coincide {
         let result = (|| -> Result<Value> {
             let id = text(&submission.thread, "id");
             anyhow::ensure!(
-                !self.attachment_import_threads.contains(&id),
+                !self.attachment_imports.contains(&id),
                 "Wait for image imports to finish; command draft retained"
             );
             if command.changes_selection() {

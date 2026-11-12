@@ -463,7 +463,11 @@ fn element(
     parent: Option<shared::Object>,
 ) -> R<Element> {
     let accessible = native(shared::accessible(bus, &object))?;
-    let role = accessible.get_role().map_err(|_| native_failure())?;
+    let role = accessible.get_role().map_err(|_error| {
+        #[cfg(test)]
+        eprintln!("owned-x11-get-role: {_error:?}");
+        native_failure()
+    })?;
     let states = accessible.get_state().map_err(|_| native_failure())?;
     let actual_parent = shared::object(accessible.parent().map_err(|_| native_failure())?);
     if parent.is_some() && parent != actual_parent {

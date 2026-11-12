@@ -125,7 +125,7 @@ impl Coincide {
             let target = thread.id.clone();
             let reusable = !fresh
                 || (!self.pending_drafts.contains_key(&target)
-                    && !self.attachment_import_threads.contains(&target)
+                    && !self.attachment_imports.contains(&target)
                     && call(&self.engine, "threads.read", json!({"threadId":target}))
                         .ok()
                         .is_some_and(|saved| {
