@@ -112,5 +112,23 @@ server.serve_forever()
             }
         }
         assert!(session.is_provider_control());
+        // Finished is a provider event, not proof the owned server and its
+        // stream workers have exited. Keep this fixture's directory alive
+        // until the actual worker is joined before starting the next case.
+        let completion = session.worker_completion();
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            match completion.status() {
+                WorkerThreadStatus::Returned => break,
+                WorkerThreadStatus::Running => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "{mode} worker did not finish cleanup"
+                    );
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                status => panic!("{mode} worker cleanup failed: {status:?}"),
+            }
+        }
     }
 }

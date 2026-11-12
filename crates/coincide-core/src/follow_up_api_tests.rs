@@ -9,6 +9,84 @@ struct Fixture {
     observed: mpsc::Receiver<()>,
     control: mpsc::Receiver<agent::Control>,
 }
+
+#[test]
+fn captured_pending_send_is_queued_without_consuming_a_new_draft() {
+    let Fixture {
+        _dir,
+        mut engine,
+        id,
+        release,
+        ..
+    } = fixture();
+    let captured = engine.store.thread(&id).unwrap();
+    let mut newer = captured.clone();
+    newer["draft"] = json!("new independent draft");
+    engine.store.save(&newer).unwrap();
+    assert!(engine.queue_captured_native_send(&captured).unwrap());
+    let saved = engine.store.thread(&id).unwrap();
+    assert_eq!(saved["draft"], "new independent draft");
+    let queued = crate::message_queue::read(&saved).unwrap();
+    assert_eq!(queued.len(), 1);
+    assert_eq!(queued[0].text, "synthetic redirect");
+    assert_eq!(queued[0].selection, captured["selection"]);
+    release.send(()).unwrap();
+}
+
+#[test]
+fn captured_send_with_changed_model_is_saved_but_not_auto_dispatched() {
+    let Fixture {
+        _dir,
+        mut engine,
+        id,
+        release,
+        ..
+    } = fixture();
+    let captured = engine.store.thread(&id).unwrap();
+    let mut newer = captured.clone();
+    newer["draft"] = json!("new draft");
+    newer["selection"]["modelID"] = json!("other-model");
+    engine.store.save(&newer).unwrap();
+    assert!(!engine.queue_captured_native_send(&captured).unwrap());
+    let saved = engine.store.thread(&id).unwrap();
+    assert_eq!(saved["draft"], "new draft");
+    assert_eq!(saved["selection"], newer["selection"]);
+    assert_eq!(
+        crate::message_queue::read(&saved).unwrap()[0].selection,
+        captured["selection"]
+    );
+    assert!(!engine.enabled_queues.contains(&id));
+    release.send(()).unwrap();
+}
+
+#[test]
+fn captured_send_never_borrows_changed_access_or_restarts_a_paused_queue() {
+    let Fixture {
+        _dir,
+        mut engine,
+        id,
+        release,
+        ..
+    } = fixture();
+    let captured = engine.store.thread(&id).unwrap();
+    let mut newer = captured.clone();
+    newer["accessMode"] = json!("fullAccess");
+    engine.store.save(&newer).unwrap();
+    assert!(engine.queue_captured_native_send(&captured).is_err());
+    assert_eq!(engine.store.thread(&id).unwrap(), newer);
+    newer["accessMode"] = captured["accessMode"].clone();
+    crate::message_queue::add(&mut newer, "previous paused item").unwrap();
+    engine.store.save(&newer).unwrap();
+    assert!(!engine.queue_captured_native_send(&captured).unwrap());
+    assert!(!engine.enabled_queues.contains(&id));
+    assert_eq!(
+        crate::message_queue::read(&engine.store.thread(&id).unwrap())
+            .unwrap()
+            .len(),
+        2
+    );
+    release.send(()).unwrap();
+}
 fn fixture() -> Fixture {
     let dir = tempfile::tempdir().unwrap();
     let mut engine = Engine::fixture(Store::open(&dir.path().join("state.sqlite")).unwrap());
@@ -707,6 +785,38 @@ fn private_image(engine: &Engine, directory: &std::path::Path) -> crate::attachm
         .save(&path)
         .unwrap();
     crate::attachments::ingest_image(&engine.store.data_directory().unwrap(), &path).unwrap()
+}
+#[test]
+fn captured_send_preserves_new_images_and_references() {
+    let Fixture {
+        _dir,
+        mut engine,
+        id,
+        release,
+        ..
+    } = fixture();
+    let original_image = private_image(&engine, _dir.path());
+    let next_image = private_image(&engine, _dir.path());
+    let original_context = json!([{"id":Uuid::new_v4(),"kind":"quote","text":"original"}]);
+    let next_context = json!([{"id":Uuid::new_v4(),"kind":"quote","text":"next"}]);
+    let mut captured = engine.store.thread(&id).unwrap();
+    captured["rustDraftImages"] = json!([original_image]);
+    captured["draftContext"] = original_context.clone();
+    engine.store.save(&captured).unwrap();
+    let mut newer = captured.clone();
+    newer["draft"] = json!("next draft");
+    newer["rustDraftImages"] = json!([original_image, next_image]);
+    newer["draftContext"] = next_context.clone();
+    engine.store.save(&newer).unwrap();
+    assert!(engine.queue_captured_native_send(&captured).unwrap());
+    let saved = engine.store.thread(&id).unwrap();
+    assert_eq!(saved["draft"], "next draft");
+    assert_eq!(saved["rustDraftImages"], json!([next_image]));
+    assert_eq!(saved["draftContext"], next_context);
+    let queued = crate::message_queue::read(&saved).unwrap();
+    assert_eq!(queued[0].images.len(), 1);
+    assert_eq!(queued[0].context, original_context);
+    release.send(()).unwrap();
 }
 #[test]
 fn native_image_and_reference_steering_delivers_exact_payload_before_cas_cleanup() {

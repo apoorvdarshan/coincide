@@ -259,6 +259,13 @@ impl Coincide {
         cx: &mut Context<Self>,
     ) {
         self.attachment_import_threads.remove(thread);
+        let import_failed = outcome.is_err();
+        if let Some(pending) = self.pending_follow_up.as_mut()
+            && pending.thread == thread
+            && pending.waiting_for_import
+        {
+            pending.import_failed = import_failed;
+        }
         let is_selected = self
             .selected
             .as_ref()
@@ -275,6 +282,15 @@ impl Coincide {
                 "Image import stopped: {error}. Any earlier successful imports remain in {destination}."
             ),
         };
+        if import_failed
+            && is_selected
+            && self
+                .pending_follow_up
+                .as_ref()
+                .is_some_and(|pending| pending.thread == thread && pending.waiting_for_import)
+        {
+            self.show_local_error("The image could not be attached. Your message has not been sent; attach the image again to continue.");
+        }
         if is_selected
             && let Ok(value) = call(&self.engine, "threads.read", json!({"threadId":thread}))
         {

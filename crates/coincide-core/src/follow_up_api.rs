@@ -116,6 +116,94 @@ impl State {
 }
 use choice::scope;
 impl Engine {
+    /// Preserve a native send which was waiting for local admission while the
+    /// editor moved on. The captured payload owns its own queue entry; it must
+    /// never clear or adopt the newer draft, images, or provider selection.
+    pub fn queue_captured_native_send(&mut self, captured: &Value) -> Result<bool> {
+        self.require_admissions()?;
+        ensure!(!self.shutdown, "Application is closing");
+        let id = required(captured, "id")?;
+        ensure!(
+            self.active_thread.as_deref() == Some(id),
+            "Composer is no longer active"
+        );
+        ensure!(
+            !self.unsaved_threads.contains_key(id),
+            "Transcript persistence is recovering"
+        );
+        let current = self.store.thread(id)?;
+        ensure!(
+            !self.store.is_imported(id)? && current["isArchived"] != true,
+            "Restore or fork this conversation first"
+        );
+        for key in [
+            "projectID",
+            "projectPath",
+            "worktreePath",
+            "botID",
+            "rustBotContext",
+            "accessMode",
+            "interactionMode",
+        ] {
+            ensure!(
+                current[key] == captured[key],
+                "Conversation context changed; submission retained"
+            );
+        }
+        let provider = text(&captured["selection"], "provider");
+        Provider::from_name(&provider)?;
+        self.require_provider_enabled(&provider)?;
+        let context = captured["draftContext"].clone();
+        crate::composer_context::validate(&context)?;
+        let images: Vec<crate::attachments::StoredImage> = if captured["rustDraftImages"].is_null()
+        {
+            Vec::new()
+        } else {
+            serde_json::from_value(captured["rustDraftImages"].clone())
+                .context("Invalid captured images")?
+        };
+        let data = self.store.data_directory()?;
+        let prepared = images
+            .iter()
+            .map(|image| image.prepare_in(&data))
+            .collect::<Result<Vec<_>>>()?;
+        agent::validate_images(&Provider::from_name(&provider)?, &prepared)?;
+        let existing = crate::message_queue::read(&current)?;
+        let can_enable = captured["selection"] == current["selection"]
+            && existing
+                .iter()
+                .all(|message| message.state != crate::message_queue::State::Dispatching)
+            && (self.enabled_queues.contains(id)
+                || existing
+                    .iter()
+                    .all(|message| message.state != crate::message_queue::State::Pending));
+        let mut target = current.clone();
+        target["selection"] = captured["selection"].clone();
+        crate::message_queue::add_payload(
+            &mut target,
+            captured["draft"].as_str().unwrap_or(""),
+            context,
+            images,
+        )?;
+        target["selection"] = current["selection"].clone();
+        if let (Some(submitted), Some(draft_images)) = (
+            captured["rustDraftImages"].as_array(),
+            target["rustDraftImages"].as_array_mut(),
+        ) {
+            draft_images.retain(|image| !submitted.contains(image));
+        }
+        if target["draftContext"] == captured["draftContext"] {
+            target.as_object_mut().unwrap().remove("draftContext");
+        }
+        target["rustQueueError"] = Value::Null;
+        self.store.save_native_follow_up_turn(&current, &target)?;
+        if can_enable {
+            self.enabled_queues.insert(id.into());
+        }
+        self.sync_goal_queue_waiting(id);
+        self.revision += 1;
+        Ok(can_enable)
+    }
     /// Named follow-ups use the selected account's actual private catalog and
     /// policy, just like normal turn admission; never borrow a default proof.
     pub(super) fn validate_native_follow_up_policy(&self, thread: &Value) -> Result<()> {

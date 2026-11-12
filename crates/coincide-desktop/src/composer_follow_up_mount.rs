@@ -39,25 +39,46 @@ pub(super) struct PendingSend {
     pub alternate: bool,
     pub selection: Value,
     pub waiting_for_import: bool,
+    pub import_failed: bool,
+    pub captured: Value,
+    pub last_error: Option<String>,
 }
 impl PendingSend {
     pub fn new(thread: &Value, draft: String, alternate: bool) -> Self {
+        let mut captured = pending_scope(thread, false);
+        captured["id"] = thread["id"].clone();
+        captured["draft"] = json!(draft);
+        captured["rustDraftImages"] = thread["rustDraftImages"].clone();
         Self {
             thread: text(thread, "id"),
             draft,
             alternate,
             selection: pending_scope(thread, false),
             waiting_for_import: false,
+            import_failed: false,
+            captured,
+            last_error: None,
         }
     }
     pub fn during_import(thread: &Value, draft: String, alternate: bool) -> Self {
-        Self {
-            thread: text(thread, "id"),
-            draft,
-            alternate,
-            selection: pending_scope(thread, true),
-            waiting_for_import: true,
+        let mut pending = Self::new(thread, draft, alternate);
+        pending.selection = pending_scope(thread, true);
+        pending.waiting_for_import = true;
+        pending
+    }
+    pub fn finish_import(&mut self, thread: &Value) {
+        let mut images = self.captured["rustDraftImages"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        for image in thread["rustDraftImages"].as_array().into_iter().flatten() {
+            if !images.contains(image) {
+                images.push(image.clone());
+            }
         }
+        self.captured["rustDraftImages"] = json!(images);
+        self.selection["images"] = self.captured["rustDraftImages"].clone();
+        self.waiting_for_import = false;
     }
     pub fn matches(&self, thread: &Value, draft: &str) -> bool {
         self.thread == text(thread, "id")
@@ -69,7 +90,8 @@ fn pending_scope(thread: &Value, ignore_images: bool) -> Value {
     let mut scope = json!({"selection":thread["selection"],"accessMode":thread["accessMode"],
         "interactionMode":thread["interactionMode"],"projectID":thread["projectID"],
         "projectPath":thread["projectPath"],"worktreePath":thread["worktreePath"],
-        "draftContext":thread["draftContext"],"followUpBehavior":thread["followUpBehavior"]});
+        "draftContext":thread["draftContext"],"followUpBehavior":thread["followUpBehavior"],
+        "botID":thread["botID"],"rustBotContext":thread["rustBotContext"]});
     if !ignore_images {
         scope["images"] = thread["rustDraftImages"].clone();
     }
@@ -578,5 +600,22 @@ mod send_route_tests {
         thread["rustDraftImages"] = json!([{"id":"new image"}]);
         assert!(importing.matches(&thread, "message"));
         assert!(!pending.matches(&thread, "message"));
+    }
+
+    #[test]
+    fn deferred_send_captures_original_text_model_and_imported_images() {
+        let mut thread = json!({"id":"conversation", "selection":{"provider":"codex","modelID":"one"}, "rustDraftImages":[{"id":"before"}]});
+        let mut pending = PendingSend::during_import(&thread, "original".into(), false);
+        thread["draft"] = json!("next message");
+        thread["rustDraftImages"] = json!([{"id":"before"},{"id":"imported"}]);
+        pending.finish_import(&thread);
+        thread["selection"]["modelID"] = json!("two");
+        assert!(!pending.matches(&thread, "next message"));
+        assert_eq!(pending.captured["draft"], "original");
+        assert_eq!(pending.captured["selection"]["modelID"], "one");
+        assert_eq!(
+            pending.captured["rustDraftImages"],
+            json!([{"id":"before"},{"id":"imported"}])
+        );
     }
 }

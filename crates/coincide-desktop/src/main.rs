@@ -4891,6 +4891,12 @@ impl Coincide {
         if !self.chat_visible() {
             return;
         }
+        if self.pending_follow_up.is_some() {
+            self.status = "Preparing the previous message; your current draft is preserved.".into();
+            self.show_local_error("The previous message is still being prepared. Your current draft is preserved; send it after the earlier message is queued or sent.");
+            cx.notify();
+            return;
+        }
         // Sending nothing while a plan is offered implements it, as in Swift.
         if self.composer.read(cx).value().trim().is_empty() && self.proposed_plan().is_some() {
             self.implement_plan(window, cx);
@@ -5943,19 +5949,87 @@ impl Render for Coincide {
             self.pending_follow_up_choice = None;
             self.choose_follow_up(behavior, cx);
         }
-        if let Some(pending) = self.pending_follow_up.take() {
+        if let Some(mut pending) = self.pending_follow_up.take() {
+            if pending.waiting_for_import
+                && !pending.import_failed
+                && !self.attachment_import_threads.contains(&pending.thread)
+            {
+                let current = self
+                    .engine
+                    .try_lock()
+                    .ok()
+                    .and_then(|engine| engine.store.thread(&pending.thread).ok());
+                if let Some(current) = current {
+                    pending.finish_import(&current);
+                    if let Some(selected) = self
+                        .selected
+                        .as_mut()
+                        .filter(|thread| text(thread, "id") == pending.thread)
+                    {
+                        selected["rustDraftImages"] = current["rustDraftImages"].clone();
+                    }
+                }
+            }
             if let Some(thread) = self
                 .selected
                 .as_ref()
                 .filter(|thread| text(thread, "id") == pending.thread)
             {
-                // An edited draft is a new intent; never overwrite it with a
-                // previously queued retry or send the stale text in its place.
-                if pending.matches(thread, self.composer.read(cx).value().as_ref()) {
-                    if self.attachment_import_threads.contains(&pending.thread) {
-                        self.pending_follow_up = Some(pending);
-                    } else {
-                        self.send_selected(pending.alternate, window, cx);
+                if pending.waiting_for_import
+                    || self.attachment_import_threads.contains(&pending.thread)
+                {
+                    self.pending_follow_up = Some(pending);
+                } else if pending.matches(thread, self.composer.read(cx).value().as_ref()) {
+                    self.send_selected(pending.alternate, window, cx);
+                } else {
+                    let result = try_state(&self.engine).and_then(|mut engine| {
+                        engine.queue_captured_native_send(&pending.captured)
+                    });
+                    match result {
+                        Ok(enabled) => {
+                            let same_selection =
+                                pending.captured["selection"] == thread["selection"];
+                            if let Some(selected) = self.selected.as_mut() {
+                                if let (Some(submitted), Some(images)) = (
+                                    pending.captured["rustDraftImages"].as_array(),
+                                    selected["rustDraftImages"].as_array_mut(),
+                                ) {
+                                    images.retain(|image| !submitted.contains(image));
+                                }
+                                if selected["draftContext"] == pending.captured["draftContext"] {
+                                    selected.as_object_mut().unwrap().remove("draftContext");
+                                }
+                            }
+                            self.status = if enabled {
+                                "Previous message queued; your current draft is preserved."
+                            } else if same_selection {
+                                "Previous message saved in the paused queue; resume it to send."
+                            } else {
+                                "Previous message saved in the queue; its original model must be selected before sending."
+                            }.into();
+                            if !enabled {
+                                self.show_local_error(if same_selection {
+                                    "Your previous message is saved in the paused queue. Resume the queue to send it."
+                                } else {
+                                    "Your previous message is saved in the queue. Select its original provider and model before sending it."
+                                });
+                            }
+                            self.refresh_queue(cx);
+                            cx.notify();
+                        }
+                        Err(error) => {
+                            let reason = error.to_string();
+                            if !engine_busy(&error)
+                                && pending.last_error.as_deref() != Some(reason.as_str())
+                            {
+                                let message = format!(
+                                    "Previous message is waiting and has not been sent: {reason}"
+                                );
+                                self.show_local_error(&message);
+                                pending.last_error = Some(reason);
+                            }
+                            self.pending_follow_up = Some(pending);
+                        }
                     }
                 }
             } else {
