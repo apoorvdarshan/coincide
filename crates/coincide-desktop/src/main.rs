@@ -234,7 +234,21 @@ fn send_error_message(reason: &str) -> String {
 
 /// Trusted draft persistence only; decide and write under the same try-lock.
 fn persist_pending_draft(engine: &SharedEngine, id: &str, text: &str) -> Result<()> {
+    persist_pending_draft_guarded(engine, id, text, || true)
+}
+
+fn persist_pending_draft_guarded(
+    engine: &SharedEngine,
+    id: &str,
+    text: &str,
+    still_current: impl FnOnce() -> bool,
+) -> Result<()> {
     let mut engine = try_state(engine)?;
+    // Check after acquiring the same lock used by Send. A stale background
+    // write cannot pass its check before Send and then land afterwards.
+    if !still_current() {
+        return Ok(());
+    }
     if engine.admissions_frozen() {
         return engine.persist_frozen_draft(id, text);
     }
@@ -558,6 +572,7 @@ struct Coincide {
     pending_native_selection: Option<Option<String>>,
     startup_selection_pending: bool,
     pending_drafts: std::collections::HashMap<String, PendingDraft>,
+    submitted_drafts: draft_close::SubmittedDrafts,
     draft_saver: draft_saver::Saver,
     composer: Entity<TextareaState>,
     model_input: Entity<InputState>,
@@ -1028,6 +1043,8 @@ impl Coincide {
     fn preserve_pending_draft(&self, thread: &mut Value) {
         if let Some(draft) = self.pending_drafts.get(&text(thread, "id")) {
             thread["draft"] = json!(draft.text);
+        } else {
+            self.submitted_drafts.project(thread);
         }
     }
     fn new(
@@ -1704,6 +1721,7 @@ impl Coincide {
             pending_native_selection: None,
             startup_selection_pending: true,
             pending_drafts: Default::default(),
+            submitted_drafts: Default::default(),
             draft_saver,
             composer,
             model_input,
@@ -4305,11 +4323,15 @@ impl Coincide {
         let Some(thread) = self.selected.as_mut() else {
             return;
         };
+        if !self.pending_drafts.contains_key(&text(thread, "id")) {
+            self.submitted_drafts.project(thread);
+        }
         if thread["draft"].as_str() == Some(draft.as_str()) {
             return;
         }
         thread["draft"] = json!(draft);
         let id = text(thread, "id");
+        self.submitted_drafts.changed(&id, &draft);
         self.draft_saver.record(&id, &draft);
         self.pending_drafts.insert(
             id,
@@ -4713,6 +4735,7 @@ impl Coincide {
             pending["rustImages"] = json!(images);
         }
         self.pending_images.begin(seq, id, images);
+        self.submitted_drafts.begin(seq, id, message);
         items.push(pending);
         self.pending_sent = Some((id.to_owned(), message.to_owned(), baseline, seq));
         let count = items.len();
@@ -4734,6 +4757,25 @@ impl Coincide {
             && let Some(images) = thread["rustDraftImages"].as_array_mut()
         {
             images.retain(|image| !submitted.contains(image));
+        }
+    }
+    fn finish_submitted_draft(&mut self, sequence: Option<u64>, delivered_and_cleared: bool) {
+        let Some(submitted) = sequence.and_then(|seq| self.submitted_drafts.finish(seq)) else {
+            return;
+        };
+        if delivered_and_cleared
+            && let Some((thread, text)) = submitted.successor_to_save()
+            && !self.pending_drafts.contains_key(thread)
+        {
+            self.pending_drafts.insert(
+                thread.into(),
+                PendingDraft {
+                    text: text.into(),
+                    retry: true,
+                    failed: false,
+                },
+            );
+            self.draft_saver.record(thread, text);
         }
     }
     /// Show a failure in the conversation itself: the composer's status row is
@@ -4905,12 +4947,20 @@ impl Coincide {
             // refused send puts it back. Waiting for the engine made a plain
             // sentence sit in the field for a second.
             let sent = self.composer.read(cx).value().to_string();
-            self.composer
-                .update(cx, |input, cx| input.set_value("", window, cx));
+            self.draft_saver.invalidate();
+            if self
+                .pending_drafts
+                .get(&id)
+                .is_some_and(|draft| draft.text == sent)
+            {
+                self.pending_drafts.remove(&id);
+            }
             if let Some(thread) = self.selected.as_mut() {
                 thread["draft"] = json!("");
                 thread.as_object_mut().unwrap().remove("draftContext");
             }
+            self.composer
+                .update(cx, |input, cx| input.set_value("", window, cx));
             // The engine call runs off the UI thread: the window never freezes
             // behind a send, and a refused send still restores the text.
             let image_send = self.show_pending_send(&id, &sent);
@@ -4929,16 +4979,11 @@ impl Coincide {
                     })
                     .await;
                 let _ = this.update(cx, |this, cx| {
+                    this.record_composer_draft(cx);
                     match result {
                         Ok(_) => {
                             this.finish_pending_images(image_send, true);
-                            if this
-                                .pending_drafts
-                                .get(&id)
-                                .is_some_and(|draft| draft.text == sent)
-                            {
-                                this.pending_drafts.remove(&id);
-                            }
+                            this.finish_submitted_draft(image_send, true);
                             if !this.running.contains(&id) {
                                 this.running.push(id.clone());
                                 this.splice_transcript(
@@ -4951,6 +4996,7 @@ impl Coincide {
                         }
                         Err(error) => {
                             this.finish_pending_images(image_send, false);
+                            this.finish_submitted_draft(image_send, false);
                             this.retry_selected_account_readiness();
                             this.drop_pending_send(&id);
                             this.restore_composer = Some((id.clone(), sent.clone()));
@@ -5865,6 +5911,8 @@ impl Render for Coincide {
             && let Some(draft) = self.pending_drafts.get(&text(thread, "id"))
         {
             thread["draft"] = json!(draft.text);
+        } else if let Some(thread) = self.selected.as_mut() {
+            self.submitted_drafts.project(thread);
         }
         if let Some(v) = self.selected.as_ref() {
             let draft = text(v, "draft");
@@ -5920,6 +5968,15 @@ impl Render for Coincide {
                 if let Some(thread) = self.selected.as_mut() {
                     thread["draft"] = json!(text);
                 }
+                self.draft_saver.record(&id, &text);
+                self.pending_drafts.insert(
+                    id.clone(),
+                    PendingDraft {
+                        text,
+                        retry: true,
+                        failed: false,
+                    },
+                );
             }
         }
         if let Some(id) = self.pending_select.clone()

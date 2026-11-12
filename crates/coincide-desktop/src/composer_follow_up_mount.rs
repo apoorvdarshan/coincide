@@ -320,6 +320,9 @@ impl Coincide {
             cx.notify();
             return;
         }
+        // The saved source is now owned by the follow-up operation. Revoke
+        // its debounced write before the provider can acknowledge and clear it.
+        self.draft_saver.invalidate();
         let result = self
             .engine
             .try_lock()
@@ -330,13 +333,13 @@ impl Coincide {
                 self.pending_follow_up = None;
                 let image_send = self.show_pending_send(&id, &draft);
                 self.pending_drafts.remove(&id);
-                self.composer
-                    .update(cx, |input, cx| input.set_value("", window, cx));
                 if let Some(thread) = self.selected.as_mut()
                     && text(thread, "id") == id
                 {
                     thread["draft"] = json!("");
                 }
+                self.composer
+                    .update(cx, |input, cx| input.set_value("", window, cx));
                 self.follow_up_deliveries.push(PendingDelivery {
                     ticket: Some(ticket),
                     thread: id,
@@ -407,7 +410,16 @@ impl Coincide {
                 None | Some(NativeFollowUpStatus::Pending) => retained.push(delivery),
                 Some(status) => {
                     let delivered = matches!(status, NativeFollowUpStatus::Delivered { .. });
+                    let draft_cleared = matches!(
+                        status,
+                        NativeFollowUpStatus::Delivered {
+                            draft_cleared: true,
+                            ..
+                        }
+                    );
+                    self.record_composer_draft(cx);
                     self.finish_pending_images(delivery.image_send, delivered);
+                    self.finish_submitted_draft(delivery.image_send, delivered && draft_cleared);
                     let restored = matches!(status, NativeFollowUpStatus::Retained(_))
                         && !delivery.queued
                         && self.restore_follow_up_draft(
@@ -460,25 +472,6 @@ impl Coincide {
                         ),
                         NativeFollowUpStatus::Pending => unreachable!(),
                     };
-                    if delivered
-                        && !delivery.queued
-                        && self
-                            .selected
-                            .as_ref()
-                            .is_some_and(|thread| thread["id"] == delivery.thread)
-                        && self.committed_composer_draft(cx) == delivery.draft
-                        && let Ok(thread) = call(
-                            &self.engine,
-                            "threads.read",
-                            json!({"threadId":delivery.thread}),
-                        )
-                        && thread["draft"] == ""
-                    {
-                        self.pending_drafts.remove(&delivery.thread);
-                        self.selected = Some(thread);
-                        self.composer
-                            .update(cx, |input, cx| input.set_value("", window, cx));
-                    }
                     self.refresh_queue(cx);
                     cx.notify();
                 }

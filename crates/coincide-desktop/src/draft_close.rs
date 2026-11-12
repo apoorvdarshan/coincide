@@ -1,5 +1,75 @@
 //! Pending text survives every unsuccessful save; only explicit retry replays failures.
+use serde_json::{Value, json};
 use std::collections::HashMap;
+
+/// The editor owns its draft while a submission is awaiting acknowledgement.
+/// The saved snapshot may be the submitted text or an older, partially typed
+/// version, so it must not replace the editor's current successor.
+#[derive(Default)]
+pub(super) struct SubmittedDrafts {
+    entries: Vec<SubmittedDraft>,
+}
+
+pub(super) struct SubmittedDraft {
+    sequence: u64,
+    thread: String,
+    successor: String,
+    edited: bool,
+}
+
+impl SubmittedDrafts {
+    pub(super) fn begin(&mut self, sequence: u64, thread: &str, _draft: &str) {
+        // A newer submission has consumed the previous visible successor.
+        for entry in self
+            .entries
+            .iter_mut()
+            .filter(|entry| entry.thread == thread)
+        {
+            entry.successor.clear();
+            entry.edited = true;
+        }
+        self.entries.push(SubmittedDraft {
+            sequence,
+            thread: thread.into(),
+            successor: String::new(),
+            edited: false,
+        });
+    }
+
+    pub(super) fn changed(&mut self, thread: &str, draft: &str) {
+        for entry in self
+            .entries
+            .iter_mut()
+            .filter(|entry| entry.thread == thread)
+        {
+            entry.successor = draft.into();
+            entry.edited = true;
+        }
+    }
+
+    pub(super) fn project(&self, thread: &mut Value) {
+        let id = thread["id"].as_str().unwrap_or("");
+        if let Some(entry) = self.entries.iter().rev().find(|entry| entry.thread == id) {
+            thread["draft"] = json!(entry.successor);
+        }
+    }
+
+    pub(super) fn finish(&mut self, sequence: u64) -> Option<SubmittedDraft> {
+        let index = self
+            .entries
+            .iter()
+            .position(|entry| entry.sequence == sequence)?;
+        Some(self.entries.remove(index))
+    }
+}
+
+impl SubmittedDraft {
+    /// A provider can clear its saved input after the user has started a new
+    /// draft, including one whose text happens to match the submitted text.
+    pub(super) fn successor_to_save(&self) -> Option<(&str, &str)> {
+        (self.edited && !self.successor.is_empty()).then_some((&self.thread, &self.successor))
+    }
+}
 
 pub(super) struct PendingDraft {
     pub text: String,
@@ -39,6 +109,45 @@ pub(super) fn retry_failed(drafts: &mut HashMap<String, PendingDraft>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn submitted_draft_snapshots_never_replace_newer_editor_text() {
+        let mut submissions = SubmittedDrafts::default();
+        submissions.begin(1, "a", "sent");
+        let mut stale = json!({"id":"a","draft":"sent"});
+        submissions.project(&mut stale);
+        assert_eq!(stale["draft"], "");
+        let mut earlier_snapshot = json!({"id":"a","draft":"se"});
+        submissions.project(&mut earlier_snapshot);
+        assert_eq!(earlier_snapshot["draft"], "");
+        submissions.changed("a", "new message");
+        let mut stale = json!({"id":"a","draft":"sent"});
+        submissions.project(&mut stale);
+        assert_eq!(stale["draft"], "new message");
+        let mut other = json!({"id":"b","draft":"sent"});
+        submissions.project(&mut other);
+        assert_eq!(other["draft"], "sent");
+        submissions.changed("a", "sent");
+        let mut retyped = json!({"id":"a","draft":"sent"});
+        submissions.project(&mut retyped);
+        assert_eq!(retyped["draft"], "sent");
+        let finished = submissions.finish(1).unwrap();
+        assert_eq!(finished.successor_to_save(), Some(("a", "sent")));
+        let mut after_completion = json!({"id":"a","draft":"stored later"});
+        submissions.project(&mut after_completion);
+        assert_eq!(after_completion["draft"], "stored later");
+    }
+
+    #[test]
+    fn a_later_submission_cannot_restore_an_earlier_one() {
+        let mut submissions = SubmittedDrafts::default();
+        submissions.begin(1, "a", "first");
+        submissions.changed("a", "second");
+        submissions.begin(2, "a", "second");
+        let mut old = json!({"id":"a","draft":"first"});
+        submissions.project(&mut old);
+        assert_eq!(old["draft"], "");
+        assert!(submissions.finish(1).unwrap().successor_to_save().is_none());
+    }
     #[test]
     fn saving_one_thread_does_not_allow_close_with_another_failed_draft() {
         let mut drafts = HashMap::from([

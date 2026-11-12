@@ -1631,6 +1631,11 @@ impl Coincide {
                 "A newer pending draft exists; command draft retained"
             );
             let mut engine = try_state(&self.engine)?;
+            if !submission.keep_draft {
+                // This transaction may consume the command text. Invalidate
+                // any older debounce while holding the same Engine lock.
+                self.draft_saver.invalidate();
+            }
             engine_command_transaction(
                 &mut engine,
                 &submission,

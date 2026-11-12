@@ -102,7 +102,7 @@ pub(crate) fn skills(
     };
     wire.call("initialize", json!({"clientInfo":{"name":"coincide","title":"Coincide","version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":true}}))?;
     wire.initialized()?;
-    let result = wire.call("skills/list", json!({"cwds":[cwd],"forceReload":false}))?;
+    let result = wire.call("skills/list", json!({"cwds":[cwd],"forceReload":true}))?;
     ensure!(allowed(), "Skill discovery cancelled");
     if let Some(profile) = profile {
         profile.validate()?;

@@ -19,6 +19,9 @@ const MAX_AGENT_ROWS: usize = 200;
 const MAX_PULL_ROWS: usize = 50;
 /// A pull request list older than this is read again when `#` opens.
 const PULL_MAX_AGE: Duration = Duration::from_secs(60);
+/// Refresh an open menu periodically; reopening it always requests a fresh list.
+const COMMAND_MAX_AGE: Duration = Duration::from_secs(30);
+const COMMAND_BUSY_RETRY: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Suggestion {
@@ -95,9 +98,36 @@ struct Live {
 impl Live {
     fn same_word(&self, other: &Self) -> bool {
         self.thread == other.thread
+            && self.provider == other.provider
+            && self.account == other.account
             && self.trigger.kind == other.trigger.kind
             && self.trigger.range.start == other.trigger.range.start
     }
+}
+fn opens_suggestion_word(previous: Option<&Live>, current: Option<&Live>) -> bool {
+    current.is_some_and(|current| previous.is_none_or(|previous| !current.same_word(previous)))
+}
+
+#[derive(Clone, Copy)]
+struct CommandAttempt {
+    started: Instant,
+    retry_after: Duration,
+}
+fn command_refresh_due(attempt: Option<&CommandAttempt>, now: Instant) -> bool {
+    attempt.is_some_and(|attempt| {
+        now.saturating_duration_since(attempt.started) >= attempt.retry_after
+    })
+}
+fn command_scope_key(live: &Live, thread: &Value) -> String {
+    format!(
+        "{}\0{}\0{}\0{}\0{}\0{}",
+        live.thread,
+        live.provider,
+        live.account,
+        thread["projectID"],
+        thread["projectPath"],
+        thread["worktreePath"]
+    )
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -221,7 +251,7 @@ pub(super) struct Suggestions {
     command_receiver: mpsc::Receiver<CommandReply>,
     command_pending: Option<String>,
     command_receipt: Option<(String, coincide_core::api::NativeCommandReceipt)>,
-    command_attempts: std::collections::HashMap<String, Instant>,
+    command_attempts: std::collections::HashMap<String, CommandAttempt>,
     /// A command chosen from the list, run once its edited draft is saved.
     queued: Option<Queued>,
 }
@@ -390,6 +420,22 @@ fn read_pulls(
 }
 
 impl Coincide {
+    fn command_list_due(&self, live: &Live, now: Instant) -> bool {
+        self.composer_suggestions.command_pending.is_none()
+            && matches!(live.trigger.kind, TriggerKind::Command | TriggerKind::Skill)
+            && self
+                .selected
+                .as_ref()
+                .filter(|thread| thread["id"] == live.thread)
+                .is_some_and(|thread| {
+                    command_refresh_due(
+                        self.composer_suggestions
+                            .command_attempts
+                            .get(&command_scope_key(live, thread)),
+                        now,
+                    )
+                })
+    }
     fn suggestion_route(&self, window: &Window, cx: &App) -> bool {
         window.is_window_active()
             && self.microphone_window_active
@@ -486,6 +532,7 @@ impl Coincide {
         }
         let state = &self.composer_suggestions;
         let changed = state.live != live;
+        let opened = opens_suggestion_word(state.live.as_ref(), live.as_ref());
         let pulls_changed = live
             .as_ref()
             .is_some_and(|live| live.trigger.kind == TriggerKind::PullRequest)
@@ -498,14 +545,17 @@ impl Coincide {
             matches!(live.trigger.kind, TriggerKind::Command | TriggerKind::Skill)
                 && state.commands_revision != self.revision
         });
-        if !changed && !pulls_changed && !builtins_changed && !reports_changed {
+        let commands_due = live
+            .as_ref()
+            .is_some_and(|live| self.command_list_due(live, Instant::now()));
+        if !changed && !pulls_changed && !builtins_changed && !reports_changed && !commands_due {
             return;
         }
         self.composer_suggestions.commands_revision = self.revision;
         self.composer_suggestions.live = live;
-        self.load_composer_suggestions(cx);
+        self.load_composer_suggestions(opened, cx);
     }
-    fn load_composer_suggestions(&mut self, cx: &mut Context<Self>) {
+    fn load_composer_suggestions(&mut self, opened: bool, cx: &mut Context<Self>) {
         let Some(live) = self.composer_suggestions.live.clone() else {
             self.composer_suggestions.hide();
             return;
@@ -513,7 +563,7 @@ impl Coincide {
         match live.trigger.kind {
             TriggerKind::Command | TriggerKind::Skill => {
                 let skills = live.trigger.kind == TriggerKind::Skill;
-                self.start_native_command_discovery(&live);
+                self.start_native_command_discovery(&live, opened);
                 let mut items = if skills {
                     Vec::new()
                 } else {
@@ -566,7 +616,7 @@ impl Coincide {
         }
         cx.notify();
     }
-    fn start_native_command_discovery(&mut self, live: &Live) {
+    fn start_native_command_discovery(&mut self, live: &Live, opened: bool) {
         if !matches!(live.provider.as_str(), "codex" | "opencode" | "claude")
             || self.composer_suggestions.command_pending.is_some()
         {
@@ -579,15 +629,13 @@ impl Coincide {
         else {
             return;
         };
-        let key = format!(
-            "{}\0{}\0{}\0{}\0{}",
-            live.thread, live.provider, live.account, thread["projectID"], thread["worktreePath"]
-        );
-        if self
-            .composer_suggestions
-            .command_attempts
-            .get(&key)
-            .is_some_and(|at| at.elapsed() < Duration::from_secs(60))
+        let key = command_scope_key(live, thread);
+        if !opened
+            && self
+                .composer_suggestions
+                .command_attempts
+                .get(&key)
+                .is_some_and(|attempt| !command_refresh_due(Some(attempt), Instant::now()))
         {
             return;
         }
@@ -614,21 +662,33 @@ impl Coincide {
                 let _ = sender.send((worker_key, result));
             })
         {
-            self.composer_suggestions
-                .command_attempts
-                .insert(key.clone(), Instant::now());
+            self.composer_suggestions.command_attempts.insert(
+                key.clone(),
+                CommandAttempt {
+                    started: Instant::now(),
+                    retry_after: COMMAND_MAX_AGE,
+                },
+            );
             self.composer_suggestions.command_pending = Some(key);
         }
     }
     fn poll_native_command_discovery(&mut self, cx: &mut Context<Self>) {
         if let Ok((key, result)) = self.composer_suggestions.command_receiver.try_recv() {
             self.composer_suggestions.command_pending = None;
+            let retry_after = match &result {
+                Err(error) if error.contains("busy") => COMMAND_BUSY_RETRY,
+                _ => COMMAND_MAX_AGE,
+            };
+            self.composer_suggestions.command_attempts.insert(
+                key.clone(),
+                CommandAttempt {
+                    started: Instant::now(),
+                    retry_after,
+                },
+            );
             match result {
                 Ok(Some(receipt)) => {
                     self.composer_suggestions.command_receipt = Some((key, receipt))
-                }
-                Err(error) if error.contains("busy") => {
-                    self.composer_suggestions.command_attempts.remove(&key);
                 }
                 _ => {}
             }
@@ -690,7 +750,14 @@ impl Coincide {
     /// What the thread's agent reported: its session's commands and skills, else what it
     /// reported last in this folder. A busy engine keeps the previous answer for the agent.
     fn reported_agent_commands(&mut self, live: &Live) -> Vec<ProviderCommand> {
-        let key = format!("{}\0{}\0{}", live.thread, live.provider, live.account);
+        let Some(thread) = self
+            .selected
+            .as_ref()
+            .filter(|thread| thread["id"] == live.thread)
+        else {
+            return Vec::new();
+        };
+        let key = command_scope_key(live, thread);
         if let Ok(reply) = call(
             &self.engine,
             "composer.commands",
@@ -756,6 +823,15 @@ impl Coincide {
         cx: &mut Context<Self>,
     ) {
         self.poll_native_command_discovery(cx);
+        if self
+            .composer_suggestions
+            .live
+            .as_ref()
+            .is_some_and(|live| self.command_list_due(live, Instant::now()))
+        {
+            // A quiet composer may not render on its own when the cache ages.
+            cx.notify();
+        }
         self.run_queued_suggestion_command(window, cx);
         let state = &mut self.composer_suggestions;
         // A worker that stopped without replying leaves nothing pending, so `#` can retry.
@@ -1124,6 +1200,42 @@ impl Coincide {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[::core::prelude::v1::test]
+    fn provider_suggestions_refresh_on_reopen_and_scope_changes() {
+        let now = Instant::now();
+        let attempt = CommandAttempt {
+            started: now,
+            retry_after: COMMAND_MAX_AGE,
+        };
+        assert!(!command_refresh_due(Some(&attempt), now));
+        assert!(command_refresh_due(Some(&attempt), now + COMMAND_MAX_AGE));
+        let current = Live {
+            thread: "thread".into(),
+            provider: "codex".into(),
+            account: Value::Null,
+            draft: "$".into(),
+            selection: 1..1,
+            trigger: Trigger {
+                kind: TriggerKind::Skill,
+                query: String::new(),
+                range: 0..1,
+            },
+        };
+        assert!(opens_suggestion_word(None, Some(&current)));
+        let mut typed = current.clone();
+        typed.draft = "$r".into();
+        typed.trigger.query = "r".into();
+        typed.trigger.range = 0..2;
+        assert!(!opens_suggestion_word(Some(&current), Some(&typed)));
+        typed.provider = "claude".into();
+        assert!(opens_suggestion_word(Some(&current), Some(&typed)));
+        let first = json!({"id":"thread","projectID":"project","projectPath":"/one"});
+        let second = json!({"id":"thread","projectID":"project","projectPath":"/two"});
+        assert_ne!(
+            command_scope_key(&current, &first),
+            command_scope_key(&current, &second)
+        );
+    }
 
     #[::core::prelude::v1::test]
     fn swift_key_routing_moves_wraps_chooses_and_dismisses() {
@@ -1237,6 +1349,7 @@ mod tests {
                 name: "review".into(),
                 description: None,
                 argument_hint: Some("[pr]".into()),
+                aliases: Vec::new(),
                 kind: CommandKind::Skill,
                 is_built_in: false,
                 is_slash_command: true,

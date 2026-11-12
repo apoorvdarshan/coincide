@@ -173,16 +173,31 @@ mod tests {
     fn codex_skills_are_discovered_without_a_turn_and_rejected_after_scope_changes() {
         use std::os::unix::fs::PermissionsExt;
         let (root, mut engine, binary) = provider_configuration::tests::fixture();
-        std::fs::write(&binary, r##"#!/usr/bin/env python3
+        let skills_file = root.path().join("synthetic-skills.json");
+        std::fs::write(
+            &skills_file,
+            json!([
+                {"name":"plugin:review","description":"Review","enabled":true},
+                {"name":"hidden","description":"Hidden","enabled":false}
+            ])
+            .to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            &binary,
+            r##"#!/usr/bin/env python3
 import json,sys
 def read():return json.loads(sys.stdin.readline())
 def write(v):print(json.dumps(v),flush=True)
 r=read();assert r['method']=='initialize';write({'id':r['id'],'result':{}})
 assert read()['method']=='initialized'
-r=read();assert r['method']=='skills/list'
+r=read();assert r['method']=='skills/list' and r['params']['forceReload'] is True
 cwd=r['params']['cwds'][0]
-write({'id':r['id'],'result':{'data':[{'cwd':cwd,'skills':[{'name':'plugin:review','description':'Review','enabled':True},{'name':'hidden','description':'Hidden','enabled':False}]}]}})
-"##).unwrap();
+skills=json.load(open(cwd+'/synthetic-skills.json'))
+write({'id':r['id'],'result':{'data':[{'cwd':cwd,'skills':skills}]}})
+"##,
+        )
+        .unwrap();
         std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
         provider_configuration::tests::save(&mut engine, "codex", &binary, "synthetic");
         let thread = engine
@@ -202,6 +217,29 @@ write({'id':r['id'],'result':{'data':[{'cwd':cwd,'skills':[{'name':'plugin:revie
         assert_eq!(commands["commands"].as_array().unwrap().len(), 1);
         assert_eq!(commands["commands"][0]["name"], "plugin:review");
         assert_eq!(commands["commands"][0]["isSlashCommand"], false);
+
+        // Installing or removing a skill in this workspace must change the
+        // next provider-reported list without restarting Coincide.
+        std::fs::write(
+            &skills_file,
+            json!([
+                {"name":"new-plugin:custom-skill","enabled":true}
+            ])
+            .to_string(),
+        )
+        .unwrap();
+        let receipt = engine
+            .prepare_native_command_discovery(&id)
+            .unwrap()
+            .unwrap()
+            .read(|| true)
+            .unwrap();
+        engine.accept_native_command_discovery(receipt).unwrap();
+        let refreshed = engine
+            .execute("composer.commands", &json!({"threadId":id}))
+            .unwrap();
+        assert_eq!(refreshed["commands"].as_array().unwrap().len(), 1);
+        assert_eq!(refreshed["commands"][0]["name"], "new-plugin:custom-skill");
 
         let request = engine
             .prepare_native_command_discovery(&id)

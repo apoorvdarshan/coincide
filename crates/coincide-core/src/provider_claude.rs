@@ -95,17 +95,42 @@ fn command_discovery_initializes_without_sending_a_prompt() {
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let binary = dir.path().join("claude");
+    let commands = dir.path().join("commands.json");
+    std::fs::write(
+        &commands,
+        json!([{"name":"plugin:review","description":"Review","builtin":false}]).to_string(),
+    )
+    .unwrap();
     std::fs::write(&binary, r##"#!/usr/bin/env python3
 import json,sys
 r=json.loads(sys.stdin.readline())
 assert r['request']['subtype']=='initialize'
-print(json.dumps({'type':'control_response','response':{'subtype':'success','request_id':r['request_id'],'response':{'commands':[{'name':'plugin:review','description':'Review','builtin':False}]}}}),flush=True)
+commands=json.load(open('commands.json'))
+print(json.dumps({'type':'control_response','response':{'subtype':'success','request_id':r['request_id'],'response':{'commands':commands}}}),flush=True)
 "##).unwrap();
     std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
     let found = command_metadata(&binary, dir.path(), &|| true).unwrap();
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].name, "plugin:review");
     assert!(found[0].is_slash_command);
+    std::fs::write(
+        &commands,
+        json!([
+            {"name":"new-builtin","builtin":true,"aliases":["new-alias"]},
+            {"name":"another-plugin:skill","builtin":false}
+        ])
+        .to_string(),
+    )
+    .unwrap();
+    let refreshed = command_metadata(&binary, dir.path(), &|| true).unwrap();
+    assert_eq!(
+        refreshed
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect::<Vec<_>>(),
+        ["new-builtin", "another-plugin:skill"]
+    );
+    assert_eq!(refreshed[0].aliases, ["new-alias"]);
 }
 
 fn response(id: &Value, result: Value) -> Value {

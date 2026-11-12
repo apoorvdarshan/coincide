@@ -204,6 +204,9 @@ pub struct ProviderCommand {
     /// What the command takes after its name, such as `[file]`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub argument_hint: Option<String>,
+    /// Alternative command names reported by the provider.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aliases: Vec<String>,
     pub kind: CommandKind,
     /// Part of the agent itself, rather than added by the user, a project or a plugin.
     #[serde(default)]
@@ -218,6 +221,26 @@ fn bounded(value: &Value, limit: usize) -> Option<String> {
 }
 fn valid_name(name: &str) -> bool {
     !name.is_empty() && name.len() <= 256 && !name.chars().any(|c| c.is_control())
+}
+fn aliases(entry: &Value, name: &str) -> Vec<String> {
+    let mut result = Vec::new();
+    for alias in entry["aliases"].as_array().into_iter().flatten().take(32) {
+        let Some(alias) = alias
+            .as_str()
+            .map(str::trim)
+            .filter(|alias| valid_name(alias))
+        else {
+            continue;
+        };
+        if !alias.eq_ignore_ascii_case(name)
+            && !result
+                .iter()
+                .any(|seen: &String| seen.eq_ignore_ascii_case(alias))
+        {
+            result.push(alias.to_owned());
+        }
+    }
+    result
 }
 impl ProviderCommand {
     /// Enabled Codex skills, including plugin skills, reported for this folder.
@@ -251,6 +274,7 @@ impl ProviderCommand {
                     description: bounded(&entry["shortDescription"], 1024)
                         .or_else(|| bounded(&entry["description"], 1024)),
                     argument_hint: None,
+                    aliases: aliases(entry, name),
                     kind: CommandKind::Skill,
                     is_built_in: false,
                     is_slash_command: false,
@@ -293,6 +317,7 @@ impl ProviderCommand {
                     name: name.into(),
                     description: bounded(&entry["description"], 1024),
                     argument_hint: None,
+                    aliases: aliases(entry, name),
                     kind,
                     is_built_in: false,
                     is_slash_command: !skill,
@@ -320,6 +345,7 @@ impl ProviderCommand {
                     name: name.into(),
                     description: bounded(&entry["description"], 1024),
                     argument_hint: bounded(&entry["argumentHint"], 256),
+                    aliases: aliases(entry, name),
                     kind: if built_in {
                         CommandKind::Command
                     } else {
@@ -345,7 +371,8 @@ impl ProviderCommand {
                 Some(Self {
                     name: name.into(),
                     description: bounded(&entry["description"], 1024),
-                    argument_hint: None,
+                    argument_hint: bounded(&entry["input"]["hint"], 256),
+                    aliases: aliases(entry, name),
                     kind: CommandKind::Command,
                     is_built_in: false,
                     is_slash_command: true,
@@ -366,16 +393,24 @@ impl ProviderCommand {
             .enumerate()
             .filter_map(|(index, command)| {
                 let name = command.name.to_lowercase();
-                let rank = if name == query {
+                let aliases = command
+                    .aliases
+                    .iter()
+                    .map(|alias| alias.to_lowercase())
+                    .collect::<Vec<_>>();
+                let rank = if name == query || aliases.iter().any(|alias| alias == &query) {
                     0
-                } else if name.starts_with(&query)
+                } else if aliases.iter().any(|alias| alias.starts_with(&query))
+                    || name.starts_with(&query)
                     || name
                         .rsplit(':')
                         .next()
                         .is_some_and(|last| last.starts_with(&query))
                 {
                     1
-                } else if name.contains(&query) {
+                } else if name.contains(&query)
+                    || aliases.iter().any(|alias| alias.contains(&query))
+                {
                     2
                 } else if command
                     .description
@@ -881,7 +916,7 @@ mod tests {
     #[test]
     fn claude_and_acp_reports_parse_dedupe_and_bound_commands() {
         let claude = json!({"provider":"claude","providerFrame":{"type":"control_response","response":{"request_id":"coincide-initialize","subtype":"success","response":{"commands":[
-            {"name":"compact","description":"Clear history","builtin":true},
+            {"name":"compact","description":"Clear history","builtin":true,"aliases":["summarize","SUMMARIZE", "bad\nname"]},
             {"name":" review ","description":"  Review a PR ","argumentHint":"[pr]"},
             {"name":"Review"},
             {"name":""},
@@ -892,6 +927,11 @@ mod tests {
         assert_eq!(commands.len(), 2);
         assert_eq!(commands[0].kind, CommandKind::Command);
         assert!(commands[0].is_built_in);
+        assert_eq!(commands[0].aliases, ["summarize"]);
+        assert_eq!(
+            ProviderCommand::matching("summarize", &commands)[0].name,
+            "compact"
+        );
         assert_eq!(commands[1].name, "review");
         assert_eq!(commands[1].description.as_deref(), Some("Review a PR"));
         assert_eq!(commands[1].argument_hint.as_deref(), Some("[pr]"));
@@ -919,6 +959,7 @@ mod tests {
             ["web", "plan"]
         );
         assert_eq!(commands[1].description, None);
+        assert_eq!(commands[0].argument_hint.as_deref(), Some("query"));
         // An ACP update replaces the list, even with nothing in it.
         let mut cleared = acp.clone();
         cleared["providerFrame"]["params"]["update"]["availableCommands"] = json!([]);
@@ -934,6 +975,7 @@ mod tests {
             name: name.into(),
             description: description.map(str::to_owned),
             argument_hint: None,
+            aliases: Vec::new(),
             kind: CommandKind::Skill,
             is_built_in: false,
             is_slash_command: true,
