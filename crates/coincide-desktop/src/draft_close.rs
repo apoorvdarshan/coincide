@@ -94,7 +94,9 @@ pub(super) fn save_one(
             // Only a busy try_lock proves dispatch did not run.
             let draft = drafts.get_mut(id).unwrap();
             draft.retry = definitely_not_written;
-            draft.failed = true;
+            // A busy lock proves the save never ran. Keep waiting and let a
+            // pending Send retry; it is not a failed or uncertain write.
+            draft.failed = !definitely_not_written;
             Some(error)
         }
     }
@@ -176,6 +178,25 @@ mod tests {
         assert_eq!(drafts["failed"].text, "two\n");
     }
     #[test]
+    fn busy_save_retries_without_treating_the_pending_send_as_failed() {
+        let mut drafts = HashMap::from([(
+            "thread".into(),
+            PendingDraft {
+                text: "send this".into(),
+                retry: true,
+                failed: false,
+            },
+        )]);
+        save_one(&mut drafts, "thread", |_, _| Err((true, "busy".into())));
+        assert!(!drafts["thread"].failed);
+        assert!(drafts["thread"].retry);
+        save_one(&mut drafts, "thread", |_, text| {
+            assert_eq!(text, "send this");
+            Ok(())
+        });
+        assert!(drafts.is_empty());
+    }
+    #[test]
     fn close_requires_all_drafts_saved_and_uncertain_failure_needs_explicit_retry() {
         let original = "  café 中文 👩🏽‍💻\n\n";
         let mut drafts = HashMap::from([(
@@ -192,6 +213,10 @@ mod tests {
         });
         assert!(!drafts.is_empty());
         assert!(drafts["thread"].retry);
+        assert!(
+            !drafts["thread"].failed,
+            "a busy engine must not block Send as a failed save"
+        );
         assert_eq!(drafts["thread"].text, original);
         save_one(&mut drafts, "thread", |_, text| {
             assert_eq!(text, original);
@@ -199,6 +224,7 @@ mod tests {
         });
         assert!(!drafts.is_empty());
         assert!(!drafts["thread"].retry);
+        assert!(drafts["thread"].failed);
         for _ in 0..3 {
             save_one(&mut drafts, "thread", |_, _| {
                 panic!("must not replay uncertain save")
