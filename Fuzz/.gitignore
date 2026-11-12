@@ -1,4 +1,0 @@
-# SwiftPM build output, scratch corpora and crash artifacts (fuzz.sh keeps them all under .build).
-.build/
-.swiftpm/
-Package.resolved

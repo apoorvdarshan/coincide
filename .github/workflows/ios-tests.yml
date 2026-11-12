@@ -2,7 +2,7 @@ name: iOS tests
 
 # Coincide Remote, the iPhone and iPad app: builds it and runs its unit tests (CoincideRemoteTests) and UI tests
 # (CoincideRemoteUITests) on an iPhone simulator, from CoincideRemoteTests.xcodeproj (project-remote-tests.yml). Nothing
-# here signs, archives or uploads anything. The Mac app's build and tests are "Build and test" in ci.yml.
+# here signs, archives or uploads anything.
 on:
   # Every pull request and push to main starts this, and "iOS changes" decides whether anything the iOS app is built or
   # tested from changed. When nothing did, "iOS build and test" is skipped, which GitHub counts as passing, so the job can
@@ -11,6 +11,7 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  workflow_call:
 
 # A newer push to a pull request replaces its older run; main and manual runs are never cancelled.
 concurrency:
@@ -30,10 +31,7 @@ env:
     CoincideRemoteKit/*
     CoincideRemoteTests/*
     CoincideRemoteUITests/*
-    Coincide/Voice/Shared/*
-    CoincideKit/Voice/DictationInsertion.swift
-    CoincideKit/Models/BotPersonalityPreset.swift
-    project.yml
+    project-remote.yml
     project-shared.yml
     project-remote-tests.yml
     Signing.xcconfig
@@ -67,8 +65,15 @@ jobs:
           EVENT: ${{ github.event_name }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
           BEFORE: ${{ github.event.before }}
+          REF: ${{ github.ref }}
         run: |
           set -euo pipefail
+          # A release tag must always run the complete iOS suite, even when
+          # GitHub provides an earlier tag SHA or no relevant file changes.
+          if [[ "$REF" == refs/tags/ios-v* ]]; then
+            echo "ios=true" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
           affects_ios() {
             local pattern
             while IFS= read -r pattern; do
@@ -129,8 +134,7 @@ jobs:
     runs-on: xcode-27
     timeout-minutes: 30
     steps:
-      # The generated project includes project.yml, so XcodeGen needs the Mac app's folders too; the website, docs,
-      # Discord bot, npm installer and fuzzing aren't needed.
+      # The iOS project needs the app, its local package, tests and project specifications.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -152,7 +156,18 @@ jobs:
           unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/xcodegen/bin" >>"$GITHUB_PATH"
 
-      - name: Generate Xcode project
+      - name: Check the committed iOS project
+        run: |
+          xcodegen generate --spec project-remote.yml --quiet
+          xcodebuild -resolvePackageDependencies -project CoincideRemote.xcodeproj -scheme CoincideRemote \
+            -clonedSourcePackagesDirPath build/SourcePackages -quiet
+          if [ -n "$(git status --porcelain --untracked-files=all -- CoincideRemote.xcodeproj)" ]; then
+            git --no-pager diff -- CoincideRemote.xcodeproj | head -n 200
+            echo '::error::Regenerate CoincideRemote.xcodeproj and resolve its packages.'
+            exit 1
+          fi
+
+      - name: Generate test project
         run: xcodegen generate --spec project-remote-tests.yml --quiet
 
       # Every tracked file the app and test targets build from (their sources, settings files and local packages) must
@@ -182,13 +197,13 @@ jobs:
           sys.exit(1 if uncovered or not files else 0)
           EOF
 
-      # The packages "Build and test" (ci.yml) resolves and caches for the same project.yml, which this project includes.
+      # Restore the iOS project's resolved packages.
       # Saved by that job on main; this one only restores it.
       - name: Restore Swift packages
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: build/SourcePackages
-          key: ci-packages-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('project.yml', 'project-shared.yml') }}
+          key: ci-packages-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('project-remote.yml', 'project-shared.yml') }}
           restore-keys: ci-packages-${{ runner.os }}-${{ runner.arch }}-
 
       # A new simulator for this run: the newest iOS runtime with an iPhone 17 Pro, which the UI tests' layouts assume; a

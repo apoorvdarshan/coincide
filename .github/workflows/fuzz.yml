@@ -1,4 +1,5 @@
-# Fuzzes Coincide's parsers with libFuzzer and AddressSanitizer. The fuzzers live in Fuzz/ and
+# Preserves the retired desktop fuzz suite against its frozen final source commit.
+# This baseline does not fuzz the current Rust app. The fuzzers live in Fuzz/ and
 # compile the real CoincideKit files through symlinks; each checks invariants (round trips,
 # consistent counts) as well as memory safety. See "Fuzzing" in CONTRIBUTING.md.
 #
@@ -60,6 +61,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: 61452fb00b4213006f8d548bc9b9adee5a67c545
           persist-credentials: false
 
       - name: Check the shim, symlinks, seeds and paths are in sync
@@ -89,6 +91,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: 61452fb00b4213006f8d548bc9b9adee5a67c545
           persist-credentials: false
 
       - name: Build with libFuzzer and AddressSanitizer

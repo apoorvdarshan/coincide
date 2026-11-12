@@ -9,7 +9,7 @@ export default {
   type: "TechArticle",
   eyebrow: "Guide",
   h1: "Languages and translations",
-  lede: "Coincide ships in English and 18 other languages, and Coincide Remote, its iPhone and iPad companion (coming soon to the App Store), uses the same ones. The translations are machine-made and marked for review in the string catalogs, so corrections from people who speak them are welcome.",
+  lede: "The earlier Swift Mac release and Coincide Remote have catalogs for English and 18 other languages. The Rust desktop is in development. The translations are machine-made and marked for review in the string catalogs, so corrections from people who speak them are welcome.",
   related: ["/features/languages", "/docs/build-from-source", "/docs/settings"],
   body: (s) => `
 <h2 id="languages">The languages</h2>
@@ -44,9 +44,9 @@ ${table(["Language", "Code"], [
 <h2 id="fix">Fixing translations yourself</h2>
 <p>The strings live in Xcode string catalogs:</p>
 ${table(["Catalog", "What it holds"], [
-  ["<code>Coincide/Resources/Localizable.xcstrings</code>", "The Mac app, including the text of its shared frameworks"],
+  ["<code>windows/Resources/Localizable.xcstrings</code>", "Source catalog for the earlier Windows implementation"],
   ["<code>CoincideRemote/Localizable.xcstrings</code>", "Coincide Remote on iPhone and iPad. A few strings of its shared package are kept here by hand, marked “manual”."],
-  ["<code>Coincide/Resources/InfoPlist.xcstrings</code>, <code>CoincideRemote/InfoPlist.xcstrings</code>", "The permission texts macOS and iOS show, keyed by their Info.plist key"],
+  ["<code>CoincideRemote/InfoPlist.xcstrings</code>", "The permission texts iOS shows, keyed by their Info.plist key"],
 ])}
 <p><code>scripts/translations.py</code> lists what a language is missing, checks your translations and imports them. For German, for example:</p>
 ${code(`scripts/translations.py missing de > de.json      # the strings German lacks, with their English text
@@ -61,8 +61,8 @@ scripts/translations.py import de de-translated.json`)}
 </ul>
 <p>Imported strings are marked “needs review” in the catalog. Write whole sentences with placeholders rather than pieces joined in code, so each language can order the words its own way.</p>
 <h3>When you change English text</h3>
-<p>New or changed strings fall back to English until they’re translated, so a pull request that changes text should translate it for every language. First update the catalogs with every string the code uses (this builds both apps, so it needs Xcode):</p>
-${code(`scripts/sync-strings.sh        # or: scripts/sync-strings.sh mac | ios`)}
+<p>New or changed strings fall back to English until they’re translated, so a pull request that changes text should translate it for every language. First update the catalogs with every string the code uses (this builds the iOS app, so it needs Xcode):</p>
+${code(`scripts/sync-strings.sh ios`)}
 <p>Then run <code>missing</code>, translate and import for each language, and commit the catalogs. The rest of the contributing workflow is in ${s.link("/docs/build-from-source")} and <a href="https://github.com/apoorvdarshan/coincide/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a>.</p>
 `,
 };

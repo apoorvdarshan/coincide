@@ -45,7 +45,7 @@ impl Engine {
             Operation {
                 thread: id,
                 source: scope(&current),
-                prefix: Vec::new(),
+                prefix: None,
                 text,
                 dispatch: Dispatch::Send,
                 delivery: None,

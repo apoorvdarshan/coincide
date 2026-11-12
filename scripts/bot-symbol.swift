@@ -127,9 +127,9 @@ func template(filled: Bool) -> String {
     """
 }
 
-// Both apps' catalogs: Coincide Remote's Bots tab and the Mac's New Bot command.
+// Coincide Remote's Bots tab.
 let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-for catalog in ["CoincideRemote/Assets.xcassets", "Coincide/Resources/Assets.xcassets"] {
+for catalog in ["CoincideRemote/Assets.xcassets"] {
     for filled in [false, true] {
         let name = filled ? "coincide.bot.fill" : "coincide.bot"
         let file = root.appendingPathComponent("\(catalog)/\(name).symbolset/\(name).svg")

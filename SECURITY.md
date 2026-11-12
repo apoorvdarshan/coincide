@@ -1,6 +1,6 @@
 # Security Policy
 
-Coincide is a native macOS app that runs the coding agent CLIs you install (Claude Code, Codex, Cursor, Grok Build, OpenCode and Antigravity) on your Mac, with your own logins. It can run commands, edit files and drive git in the folders you open, so security reports are very welcome.
+Coincide is a native desktop app that runs the coding agent CLIs you install (Claude Code, Codex, Cursor, Grok Build, OpenCode and Antigravity) on your Mac, with your own logins. It can run commands, edit files and drive git in the folders you open, so security reports are very welcome.
 
 ## Supported Versions
 
@@ -41,7 +41,7 @@ If you hear nothing within 7 days, add a comment to the advisory. Please keep th
 
 **In scope:**
 
-- The app and the CoincideKit framework (`Coincide/`, `CoincideKit/`).
+- The Rust desktop and core (`crates/`), and the iOS companion (`CoincideRemote/`, `CoincideRemoteKit/`).
 - How Coincide starts and talks to agent CLI processes: the arguments and environment it passes (including the login shell environment it reads), and how it parses their output (Claude stream-json, Codex and ACP JSON-RPC, the OpenCode HTTP API and event stream). For example, agent output that crashes Coincide, runs code, or makes Coincide act outside the project folder.
 - Access modes: anything that lets an agent run a command or change a file without asking while **Ask for approval** is selected, or that approves a request the user did not approve.
 - File and terminal requests agents make through Coincide (ACP file system and terminal requests), such as reading or writing outside the working directory.
@@ -49,12 +49,12 @@ If you hear nothing within 7 days, add a comment to the advisory. Please keep th
 - Mid-thread handoff: a recap reaching an agent or session it was not meant for.
 - Git features: worktrees, checkpoints and reverts, commits, pushes and pull requests (through `git` and `gh`). For example, branch names, paths or repository contents that inject options or commands, or a revert that deletes data it should not.
 - The integrated terminal, attachments and `@` file mentions.
-- Local data in `~/Library/Application Support/Coincide` (or `COINCIDE_DATA_DIR`): threads, drafts and settings. For example, other users or apps being able to read it, secrets being written there unexpectedly, or a damaged or crafted file crashing Coincide or running code.
+- Local data in the platform-specific Coincide Rust data directory: threads, drafts and settings. For example, other users or apps being able to read it, secrets being written there unexpectedly, or a damaged or crafted file crashing Coincide or running code.
 - This repository's build and release tooling: GitHub Actions workflows and `scripts/`.
 
 **Out of scope:**
 
-- Vulnerabilities in the agent CLIs themselves or their services (report them to the agent's maker), and in T3 Code or SwiftTerm (report them upstream).
+- Vulnerabilities in the agent CLIs themselves or their services (report them to the agent's maker), and in T3 Code (report them upstream).
 - What an agent does within the access you gave it. In **Full access**, running commands and editing files without asking is the documented behavior.
 - Prompt injection that makes an agent misbehave within the access you gave it, unless Coincide itself grants more access than you chose.
 - Attacks that need an already compromised Mac or a process already running as your user, which can read your files anyway.
@@ -71,4 +71,4 @@ With your permission, we credit reporters of valid vulnerabilities in the adviso
 
 ## Supply Chain
 
-GitHub Actions in this repository are pinned to full commit SHAs and kept current by Dependabot. Pull requests get dependency review and CodeQL analysis of the workflows, the Swift code gets a weekly CodeQL analysis, Coincide's parsers are fuzzed (`Fuzz/`), and OpenSSF Scorecard checks the repository weekly.
+GitHub Actions in this repository are pinned to full commit SHAs and kept current by Dependabot. Pull requests get dependency review and CodeQL analysis of the workflows, the Swift code gets a weekly CodeQL analysis, the retired Swift desktop parsers are fuzzed against a frozen legacy commit (not the current Rust code), and OpenSSF Scorecard checks the repository weekly.
