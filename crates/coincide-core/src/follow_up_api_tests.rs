@@ -174,7 +174,7 @@ fn approval_redirect_uses_actual_request_denials_and_alternate_queue() {
     engine.runs.get_mut(&id).unwrap().pending.insert("real-request".into(),json!({"id":77,"method":"item/commandExecution/requestApproval","params":{"availableDecisions":["accept"]}}));
     assert_eq!(
         engine.native_follow_up_dispatch(&source, false).unwrap(),
-        Dispatch::Steer
+        Dispatch::Interrupt
     );
     assert!(engine.send_native_follow_up(&source, false).is_err());
     assert_eq!(engine.store.thread(&id).unwrap(), source);
@@ -248,7 +248,7 @@ fn redirect_declines_only_offered_approval_and_dismisses_question_before_actual_
     } = fixture();
     let source = engine.store.thread(&id).unwrap();
     let source = engine
-        .choose_native_follow_up(&source, Behavior::Queue)
+        .choose_native_follow_up(&source, Behavior::Steer)
         .unwrap();
     engine.runs.get_mut(&id).unwrap().pending.insert("approval".into(), json!({"id":77,"method":"item/commandExecution/requestApproval","params":{"availableDecisions":["accept","decline"]}}));
     engine.runs.get_mut(&id).unwrap().pending.insert("question".into(), json!({"id":78,"method":"item/tool/requestUserInput","params":{"questions":[{"id":"synthetic-question"}]}}));
@@ -733,4 +733,302 @@ fn accepted_payload_preserves_a_newer_composer_and_rejects_only_identical_resubm
     engine.poll();
     engine.collect_native_follow_up(new_ticket).unwrap();
     finish_fake(&mut engine, &id, release);
+}
+
+#[test]
+fn queue_keeps_pending_approval_and_does_not_signal_the_running_provider() {
+    let Fixture {
+        _dir,
+        mut engine,
+        id,
+        release,
+        control,
+        ..
+    } = fixture();
+    let source = engine.store.thread(&id).unwrap();
+    let source = engine
+        .choose_native_follow_up(&source, Behavior::Queue)
+        .unwrap();
+    engine.runs.get_mut(&id).unwrap().pending.insert("approval".into(),
+        json!({"id":77,"method":"item/commandExecution/requestApproval","params":{"availableDecisions":["accept"]}}));
+    let ticket = engine.send_native_follow_up(&source, false).unwrap();
+    assert_eq!(
+        engine.native_follow_up_status(&ticket).unwrap(),
+        NativeFollowUpStatus::Delivered {
+            dispatch: Dispatch::Queue,
+            draft_cleared: true,
+        }
+    );
+    assert!(engine.runs[&id].pending.contains_key("approval"));
+    assert!(control.try_recv().is_err());
+    assert_eq!(
+        crate::message_queue::read(&engine.store.thread(&id).unwrap()).unwrap()[0].text,
+        "synthetic redirect"
+    );
+    engine.collect_native_follow_up(ticket).unwrap();
+    finish_fake(&mut engine, &id, release);
+}
+
+#[test]
+fn unavailable_steering_saves_a_queue_row_before_accepting_a_new_draft() {
+    let Fixture {
+        _dir,
+        mut engine,
+        id,
+        mut server,
+        release,
+        control,
+        ..
+    } = fixture();
+    // An in-progress assistant item temporarily makes Codex steering unsafe.
+    server.observe(&json!({"method":"item/started","params":{
+        "threadId":"native-thread","turnId":"native-turn",
+        "item":{"type":"agentMessage","id":"reply"}
+    }}));
+    let source = engine.store.thread(&id).unwrap();
+    let ticket = engine.send_native_follow_up(&source, false).unwrap();
+    assert_eq!(
+        engine.native_follow_up_status(&ticket).unwrap(),
+        NativeFollowUpStatus::Delivered {
+            dispatch: Dispatch::Queue,
+            draft_cleared: true,
+        }
+    );
+    assert!(control.try_recv().is_err());
+    let queued = engine.store.thread(&id).unwrap();
+    assert_eq!(queued["draft"], "");
+    assert_eq!(
+        crate::message_queue::read(&queued).unwrap()[0].text,
+        "synthetic redirect"
+    );
+    engine
+        .store
+        .patch_thread(&id, &json!({"draft":"a separate new draft"}))
+        .unwrap();
+    assert_eq!(
+        engine.store.thread(&id).unwrap()["draft"],
+        "a separate new draft"
+    );
+    engine.collect_native_follow_up(ticket).unwrap();
+    finish_fake(&mut engine, &id, release);
+}
+
+#[test]
+fn prefix_proof_accepts_long_history_and_detects_changes_or_truncation() {
+    let prefix = vec![json!({"kind":"user","text":"x".repeat(9 * 1024 * 1024)})];
+    let proof = PrefixProof::capture(&prefix, 1).unwrap();
+    let mut extended = prefix.clone();
+    extended.push(json!({"kind":"assistant","text":"later"}));
+    assert!(proof.matches(&extended).unwrap());
+    extended[0]["text"] = json!("changed");
+    assert!(!proof.matches(&extended).unwrap());
+    assert!(!proof.matches(&[]).unwrap());
+}
+
+fn text_steer_waits_for_ack_without_blocking_and_preserves_new_draft(provider: &str) {
+    let dir = tempfile::tempdir().unwrap();
+    let mut engine = Engine::fixture(Store::open(&dir.path().join("state.sqlite")).unwrap());
+    let mut thread = engine
+        .execute("threads.create", &json!({"cwd":dir.path()}))
+        .unwrap();
+    let id = text(&thread, "id");
+    thread["selection"] = json!({"provider":provider,"modelID":"default"});
+    thread["draft"] = json!("first steering message");
+    engine.store.save(&thread).unwrap();
+    engine.set_active_thread(Some(id.clone())).unwrap();
+    let (observed_tx, observed) = mpsc::channel();
+    let (ack_tx, ack) = mpsc::channel();
+    let session = Session::fixture_worker(move |commands, events| {
+        while let Ok(command) = commands.recv() {
+            match command {
+                agent::Control::Steer { text, reply } => {
+                    observed_tx.send(text).unwrap();
+                    ack.recv().unwrap();
+                    reply.send(Ok(())).unwrap();
+                }
+                agent::Control::Stop => break,
+                _ => {}
+            }
+        }
+        let _ = events.send(Event::Finished);
+    });
+    engine.insert_running(
+        id.clone(),
+        Running {
+            configuration: None,
+            resume_safe: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            session,
+            usage_context: Some(agent::usage_capture::TurnContext::new(&thread)),
+            provider: provider.into(),
+            transcript_start: 0,
+            pending: HashMap::new(),
+            schedule_claim: None,
+            queue_claim: None,
+            cancelled: false,
+            events: VecDeque::new(),
+            persistence_error: None,
+        },
+    );
+    let start = Instant::now();
+    let ticket = engine.send_native_follow_up(&thread, false).unwrap();
+    assert!(
+        start.elapsed() < Duration::from_secs(1),
+        "admission blocked waiting for provider"
+    );
+    assert_eq!(
+        observed.recv_timeout(Duration::from_secs(5)).unwrap(),
+        "first steering message"
+    );
+    engine.poll();
+    assert_eq!(
+        engine.native_follow_up_status(&ticket).unwrap(),
+        NativeFollowUpStatus::Pending
+    );
+    engine
+        .store
+        .patch_thread(&id, &json!({"draft":"new draft"}))
+        .unwrap();
+    ack_tx.send(()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while engine.native_follow_up_status(&ticket).unwrap() == NativeFollowUpStatus::Pending {
+        engine.poll();
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    assert_eq!(
+        engine.native_follow_up_status(&ticket).unwrap(),
+        NativeFollowUpStatus::Delivered {
+            dispatch: Dispatch::Steer,
+            draft_cleared: false,
+        }
+    );
+    let saved = engine.store.thread(&id).unwrap();
+    assert_eq!(saved["draft"], "new draft");
+    assert_eq!(
+        saved["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| item["text"] == "first steering message" && item["steered"] == true)
+            .count(),
+        1
+    );
+    engine.collect_native_follow_up(ticket).unwrap();
+
+    // Sending a queued row now must steer that row, never the separate draft.
+    let mut queued = engine.store.thread(&id).unwrap();
+    crate::message_queue::add(&mut queued, "queued OpenCode message").unwrap();
+    engine.store.save(&queued).unwrap();
+    let visible = serde_json::to_value(&crate::message_queue::read(&queued).unwrap()[0]).unwrap();
+    let ticket = engine.native_send_queued_now(&queued, &visible).unwrap();
+    assert_eq!(
+        observed.recv_timeout(Duration::from_secs(5)).unwrap(),
+        "queued OpenCode message"
+    );
+    ack_tx.send(()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while engine.native_follow_up_status(&ticket).unwrap() == NativeFollowUpStatus::Pending {
+        engine.poll();
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    assert_eq!(
+        engine.native_follow_up_status(&ticket).unwrap(),
+        NativeFollowUpStatus::Delivered {
+            dispatch: Dispatch::Steer,
+            draft_cleared: false,
+        }
+    );
+    let saved = engine.store.thread(&id).unwrap();
+    assert_eq!(saved["draft"], "new draft");
+    assert_eq!(saved["rustMessageQueue"][0]["state"], "completed");
+    engine.collect_native_follow_up(ticket).unwrap();
+    engine.request_provider_stop(&id).unwrap();
+}
+
+#[test]
+fn opencode_steer_waits_for_ack_without_blocking_and_preserves_new_draft() {
+    text_steer_waits_for_ack_without_blocking_and_preserves_new_draft("opencode");
+}
+#[test]
+fn claude_steer_waits_for_ack_without_blocking_and_preserves_new_draft() {
+    text_steer_waits_for_ack_without_blocking_and_preserves_new_draft("claude");
+}
+
+#[test]
+fn queue_and_interrupt_target_only_the_running_worker_for_every_provider() {
+    for provider in [
+        "codex",
+        "opencode",
+        "claude",
+        "cursor",
+        "grok",
+        "antigravity",
+    ] {
+        for behavior in [Behavior::Queue, Behavior::Interrupt] {
+            let Fixture {
+                _dir,
+                mut engine,
+                id,
+                release,
+                observed,
+                control,
+                ..
+            } = fixture();
+            let mut source = engine.store.thread(&id).unwrap();
+            source["selection"] = json!({"provider":provider,"modelID":"default"});
+            engine.store.save(&source).unwrap();
+            let run = engine.runs.get_mut(&id).unwrap();
+            run.provider = provider.into();
+            run.usage_context = Some(agent::usage_capture::TurnContext::new(&source));
+            let source = engine.choose_native_follow_up(&source, behavior).unwrap();
+            let ticket = engine
+                .send_native_follow_up(&source, false)
+                .unwrap_or_else(|error| panic!("{provider} {behavior:?}: {error}"));
+            match behavior {
+                Behavior::Queue => {
+                    assert_eq!(
+                        engine.native_follow_up_status(&ticket).unwrap(),
+                        NativeFollowUpStatus::Delivered {
+                            dispatch: Dispatch::Queue,
+                            draft_cleared: true,
+                        }
+                    );
+                    assert!(control.try_recv().is_err(), "queue signalled {provider}");
+                    engine.collect_native_follow_up(ticket).unwrap();
+                    finish_fake(&mut engine, &id, release);
+                }
+                Behavior::Interrupt => {
+                    assert!(matches!(
+                        control.recv_timeout(Duration::from_secs(5)).unwrap(),
+                        agent::Control::Stop
+                    ));
+                    observed.recv_timeout(Duration::from_secs(5)).unwrap();
+                    engine
+                        .store
+                        .patch_thread(&id, &json!({"draft":"edited while stopping"}))
+                        .unwrap();
+                    release.send(()).unwrap();
+                    let deadline = Instant::now() + Duration::from_secs(5);
+                    while engine.native_follow_up_status(&ticket).unwrap()
+                        == NativeFollowUpStatus::Pending
+                    {
+                        engine.poll();
+                        assert!(Instant::now() < deadline);
+                        std::thread::yield_now();
+                    }
+                    assert!(matches!(
+                        engine.native_follow_up_status(&ticket).unwrap(),
+                        NativeFollowUpStatus::Retained(_)
+                    ));
+                    assert_eq!(
+                        engine.store.thread(&id).unwrap()["draft"],
+                        "edited while stopping"
+                    );
+                    engine.collect_native_follow_up(ticket).unwrap();
+                }
+                Behavior::Steer => unreachable!(),
+            }
+        }
+    }
 }
