@@ -1,5 +1,7 @@
 # Native app updates
 
+> Historical Swift desktop documentation. The active desktop implementation is Rust.
+
 Coincide → Check for Updates and Settings → About use the public GitHub Releases API. Daily checks are opt-in and persisted; checking does not download, stop agents, or quit the app. Download Update stages a verified release. Install on Quit starts a separate signed Swift helper and can be cancelled until the user quits.
 
 The helper waits for a normal exit of the exact parent process and a one-use consent marker written after provider shutdown and store/UI flushing. It does not terminate or relaunch Coincide. After installation it shows a native confirmation; the user reopens the app manually. A crash, forced termination, missing consent, another running Coincide, failed verification, or unwritable destination leaves installation unperformed. Closing a window alone does not install anything.

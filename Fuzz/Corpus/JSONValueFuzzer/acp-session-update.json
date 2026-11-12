@@ -1,1 +1,0 @@
-{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"tool_call","toolCallId":"c1","title":"Edit a.txt","kind":"edit","status":"pending","content":[{"type":"diff","path":"/tmp/a.txt","oldText":"a\n","newText":"b\n"}],"locations":[{"path":"/tmp/a.txt","line":1}]}}}

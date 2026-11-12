@@ -46,7 +46,7 @@
   <header class="page-head">
     <p class="eyebrow">Guide</p>
     <h1>Languages and translations</h1>
-    <p class="lede">Coincide ships in English and 18 other languages, and Coincide Remote, its iPhone and iPad companion (coming soon to the App Store), uses the same ones. The translations are machine-made and marked for review in the string catalogs, so corrections from people who speak them are welcome.</p>
+    <p class="lede">The earlier Swift Mac release and Coincide Remote have catalogs for English and 18 other languages. The Rust desktop is in development. The translations are machine-made and marked for review in the string catalogs, so corrections from people who speak them are welcome.</p>
     <p class="updated">Updated <time datetime="2026-11-01">November 1, 2026</time></p>
   </header>
   <div class="prose">
@@ -62,7 +62,7 @@
 
 <h2 id="fix">Fixing translations yourself</h2>
 <p>The strings live in Xcode string catalogs:</p>
-<div class="table-wrap"><table><thead><tr><th scope="col">Catalog</th><th scope="col">What it holds</th></tr></thead><tbody><tr><td><code>Coincide/Resources/Localizable.xcstrings</code></td><td>The Mac app, including the text of its shared frameworks</td></tr><tr><td><code>CoincideRemote/Localizable.xcstrings</code></td><td>Coincide Remote on iPhone and iPad. A few strings of its shared package are kept here by hand, marked “manual”.</td></tr><tr><td><code>Coincide/Resources/InfoPlist.xcstrings</code>, <code>CoincideRemote/InfoPlist.xcstrings</code></td><td>The permission texts macOS and iOS show, keyed by their Info.plist key</td></tr></tbody></table></div>
+<div class="table-wrap"><table><thead><tr><th scope="col">Catalog</th><th scope="col">What it holds</th></tr></thead><tbody><tr><td><code>windows/Resources/Localizable.xcstrings</code></td><td>Source catalog for the earlier Windows implementation</td></tr><tr><td><code>CoincideRemote/Localizable.xcstrings</code></td><td>Coincide Remote on iPhone and iPad. A few strings of its shared package are kept here by hand, marked “manual”.</td></tr><tr><td><code>CoincideRemote/InfoPlist.xcstrings</code></td><td>The permission texts iOS shows, keyed by their Info.plist key</td></tr></tbody></table></div>
 <p><code>scripts/translations.py</code> lists what a language is missing, checks your translations and imports them. For German, for example:</p>
 <pre><code>scripts/translations.py missing de &gt; de.json      # the strings German lacks, with their English text
 # translate de.json into {&quot;key&quot;: &quot;translation&quot;}
@@ -76,12 +76,12 @@ scripts/translations.py import de de-translated.json</code></pre>
 </ul>
 <p>Imported strings are marked “needs review” in the catalog. Write whole sentences with placeholders rather than pieces joined in code, so each language can order the words its own way.</p>
 <h3>When you change English text</h3>
-<p>New or changed strings fall back to English until they’re translated, so a pull request that changes text should translate it for every language. First update the catalogs with every string the code uses (this builds both apps, so it needs Xcode):</p>
-<pre><code>scripts/sync-strings.sh        # or: scripts/sync-strings.sh mac | ios</code></pre>
+<p>New or changed strings fall back to English until they’re translated, so a pull request that changes text should translate it for every language. First update the catalogs with every string the code uses (this builds the iOS app, so it needs Xcode):</p>
+<pre><code>scripts/sync-strings.sh ios</code></pre>
 <p>Then run <code>missing</code>, translate and import for each language, and commit the catalogs. The rest of the contributing workflow is in <a href="/docs/build-from-source">Build from source</a> and <a href="https://github.com/apoorvdarshan/coincide/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a>.</p>
 
   </div>
-  <section class="related" aria-labelledby="related"><h2 id="related">Related</h2><ul class="cards"><li><a class="card" href="/features/languages"><b>19 languages</b><span>The interface in 19 languages, following your Mac’s language or one you pick just for Coincide.</span></a></li><li><a class="card" href="/docs/build-from-source"><b>Build from source</b><span>Build Coincide with Xcode and XcodeGen, and keep Debug builds apart from your installed app.</span></a></li><li><a class="card" href="/docs/settings"><b>Settings tour</b><span>What each pane of the Settings window holds, from General and Models to each agent’s page and About.</span></a></li></ul></section>
+  <section class="related" aria-labelledby="related"><h2 id="related">Related</h2><ul class="cards"><li><a class="card" href="/features/languages"><b>19 languages</b><span>The interface in 19 languages, following your Mac’s language or one you pick just for Coincide.</span></a></li><li><a class="card" href="/docs/build-from-source"><b>Build from source</b><span>Build the Rust desktop, run its core tests and find the iOS companion project.</span></a></li><li><a class="card" href="/docs/settings"><b>Settings tour</b><span>What each pane of the Settings window holds, from General and Models to each agent’s page and About.</span></a></li></ul></section>
 </main>
 
 <footer class="site-foot">

@@ -1,1 +1,0 @@
-../../../CoincideKit/Support/TextClip.swift

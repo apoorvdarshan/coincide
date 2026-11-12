@@ -13,7 +13,7 @@ on:
       - "scripts/release/**"
       - "npm/**"
       - "CHANGELOG.md"
-      - "project.yml"
+      - "Cargo.toml"
   push:
     branches: [main]
     paths:
@@ -22,7 +22,7 @@ on:
       - "scripts/release/**"
       - "npm/**"
       - "CHANGELOG.md"
-      - "project.yml"
+      - "Cargo.toml"
   workflow_dispatch:
 
 permissions:

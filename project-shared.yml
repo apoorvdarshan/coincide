@@ -1,6 +1,4 @@
-# What both Xcode projects share: Coincide.xcodeproj (project.yml: the Mac app, its tools and tests, and Coincide
-# Remote) and CoincideRemote.xcodeproj (project-remote.yml: Coincide Remote alone, which store-release archives for the
-# App Store). Both specs include this file, so both projects build the same iOS app. Paths are relative to this folder.
+# Shared configuration for the Coincide Remote iOS app and its test project. Paths are relative to this folder.
 options:
   bundleIdPrefix: com.apoorvdarshan
   deploymentTarget:
@@ -8,7 +6,7 @@ options:
   createIntermediateGroups: true
   developmentLanguage: en
 packages:
-  # The remote protocol, pairing and theme palettes, shared by the Mac app and Coincide Remote on iOS.
+  # Coincide Remote protocol, pairing and theme palettes.
   CoincideRemoteKit:
     path: CoincideRemoteKit
   # Coincide Pro and tips on iOS (CoincideRemote/Pro): RevenueCat's purchases-ios, MIT, from its SwiftPM mirror. Only its
@@ -44,12 +42,6 @@ targetTemplates:
       # For Xcode's Run (the scheme's storeKitConfiguration), not the app bundle.
       - path: CoincideRemote/StoreKit
         buildPhase: none
-      # Dictation: the Mac's microphone capture and Apple speech recognition, and where the transcript goes in the text.
-      - path: Coincide/Voice/Shared
-      - path: CoincideKit/Voice/DictationInsertion.swift
-      # The bot personality presets, the same file CoincideKit builds, so the phone offers the Mac's presets with
-      # their text and localizes their names in its own catalog.
-      - path: CoincideKit/Models/BotPersonalityPreset.swift
     dependencies:
       - package: CoincideRemoteKit
       - package: RevenueCat

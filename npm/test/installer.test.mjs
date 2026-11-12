@@ -68,8 +68,8 @@ test("reads the macOS major version", () => {
 });
 
 test("requires the app's deployment target", () => {
-  const project = readFileSync(`${repository}/project.yml`, "utf8");
-  assert.match(project, new RegExp(`macOS: "${MINIMUM_MACOS}\\.0"`));
+  const pkg = JSON.parse(readFileSync(`${repository}/npm/package.json`, "utf8"));
+  assert.equal(pkg.coincideLegacyMinimumMacOS, MINIMUM_MACOS);
 });
 
 test("the package version is a release version", () => {

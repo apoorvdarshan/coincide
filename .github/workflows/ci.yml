@@ -1,20 +1,13 @@
 name: CI
 
 on:
-  # Every pull request runs, because "Build and test" is a required check and a skipped one would block merging. A pull
-  # request that changes nothing the app is built or tested from passes in seconds (see "Check what the pull request
-  # changes").
   pull_request:
   push:
     branches: [main]
-    paths-ignore:
-      - "**.md"
+    paths-ignore: ['**.md']
   workflow_dispatch:
-  # Coincide Remote's iOS Release (.github/workflows/ios-release.yml) runs this on the tagged commit and builds only
-  # after it passes (gate_jobs in store/store-release.toml).
   workflow_call:
 
-# A newer push to a pull request replaces its older run; main and manual runs are never cancelled.
 concurrency:
   group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -22,173 +15,131 @@ concurrency:
 permissions:
   contents: read
 
-env:
-  # XcodeGen's release archive, checked against its published SHA-256. Faster than `brew install xcodegen`.
-  XCODEGEN_VERSION: 2.46.0
-  XCODEGEN_SHA256: 4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806
-
 jobs:
-  build-and-test:
-    name: Build and test
-    # Coincide builds against the macOS 27 SDK; this image ships Xcode 27 on macOS 27.
-    runs-on: xcode-27
+  changes:
+    name: Check affected tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      rust: ${{ steps.scope.outputs.rust }}
+      legacy: ${{ steps.scope.outputs.legacy }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - id: scope
+        continue-on-error: true
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          BEFORE: ${{ github.event.before }}
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [[ "$REF" == refs/tags/* ]] || [[ "$EVENT" == workflow_dispatch ]]; then
+            echo rust=true >> "$GITHUB_OUTPUT"
+            echo legacy=true >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ "$EVENT" == pull_request ]]; then
+            test "$(git rev-parse HEAD^2)" = "$PR_HEAD"
+            base=HEAD^1
+          else
+            git fetch --quiet --no-tags --depth=1 origin "$BEFORE"
+            base="$BEFORE"
+          fi
+          git diff --no-renames --name-only -z "$base" HEAD > "$RUNNER_TEMP/changed-files"
+          rust=false
+          legacy=false
+          count=0
+          while IFS= read -r -d '' path; do
+            count=$((count + 1))
+            case "$path" in
+              crates/*|vendor/*|Cargo.toml|Cargo.lock|.cargo/*|rust-toolchain*|.github/workflows/ci.yml) rust=true ;;
+            esac
+            case "$path" in
+              Coincide/*|CoincideKit/*|CoincideTests/*|CoincideKitTests/*|CoincideAgentHost/*|CoincideAlwaysOn/*|CoincidePowerHelper/*|CoincideCLI/*|CoincideUpdater/*|project.yml|.github/workflows/ci.yml) legacy=true ;;
+            esac
+          done < "$RUNNER_TEMP/changed-files"
+          test "$count" -gt 0
+          echo "rust=$rust" >> "$GITHUB_OUTPUT"
+          echo "legacy=$legacy" >> "$GITHUB_OUTPUT"
+
+  rust-core:
+    name: Rust core tests
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: required-core-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}-${{ github.sha }}
+          restore-keys: |
+            required-core-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml') }}-
+            required-core-${{ runner.os }}-
+      - run: cargo test -p coincide-core --locked
 
-      # Pull requests only; pushes to main and manual runs always build and test. The build and tests are skipped only
-      # when this step positively finds that every changed file is one the app isn't built or tested from: if it
-      # fails or can't tell, `app` is left unset and everything runs.
-      - name: Check what the pull request changes
-        id: scope
-        if: github.event_name == 'pull_request'
-        continue-on-error: true
-        env:
-          PR_HEAD: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-          # Files the app isn't built or tested from. Anything else, including this workflow, the issue forms (which
-          # CommunityLinksTests read) and Markdown inside a source folder, needs the build and tests.
-          affects_app() {
-            case "$1" in
-              .github/workflows/ci.yml) return 0 ;;
-              # The standalone Rust workspace has its own cross-platform checks.
-              # No Xcode target or build/test script reads these files.
-              crates/* | Cargo.toml | Cargo.lock | \
-              website/* | discord/* | npm/* | docs/* | store/* | windows/* | .github/workflows/* | .github/dependabot.yml | \
-                .github/actionlint.yaml | .github/PULL_REQUEST_TEMPLATE.md) return 1 ;;
-              */*) return 0 ;;
-              *.md) return 1 ;;
-              *) return 0 ;;
-            esac
-          }
-          # GitHub tests a pull request on a merge commit of it into its base: the first parent is the base, the second
-          # the pull request's head. The shallow checkout hides parents from `git log`, but the commit still names them.
-          read -r base head extra <<<"$(git cat-file commit HEAD | sed -n 's/^parent //p' | tr '\n' ' ')"
-          if [ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ] || [ -z "$base" ] || [ "$head" != "$PR_HEAD" ] || [ -n "$extra" ]; then
-            echo "::notice::Not a merge of the pull request into its base, so everything runs."
-            exit 0
-          fi
-          git fetch --quiet --no-tags --no-recurse-submodules --depth=1 origin "$base"
-          # --no-renames lists both sides of a rename, so moving a file out of a source folder counts.
-          git diff --no-renames --name-only -z "$base" HEAD >"$RUNNER_TEMP/changed-files"
-          app=false
-          count=0
-          while IFS= read -r -d '' path; do
-            count=$((count + 1))
-            if affects_app "$path"; then
-              app=true
-              echo "Needs the build and tests: $path"
-            fi
-          done <"$RUNNER_TEMP/changed-files"
-          if [ "$count" -eq 0 ]; then
-            echo "::notice::Found no changed files, so everything runs."
-            exit 0
-          fi
-          if [ "$app" = false ]; then
-            echo "Changes only files the app isn't built or tested from:"
-            tr '\0' '\n' <"$RUNNER_TEMP/changed-files"
-            echo "Skipping the Swift build and tests: this pull request changes only files the app isn't built or tested from." \
-              >>"$GITHUB_STEP_SUMMARY"
-          fi
-          echo "app=$app" >>"$GITHUB_OUTPUT"
-
-      - name: Skip the build and tests
-        if: steps.scope.outputs.app == 'false'
-        run: echo "This pull request changes only files the app isn't built or tested from, so there is nothing to build or test."
-
+  # Preserve the retired desktop's original build and unit test suite as a
+  # frozen baseline. This does not test current Rust changes. Remove only when
+  # its coverage has been deliberately replaced.
+  legacy-swift-baseline:
+    name: Retired Swift desktop baseline
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.legacy != 'false' }}
+    runs-on: xcode-27
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 61452fb00b4213006f8d548bc9b9adee5a67c545
+          persist-credentials: false
       - name: Install XcodeGen
-        if: steps.scope.outputs.app != 'false'
         run: |
-          curl --fail --location --silent --show-error --proto '=https' --tlsv1.2 -o "$RUNNER_TEMP/xcodegen.zip" \
-            "https://github.com/yonaskolb/XcodeGen/releases/download/$XCODEGEN_VERSION/xcodegen.zip"
-          echo "$XCODEGEN_SHA256  $RUNNER_TEMP/xcodegen.zip" | shasum -a 256 -c -
+          curl --fail --location --silent --show-error --proto '=https' --tlsv1.2 -o "$RUNNER_TEMP/xcodegen.zip" 'https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip'
+          echo '4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806  '"$RUNNER_TEMP/xcodegen.zip" | shasum -a 256 -c -
           unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP"
-          echo "$RUNNER_TEMP/xcodegen/bin" >>"$GITHUB_PATH"
-
-      - name: Generate Xcode project
-        id: generate
-        if: steps.scope.outputs.app != 'false'
-        run: |
-          xcodegen generate
-          # Compiler outputs are reused only with the Xcode that wrote them.
-          xcode="$(xcodebuild -version | awk '/^Build version/ { print $3 }')"
-          test -n "$xcode"
-          echo "xcode=$xcode" >>"$GITHUB_OUTPUT"
-
-      # Caches are saved only by pushes to main and manual runs (each in its own branch's scope); pull requests restore
-      # main's and never write one, so nothing a pull request builds reaches another branch.
-      - name: Restore Swift packages
-        id: packages
-        if: steps.scope.outputs.app != 'false'
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: build/SourcePackages
-          # project.yml and project-shared.yml pin the remote packages.
-          key: ci-packages-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('project.yml', 'project-shared.yml') }}
-          restore-keys: ci-packages-${{ runner.os }}-${{ runner.arch }}-
-
-      # CoincideRemote.xcodeproj is committed, because store-release reads its versions (store/README.md). It must be
-      # exactly what this XcodeGen writes from project-remote.yml and project-shared.yml (generated again on its own
-      # here, since project.yml's postGenCommand only warns when it fails), and its Package.resolved must pin what
-      # project-shared.yml names, because the App Store build resolves packages only from that file.
-      - name: Check CoincideRemote.xcodeproj is current
-        if: steps.scope.outputs.app != 'false'
-        run: |
-          xcodegen generate --spec project-remote.yml --quiet
-          xcodebuild -resolvePackageDependencies -project CoincideRemote.xcodeproj -scheme CoincideRemote \
-            -clonedSourcePackagesDirPath build/SourcePackages -quiet
-          changes="$(git status --porcelain --untracked-files=all -- CoincideRemote.xcodeproj)"
-          if [ -n "$changes" ]; then
-            echo "$changes"
-            git --no-pager diff -- CoincideRemote.xcodeproj | head -n 200
-            echo "::error::CoincideRemote.xcodeproj isn't what XcodeGen $XCODEGEN_VERSION and Xcode write. Run xcodegen generate, then xcodebuild -resolvePackageDependencies -project CoincideRemote.xcodeproj -scheme CoincideRemote, and commit CoincideRemote.xcodeproj."
-            exit 1
-          fi
-
-      # Xcode's compilation cache: compiler outputs keyed by the exact inputs of each compile, so an unchanged file
-      # reuses its earlier output and a changed one compiles again. It holds no build products or test results; the
-      # build starts from an empty DerivedData and every test runs. (A cached DerivedData barely helped: a fresh checkout
-      # gives every file a new date, so Xcode compiles the app's targets again anyway. Measured in #200.)
-      - name: Restore compilation cache
-        id: compilation
-        if: steps.scope.outputs.app != 'false'
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: build/CompilationCache
-          key: ci-compilation-${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.generate.outputs.xcode }}-${{ github.sha }}
-          restore-keys: ci-compilation-${{ runner.os }}-${{ runner.arch }}-xcode-${{ steps.generate.outputs.xcode }}-
-
-      # COMPILATION_CACHE_LIMIT_SIZE keeps the cache from growing with every saved run; a full build adds about 850 MB.
-      - name: Build
-        id: build
-        if: steps.scope.outputs.app != 'false'
+          echo "$RUNNER_TEMP/xcodegen/bin" >> "$GITHUB_PATH"
+      - run: xcodegen generate
+      - name: Build and run the original macOS unit tests
         run: |
           xcodebuild -project Coincide.xcodeproj -scheme Coincide -destination 'platform=macOS' -skipPackagePluginValidation \
-            -derivedDataPath build/DerivedData -clonedSourcePackagesDirPath build/SourcePackages build-for-testing \
-            COMPILATION_CACHE_ENABLE_CACHING=YES "COMPILATION_CACHE_CAS_PATH=$PWD/build/CompilationCache" \
-            COMPILATION_CACHE_LIMIT_SIZE=2G
-
-      - name: Save Swift packages
-        if: steps.build.outcome == 'success' && github.event_name != 'pull_request' && steps.packages.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: build/SourcePackages
-          key: ${{ steps.packages.outputs.cache-primary-key }}
-
-      # A re-run of a commit restores that commit's own cache exactly, and a cache key can't be saved twice.
-      - name: Save compilation cache
-        if: steps.build.outcome == 'success' && github.event_name != 'pull_request' && steps.compilation.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: build/CompilationCache
-          key: ${{ steps.compilation.outputs.cache-primary-key }}
-
-      - name: Run unit tests
-        if: steps.scope.outputs.app != 'false'
-        run: |
-          xcodebuild -project Coincide.xcodeproj -scheme Coincide -destination 'platform=macOS' -skipPackagePluginValidation \
-            -derivedDataPath build/DerivedData -clonedSourcePackagesDirPath build/SourcePackages test-without-building \
+            -derivedDataPath build/DerivedData -clonedSourcePackagesDirPath build/SourcePackages test \
             -collect-test-diagnostics never
+
+  ios-release-tests:
+    # The existing iOS release caller invokes this workflow on its ios-v tag.
+    if: startsWith(github.ref, 'refs/tags/ios-v')
+    uses: ./.github/workflows/ios-tests.yml
+    permissions:
+      contents: read
+
+  build-and-test:
+    name: Build and test
+    needs: [changes, rust-core, legacy-swift-baseline, ios-release-tests]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Require the relevant checks
+        env:
+          RUST_RESULT: ${{ needs.rust-core.result }}
+          RUST_SCOPE: ${{ needs.changes.outputs.rust }}
+          LEGACY_RESULT: ${{ needs.legacy-swift-baseline.result }}
+          LEGACY_SCOPE: ${{ needs.changes.outputs.legacy }}
+          IOS_RESULT: ${{ needs.ios-release-tests.result }}
+          REF: ${{ github.ref }}
+        run: |
+          if [[ "$RUST_SCOPE" == false ]]; then test "$RUST_RESULT" = skipped; else test "$RUST_RESULT" = success; fi
+          if [[ "$LEGACY_SCOPE" == false ]]; then test "$LEGACY_RESULT" = skipped; else test "$LEGACY_RESULT" = success; fi
+          if [[ "$REF" == refs/tags/ios-v* ]]; then test "$IOS_RESULT" = success; fi

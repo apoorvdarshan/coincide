@@ -7,7 +7,7 @@ export const TEAM_ID = "23RV7FYH36";
 // The asset the in-app updater installs too (docs/app-updates.md), and the checksum file every release carries.
 export const ARCHIVE = "Coincide-macos-universal.zip";
 export const CHECKSUMS = "SHA256SUMS.txt";
-// The app's deployment target (project.yml), so an older Mac stops before downloading anything.
+// The published legacy Swift release's deployment target.
 export const MINIMUM_MACOS = 26;
 
 // codesign's check that a bundle is Coincide, signed with the Developer ID of its maintainer's team.
