@@ -100,6 +100,22 @@ impl<P: Fn() -> bool> BoundedStream<P> {
 }
 pub(crate) type XConnection<'a> = RustConnection<BoundedStream<&'a dyn Fn() -> bool>>;
 
+/// x11rb 0.14 no longer tries Linux abstract sockets. Keep the previous
+/// local-display behavior before falling back to the filesystem socket.
+fn connect_local_stream(
+    address: &parse_display::ConnectAddress<'_>,
+) -> io::Result<(DefaultStream, (xauth::Family, Vec<u8>))> {
+    use std::os::linux::net::SocketAddrExt;
+    use std::os::unix::net::{SocketAddr, UnixStream};
+    if let parse_display::ConnectAddress::Socket(path) = address
+        && let Ok(abstract_address) = SocketAddr::from_abstract_name(path.as_bytes())
+        && let Ok(stream) = UnixStream::connect_addr(&abstract_address)
+    {
+        return DefaultStream::from_unix_stream(stream);
+    }
+    DefaultStream::connect(address)
+}
+
 pub(crate) fn connect(allowed: &dyn Fn() -> bool) -> Result<(XConnection<'_>, usize)> {
     connect_guarded(allowed)
 }
@@ -115,7 +131,7 @@ pub(crate) fn connect_guarded<P: Fn() -> bool>(
         if !matches!(address, parse_display::ConnectAddress::Socket(_)) {
             continue;
         }
-        match DefaultStream::connect(&address) {
+        match connect_local_stream(&address) {
             Ok((stream, (family, address))) => {
                 let (auth_name, auth_data) =
                     xauth::get_auth(family, &address, parsed.display)?.unwrap_or_default();
@@ -948,6 +964,28 @@ pub(super) fn sound() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn x11_local_stream_accepts_abstract_sockets_and_filesystem_fallback() {
+        use std::os::linux::net::SocketAddrExt;
+        use std::os::unix::net::{SocketAddr, UnixListener};
+
+        let name = format!("coincide-x11-{}", uuid::Uuid::new_v4());
+        let abstract_address = SocketAddr::from_abstract_name(name.as_bytes()).unwrap();
+        let abstract_listener = UnixListener::bind_addr(&abstract_address).unwrap();
+        let address = parse_display::ConnectAddress::Socket(name.as_str().into());
+        let (abstract_client, _) = connect_local_stream(&address).unwrap();
+        let (_accepted, _) = abstract_listener.accept().unwrap();
+        drop(abstract_client);
+
+        let path = std::env::temp_dir().join(format!("coincide-x11-{}.sock", uuid::Uuid::new_v4()));
+        let file_listener = UnixListener::bind(&path).unwrap();
+        let address = parse_display::ConnectAddress::Socket(path.to_str().unwrap().into());
+        let (file_client, _) = connect_local_stream(&address).unwrap();
+        let (_accepted, _) = file_listener.accept().unwrap();
+        drop(file_client);
+        drop(file_listener);
+        std::fs::remove_file(path).unwrap();
+    }
     #[test]
     fn padded_big_endian_and_rgb565_pixels_are_decoded_without_neighbor_data() {
         let mut visual = Visualtype {
