@@ -109,18 +109,24 @@ impl Engine {
     /// policy, just like normal turn admission; never borrow a default proof.
     pub(super) fn validate_native_follow_up_policy(&self, thread: &Value) -> Result<()> {
         let provider = text(&thread["selection"], "provider");
-        let configuration =
-            if let Some(run) = thread["id"].as_str().and_then(|id| self.runs.get(id)) {
-                ensure!(
-                    run.provider == provider,
-                    "Stored provider differs from the running turn"
-                );
-                // Steering targets this already-admitted worker. Later Settings
-                // edits apply only to future workers and cannot rebind its proofs.
-                run.configuration.clone()
-            } else {
-                self.provider_launch_configuration_for_thread(thread)?
-            };
+        if let Some(run) = thread["id"].as_str().and_then(|id| self.runs.get(id)) {
+            // A follow-up targets a worker whose exact selection was already
+            // admitted. Refreshing model metadata must not invalidate that
+            // live turn. A queued or interrupted replacement is validated
+            // again when the next worker is actually started.
+            ensure!(
+                run.provider == provider,
+                "Stored provider differs from the running turn"
+            );
+            ensure!(
+                run.usage_context
+                    .as_ref()
+                    .is_some_and(|context| context.matches(thread)),
+                "Stored selection or project differs from the running turn"
+            );
+            return self.require_provider_enabled(&provider);
+        }
+        let configuration = self.provider_launch_configuration_for_thread(thread)?;
         let _configuration_scope = provider_configuration::enter(configuration);
         self.require_provider_enabled(&text(&thread["selection"], "provider"))?;
         if let Some(profile) = self.codex_login_context(thread)? {

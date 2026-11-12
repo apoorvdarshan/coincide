@@ -884,6 +884,9 @@ pub(super) struct ComposerSelection {
     pub(super) catalog: Value,
     catalog_request: Option<CatalogRequest>,
     catalog_last_poll: Option<Instant>,
+    /// Disk cache is display-only; each app session still needs a live read.
+    catalog_attempted: std::collections::HashSet<(String, String)>,
+    capability_pending: bool,
     pending_provider: Option<(
         crate::composer_commands::Command,
         crate::composer_commands::Submission,
@@ -952,7 +955,16 @@ pub(super) const STAGED_SELECTION: &str = "Selection staged for the next turn";
 fn capability_lock(capabilities: &Value, running: bool) -> Option<String> {
     // Swift leaves the composer's controls enabled during a turn: a change made
     // now belongs to the next one, and a provider that cannot take it says so.
-    let _ = running;
+    if running
+        && capabilities["provenance"] == "static_runtime_contract"
+        && capabilities["providers"].is_array()
+        && capabilities["locked"] == true
+        && capabilities["lockReason"] == "Stop the current turn before changing provider"
+    {
+        // The editor can stage a change for the next turn. Core still owns the
+        // running selection and validates the staged change before applying it.
+        return None;
+    }
     if capabilities["locked"] == true {
         return Some(
             capabilities["lockReason"]
@@ -1260,11 +1272,50 @@ fn prefetches_saved_catalog(
     catalog_provider: Option<&str>,
     saved_provider: &str,
     discovery_supported: bool,
+    attempted_in_session: bool,
 ) -> bool {
     !picker_open
         && !request_pending
-        && catalog_provider != Some(saved_provider)
+        && (!attempted_in_session || catalog_provider != Some(saved_provider))
         && discovery_supported
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum SendCatalogAction {
+    Proceed,
+    Wait,
+    Refresh,
+    Unavailable,
+}
+fn send_catalog_action(
+    selection: &Value,
+    running: bool,
+    attempted: bool,
+    pending: bool,
+    discovery: Option<bool>,
+) -> SendCatalogAction {
+    let astra_default = selection["effort"].is_null()
+        && matches!(
+            selection["modelID"].as_str(),
+            Some("gpt-6-astra" | "openai.gpt-6-astra")
+        );
+    if running
+        || selection["provider"] != "codex"
+        || (selection["effort"].is_null() && selection["speed"].is_null() && !astra_default)
+    {
+        return SendCatalogAction::Proceed;
+    }
+    if pending {
+        return SendCatalogAction::Wait;
+    }
+    if attempted {
+        return SendCatalogAction::Proceed;
+    }
+    match discovery {
+        None => SendCatalogAction::Wait,
+        Some(true) => SendCatalogAction::Refresh,
+        Some(false) => SendCatalogAction::Unavailable,
+    }
 }
 /// Swift's collapse priority: mode, follow-up, access, speed, effort, model.
 fn footer_compaction(widths: [f32; 6], available: f32) -> [bool; 6] {
@@ -1287,7 +1338,86 @@ impl Coincide {
     pub(super) fn selection_change_pending(&self) -> bool {
         self.selection_ui.pending_native_account.is_some()
             || self.selection_ui.pending_provider.is_some()
-            || self.selection_ui.pending_provider_picker.is_some()
+            || self
+                .selection_ui
+                .pending_provider_picker
+                .as_ref()
+                .is_some_and(|pending| !pending.observation_only)
+    }
+    /// An idle Codex turn with an explicit saved option needs one live model
+    /// read after launch. A click made during that read is kept and retried
+    /// after it completes, instead of failing against a display-only cache.
+    pub(super) fn wait_for_send_catalog(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(thread) = self.selected.as_ref() else {
+            return false;
+        };
+        let selection = &thread["selection"];
+        let id = text(thread, "id");
+        if self.running.contains(&id) || selection["provider"] != "codex" {
+            return false;
+        }
+        if self.selection_ui.capability_pending {
+            return true;
+        }
+        if named_models::named_thread(thread) {
+            let named = &self.selection_ui.capabilities["namedModels"];
+            if named.is_null() {
+                return self.selection_ui.error.is_empty()
+                    || !self
+                        .selection_ui
+                        .error
+                        .starts_with("Capabilities unavailable:");
+            }
+            if named["refreshAllowed"] == true && named["accountCatalogReady"] != true {
+                if self.selection_ui.pending_provider_picker.is_some()
+                    || self.selection_ui.automatic_profile_context.is_none()
+                {
+                    self.observe_saved_profile_once(cx);
+                    return true;
+                }
+            }
+            return false;
+        }
+        let key = ("codex".to_owned(), "default".to_owned());
+        let provider = self.selection_ui.capabilities["providers"]
+            .as_array()
+            .and_then(|providers| providers.iter().find(|row| row["provider"] == "codex"));
+        if provider.is_some_and(|provider| {
+            account_problem(
+                provider,
+                &selection["accountID"],
+                &self.selection_ui.accounts,
+            )
+            .is_some()
+        }) {
+            return false;
+        }
+        let discovery = provider
+            .and_then(|provider| provider["modelDiscovery"]["supported"].as_bool())
+            .or_else(|| {
+                self.selection_ui
+                    .error
+                    .starts_with("Capabilities unavailable:")
+                    .then_some(false)
+            });
+        match send_catalog_action(
+            selection,
+            false,
+            self.selection_ui.catalog_attempted.contains(&key),
+            self.selection_ui.catalog_request.is_some(),
+            discovery,
+        ) {
+            SendCatalogAction::Proceed => return false,
+            SendCatalogAction::Wait => return true,
+            SendCatalogAction::Unavailable => {
+                self.selection_ui.catalog_attempted.insert(key);
+                return false;
+            }
+            SendCatalogAction::Refresh => {}
+        }
+        self.refresh_model_catalog(Some("codex".into()), cx);
+        self.selection_ui.catalog_request.is_some()
+            || !self.selection_ui.catalog_attempted.contains(&key)
     }
     fn switch_provider_from_history(
         &mut self,
@@ -1738,6 +1868,7 @@ impl Coincide {
             .selection_ui
             .capability_cache
             .read(&self.engine, &scope);
+        self.selection_ui.capability_pending = matches!(result, capability_cache::Read::Pending(_));
         let (capabilities, error, read_accounts) = match result {
             capability_cache::Read::Cached => return,
             capability_cache::Read::Pending(reason) => (
@@ -1804,13 +1935,21 @@ impl Coincide {
                     row["provider"] == provider && row["modelDiscovery"]["supported"] == true
                 })
             });
-        if prefetches_saved_catalog(
-            self.selection_ui.expanded,
-            self.selection_ui.catalog_request.is_some(),
-            self.selection_ui.catalog["provider"].as_str(),
-            &provider,
-            discovery_supported,
-        ) {
+        let account = default_account_id(&thread["selection"]["accountID"]).unwrap_or("default");
+        let attempted = self
+            .selection_ui
+            .catalog_attempted
+            .contains(&(provider.clone(), account.to_owned()));
+        if !named_models::named_thread(thread)
+            && prefetches_saved_catalog(
+                self.selection_ui.expanded,
+                self.selection_ui.catalog_request.is_some(),
+                self.selection_ui.catalog["provider"].as_str(),
+                &provider,
+                discovery_supported,
+                attempted,
+            )
+        {
             self.refresh_model_catalog(Some(provider), cx);
         }
         // A pending handoff uses the existing tick/next actual UI update.
@@ -2259,7 +2398,12 @@ impl Coincide {
             .clone()
             .unwrap_or_else(|| draft.provider.clone());
         let catalog = &self.selection_ui.catalog;
-        if catalog["provider"] == provider.as_str()
+        let account = default_account_id(&draft.account).unwrap_or("default");
+        if self
+            .selection_ui
+            .catalog_attempted
+            .contains(&(provider.clone(), account.to_owned()))
+            && catalog["provider"] == provider.as_str()
             && catalog["state"] == "ready"
             && catalog["accountID"].as_str() == default_account_id(&draft.account)
         {
@@ -2328,6 +2472,9 @@ impl Coincide {
         })();
         match response {
             Ok(value) => {
+                self.selection_ui
+                    .catalog_attempted
+                    .insert((provider.clone(), account_id.clone()));
                 let request = CatalogRequest {
                     request_id: text(&value, "requestId"),
                     provider,
@@ -2355,7 +2502,15 @@ impl Coincide {
                     }
                 }
             }
+            Err(error) if engine_busy(&error) => {
+                self.selection_ui.capability_cache.invalidate();
+                self.selection_ui.context = None;
+                return;
+            }
             Err(error) => {
+                self.selection_ui
+                    .catalog_attempted
+                    .insert((provider.clone(), account_id.clone()));
                 self.selection_ui.catalog = json!({"provider":provider,"accountID":account_id,"state":"failed","error":format!("Catalog refresh failed: {error}")})
             }
         }
@@ -2390,6 +2545,10 @@ impl Coincide {
                 self.selection_ui.catalog = value;
                 if done {
                     self.selection_ui.catalog_request = None;
+                    // Capability rows contain live proof, not the disk cache.
+                    // Re-read them when any provider's discovery completes.
+                    self.selection_ui.capability_cache.invalidate();
+                    self.selection_ui.context = None;
                     if self.selection_ui.catalog["state"] == "ready"
                         && let Ok(directory) = coincide_core::control::data_directory()
                     {
@@ -3463,13 +3622,17 @@ impl Coincide {
                             ));
                         }
                     }
-                    Err(error) => {
+                    Err(_) => {
                         menu = menu.child(
                             div()
                                 .px_1()
                                 .text_xs()
                                 .text_color(self.color(0xe4e9f2).opacity(0.6))
-                                .child(error.to_string()),
+                                .child(if self.selection_ui.catalog_request.is_some() {
+                                    "Loading options…"
+                                } else {
+                                    "No options available."
+                                }),
                         );
                     }
                 },
@@ -3511,13 +3674,17 @@ impl Coincide {
                             ));
                         }
                     }
-                    Err(error) => {
+                    Err(_) => {
                         menu = menu.child(
                             div()
                                 .px_1()
                                 .text_xs()
                                 .text_color(self.color(0xe4e9f2).opacity(0.6))
-                                .child(error.to_string()),
+                                .child(if self.selection_ui.catalog_request.is_some() {
+                                    "Loading options…"
+                                } else {
+                                    "No options available."
+                                }),
                         );
                     }
                 },
@@ -3594,26 +3761,7 @@ impl Coincide {
                 }
                 PickerFacet::Model => {}
             }
-            return menu
-                .when_some(lock, |view, reason| {
-                    view.child(
-                        div()
-                            .px_1()
-                            .text_xs()
-                            .text_color(self.color(0xe4e9f2).opacity(0.6))
-                            .child(reason),
-                    )
-                })
-                .when(!self.selection_ui.error.is_empty(), |view| {
-                    view.child(
-                        div()
-                            .px_1()
-                            .text_xs()
-                            .text_color(self.color(0xe4e9f2).opacity(0.6))
-                            .child(self.selection_ui.error.clone()),
-                    )
-                })
-                .into_any_element();
+            return menu.into_any_element();
         }
         // Swift's picker: search, agent tabs, the chosen agent's models with
         // their context sizes, then reasoning chips and refresh/settings.
@@ -3678,7 +3826,7 @@ impl Coincide {
             .unwrap_or("Models have not been read yet.");
         let empty = match state {
             "loading" => "Loading models…".to_owned(),
-            "unsupported" | "failed" => text(catalog, "error"),
+            "unsupported" | "failed" => "Models unavailable.".to_owned(),
             "ready" if shown == 0 && !query.trim().is_empty() => "No models match.".to_owned(),
             "ready" if self.selection_ui.favorites_only => {
                 "No favorites yet. Star a model to keep it here.".to_owned()
@@ -3831,7 +3979,8 @@ impl Coincide {
         if replacement_context {
             pane = pane.child(div().text_sm().child("The current model's app default is unproved. Refresh its catalog, or explicitly choose another provider/model and Apply. Modes, effort, speed and Send remain locked; the replacement is validated normally."));
         }
-        if let Some(reason) = lock {
+        if let Some(reason) = lock.filter(|reason| !reason.to_ascii_lowercase().contains("catalog"))
+        {
             pane = pane.child(div().text_sm().child(reason));
         }
         if conflict {
@@ -3878,6 +4027,51 @@ mod tests {
 
     use super::*;
     #[::core::prelude::v1::test]
+    fn sending_waits_for_one_live_catalog_without_blocking_other_providers_or_running_turns() {
+        let codex = json!({"provider":"codex", "modelID":"synthetic", "effort":"high"});
+        assert_eq!(
+            send_catalog_action(&codex, false, false, false, None),
+            SendCatalogAction::Wait
+        );
+        assert_eq!(
+            send_catalog_action(&codex, false, false, false, Some(true)),
+            SendCatalogAction::Refresh
+        );
+        assert_eq!(
+            send_catalog_action(&codex, false, true, true, Some(true)),
+            SendCatalogAction::Wait
+        );
+        assert_eq!(
+            send_catalog_action(&codex, false, true, false, Some(true)),
+            SendCatalogAction::Proceed
+        );
+        assert_eq!(
+            send_catalog_action(&codex, false, false, false, Some(false)),
+            SendCatalogAction::Unavailable
+        );
+        assert_eq!(
+            send_catalog_action(&codex, true, false, true, Some(true)),
+            SendCatalogAction::Proceed
+        );
+        for provider in ["claude", "opencode", "cursor", "grok", "antigravity"] {
+            let selection = json!({"provider":provider,"modelID":"model","effort":"high"});
+            assert_eq!(
+                send_catalog_action(&selection, false, false, true, None),
+                SendCatalogAction::Proceed
+            );
+        }
+        assert_eq!(
+            send_catalog_action(
+                &json!({"provider":"codex","modelID":"gpt-6-astra"}),
+                false,
+                false,
+                false,
+                Some(true)
+            ),
+            SendCatalogAction::Refresh
+        );
+    }
+    #[::core::prelude::v1::test]
     fn capability_reads_never_replace_the_agent_tab_the_picker_shows() {
         // Browsing OpenCode's models on a Codex thread: the open picker owns
         // the catalog, so a capability read must not prefetch Codex's list.
@@ -3886,6 +4080,7 @@ mod tests {
             false,
             Some("opencode"),
             "codex",
+            true,
             true
         ));
         assert!(!prefetches_saved_catalog(
@@ -3893,6 +4088,7 @@ mod tests {
             true,
             Some("opencode"),
             "codex",
+            true,
             true
         ));
         assert!(prefetches_saved_catalog(
@@ -3900,6 +4096,7 @@ mod tests {
             false,
             Some("opencode"),
             "codex",
+            true,
             true
         ));
         assert!(!prefetches_saved_catalog(
@@ -3907,6 +4104,7 @@ mod tests {
             false,
             Some("codex"),
             "codex",
+            true,
             true
         ));
         assert!(!prefetches_saved_catalog(
@@ -3914,8 +4112,17 @@ mod tests {
             false,
             Some("opencode"),
             "grok",
+            false,
             false
         ));
+        assert!(
+            prefetches_saved_catalog(false, false, Some("codex"), "codex", true, false),
+            "a disk cache does not replace the first live read after restart"
+        );
+        assert!(
+            !prefetches_saved_catalog(false, true, Some("codex"), "codex", true, false),
+            "a live read already in flight is not started again"
+        );
     }
     #[::core::prelude::v1::test]
     fn picker_preferences_filter_without_inventing_catalog_rows_or_changing_selection() {
@@ -4256,6 +4463,9 @@ mod tests {
             capability_lock(&open, true).is_none(),
             "a running turn leaves the composer's controls usable"
         );
+        let active = json!({"provenance":"static_runtime_contract","locked":true,"lockReason":"Stop the current turn before changing provider","providers":[modes("codex",true)]});
+        assert!(capability_lock(&active, true).is_none());
+        assert!(capability_lock(&active, false).is_some());
         let baseline = SelectionDraft::from_thread(
             &json!({"selection":{"provider":"codex","modelID":"default"}}),
         );

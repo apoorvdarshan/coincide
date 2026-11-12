@@ -105,6 +105,7 @@ mod composer_context_api;
 mod composer_file_reference;
 #[path = "composer_suggestions_api.rs"]
 mod composer_suggestions_api;
+pub use composer_suggestions_api::{NativeCommandDiscovery, NativeCommandReceipt};
 #[path = "terminal_activity_api.rs"]
 mod terminal_activity_api;
 #[path = "terminal_context_api.rs"]
@@ -2268,7 +2269,10 @@ impl Engine {
                                     } else {
                                         Value::Null
                                     };
-                                    let folder = self.working_directory(&v).ok();
+                                    let folder = self
+                                        .working_directory(&v)
+                                        .ok()
+                                        .and_then(|path| path.canonicalize().ok());
                                     self.composer_commands.record(
                                         &id,
                                         &provider,

@@ -220,6 +220,90 @@ fn valid_name(name: &str) -> bool {
     !name.is_empty() && name.len() <= 256 && !name.chars().any(|c| c.is_control())
 }
 impl ProviderCommand {
+    /// Enabled Codex skills, including plugin skills, reported for this folder.
+    pub fn from_codex(result: &Value, cwd: &Path) -> Vec<Self> {
+        let mut seen = std::collections::HashSet::new();
+        result["data"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .take(64)
+            .filter(|group| {
+                group["cwd"].as_str().is_some_and(|path| {
+                    Path::new(path) == cwd
+                        || std::fs::canonicalize(path)
+                            .ok()
+                            .zip(std::fs::canonicalize(cwd).ok())
+                            .is_some_and(|(a, b)| a == b)
+                })
+            })
+            .flat_map(|group| group["skills"].as_array().into_iter().flatten())
+            .filter_map(|entry| {
+                let name = entry["name"].as_str()?.trim();
+                if entry["enabled"] != true
+                    || !valid_name(name)
+                    || !seen.insert(name.to_lowercase())
+                {
+                    return None;
+                }
+                Some(Self {
+                    name: name.into(),
+                    description: bounded(&entry["shortDescription"], 1024)
+                        .or_else(|| bounded(&entry["description"], 1024)),
+                    argument_hint: None,
+                    kind: CommandKind::Skill,
+                    is_built_in: false,
+                    is_slash_command: false,
+                })
+            })
+            .take(MAX_COMMANDS)
+            .collect()
+    }
+    /// OpenCode reports slash commands and skills as separate scoped lists.
+    pub fn from_opencode(commands: &Value, skills: &Value, cwd: &Path) -> Vec<Self> {
+        let mut result = Vec::new();
+        for (value, skill) in [(commands, false), (skills, true)] {
+            if !opencode_location_matches(value, cwd) {
+                continue;
+            }
+            for entry in value["data"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .take(MAX_COMMANDS)
+            {
+                let Some(name) = entry["name"]
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|name| valid_name(name))
+                else {
+                    continue;
+                };
+                let kind = if skill {
+                    CommandKind::Skill
+                } else {
+                    CommandKind::Command
+                };
+                if result.iter().any(|previous: &Self| {
+                    previous.name.eq_ignore_ascii_case(name) && previous.kind == kind
+                }) {
+                    continue;
+                }
+                result.push(Self {
+                    name: name.into(),
+                    description: bounded(&entry["description"], 1024),
+                    argument_hint: None,
+                    kind,
+                    is_built_in: false,
+                    is_slash_command: !skill,
+                });
+                if result.len() >= MAX_COMMANDS {
+                    return result;
+                }
+            }
+        }
+        result
+    }
     /// Claude's `initialize` command list, deduplicated by name. Claude's own commands are
     /// built in; the rest (skills, custom and plugin commands) are offered as skills too.
     pub fn from_claude(entries: &[Value]) -> Vec<Self> {
@@ -309,6 +393,15 @@ impl ProviderCommand {
         ranked.into_iter().map(|(_, _, command)| command).collect()
     }
 }
+pub fn opencode_location_matches(value: &Value, cwd: &Path) -> bool {
+    value["location"]["directory"].as_str().is_some_and(|path| {
+        Path::new(path) == cwd
+            || std::fs::canonicalize(path)
+                .ok()
+                .zip(std::fs::canonicalize(cwd).ok())
+                .is_some_and(|(a, b)| a == b)
+    })
+}
 
 /// The commands a `provider/event` frame reports: Claude's successful `initialize` response
 /// (when it lists any) or an ACP `available_commands_update`, which replaces the list.
@@ -335,9 +428,10 @@ pub fn reported_commands(params: &Value) -> Option<Vec<ProviderCommand>> {
 /// What each thread's sessions reported, and per agent, account and folder what it reported
 /// last, for threads that have not run it yet. In memory only, as in the Swift app; the
 /// fallback never crosses folders, so one project's skills are not offered in another.
+type SessionCommandScope = (String, String, Option<String>);
 #[derive(Default)]
 pub struct ReportedCommands {
-    sessions: HashMap<String, HashMap<String, Vec<ProviderCommand>>>,
+    sessions: HashMap<String, HashMap<SessionCommandScope, Vec<ProviderCommand>>>,
     session_order: VecDeque<String>,
     folders: HashMap<(String, String, String), Vec<ProviderCommand>>,
     folder_order: VecDeque<(String, String, String)>,
@@ -383,10 +477,14 @@ impl ReportedCommands {
             }
             self.folders.insert(key, commands.clone());
         }
-        self.sessions
-            .entry(thread.into())
-            .or_default()
-            .insert(provider.into(), commands);
+        self.sessions.entry(thread.into()).or_default().insert(
+            (
+                provider.into(),
+                account_key(account),
+                folder.map(|path| path.to_string_lossy().into_owned()),
+            ),
+            commands,
+        );
     }
     /// The commands and skills `provider` offers in the thread: what its session there
     /// reported, else what it last reported in the same folder with the same account.
@@ -397,11 +495,13 @@ impl ReportedCommands {
         account: &Value,
         folder: Option<&Path>,
     ) -> (&[ProviderCommand], &'static str) {
-        if let Some(commands) = self
-            .sessions
-            .get(thread)
-            .and_then(|providers| providers.get(provider))
-        {
+        if let Some(commands) = self.sessions.get(thread).and_then(|providers| {
+            providers.get(&(
+                provider.into(),
+                account_key(account),
+                folder.map(|path| path.to_string_lossy().into_owned()),
+            ))
+        }) {
             return (commands, "session");
         }
         if let Some(commands) = folder.and_then(|folder| {
@@ -861,6 +961,37 @@ mod tests {
     }
 
     #[test]
+    fn codex_skills_include_enabled_plugins_only_for_the_requested_folder() {
+        let result = json!({"data":[
+            {"cwd":"/synthetic/one","skills":[
+                {"name":"browser:control","description":"Browse", "enabled":true,"pluginId":"browser"},
+                {"name":"disabled","description":"hidden", "enabled":false},
+                {"name":"BROWSER:CONTROL","description":"duplicate", "enabled":true}]},
+            {"cwd":"/synthetic/two","skills":[{"name":"other","description":"other", "enabled":true}]}
+        ]});
+        let commands = ProviderCommand::from_codex(&result, Path::new("/synthetic/one"));
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].name, "browser:control");
+        assert_eq!(commands[0].kind, CommandKind::Skill);
+        assert!(!commands[0].is_slash_command);
+    }
+    #[test]
+    fn opencode_commands_and_skills_are_bound_to_the_requested_workspace() {
+        let commands = json!({"location":{"directory":"/synthetic/project"},"data":[{"name":"review","description":"Review changes"}]});
+        let skills = json!({"location":{"directory":"/synthetic/project"},"data":[{"id":"id-one","name":"research","description":"Research"}]});
+        let found =
+            ProviderCommand::from_opencode(&commands, &skills, Path::new("/synthetic/project"));
+        assert_eq!(found.len(), 2);
+        assert!(found[0].is_slash_command);
+        assert_eq!(found[1].kind, CommandKind::Skill);
+        assert!(!found[1].is_slash_command);
+        assert!(
+            ProviderCommand::from_opencode(&commands, &skills, Path::new("/synthetic/other"))
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn reported_commands_stay_in_their_thread_or_same_folder_and_account() {
         let mut reported = ReportedCommands::default();
         let folder = Path::new("/synthetic/project");
@@ -872,8 +1003,27 @@ mod tests {
             vec![command("review", None)],
         );
         assert_eq!(
-            reported.lookup("one", "claude", &Value::Null, None).1,
+            reported
+                .lookup("one", "claude", &Value::Null, Some(folder))
+                .1,
             "session"
+        );
+        assert_eq!(
+            reported
+                .lookup("one", "claude", &json!("work"), Some(folder))
+                .1,
+            "none"
+        );
+        assert_eq!(
+            reported
+                .lookup(
+                    "one",
+                    "claude",
+                    &Value::Null,
+                    Some(Path::new("/synthetic/other"))
+                )
+                .1,
+            "none"
         );
         assert_eq!(
             reported

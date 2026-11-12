@@ -20,6 +20,7 @@ mod acp;
 mod antigravity;
 #[path = "provider_claude.rs"]
 mod claude;
+pub(crate) use claude::command_metadata as claude_command_metadata;
 #[path = "codex_profile_login.rs"]
 pub(crate) mod codex_profile_login;
 #[path = "codex_speed.rs"]
@@ -47,6 +48,13 @@ pub(crate) fn opencode_installation_metadata(
     allowed: &impl Fn() -> bool,
 ) -> Result<(Vec<Value>, Option<String>)> {
     opencode::installation_metadata(executable, allowed)
+}
+pub(crate) fn opencode_command_metadata(
+    executable: &std::path::Path,
+    cwd: &std::path::Path,
+    allowed: &impl Fn() -> bool,
+) -> Result<Vec<crate::composer_suggestions::ProviderCommand>> {
+    opencode::command_metadata(executable, cwd, allowed)
 }
 #[path = "provider_transport.rs"]
 mod transport;

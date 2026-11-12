@@ -16,6 +16,98 @@ const NESTED_ENV: &[&str] = &[
     "CLAUDE_EFFORT",
 ];
 
+/// Ask Claude for the commands available in this folder without creating a
+/// persisted session or sending a prompt. The same initialize response is
+/// observed during normal turns, so plugin skills remain provider-owned.
+pub(crate) fn command_metadata(
+    executable: &std::path::Path,
+    cwd: &std::path::Path,
+    allowed: &impl Fn() -> bool,
+) -> Result<Vec<crate::composer_suggestions::ProviderCommand>> {
+    ensure!(allowed(), "Command discovery cancelled");
+    let launch = Launch {
+        executable: executable.into(),
+        cwd: cwd.into(),
+        session: None,
+        prompt: String::new(),
+        model: None,
+        variant: None,
+        full_access: false,
+    };
+    let args = [
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--input-format",
+        "stream-json",
+        "--setting-sources=user,project,local",
+        "--no-session-persistence",
+        "--settings",
+        r#"{"disableAllHooks":true}"#,
+        "--strict-mcp-config",
+    ]
+    .map(str::to_owned)
+    .to_vec();
+    let environment = [
+        ("ENABLE_CLAUDEAI_MCP_SERVERS".into(), "false".into()),
+        ("CLAUDE_CODE_AUTO_CONNECT_IDE".into(), "0".into()),
+        ("CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL".into(), "1".into()),
+    ];
+    let mut transport = CatalogTransport::spawn(&launch, &args, NESTED_ENV, &environment, None)?;
+    transport.write(json!({"type":"control_request","request_id":"coincide-initialize","request":{"subtype":"initialize"}}))?;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut frames = 0;
+    loop {
+        ensure!(
+            allowed() && Instant::now() < deadline,
+            "Command discovery cancelled or timed out"
+        );
+        let Some(frame) = transport.next()? else {
+            continue;
+        };
+        frames += 1;
+        ensure!(
+            frames <= 256,
+            "Claude command discovery exceeded its frame limit"
+        );
+        if frame["type"] == "control_request" {
+            bail!("Claude requested an action during command discovery");
+        }
+        if frame["type"] == "control_response" {
+            ensure!(
+                frame["response"]["request_id"] == "coincide-initialize"
+                    && frame["response"]["subtype"] == "success",
+                "Claude command discovery was refused"
+            );
+            let commands = frame["response"]["response"]["commands"]
+                .as_array()
+                .context("Claude did not report commands")?;
+            return Ok(crate::composer_suggestions::ProviderCommand::from_claude(
+                commands,
+            ));
+        }
+    }
+}
+
+#[cfg(all(test, unix))]
+#[test]
+fn command_discovery_initializes_without_sending_a_prompt() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let binary = dir.path().join("claude");
+    std::fs::write(&binary, r##"#!/usr/bin/env python3
+import json,sys
+r=json.loads(sys.stdin.readline())
+assert r['request']['subtype']=='initialize'
+print(json.dumps({'type':'control_response','response':{'subtype':'success','request_id':r['request_id'],'response':{'commands':[{'name':'plugin:review','description':'Review','builtin':False}]}}}),flush=True)
+"##).unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let found = command_metadata(&binary, dir.path(), &|| true).unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].name, "plugin:review");
+    assert!(found[0].is_slash_command);
+}
+
 fn response(id: &Value, result: Value) -> Value {
     json!({"type":"control_response","response":{"subtype":"success","request_id":id,"response":result}})
 }

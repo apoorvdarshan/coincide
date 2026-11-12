@@ -33,6 +33,15 @@ pub(super) enum Suggestion {
     PullRequest(PullRequest),
 }
 impl Suggestion {
+    fn agent_insertion(command: &ProviderCommand, token: char) -> String {
+        // Claude's skills are invoked with `/`, even when found through `$`.
+        let token = if token == '$' && command.is_slash_command {
+            '/'
+        } else {
+            token
+        };
+        format!("{token}{} ", command.name)
+    }
     fn title(&self) -> String {
         match self {
             Self::Command(command) => command.title(),
@@ -179,6 +188,10 @@ type PullReply = (
     String,
     std::result::Result<Option<Vec<PullRequest>>, String>,
 );
+type CommandReply = (
+    String,
+    std::result::Result<Option<coincide_core::api::NativeCommandReceipt>, String>,
+);
 
 pub(super) struct Suggestions {
     live: Option<Live>,
@@ -193,6 +206,7 @@ pub(super) struct Suggestions {
     anchor: Rc<Cell<Option<Bounds<Pixels>>>>,
     scroll: ScrollHandle,
     commands: Option<(String, Vec<ProviderCommand>)>,
+    commands_revision: u64,
     /// The built-ins last listed, so the list follows agents and limits as they load.
     builtins: Vec<BuiltIn>,
     pulls: Option<PullList>,
@@ -202,12 +216,19 @@ pub(super) struct Suggestions {
     workers: WorkerOwner,
     sender: mpsc::SyncSender<PullReply>,
     receiver: mpsc::Receiver<PullReply>,
+    command_workers: WorkerOwner,
+    command_sender: mpsc::SyncSender<CommandReply>,
+    command_receiver: mpsc::Receiver<CommandReply>,
+    command_pending: Option<String>,
+    command_receipt: Option<(String, coincide_core::api::NativeCommandReceipt)>,
+    command_attempts: std::collections::HashMap<String, Instant>,
     /// A command chosen from the list, run once its edited draft is saved.
     queued: Option<Queued>,
 }
 impl Default for Suggestions {
     fn default() -> Self {
         let (sender, receiver) = mpsc::sync_channel(1);
+        let (command_sender, command_receiver) = mpsc::sync_channel(1);
         Self {
             live: None,
             dismissed: None,
@@ -220,6 +241,7 @@ impl Default for Suggestions {
             anchor: Rc::default(),
             scroll: ScrollHandle::new(),
             commands: None,
+            commands_revision: 0,
             builtins: Vec::new(),
             pulls: None,
             pulls_revision: 0,
@@ -228,6 +250,12 @@ impl Default for Suggestions {
             workers: WorkerOwner::default(),
             sender,
             receiver,
+            command_workers: WorkerOwner::default(),
+            command_sender,
+            command_receiver,
+            command_pending: None,
+            command_receipt: None,
+            command_attempts: Default::default(),
             queued: None,
         }
     }
@@ -256,12 +284,24 @@ impl Suggestions {
     }
     pub fn close(&mut self) {
         self.workers.close();
+        self.command_workers.close();
         self.live = None;
         self.queued = None;
         self.hide();
     }
     pub fn shutdown_status(&mut self) -> ShutdownStatus {
-        self.workers.status()
+        let mut status = self.workers.status();
+        let commands = self.command_workers.status();
+        status.closed &= commands.closed;
+        status.unjoined += commands.unjoined;
+        status.returned = status.returned.saturating_add(commands.returned);
+        status.panicked = status.panicked.saturating_add(commands.panicked);
+        status.unclassified += commands.unclassified;
+        status.pending_pickers += commands.pending_pickers;
+        if status.spawn_error.is_none() {
+            status.spawn_error = commands.spawn_error;
+        }
+        status
     }
     pub fn closed_and_drained(&mut self) -> bool {
         let status = self.shutdown_status();
@@ -454,9 +494,14 @@ impl Coincide {
             live.trigger.kind == TriggerKind::Command
                 && self.composer_builtins(live) != self.composer_suggestions.builtins
         });
-        if !changed && !pulls_changed && !builtins_changed {
+        let reports_changed = live.as_ref().is_some_and(|live| {
+            matches!(live.trigger.kind, TriggerKind::Command | TriggerKind::Skill)
+                && state.commands_revision != self.revision
+        });
+        if !changed && !pulls_changed && !builtins_changed && !reports_changed {
             return;
         }
+        self.composer_suggestions.commands_revision = self.revision;
         self.composer_suggestions.live = live;
         self.load_composer_suggestions(cx);
     }
@@ -468,6 +513,7 @@ impl Coincide {
         match live.trigger.kind {
             TriggerKind::Command | TriggerKind::Skill => {
                 let skills = live.trigger.kind == TriggerKind::Skill;
+                self.start_native_command_discovery(&live);
                 let mut items = if skills {
                     Vec::new()
                 } else {
@@ -497,7 +543,16 @@ impl Coincide {
                             token: if skills { '$' } else { '/' },
                         }),
                 );
-                if items.is_empty() {
+                if items.is_empty()
+                    && self.composer_suggestions.command_pending.is_some()
+                    && matches!(live.provider.as_str(), "codex" | "opencode" | "claude")
+                {
+                    self.composer_suggestions.show(
+                        items,
+                        Some("Loading skills…"),
+                        if skills { "Skills" } else { "Commands" },
+                    );
+                } else if items.is_empty() {
                     self.composer_suggestions.hide();
                 } else {
                     self.composer_suggestions.show(
@@ -510,6 +565,93 @@ impl Coincide {
             TriggerKind::PullRequest => self.load_pull_suggestions(&live),
         }
         cx.notify();
+    }
+    fn start_native_command_discovery(&mut self, live: &Live) {
+        if !matches!(live.provider.as_str(), "codex" | "opencode" | "claude")
+            || self.composer_suggestions.command_pending.is_some()
+        {
+            return;
+        }
+        let Some(thread) = self
+            .selected
+            .as_ref()
+            .filter(|thread| thread["id"] == live.thread)
+        else {
+            return;
+        };
+        let key = format!(
+            "{}\0{}\0{}\0{}\0{}",
+            live.thread, live.provider, live.account, thread["projectID"], thread["worktreePath"]
+        );
+        if self
+            .composer_suggestions
+            .command_attempts
+            .get(&key)
+            .is_some_and(|at| at.elapsed() < Duration::from_secs(60))
+        {
+            return;
+        }
+        let engine = self.engine.clone();
+        let sender = self.composer_suggestions.command_sender.clone();
+        let id = live.thread.clone();
+        let worker_key = key.clone();
+        if self
+            .composer_suggestions
+            .command_workers
+            .spawn(move |admission| {
+                let result = (|| -> Result<Option<coincide_core::api::NativeCommandReceipt>> {
+                    let request = {
+                        let engine = engine
+                            .try_lock()
+                            .map_err(|_| anyhow::anyhow!("App is busy"))?;
+                        engine.prepare_native_command_discovery(&id)?
+                    };
+                    request
+                        .map(|request| request.read(|| admission.allowed()))
+                        .transpose()
+                })()
+                .map_err(|error| error.to_string());
+                let _ = sender.send((worker_key, result));
+            })
+        {
+            self.composer_suggestions
+                .command_attempts
+                .insert(key.clone(), Instant::now());
+            self.composer_suggestions.command_pending = Some(key);
+        }
+    }
+    fn poll_native_command_discovery(&mut self, cx: &mut Context<Self>) {
+        if let Ok((key, result)) = self.composer_suggestions.command_receiver.try_recv() {
+            self.composer_suggestions.command_pending = None;
+            match result {
+                Ok(Some(receipt)) => {
+                    self.composer_suggestions.command_receipt = Some((key, receipt))
+                }
+                Err(error) if error.contains("busy") => {
+                    self.composer_suggestions.command_attempts.remove(&key);
+                }
+                _ => {}
+            }
+            self.composer_suggestions.commands_revision = self.revision.wrapping_sub(1);
+            cx.notify();
+        }
+        if self.composer_suggestions.command_receipt.is_some()
+            && let Ok(mut engine) = self.engine.try_lock()
+        {
+            let (key, receipt) = self.composer_suggestions.command_receipt.take().unwrap();
+            if engine.accept_native_command_discovery(receipt).is_err() {
+                self.composer_suggestions.command_attempts.remove(&key);
+            }
+            self.composer_suggestions.commands_revision = self.revision.wrapping_sub(1);
+            cx.notify();
+        }
+        if self.composer_suggestions.command_pending.is_some()
+            && self.composer_suggestions.command_workers.status().unjoined == 0
+        {
+            self.composer_suggestions.command_pending = None;
+            self.composer_suggestions.commands_revision = self.revision.wrapping_sub(1);
+            cx.notify();
+        }
     }
     /// `/model`, `/plan`, `/build`, `/usage-limits` when reported, then one per other agent
     /// this conversation can switch to.
@@ -613,6 +755,7 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.poll_native_command_discovery(cx);
         self.run_queued_suggestion_command(window, cx);
         let state = &mut self.composer_suggestions;
         // A worker that stopped without replying leaves nothing pending, so `#` can retry.
@@ -701,7 +844,9 @@ impl Coincide {
         };
         let insertion = match &item {
             Suggestion::Command(_) => String::new(),
-            Suggestion::Agent { command, token, .. } => format!("{token}{} ", command.name),
+            Suggestion::Agent { command, token, .. } => {
+                Suggestion::agent_insertion(command, *token)
+            }
             Suggestion::PullRequest(pull) => match pull.markdown() {
                 Some(mention) => format!("{mention} "),
                 None => return,
@@ -1101,6 +1246,12 @@ mod tests {
         };
         assert_eq!(skill.title(), "$review [pr]");
         assert_eq!(skill.accessible(), "$review");
+        if let Suggestion::Agent { command, .. } = &skill {
+            assert_eq!(Suggestion::agent_insertion(command, '$'), "/review ");
+            let mut codex = command.clone();
+            codex.is_slash_command = false;
+            assert_eq!(Suggestion::agent_insertion(&codex, '$'), "$review ");
+        }
         let plan = Suggestion::Command(BuiltIn::Plan);
         assert_eq!(plan.title(), "/plan");
         assert_eq!(

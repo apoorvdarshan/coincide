@@ -14,6 +14,13 @@ mod forms;
 #[path = "provider_opencode_http.rs"]
 mod http;
 use http::{Http, segment};
+pub(super) fn command_metadata(
+    executable: &std::path::Path,
+    cwd: &std::path::Path,
+    allowed: &impl Fn() -> bool,
+) -> Result<Vec<crate::composer_suggestions::ProviderCommand>> {
+    metadata::commands(executable, cwd, allowed)
+}
 
 #[derive(Debug)]
 struct Stopped;
@@ -521,6 +528,67 @@ fn permissions(full_access: bool) -> Value {
     let effect = if full_access { "allow" } else { "ask" };
     json!([{"action":"shell","resource":"*","effect":effect},{"action":"edit","resource":"*","effect":effect},{"action":"external_directory","resource":"*","effect":effect}])
 }
+/// Only explicit `$name` mentions that the current workspace actually reports
+/// become native OpenCode skill attachments. Other text stays ordinary text.
+fn skill_attachments(prompt: &str, catalog: &Value, cwd: &std::path::Path) -> Vec<Value> {
+    if !crate::composer_suggestions::opencode_location_matches(catalog, cwd) {
+        return Vec::new();
+    }
+    let requested = prompt
+        .split_whitespace()
+        .filter_map(|word| word.strip_prefix('$'))
+        .filter(|name| !name.is_empty() && name.len() <= 256 && !name.chars().any(char::is_control))
+        .collect::<Vec<_>>();
+    let mut found = Vec::new();
+    for entry in catalog["data"].as_array().into_iter().flatten().take(1000) {
+        let Some(id) = entry["id"]
+            .as_str()
+            .filter(|id| !id.is_empty() && id.len() <= 256 && !id.chars().any(char::is_control))
+        else {
+            continue;
+        };
+        let name = entry["name"].as_str().unwrap_or("");
+        if requested.iter().any(|candidate| {
+            candidate.eq_ignore_ascii_case(name) || candidate.eq_ignore_ascii_case(id)
+        }) && !found.iter().any(|entry: &Value| entry["id"] == id)
+        {
+            found.push(json!({"id":id}));
+            if found.len() == 20 {
+                break;
+            }
+        }
+    }
+    found
+}
+
+fn native_command(
+    prompt: &str,
+    catalog: &Value,
+    cwd: &std::path::Path,
+) -> Option<(String, String)> {
+    if !crate::composer_suggestions::opencode_location_matches(catalog, cwd) {
+        return None;
+    }
+    let prompt = prompt.trim_start();
+    let end = prompt.find(char::is_whitespace).unwrap_or(prompt.len());
+    let name = prompt[..end].strip_prefix('/')?;
+    if name.is_empty()
+        || !catalog["data"]
+            .as_array()?
+            .iter()
+            .any(|entry| entry["name"] == name)
+    {
+        return None;
+    }
+    Some((name.to_owned(), prompt[end..].trim_start().to_owned()))
+}
+
+fn native_command_idle(active: &Value, inbox: &Value, session: &str) -> bool {
+    active["data"]
+        .as_object()
+        .is_some_and(|sessions| !sessions.contains_key(session))
+        && inbox["data"].as_array().is_some_and(Vec::is_empty)
+}
 
 pub(super) fn run(
     launch: Launch,
@@ -672,6 +740,24 @@ fn run_inner(
         files.push(json!({"uri":uri.as_str(),"name":name}));
     }
     let mut body = json!({"id":prompt,"text":text});
+    if text
+        .split_whitespace()
+        .any(|word| word.starts_with('$') && word.len() > 1)
+        && let Some(directory) = launch.cwd.to_str()
+    {
+        match runtime.catalog(&server.http, "/api/skill", directory) {
+            Ok(catalog) => {
+                let skills = skill_attachments(&text, &catalog, &launch.cwd);
+                if !skills.is_empty() {
+                    body["skills"] = json!(skills);
+                }
+            }
+            Err(error) if error.is::<Stopped>() || error.is::<OperationTimedOut>() => {
+                return Err(error);
+            }
+            Err(_) => {}
+        }
+    }
     if !files.is_empty() {
         body["files"] = json!(files);
     }
@@ -686,7 +772,39 @@ fn run_inner(
         pending: HashMap::new(),
         tools: HashMap::new(),
     };
-    runtime.request(&server.http, "POST", format!("{root}/prompt"), Some(body))?;
+    let command = if text.trim_start().starts_with('/')
+        && let Some(directory) = launch.cwd.to_str()
+    {
+        match runtime.catalog(&server.http, "/api/command", directory) {
+            Ok(catalog) => native_command(&text, &catalog, &launch.cwd),
+            Err(error) if error.is::<Stopped>() || error.is::<OperationTimedOut>() => {
+                return Err(error);
+            }
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
+    let mut command_idle_check = None;
+    if let Some((name, arguments)) = command {
+        let mut command_body = json!({"name":name,"text":arguments});
+        for field in ["files", "skills"] {
+            if let Some(value) = body.get(field) {
+                command_body[field] = value.clone();
+            }
+        }
+        runtime.request(
+            &server.http,
+            "POST",
+            format!("{root}/command"),
+            Some(command_body),
+        )?;
+        // Some native callbacks do not start a turn. Their 204 response is
+        // followed by an authoritative active-session and inbox check below.
+        command_idle_check = Some(Instant::now() + Duration::from_secs(1));
+    } else {
+        runtime.request(&server.http, "POST", format!("{root}/prompt"), Some(body))?;
+    }
     loop {
         while let Some(command) = runtime.next_command() {
             match command {
@@ -775,7 +893,23 @@ fn run_inner(
         );
         let frame = match stream_rx.recv_timeout(Duration::from_millis(10)) {
             Ok(result) => result?,
-            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if !mapper.started
+                    && command_idle_check.is_some_and(|deadline| Instant::now() >= deadline)
+                {
+                    let active =
+                        runtime.request(&server.http, "GET", "/api/session/active".into(), None)?;
+                    let inbox =
+                        runtime.request(&server.http, "GET", format!("{root}/inbox"), None)?;
+                    if native_command_idle(&active, &inbox, &session) {
+                        server.cleanup = None;
+                        events.send(Event::Finished)?;
+                        return Ok(());
+                    }
+                    command_idle_check = Some(Instant::now() + Duration::from_secs(1));
+                }
+                continue;
+            }
             Err(_) => bail!("OpenCode event stream disconnected"),
         };
         raw(runtime.events, "opencode", &frame)?;
@@ -842,5 +976,58 @@ mod model_reference_tests {
                 .unwrap();
             assert_eq!(row["effect"], "ask");
         }
+    }
+    #[test]
+    fn skill_mentions_attach_only_matching_skills_from_this_workspace() {
+        use std::path::Path;
+        let catalog = json!({"location":{"directory":"/project"},"data":[
+            {"id":"skill-1","name":"review"}, {"id":"skill-2","name":"release"}
+        ]});
+        assert_eq!(
+            super::skill_attachments(
+                "Please use $review and $review, not $money",
+                &catalog,
+                Path::new("/project")
+            ),
+            vec![json!({"id":"skill-1"})]
+        );
+        assert!(super::skill_attachments("$review", &catalog, Path::new("/other")).is_empty());
+        assert!(super::skill_attachments("$unknown", &catalog, Path::new("/project")).is_empty());
+    }
+    #[test]
+    fn slash_commands_use_only_the_current_workspace_and_finish_when_idle() {
+        use std::path::Path;
+        let catalog =
+            json!({"location":{"directory":"/project"},"data":[{"name":"github:review"}]});
+        assert_eq!(
+            super::native_command(
+                "/github:review this branch",
+                &catalog,
+                Path::new("/project")
+            ),
+            Some(("github:review".into(), "this branch".into()))
+        );
+        assert!(super::native_command("/unknown", &catalog, Path::new("/project")).is_none());
+        assert!(super::native_command("/github:review", &catalog, Path::new("/other")).is_none());
+        assert!(super::native_command_idle(
+            &json!({"data":{}}),
+            &json!({"data":[]}),
+            "s"
+        ));
+        assert!(!super::native_command_idle(
+            &json!({"data":{"s":{}}}),
+            &json!({"data":[]}),
+            "s"
+        ));
+        assert!(!super::native_command_idle(
+            &json!({"data":{}}),
+            &json!({"data":[{}]}),
+            "s"
+        ));
+        assert!(!super::native_command_idle(
+            &json!({}),
+            &json!({"data":[]}),
+            "s"
+        ));
     }
 }

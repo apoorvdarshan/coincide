@@ -108,6 +108,40 @@ fn native_steer_requires_actual_ack_and_persistence_before_clearing_draft() {
     engine.collect_native_follow_up(ticket).unwrap();
     finish_fake(&mut engine, &id, release);
 }
+
+#[test]
+fn live_turn_accepts_follow_up_without_a_new_model_catalog() {
+    let Fixture {
+        _dir,
+        mut engine,
+        id,
+        mut server,
+        release,
+        ..
+    } = fixture();
+    let mut thread = engine.store.thread(&id).unwrap();
+    thread["selection"] = json!({"provider":"codex","modelID":"synthetic-model","effort":"high"});
+    engine.store.save(&thread).unwrap();
+    engine.runs.get_mut(&id).unwrap().usage_context =
+        Some(agent::usage_capture::TurnContext::new(&thread));
+    assert!(engine.composer_thread_effort_proof(&thread).is_err());
+
+    let ticket = engine.send_native_follow_up(&thread, false).unwrap();
+    let request = server.next_request().unwrap();
+    server.response(&json!({"id":request["id"],"result":{"turnId":"native-turn"}}));
+    engine.poll();
+    engine.poll();
+    assert!(matches!(
+        engine.native_follow_up_status(&ticket).unwrap(),
+        NativeFollowUpStatus::Delivered { .. }
+    ));
+    engine.collect_native_follow_up(ticket).unwrap();
+
+    let mut changed = engine.store.thread(&id).unwrap();
+    changed["selection"]["modelID"] = json!("other-model");
+    assert!(engine.validate_native_follow_up_policy(&changed).is_err());
+    finish_fake(&mut engine, &id, release);
+}
 #[test]
 fn interrupt_waits_for_actual_return_and_refuses_changed_source_without_launch() {
     let Fixture {

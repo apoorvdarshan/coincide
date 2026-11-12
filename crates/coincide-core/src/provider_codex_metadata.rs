@@ -44,7 +44,10 @@ impl Rpc for Wire<'_> {
     }
     fn call(&mut self, method: &'static str, params: Value) -> Result<Value> {
         ensure!(
-            matches!(method, "initialize" | "account/read" | "model/list"),
+            matches!(
+                method,
+                "initialize" | "account/read" | "model/list" | "skills/list"
+            ),
             "Unsupported metadata request"
         );
         self.sequence += 1;
@@ -66,6 +69,47 @@ impl Rpc for Wire<'_> {
             }
         }
     }
+}
+/// Read the provider's enabled skills without starting a conversation or turn.
+pub(crate) fn skills(
+    executable: &Path,
+    cwd: &Path,
+    profile: Option<&crate::codex_login_profiles::LaunchContext>,
+    allowed: &impl Fn() -> bool,
+) -> Result<Vec<crate::composer_suggestions::ProviderCommand>> {
+    ensure!(allowed(), "Skill discovery cancelled");
+    if let Some(profile) = profile {
+        profile.validate()?;
+    }
+    let launch = Launch {
+        executable: executable.into(),
+        cwd: cwd.into(),
+        session: None,
+        prompt: String::new(),
+        model: None,
+        variant: None,
+        full_access: false,
+    };
+    let args = profile.map_or_else(|| vec!["app-server".into()], |profile| profile.arguments());
+    let transport = CatalogTransport::spawn(&launch, &args, &[], &[], profile)?;
+    let mut wire = Wire {
+        transport,
+        allowed,
+        deadline: Instant::now() + Duration::from_secs(30),
+        sequence: 0,
+        frames: 0,
+        bytes: 0,
+    };
+    wire.call("initialize", json!({"clientInfo":{"name":"coincide","title":"Coincide","version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":true}}))?;
+    wire.initialized()?;
+    let result = wire.call("skills/list", json!({"cwds":[cwd],"forceReload":false}))?;
+    ensure!(allowed(), "Skill discovery cancelled");
+    if let Some(profile) = profile {
+        profile.validate()?;
+    }
+    Ok(crate::composer_suggestions::ProviderCommand::from_codex(
+        &result, cwd,
+    ))
 }
 fn response(frame: &Value, id: u64) -> Result<Option<Value>> {
     if frame.get("method").is_some() {

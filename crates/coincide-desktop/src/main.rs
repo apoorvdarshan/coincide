@@ -223,6 +223,14 @@ fn call(engine: &SharedEngine, method: &str, params: Value) -> Result<Value> {
     }
     Ok(response["result"].clone())
 }
+fn send_error_message(reason: &str) -> String {
+    let lower = reason.to_ascii_lowercase();
+    if lower.contains("catalog") || lower.contains("model proof") {
+        "The selected model or its options are unavailable. Choose a model and try again.".into()
+    } else {
+        format!("Message not sent: {reason}")
+    }
+}
 
 /// Trusted draft persistence only; decide and write under the same try-lock.
 fn persist_pending_draft(engine: &SharedEngine, id: &str, text: &str) -> Result<()> {
@@ -585,7 +593,7 @@ struct Coincide {
     /// a window is available to edit the field.
     restore_composer: Option<(String, String)>,
     /// A follow-up whose engine call found the lock busy, retried each tick.
-    pending_follow_up: Option<(String, String, bool)>,
+    pending_follow_up: Option<composer_follow_up_mount::PendingSend>,
     /// A Queue/Steer choice made while the engine was busy, written later.
     pending_follow_up_choice: Option<(String, coincide_core::composer_follow_up::Behavior)>,
     /// A just-sent message drawn before the stored thread contains it, with
@@ -4863,7 +4871,11 @@ impl Coincide {
             ) {
                 composer_follow_up_mount::SendRoute::WaitForImages => {
                     self.pending_follow_up =
-                        Some((id, self.composer.read(cx).value().to_string(), alternate));
+                        Some(composer_follow_up_mount::PendingSend::during_import(
+                            v,
+                            self.composer.read(cx).value().to_string(),
+                            alternate,
+                        ));
                     cx.notify();
                     return;
                 }
@@ -4879,6 +4891,15 @@ impl Coincide {
                     return;
                 }
                 composer_follow_up_mount::SendRoute::Send => {}
+            }
+            let pending = composer_follow_up_mount::PendingSend::new(
+                v,
+                self.composer.read(cx).value().to_string(),
+                alternate,
+            );
+            if self.wait_for_send_catalog(cx) {
+                self.pending_follow_up = Some(pending);
+                return;
             }
             // Send reads as instant: the draft leaves the composer now, and a
             // refused send puts it back. Waiting for the engine made a plain
@@ -4933,7 +4954,7 @@ impl Coincide {
                             this.retry_selected_account_readiness();
                             this.drop_pending_send(&id);
                             this.restore_composer = Some((id.clone(), sent.clone()));
-                            this.show_local_error(&format!("Message not sent: {error}"));
+                            this.show_local_error(&send_error_message(&error.to_string()));
                             this.status = error.to_string();
                         }
                     }
@@ -5867,23 +5888,23 @@ impl Render for Coincide {
             self.pending_follow_up_choice = None;
             self.choose_follow_up(behavior, cx);
         }
-        if let Some((id, draft, alternate)) = self.pending_follow_up.take() {
-            if self
+        if let Some(pending) = self.pending_follow_up.take() {
+            if let Some(thread) = self
                 .selected
                 .as_ref()
-                .is_some_and(|thread| text(thread, "id") == id)
+                .filter(|thread| text(thread, "id") == pending.thread)
             {
                 // An edited draft is a new intent; never overwrite it with a
                 // previously queued retry or send the stale text in its place.
-                if self.composer.read(cx).value().as_ref() == draft {
-                    if self.attachment_import_threads.contains(&id) {
-                        self.pending_follow_up = Some((id, draft, alternate));
+                if pending.matches(thread, self.composer.read(cx).value().as_ref()) {
+                    if self.attachment_import_threads.contains(&pending.thread) {
+                        self.pending_follow_up = Some(pending);
                     } else {
-                        self.send_selected(alternate, window, cx);
+                        self.send_selected(pending.alternate, window, cx);
                     }
                 }
             } else {
-                self.pending_follow_up = Some((id, draft, alternate));
+                self.pending_follow_up = Some(pending);
             }
         }
         if let Some((id, text)) = self.restore_composer.clone()

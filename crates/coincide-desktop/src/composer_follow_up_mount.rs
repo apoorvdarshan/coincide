@@ -31,6 +31,50 @@ pub(super) struct PendingDelivery {
     queued: bool,
     image_send: Option<u64>,
 }
+/// A send waiting for a local prerequisite, bound to the original settings.
+#[derive(Clone)]
+pub(super) struct PendingSend {
+    pub thread: String,
+    pub draft: String,
+    pub alternate: bool,
+    pub selection: Value,
+    pub waiting_for_import: bool,
+}
+impl PendingSend {
+    pub fn new(thread: &Value, draft: String, alternate: bool) -> Self {
+        Self {
+            thread: text(thread, "id"),
+            draft,
+            alternate,
+            selection: pending_scope(thread, false),
+            waiting_for_import: false,
+        }
+    }
+    pub fn during_import(thread: &Value, draft: String, alternate: bool) -> Self {
+        Self {
+            thread: text(thread, "id"),
+            draft,
+            alternate,
+            selection: pending_scope(thread, true),
+            waiting_for_import: true,
+        }
+    }
+    pub fn matches(&self, thread: &Value, draft: &str) -> bool {
+        self.thread == text(thread, "id")
+            && self.draft == draft
+            && self.selection == pending_scope(thread, self.waiting_for_import)
+    }
+}
+fn pending_scope(thread: &Value, ignore_images: bool) -> Value {
+    let mut scope = json!({"selection":thread["selection"],"accessMode":thread["accessMode"],
+        "interactionMode":thread["interactionMode"],"projectID":thread["projectID"],
+        "projectPath":thread["projectPath"],"worktreePath":thread["worktreePath"],
+        "draftContext":thread["draftContext"],"followUpBehavior":thread["followUpBehavior"]});
+    if !ignore_images {
+        scope["images"] = thread["rustDraftImages"].clone();
+    }
+    scope
+}
 #[derive(Clone, Default, PartialEq, gpui_kit::Action)]
 #[action(namespace = coincide_follow_up, no_json, no_register)]
 struct ModifiedSend;
@@ -272,7 +316,7 @@ impl Coincide {
                 .as_ref()
                 .is_some_and(|(owner, _)| owner == &id)
         {
-            self.pending_follow_up = Some((id, draft, alternate));
+            self.pending_follow_up = Some(PendingSend::new(&thread, draft, alternate));
             cx.notify();
             return;
         }
@@ -305,12 +349,12 @@ impl Coincide {
                 if engine_busy(&error)
                     || error.to_string().contains("Collect the previous follow-up") =>
             {
-                self.pending_follow_up = Some((id, draft, alternate));
+                self.pending_follow_up = Some(PendingSend::new(&thread, draft, alternate));
             }
             Err(error) => {
                 self.pending_follow_up = None;
                 let reason = error.to_string();
-                self.show_local_error(&format!("Message not sent: {reason}"));
+                self.show_local_error(&send_error_message(&reason));
                 self.status = reason;
             }
         }
@@ -508,7 +552,8 @@ fn behavior_help(behavior: Behavior) -> &'static str {
 
 #[cfg(test)]
 mod send_route_tests {
-    use super::{SendRoute, send_route};
+    use super::{PendingSend, SendRoute, send_route};
+    use serde_json::json;
 
     #[test]
     fn running_turn_routes_to_follow_up_even_while_selection_is_refreshing() {
@@ -522,5 +567,23 @@ mod send_route_tests {
         assert_eq!(send_route(false, true, false), SendRoute::WaitForImages);
         assert_eq!(send_route(false, false, true), SendRoute::WaitForSelection);
         assert_eq!(send_route(false, false, false), SendRoute::Send);
+    }
+
+    #[test]
+    fn deferred_send_never_follows_a_changed_draft_or_model() {
+        let mut thread = json!({"id":"conversation", "selection":{"provider":"codex","modelID":"one"}, "accessMode":"approval", "interactionMode":"build"});
+        let pending = PendingSend::new(&thread, "message".into(), false);
+        assert!(pending.matches(&thread, "message"));
+        assert!(!pending.matches(&thread, "new message"));
+        thread["selection"]["modelID"] = json!("two");
+        assert!(!pending.matches(&thread, "message"));
+        thread["selection"]["modelID"] = json!("one");
+        thread["draftContext"] = json!([{"id":"new reference"}]);
+        assert!(!pending.matches(&thread, "message"));
+        thread["draftContext"] = json!(null);
+        let importing = PendingSend::during_import(&thread, "message".into(), false);
+        thread["rustDraftImages"] = json!([{"id":"new image"}]);
+        assert!(importing.matches(&thread, "message"));
+        assert!(!pending.matches(&thread, "message"));
     }
 }
