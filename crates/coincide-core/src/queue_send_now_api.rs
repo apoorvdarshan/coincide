@@ -45,6 +45,7 @@ impl Engine {
             Operation {
                 thread: id,
                 source: scope(&current),
+                draft_revision: None,
                 prefix: None,
                 text,
                 dispatch: Dispatch::Send,

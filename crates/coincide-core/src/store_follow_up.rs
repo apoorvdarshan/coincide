@@ -165,7 +165,11 @@ impl Store {
         self.note_selection_scope(&current);
         Ok(can_enable)
     }
-    pub(crate) fn clear_native_follow_up_draft(&mut self, expected_scope: &Value) -> Result<bool> {
+    pub(crate) fn clear_native_follow_up_draft(
+        &mut self,
+        expected_scope: &Value,
+        expected_revision: Option<&[u8]>,
+    ) -> Result<bool> {
         let id = expected_scope["id"]
             .as_str()
             .context("Missing native draft identity")?;
@@ -186,34 +190,38 @@ impl Store {
             )?,
             "Imported conversation is read-only"
         );
-        if crate::composer_follow_up::scope(&current)
-            != crate::composer_follow_up::scope(expected_scope)
-        {
-            // The user may have started a new draft while the provider was
-            // acknowledging this message. Remove only the exact images that
-            // were delivered; preserve all later text, context and images.
-            let submitted = expected_scope["rustDraftImages"]
-                .as_array()
-                .cloned()
-                .unwrap_or_default();
-            if let Some(images) = current["rustDraftImages"].as_array_mut() {
-                let before = images.len();
-                images.retain(|image| !submitted.contains(image));
-                if images.len() != before {
-                    tx.execute(
-                        "UPDATE threads SET document=?2 WHERE id=?1",
-                        params![id, current.to_string()],
-                    )?;
-                    cache_thread(&tx, &current, false)?;
-                    tx.commit()?;
-                    self.note_selection_scope(&current);
-                }
+        let revision: Option<Vec<u8>> = tx
+            .query_row(
+                "SELECT revision FROM native_draft_revisions WHERE id=?1 COLLATE NOCASE",
+                [id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        // Settings, context or images can change while the provider is
+        // acknowledging a message. They must not resurrect its text, but a
+        // later draft write (even an identical retype) belongs to the user.
+        let clear_text =
+            revision.as_deref() == expected_revision && current["draft"] == expected_scope["draft"];
+        let before = current.clone();
+        if clear_text {
+            current["draft"] = json!("");
+            if current["draftContext"] == expected_scope["draftContext"] {
+                current.as_object_mut().unwrap().remove("draftContext");
             }
-            return Ok(false);
         }
-        current["draft"] = json!("");
-        current["rustDraftImages"] = json!([]);
-        current.as_object_mut().unwrap().remove("draftContext");
+        let submitted = expected_scope["rustDraftImages"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        if let Some(images) = current
+            .get_mut("rustDraftImages")
+            .and_then(Value::as_array_mut)
+        {
+            images.retain(|image| !submitted.contains(image));
+        }
+        if current == before {
+            return Ok(clear_text);
+        }
         tx.execute(
             "UPDATE threads SET document=?2 WHERE id=?1",
             params![id, current.to_string()],
@@ -221,7 +229,7 @@ impl Store {
         cache_thread(&tx, &current, false)?;
         tx.commit()?;
         self.note_selection_scope(&current);
-        Ok(true)
+        Ok(clear_text)
     }
     pub(crate) fn choose_follow_up(
         &mut self,
@@ -364,6 +372,7 @@ mod tests {
         let id = text(&source, "id");
         source["draft"] = json!("original synthetic draft");
         store.save(&source).unwrap();
+        let (_, revision) = store.thread_with_draft_revision(&id).unwrap();
         let mut other = Store::open(&path).unwrap();
         let edited = other
             .patch_thread(&id, &json!({"draft":"newer independent draft"}))
@@ -373,7 +382,11 @@ mod tests {
                 .queue_native_follow_up(&source, "original synthetic draft", false)
                 .is_err()
         );
-        assert!(!store.clear_native_follow_up_draft(&source).unwrap());
+        assert!(
+            !store
+                .clear_native_follow_up_draft(&source, revision.as_deref())
+                .unwrap()
+        );
         let mut turn = source.clone();
         turn["draft"] = json!("");
         turn["items"] =
@@ -402,17 +415,63 @@ mod tests {
         original["draft"] = json!("sent");
         original["rustDraftImages"] = json!([submitted]);
         store.save(&original).unwrap();
+        let (_, revision) = store.thread_with_draft_revision(&id).unwrap();
 
         let mut edited = original.clone();
         edited["draft"] = json!("next message");
         edited["rustDraftImages"] = json!([submitted, newer, changed]);
         edited["draftContext"] = json!({"keep":true});
         store.save(&edited).unwrap();
-        assert!(!store.clear_native_follow_up_draft(&original).unwrap());
+        assert!(
+            !store
+                .clear_native_follow_up_draft(&original, revision.as_deref())
+                .unwrap()
+        );
         let actual = store.thread(&id).unwrap();
         assert_eq!(actual["draft"], "next message");
         assert_eq!(actual["draftContext"], edited["draftContext"]);
         assert_eq!(actual["rustDraftImages"], json!([newer, changed]));
+    }
+
+    #[test]
+    fn acknowledged_text_clears_across_context_changes_but_not_a_retyped_draft() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.sqlite");
+        let mut store = Store::open(&path).unwrap();
+        let mut original = store.new_thread("").unwrap();
+        let id = text(&original, "id");
+        original["draft"] = json!("submitted");
+        original["rustDraftImages"] = json!([{"id":"first"}]);
+        store.save(&original).unwrap();
+        let (_, revision) = store.thread_with_draft_revision(&id).unwrap();
+
+        let mut other = Store::open(&path).unwrap();
+        let mut next = other.thread(&id).unwrap();
+        next["draftContext"] = json!([{"id":"new-context"}]);
+        next["rustDraftImages"] = json!([{"id":"first"}, {"id":"next"}]);
+        next["selection"]["modelID"] = json!("different-model");
+        other.save(&next).unwrap();
+        assert!(
+            store
+                .clear_native_follow_up_draft(&original, revision.as_deref())
+                .unwrap()
+        );
+        let saved = other.thread(&id).unwrap();
+        assert_eq!(saved["draft"], "");
+        assert_eq!(saved["draftContext"], next["draftContext"]);
+        assert_eq!(saved["rustDraftImages"], json!([{"id":"next"}]));
+        assert_eq!(saved["selection"], next["selection"]);
+
+        other.patch_draft(&id, "submitted").unwrap();
+        let (submitted, revision) = store.thread_with_draft_revision(&id).unwrap();
+        // This explicit write can be a deliberate retype of the same text.
+        other.patch_draft(&id, "submitted").unwrap();
+        assert!(
+            !store
+                .clear_native_follow_up_draft(&submitted, revision.as_deref())
+                .unwrap()
+        );
+        assert_eq!(other.thread(&id).unwrap()["draft"], "submitted");
     }
     #[test]
     fn uncertainty_is_account_scoped_durable_and_old_nonce_cannot_clear_a_new_reservation() {

@@ -9,6 +9,8 @@ fn compact_uses_the_session_endpoint_and_waits_for_execution() {
         fs::write(&executable, r#"#!/usr/bin/env python3
 import http.server,json,os,queue,sys
 events=queue.Queue()
+def mark(name):
+  with open(name,'w') as marker: marker.write('ready')
 class Handler(http.server.BaseHTTPRequestHandler):
   def log_message(self,*args): pass
   def reply(self,data):
@@ -16,6 +18,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
   def do_GET(self):
     if self.path=='/api/event':
       self.send_response(200); self.send_header('Content-Type','text/event-stream'); self.end_headers()
+      mark('event-connected')
       self.wfile.write(b'data: {"type":"server.connected"}\n\n'); self.wfile.flush()
       while True:
         item=events.get(); self.wfile.write(('data: '+json.dumps(item)+'\n\n').encode()); self.wfile.flush()
@@ -29,6 +32,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     self.rfile.read(int(self.headers.get('Content-Length',0))); self.reply({'data':{}})
   def do_POST(self):
     data=json.loads(self.rfile.read(int(self.headers.get('Content-Length',0))))
+    mark('control-received')
     mode=os.path.basename(sys.argv[0])
     if mode=='goal-command':
       assert self.path=='/api/session/native/command' and data=={'name':'goal','text':'finish this'}
@@ -41,6 +45,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     events.put({'type':'session.execution.succeeded','data':{'sessionID':'native'}})
 http.server.ThreadingHTTPServer.daemon_threads=True
 server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Handler)
+mark('server-ready')
 print('server listening on http://127.0.0.1:%d/'%server.server_port,flush=True)
 server.serve_forever()
 "#).unwrap();
@@ -72,10 +77,28 @@ server.serve_forever()
                 ..Default::default()
             },
         );
+        // The provider allows up to 30 s for process startup, followed by a
+        // separate event-stream connection and several HTTP requests. A single
+        // 10 s event timeout incorrectly failed before those phases could end
+        // on busy runners. Observe each actual fixture milestone instead.
+        for marker in ["server-ready", "event-connected", "control-received"] {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while !directory.path().join(marker).is_file() {
+                if let Ok(event) = session.events.try_recv() {
+                    match event {
+                        Event::Failed(error) => panic!("{mode} failed before {marker}: {error}"),
+                        Event::Finished => panic!("{mode} finished before {marker}"),
+                        _ => {}
+                    }
+                }
+                assert!(Instant::now() < deadline, "{mode} did not reach {marker}");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
         loop {
             match session
                 .events
-                .recv_timeout(Duration::from_secs(10))
+                .recv_timeout(Duration::from_secs(16))
                 .unwrap()
             {
                 Event::Finished if mode != "wrong-receipt" => break,

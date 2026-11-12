@@ -809,6 +809,11 @@ fn accepted_payload_preserves_a_newer_composer_and_rejects_only_identical_resubm
     engine.store.save(&source).unwrap();
     let ticket = engine.send_native_follow_up(&source, false).unwrap();
     let request = server.next_request().unwrap();
+    // The user explicitly retyped the same text for the next message.
+    engine
+        .store
+        .patch_draft(&id, source["draft"].as_str().unwrap())
+        .unwrap();
     let mut newer = engine.store.thread(&id).unwrap();
     newer["draftContext"][0]["text"] = json!("Newer reference typed during ACK");
     engine.store.save(&newer).unwrap();
@@ -840,6 +845,93 @@ fn accepted_payload_preserves_a_newer_composer_and_rejects_only_identical_resubm
     engine.poll();
     engine.poll();
     engine.collect_native_follow_up(new_ticket).unwrap();
+    finish_fake(&mut engine, &id, release);
+}
+
+#[test]
+fn accepted_steer_clears_sent_text_when_next_context_changes_during_ack() {
+    let Fixture {
+        _dir,
+        mut engine,
+        id,
+        mut server,
+        release,
+        ..
+    } = fixture();
+    let source = engine.store.thread(&id).unwrap();
+    let ticket = engine.send_native_follow_up(&source, false).unwrap();
+    let request = server.next_request().unwrap();
+    let mut next = engine.store.thread(&id).unwrap();
+    next["draftContext"] = json!([{"id":Uuid::new_v4(),"kind":"quote","text":"Next reference"}]);
+    engine.store.save(&next).unwrap();
+    server.response(&json!({"id":request["id"],"result":{"turnId":"native-turn"}}));
+    engine.poll();
+    engine.poll();
+    assert_eq!(
+        engine.native_follow_up_status(&ticket).unwrap(),
+        NativeFollowUpStatus::Delivered {
+            dispatch: Dispatch::Steer,
+            draft_cleared: true,
+        }
+    );
+    let saved = engine.store.thread(&id).unwrap();
+    assert_eq!(saved["draft"], "");
+    assert_eq!(saved["draftContext"], next["draftContext"]);
+    assert!(
+        saved["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| { item["kind"] == "user" && item["text"] == source["draft"] })
+    );
+    engine.collect_native_follow_up(ticket).unwrap();
+    finish_fake(&mut engine, &id, release);
+}
+
+#[test]
+fn explicit_retype_of_same_message_can_be_sent_again_after_ack() {
+    let Fixture {
+        _dir,
+        mut engine,
+        id,
+        mut server,
+        release,
+        ..
+    } = fixture();
+    let source = engine.store.thread(&id).unwrap();
+    let first = engine.send_native_follow_up(&source, false).unwrap();
+    let request = server.next_request().unwrap();
+    engine
+        .store
+        .patch_draft(&id, source["draft"].as_str().unwrap())
+        .unwrap();
+    server.response(&json!({"id":request["id"],"result":{"turnId":"native-turn"}}));
+    engine.poll();
+    engine.poll();
+    assert!(matches!(
+        engine.native_follow_up_status(&first).unwrap(),
+        NativeFollowUpStatus::Delivered {
+            draft_cleared: false,
+            ..
+        }
+    ));
+    engine.collect_native_follow_up(first).unwrap();
+    let next = engine.store.thread(&id).unwrap();
+    assert_eq!(next["draft"], source["draft"]);
+    let second = engine.send_native_follow_up(&next, false).unwrap();
+    let request = server.next_request().unwrap();
+    server.response(&json!({"id":request["id"],"result":{"turnId":"native-turn"}}));
+    engine.poll();
+    engine.poll();
+    assert!(matches!(
+        engine.native_follow_up_status(&second).unwrap(),
+        NativeFollowUpStatus::Delivered {
+            draft_cleared: true,
+            ..
+        }
+    ));
+    assert_eq!(engine.store.thread(&id).unwrap()["draft"], "");
+    engine.collect_native_follow_up(second).unwrap();
     finish_fake(&mut engine, &id, release);
 }
 

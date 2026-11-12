@@ -39,6 +39,7 @@ enum Delivery {
 struct Operation {
     thread: String,
     source: Value,
+    draft_revision: Option<Vec<u8>>,
     prefix: Option<PrefixProof>,
     text: String,
     dispatch: Dispatch,
@@ -86,7 +87,7 @@ impl PrefixProof {
 pub(super) struct State {
     owner: Uuid,
     operations: HashMap<Uuid, Operation>,
-    blocked: HashMap<String, Value>,
+    blocked: HashMap<String, (Value, Option<Vec<u8>>)>,
 }
 impl Default for State {
     fn default() -> Self {
@@ -258,7 +259,7 @@ impl Engine {
             !self.unsaved_threads.contains_key(&id),
             "Transcript persistence is recovering"
         );
-        let current = self.store.thread(&id)?;
+        let (current, draft_revision) = self.store.thread_with_draft_revision(&id)?;
         ensure!(
             scope(&current) == scope(expected),
             "Composer changed; draft retained"
@@ -296,15 +297,16 @@ impl Engine {
         );
         if !is_queue {
             ensure!(
-                self.native_follow_up.blocked.get(&id) != Some(&scope(&current)),
+                self.native_follow_up.blocked.get(&id)
+                    != Some(&(scope(&current), draft_revision.clone())),
                 "This message was already submitted; edit it before submitting again"
             );
             self.native_follow_up.blocked.remove(&id);
             let store = &self.store;
             self.native_follow_up.blocked.retain(|thread, submitted| {
                 store
-                    .thread(thread)
-                    .is_ok_and(|value| scope(&value) == *submitted)
+                    .thread_with_draft_revision(thread)
+                    .is_ok_and(|(value, revision)| (scope(&value), revision) == *submitted)
             });
             ensure!(
                 self.native_follow_up.blocked.len() < 32,
@@ -455,6 +457,7 @@ impl Engine {
         let mut op = Operation {
             thread: id.clone(),
             source: scope(&current),
+            draft_revision: draft_revision.clone(),
             prefix,
             text: text.clone(),
             dispatch,
@@ -539,7 +542,9 @@ impl Engine {
                 }
             )
         {
-            self.native_follow_up.blocked.insert(id, scope(&current));
+            self.native_follow_up
+                .blocked
+                .insert(id, (scope(&current), draft_revision));
         }
         self.native_follow_up.operations.insert(ticket.id, op);
         self.revision += 1;
@@ -600,7 +605,10 @@ impl Engine {
                                     self.complete_native_queue_steer(claim)?;
                                     Ok(Some(false))
                                 } else {
-                                    Ok(Some(self.store.clear_native_follow_up_draft(&op.source)?))
+                                    Ok(Some(self.store.clear_native_follow_up_draft(
+                                        &op.source,
+                                        op.draft_revision.as_deref(),
+                                    )?))
                                 }
                             }
                             Some("rejected") if op.queue.is_some() => {
@@ -651,7 +659,10 @@ impl Engine {
                             self.complete_native_queue_steer(claim)?;
                             Ok(Some(false))
                         } else {
-                            Ok(Some(self.store.clear_native_follow_up_draft(&op.source)?))
+                            Ok(Some(self.store.clear_native_follow_up_draft(
+                                &op.source,
+                                op.draft_revision.as_deref(),
+                            )?))
                         }
                     }
                     Delivery::Deferred(worker) => {

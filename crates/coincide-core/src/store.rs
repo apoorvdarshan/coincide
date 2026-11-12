@@ -70,6 +70,14 @@ pub struct Store {
     selection_scopes: composer_scope_store::Scopes,
 }
 
+fn mark_draft_write(tx: &rusqlite::Transaction<'_>, id: &str) -> Result<()> {
+    tx.execute(
+        "INSERT INTO native_draft_revisions(id,revision) VALUES (?1,randomblob(16)) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision",
+        [id],
+    )?;
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThreadSummary {
     pub id: String,
@@ -309,6 +317,20 @@ impl Store {
             tx.commit()?;
         }
         navigation_cache::install(&mut db)?;
+        // A follow-up can be acknowledged after the user has started the next
+        // draft. Track draft writes separately from transcript and attachment
+        // updates, including an explicit rewrite to identical text.
+        db.execute_batch("CREATE TABLE IF NOT EXISTS native_draft_revisions(id TEXT PRIMARY KEY COLLATE NOCASE, revision BLOB NOT NULL CHECK(length(revision)=16));
+            CREATE TRIGGER IF NOT EXISTS native_draft_revision_insert AFTER INSERT ON threads BEGIN
+              INSERT INTO native_draft_revisions(id,revision) VALUES (NEW.id,randomblob(16)) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision;
+            END;
+            CREATE TRIGGER IF NOT EXISTS native_draft_revision_update AFTER UPDATE OF document ON threads
+              WHEN json_extract(OLD.document,'$.draft') IS NOT json_extract(NEW.document,'$.draft') BEGIN
+              INSERT INTO native_draft_revisions(id,revision) VALUES (NEW.id,randomblob(16)) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision;
+            END;
+            CREATE TRIGGER IF NOT EXISTS native_draft_revision_delete AFTER DELETE ON threads BEGIN
+              DELETE FROM native_draft_revisions WHERE id=OLD.id;
+            END;")?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -580,6 +602,16 @@ impl Store {
             |r| r.get(0),
         )?;
         Ok(serde_json::from_str(&document)?)
+    }
+
+    /// Read the thread and its draft-write identity in one SQLite snapshot.
+    pub(crate) fn thread_with_draft_revision(&self, id: &str) -> Result<(Value, Option<Vec<u8>>)> {
+        let (document, revision): (String, Option<Vec<u8>>) = self.connection()?.query_row(
+            "SELECT t.document,r.revision FROM threads t LEFT JOIN native_draft_revisions r ON r.id=t.id COLLATE NOCASE WHERE t.id=?1",
+            [id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        Ok((serde_json::from_str(&document)?, revision))
     }
 
     /// Bounded exact UUID identity lookup. Read only scalar IDs, never decode
@@ -1002,6 +1034,11 @@ impl Store {
         ensure!(draft.len() <= 1_048_576, "Draft exceeds 1 MiB");
         self.connection()?;
         let tx = self.connection_mut()?.transaction()?;
+        let same_draft: bool = tx.query_row(
+            "SELECT coalesce(json_type(document,'$.draft')='text' AND json_extract(document,'$.draft')=?2,0) FROM threads WHERE id=?1 COLLATE NOCASE",
+            params![id, draft],
+            |row| row.get(0),
+        )?;
         let navigation = tx
             .query_row(
                 "SELECT metadata FROM thread_navigation WHERE id=?1 COLLATE NOCASE",
@@ -1020,6 +1057,11 @@ impl Store {
             params![id, draft],
         )?;
         ensure!(changed == 1, "Thread not found");
+        if same_draft {
+            // The change trigger handles different text; an explicit rewrite
+            // of the same text still represents a new editing intent.
+            mark_draft_write(&tx, id)?;
+        }
         if let Some(metadata) = navigation {
             tx.execute(
                 "INSERT INTO thread_navigation(id,metadata) VALUES (?1,?2) ON CONFLICT(id) DO UPDATE SET metadata=excluded.metadata",
@@ -1044,6 +1086,9 @@ impl Store {
             return self.thread(id);
         }
         let mut value = self.thread(id)?;
+        let same_draft = patch
+            .get("draft")
+            .is_some_and(|draft| value.get("draft") == Some(draft));
         for (key, next) in patch {
             value[key] = next.clone();
         }
@@ -1053,6 +1098,9 @@ impl Store {
             "UPDATE threads SET document=?2 WHERE id=?1",
             params![id, value.to_string()],
         )?;
+        if same_draft {
+            mark_draft_write(&tx, id)?;
+        }
         cache_thread(&tx, &value, reindex)?;
         if reindex {
             tx.execute("DELETE FROM search WHERE thread_id=?1", [id])?;
@@ -2020,6 +2068,8 @@ mod tests {
                 INSERT INTO patch_write_audit VALUES ('threads','update'); END;
             CREATE TEMP TRIGGER audit_patch_summary AFTER UPDATE ON main.thread_summaries BEGIN
                 INSERT INTO patch_write_audit VALUES ('thread_summaries','update'); END;
+            CREATE TEMP TRIGGER audit_draft_revision AFTER UPDATE ON main.native_draft_revisions BEGIN
+                INSERT INTO patch_write_audit VALUES ('native_draft_revisions','update'); END;
             CREATE TEMP TRIGGER audit_patch_navigation_delete AFTER DELETE ON main.thread_navigation BEGIN
                 INSERT INTO patch_write_audit VALUES ('thread_navigation','delete'); END;
             CREATE TEMP TRIGGER audit_patch_navigation_insert AFTER INSERT ON main.thread_navigation BEGIN
@@ -2042,15 +2092,16 @@ mod tests {
         assert_eq!(
             audit,
             vec![
+                ("native_draft_revisions".into(), "update".into()),
                 ("thread_navigation".into(), "delete".into()),
                 ("thread_navigation".into(), "insert".into()),
                 ("thread_summaries".into(), "update".into()),
                 ("threads".into(), "update".into()),
             ]
         );
-        // Four observed writes plus their four temporary audit rows. Search
+        // Five observed writes plus their five temporary audit rows. Search
         // maintenance would add unaccounted writes and violate this assertion.
-        assert_eq!(db.connection().unwrap().total_changes() - before, 8);
+        assert_eq!(db.connection().unwrap().total_changes() - before, 10);
         assert_eq!(changed["items"], v["items"]);
         assert_eq!(changed["sessions"], v["sessions"]);
         assert_eq!(changed["draftContext"], v["draftContext"]);
