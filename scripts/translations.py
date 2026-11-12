@@ -5,9 +5,7 @@
   scripts/translations.py check <lang> <in.json>      validates a translation file against the catalog
   scripts/translations.py import <lang> <in.json>     writes a validated file into the catalog (state needs_review)
 
-The catalog is the Mac app's (Coincide/Resources/Localizable.xcstrings) unless the command starts with
---catalog <path>: CoincideRemote/Localizable.xcstrings for Coincide Remote on iOS, or an InfoPlist.xcstrings for
-the permission texts.
+The default catalog is Coincide Remote's. Use --catalog <path> for a different catalog.
 
 A translation file maps catalog keys to a string, or to {"plural": {"one": "...", "other": "..."}} for a string with
 exactly one integer placeholder, using only the CLDR plural categories of the language. Placeholders must match the
@@ -19,7 +17,7 @@ import re
 import sys
 from pathlib import Path
 
-CATALOG = Path(__file__).resolve().parent.parent / "Coincide/Resources/Localizable.xcstrings"
+CATALOG = Path(__file__).resolve().parent.parent / "CoincideRemote/Localizable.xcstrings"
 # CLDR plural categories each supported language uses for whole numbers.
 PLURALS = {
     "de": {"one", "other"}, "es": {"one", "many", "other"}, "es-419": {"one", "many", "other"},

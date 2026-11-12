@@ -58,7 +58,7 @@ def labels():
 
 
 def generate():
-    catalog = json.loads((ROOT.parent / 'Coincide/Resources/Localizable.xcstrings').read_text(encoding='utf-8'))
+    catalog = json.loads((ROOT / 'Resources/Localizable.xcstrings').read_text(encoding='utf-8'))
     values = labels()
     languages = sorted({language for key in LABELS.values()
                         for language in catalog['strings'].get(key, {}).get('localizations', {})} | {'en'})

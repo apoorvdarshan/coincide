@@ -1,11 +1,11 @@
 #!/bin/bash
-# Prints the app's version, MARKETING_VERSION in project.yml (CFBundleShortVersionString). A release's tag is v<this>.
+# Prints the Rust workspace version. A release tag is v<this>.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-version="$(sed -n 's/^ *MARKETING_VERSION: *"\{0,1\}\([^"]*\)"\{0,1\} *$/\1/p' "$root/project.yml")"
-# Three numeric components, no leading zeros: what the in-app updater accepts (UpdateVersion in AppUpdate.swift).
+version="$(awk '/^\[workspace.package\]/ { section=1; next } /^\[/ { section=0 } section && /^version = / { gsub(/[^0-9.]/, "", $0); print; exit }' "$root/Cargo.toml")"
+# Three numeric components with no leading zeros.
 if ! [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-    echo "error: MARKETING_VERSION in project.yml (\"$version\") isn't a version like 1.2.3" >&2
+    echo "error: workspace version in Cargo.toml (\"$version\") isn't a version like 1.2.3" >&2
     exit 1
 fi
 echo "$version"

@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- Keys Xcode can't generate from build settings; the rest come from INFOPLIST_KEY_* in project.yml. -->
+	<!-- Keys Xcode can't generate from build settings; the rest come from INFOPLIST_KEY_* in project-shared.yml. -->
 	<!-- RevenueCat's public App Store SDK key for Coincide Pro and tips (ProStore). It's meant to ship in the app; secret
 	     keys never go here, and ProStore ignores anything but an App Store key (appl_), so a Test Store key can't ship. -->
 	<key>RevenueCatAPIKey</key>
