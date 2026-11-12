@@ -28,7 +28,7 @@ fn compact_uses_the_session_endpoint_and_waits_for_execution() {
 open('python-started','w').write('ready')
 import sys
 sys.stderr=open('fixture-stderr','w',buffering=1)
-import http.server,json,os,queue
+import http.server,json,os,queue,socket,socketserver
 open('python-imported','w').write('ready')
 events=queue.Queue()
 def mark(name):
@@ -65,8 +65,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
       self.reply({'data':{'id':received,'sessionID':'native','type':'compaction'}})
     events.put({'type':'session.execution.started','data':{'sessionID':'native'}})
     events.put({'type':'session.execution.succeeded','data':{'sessionID':'native'}})
-http.server.ThreadingHTTPServer.daemon_threads=True
-server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Handler)
+class LocalServer(http.server.ThreadingHTTPServer):
+  daemon_threads=True
+  def server_bind(self):
+    # HTTPServer normally calls getfqdn(), which may block on reverse DNS on
+    # macOS runners even though this fixture only binds an IPv4 loopback IP.
+    socketserver.TCPServer.server_bind(self)
+    self.server_name='127.0.0.1'
+    self.server_port=self.server_address[1]
+def no_dns(*args):
+  raise AssertionError('the loopback fixture must not perform DNS lookups')
+socket.getfqdn=no_dns
+server=LocalServer(('127.0.0.1',0),Handler)
 mark('server-ready')
 print('server listening on http://127.0.0.1:%d/'%server.server_port,flush=True)
 server.serve_forever()
