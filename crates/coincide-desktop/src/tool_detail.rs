@@ -6,6 +6,7 @@
 //! single forward scan for the grammars this panel uses.
 use super::*;
 use gpui_kit::assets::IconName;
+use gpui_kit::component::spinner::Spinner;
 use gpui_kit::{Role, StatefulInteractiveElement as _};
 use serde_json::Value;
 use std::ops::Range;
@@ -654,9 +655,11 @@ impl super::Coincide {
                             )
                             .when(running.is_some(), |row| {
                                 row.child(
-                                    Icon::new(IconName::LoaderCircle)
+                                    Spinner::new()
+                                        .icon(IconName::LoaderCircle)
                                         .xsmall()
-                                        .text_color(Hsla::from(secondary)),
+                                        .color(Hsla::from(secondary))
+                                        .ease(|progress| progress),
                                 )
                             })
                             .child(
@@ -886,7 +889,6 @@ impl super::Coincide {
         let title_text =
             code_span_text(&title, &code, secondary.into(), code_background, window, cx);
         let status_icon = match status {
-            "running" => Some((IconName::LoaderCircle, Hsla::from(secondary))),
             "completed" => Some((IconName::Check, Hsla::from(tertiary))),
             "failed" => Some((IconName::X, Hsla::from(failure))),
             "declined" => Some((IconName::Ban, Hsla::from(warning))),
@@ -952,6 +954,15 @@ impl super::Coincide {
                         .text_xs()
                         .text_color(tertiary)
                         .child(duration),
+                )
+            })
+            .when(status == "running", |row| {
+                row.child(
+                    Spinner::new()
+                        .icon(IconName::LoaderCircle)
+                        .xsmall()
+                        .color(Hsla::from(secondary))
+                        .ease(|progress| progress),
                 )
             })
             .when_some(status_icon, |row, (icon, color)| {
