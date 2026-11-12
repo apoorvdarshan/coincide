@@ -871,6 +871,7 @@ pub(super) enum PickerFacet {
 #[derive(Default)]
 pub(super) struct ComposerSelection {
     drafts: HashMap<String, SelectionDraft>,
+    goal_yield_attempts: std::collections::HashSet<String>,
     bound: Option<String>,
     context: Option<(String, Value, bool)>,
     capability_cache: capability_cache::CapabilityCache,
@@ -2341,6 +2342,9 @@ impl Coincide {
             if self.running.contains(&id) {
                 // Queue it: the draft stays as it is and the turn's end applies
                 // it, instead of writing a selection the agent is still using.
+                let staged = draft.has_edits();
+                engine.defer_goal_for_staged_selection(&current, staged)?;
+                self.selection_ui.goal_yield_attempts.remove(&id);
                 anyhow::bail!(STAGED_SELECTION);
             }
             let provider = capabilities["providers"]
@@ -2403,6 +2407,14 @@ impl Coincide {
         // The turn ended on its own; the saved-selection note is not news.
         if self.status.starts_with("Selection saved") {
             self.status.clear();
+        }
+    }
+    pub(super) fn flush_yielded_goal_selection(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.selected.as_ref().map(|thread| text(thread, "id")) else {
+            return;
+        };
+        if self.selection_ui.goal_yield_attempts.insert(id) {
+            self.flush_staged_selection(cx);
         }
     }
     /// Show the last catalog at once and only read again when there is none.

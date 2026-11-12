@@ -145,6 +145,89 @@ fn codex_compact_during_a_turn_is_queued_instead_of_steered_as_text() {
 }
 
 #[test]
+fn goal_control_does_not_answer_an_existing_approval() {
+    let Fixture {
+        _dir,
+        mut engine,
+        id,
+        release,
+        control,
+        ..
+    } = fixture();
+    engine
+        .store
+        .patch_thread(&id, &json!({"draft":"/goal pause"}))
+        .unwrap();
+    engine.runs.get_mut(&id).unwrap().pending.insert("approval".into(), json!({"id":77,"method":"item/commandExecution/requestApproval","params":{"availableDecisions":["accept","decline"]}}));
+    let source = engine.store.thread(&id).unwrap();
+    assert_eq!(
+        engine.native_follow_up_dispatch(&source, false).unwrap(),
+        Dispatch::Steer
+    );
+    let ticket = engine.send_native_follow_up(&source, false).unwrap();
+    match control.recv_timeout(Duration::from_secs(5)).unwrap() {
+        agent::Control::Steer { text, reply } => {
+            assert_eq!(text, "/goal pause");
+            reply.send(Ok(())).unwrap();
+        }
+        _ => panic!("goal control must not answer or stop the pending approval"),
+    }
+    engine.poll();
+    assert!(engine.runs[&id].pending.contains_key("approval"));
+    assert!(matches!(
+        engine.native_follow_up_status(&ticket).unwrap(),
+        NativeFollowUpStatus::Delivered {
+            draft_cleared: true,
+            ..
+        }
+    ));
+    engine.collect_native_follow_up(ticket).unwrap();
+    finish_fake(&mut engine, &id, release);
+}
+
+#[test]
+fn staged_selection_yields_the_goal_without_discarding_queued_messages() {
+    let Fixture {
+        _dir,
+        mut engine,
+        id,
+        release,
+        ..
+    } = fixture();
+    let source = engine.store.thread(&id).unwrap();
+    engine
+        .defer_goal_for_staged_selection(&source, true)
+        .unwrap();
+    assert!(engine.goal_selection_waiting.contains(&id));
+    assert!(engine.runs[&id].session.goal_queue_is_waiting());
+    let mut stale = source.clone();
+    stale["selection"]["modelID"] = json!("other-model");
+    assert!(
+        engine
+            .defer_goal_for_staged_selection(&stale, false)
+            .is_err()
+    );
+    let mut current = engine.store.thread(&id).unwrap();
+    crate::message_queue::add(&mut current, "queued message").unwrap();
+    engine.store.save(&current).unwrap();
+    engine.enabled_queues.insert(id.clone());
+    engine
+        .defer_goal_for_staged_selection(&source, false)
+        .unwrap();
+    assert!(!engine.goal_selection_waiting.contains(&id));
+    assert!(
+        engine.runs[&id].session.goal_queue_is_waiting(),
+        "queue still owns the next turn"
+    );
+    assert_eq!(
+        crate::message_queue::read(&engine.store.thread(&id).unwrap()).unwrap()[0].text,
+        "queued message"
+    );
+    engine.freeze_admissions();
+    finish_fake(&mut engine, &id, release);
+}
+
+#[test]
 fn live_turn_accepts_follow_up_without_a_new_model_catalog() {
     let Fixture {
         _dir,

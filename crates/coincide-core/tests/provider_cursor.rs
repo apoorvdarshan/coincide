@@ -276,6 +276,9 @@ fn cursor_fixture_child() {
                 };
                 break;
             }
+            Event::Goal { .. } | Event::Usage | Event::TurnBoundary => {
+                panic!("unexpected Codex goal event from Cursor")
+            }
         }
     }
     if matches!(mode.as_str(), "new" | "resume") {

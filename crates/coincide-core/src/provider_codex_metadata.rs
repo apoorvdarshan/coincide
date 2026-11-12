@@ -46,7 +46,11 @@ impl Rpc for Wire<'_> {
         ensure!(
             matches!(
                 method,
-                "initialize" | "account/read" | "model/list" | "skills/list"
+                "initialize"
+                    | "account/read"
+                    | "model/list"
+                    | "skills/list"
+                    | "experimentalFeature/list"
             ),
             "Unsupported metadata request"
         );
@@ -119,7 +123,57 @@ pub(crate) fn skills(
         is_built_in: true,
         is_slash_command: true,
     });
+    // The native feature list is paginated and respects the current Codex
+    // installation/configuration. Older servers may not support this query;
+    // never lose discovered skills merely because feature lookup failed.
+    wire.deadline = wire.deadline.min(Instant::now() + Duration::from_secs(3));
+    if goals_enabled(&mut wire, allowed).unwrap_or(false) {
+        commands.push(crate::composer_suggestions::ProviderCommand {
+            name: "goal".into(),
+            description: Some("Manage a persistent Codex goal".into()),
+            argument_hint: Some("objective | pause | resume | clear".into()),
+            aliases: Vec::new(),
+            kind: crate::composer_suggestions::CommandKind::Command,
+            is_built_in: true,
+            is_slash_command: true,
+        });
+    }
     Ok(commands)
+}
+
+fn goals_enabled(rpc: &mut impl Rpc, allowed: &impl Fn() -> bool) -> Result<bool> {
+    let mut cursor: Option<String> = None;
+    let mut cursors = std::collections::HashSet::new();
+    for _ in 0..16 {
+        ensure!(allowed(), "Feature discovery cancelled");
+        let mut params = json!({"limit":100});
+        if let Some(cursor) = &cursor {
+            params["cursor"] = json!(cursor);
+        }
+        let page = rpc.call("experimentalFeature/list", params)?;
+        let rows = page["data"]
+            .as_array()
+            .context("Codex features are missing")?;
+        ensure!(rows.len() <= 1000, "Codex feature page exceeds its bound");
+        if let Some(goal) = rows.iter().find(|row| row["name"] == "goals") {
+            return goal["enabled"]
+                .as_bool()
+                .context("Codex goal availability is missing");
+        }
+        ensure!(
+            page["nextCursor"].is_null() || page["nextCursor"].is_string(),
+            "Codex feature cursor is invalid"
+        );
+        let Some(next) = page["nextCursor"].as_str() else {
+            return Ok(false);
+        };
+        ensure!(
+            !next.is_empty() && next.len() <= 1024 && cursors.insert(next.to_owned()),
+            "Codex feature cursor is repeated or invalid"
+        );
+        cursor = Some(next.to_owned());
+    }
+    anyhow::bail!("Codex feature metadata exceeds sixteen pages")
 }
 fn response(frame: &Value, id: u64) -> Result<Option<Value>> {
     if frame.get("method").is_some() {
@@ -266,6 +320,37 @@ mod tests {
             self.methods.push("initialized");
             Ok(())
         }
+    }
+    #[test]
+    fn goal_suggestions_follow_paginated_provider_feature_state() {
+        let page = |data: Value, cursor: Value| json!({"data":data,"nextCursor":cursor});
+        let mut rpc = Fake {
+            replies: [
+                page(json!([{"name":"other","enabled":true}]), json!("next")),
+                page(json!([{"name":"goals","enabled":true}]), Value::Null),
+            ]
+            .into(),
+            methods: Vec::new(),
+        };
+        assert!(goals_enabled(&mut rpc, &|| true).unwrap());
+        assert_eq!(
+            rpc.methods,
+            ["experimentalFeature/list", "experimentalFeature/list"]
+        );
+        let mut rpc = Fake {
+            replies: [page(json!([{"name":"goals","enabled":false}]), Value::Null)].into(),
+            methods: Vec::new(),
+        };
+        assert!(!goals_enabled(&mut rpc, &|| true).unwrap());
+        let mut rpc = Fake {
+            replies: [
+                page(json!([]), json!("repeat")),
+                page(json!([]), json!("repeat")),
+            ]
+            .into(),
+            methods: Vec::new(),
+        };
+        assert!(goals_enabled(&mut rpc, &|| true).is_err());
     }
     #[test]
     fn metadata_wire_rejects_tool_requests_wrong_ids_and_raw_error_details() {

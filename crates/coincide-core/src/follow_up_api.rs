@@ -31,6 +31,7 @@ enum Delivery {
         reply: std::sync::mpsc::Receiver<std::result::Result<(), String>>,
         accepted: bool,
         started: Instant,
+        timeout: Duration,
         item_id: String,
         context: Value,
     },
@@ -216,6 +217,16 @@ impl Engine {
                 .any(|frame| frame["method"] != "item/tool/requestUserInput")
         });
         if run.is_some()
+            && thread["selection"]["provider"] == "codex"
+            && agent::codex_goals::parse(thread["draft"].as_str().unwrap_or("")).is_some()
+            && thread["rustDraftImages"]
+                .as_array()
+                .is_none_or(Vec::is_empty)
+            && !crate::composer_context::has_context(&thread["draftContext"])
+        {
+            return Ok(Dispatch::Steer);
+        }
+        if run.is_some()
             && matches!(
                 thread["selection"]["provider"].as_str(),
                 Some("codex" | "opencode")
@@ -371,7 +382,7 @@ impl Engine {
         }
         self.validate_native_follow_up_policy(&current)?;
         let cwd = self.working_directory(&current)?;
-        self.bot_instructions(&current, &cwd)?;
+        let bot_instructions = self.bot_instructions(&current, &cwd)?;
         let settings = self
             .store
             .document("settings.json")?
@@ -399,6 +410,17 @@ impl Engine {
         } else {
             choice::resolve(true, can_steer, alternate, behavior, approval)
         };
+        let goal_control = !is_queue
+            && run.provider == "codex"
+            && images.is_empty()
+            && !crate::composer_context::has_context(&context)
+            && bot_instructions.is_none()
+            && agent::codex_goals::parse(&text).is_some();
+        if goal_control {
+            // Goal controls target the live provider thread immediately; they
+            // neither steal queued messages nor answer unrelated approvals.
+            dispatch = Dispatch::Steer;
+        }
         if matches!(run.provider.as_str(), "codex" | "opencode")
             && agent::codex_compact_command(&text)
             && images.is_empty()
@@ -432,7 +454,11 @@ impl Engine {
             run.pending.len() <= 64,
             "Too many pending requests; respond explicitly first"
         );
-        for (key, frame) in run.pending.iter().filter(|_| dispatch != Dispatch::Queue) {
+        for (key, frame) in run
+            .pending
+            .iter()
+            .filter(|_| dispatch != Dispatch::Queue && !goal_control)
+        {
             let result = if frame["method"] == "item/tool/requestUserInput" {
                 json!({"answers":{}})
             } else {
@@ -467,7 +493,23 @@ impl Engine {
         };
         match dispatch {
             Dispatch::Steer => {
-                if self
+                if goal_control {
+                    let reply = self
+                        .runs
+                        .get(&id)
+                        .context("Thread is not running")?
+                        .session
+                        .begin_steer_text(&text)?;
+                    op.delivery = Some(Delivery::TextSteer {
+                        provider: "codex".into(),
+                        reply,
+                        accepted: false,
+                        started: Instant::now(),
+                        timeout: Duration::from_secs(30),
+                        item_id: Uuid::new_v4().to_string(),
+                        context,
+                    });
+                } else if self
                     .runs
                     .get(&id)
                     .is_some_and(|run| matches!(run.provider.as_str(), "opencode" | "claude"))
@@ -486,6 +528,7 @@ impl Engine {
                         .provider
                         .clone();
                     op.delivery = Some(Delivery::TextSteer {
+                        timeout: text_steer_timeout(&provider),
                         provider,
                         reply,
                         accepted: false,
@@ -522,6 +565,7 @@ impl Engine {
                 if enabled {
                     self.enabled_queues.insert(id.clone());
                 }
+                self.sync_goal_queue_waiting(&id);
                 op.status = NativeFollowUpStatus::Delivered {
                     dispatch,
                     draft_cleared: true,
@@ -630,6 +674,7 @@ impl Engine {
                         reply,
                         accepted,
                         started,
+                        timeout,
                         item_id,
                         context,
                     } => {
@@ -638,7 +683,7 @@ impl Engine {
                                 Ok(Ok(())) => *accepted = true,
                                 Ok(Err(error)) => bail!("{provider} rejected the message: {error}"),
                                 Err(std::sync::mpsc::TryRecvError::Empty)
-                                    if started.elapsed() < text_steer_timeout(provider) =>
+                                    if started.elapsed() < *timeout =>
                                 {
                                     return Ok(None);
                                 }

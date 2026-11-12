@@ -3890,7 +3890,14 @@ impl Coincide {
                 self.splice_transcript(0..self.transcript_count, self.transcript_count);
                 cx.notify();
             }
-            if was_running && !is_running {
+            let staged_goal_selection = selected_thread.as_ref().is_some_and(|id| {
+                status["stagedGoalSelections"]
+                    .as_array()
+                    .is_some_and(|ids| ids.iter().any(|value| value.as_str() == Some(id.as_str())))
+            });
+            if !is_running && staged_goal_selection {
+                self.flush_yielded_goal_selection(cx);
+            } else if was_running && !is_running {
                 self.flush_staged_selection(cx);
             }
             self.observe_thread_activity(&status, window, cx);

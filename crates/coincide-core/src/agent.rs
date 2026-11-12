@@ -21,6 +21,8 @@ mod antigravity;
 #[path = "provider_claude.rs"]
 mod claude;
 pub(crate) use claude::command_metadata as claude_command_metadata;
+#[path = "codex_goals.rs"]
+pub(crate) mod codex_goals;
 #[path = "codex_profile_login.rs"]
 pub(crate) mod codex_profile_login;
 #[path = "codex_speed.rs"]
@@ -145,6 +147,19 @@ pub struct Launch {
 pub enum Event {
     Session(String),
     Frame(Value),
+    /// Native goal state bound to the provider thread that reported it.
+    Goal {
+        thread: String,
+        goal: Option<Value>,
+        notice: Option<String>,
+        /// true/false identifies an automatic queue pause/resume receipt.
+        queue_action: Option<bool>,
+        user_mutation: bool,
+    },
+    /// One completed native turn's usage is ready for durable accounting.
+    Usage,
+    /// A successful turn completed while the provider remains alive.
+    TurnBoundary,
     Finished,
     Failed(String),
 }
@@ -226,11 +241,13 @@ pub struct Session {
     pub events: Receiver<Event>,
     control: Sender<Control>,
     completion: WorkerCompletion,
-    usage: Arc<Mutex<Option<usage_capture::Snapshot>>>,
+    usage: Arc<Mutex<std::collections::VecDeque<usage_capture::Snapshot>>>,
     steering: Option<codex_steering::Client>,
     codex_profile_account: Option<String>,
     named_completion: Arc<Mutex<Option<crate::named_profile_resume::Acknowledged>>>,
     provider_control: Arc<std::sync::atomic::AtomicBool>,
+    pause_goal_on_stop: Arc<std::sync::atomic::AtomicBool>,
+    goal_queue_waiting: Arc<std::sync::atomic::AtomicBool>,
 }
 #[cfg(test)]
 mod completion_owner_tests {
@@ -262,6 +279,10 @@ pub(crate) struct LaunchOptions {
     pub prelude: Option<Box<dyn FnOnce() + Send>>,
     pub compact: bool,
     pub opencode_command: Option<String>,
+    pub codex_goal: Option<codex_goals::Command>,
+    pub goal_queue_waiting: bool,
+    pub resume_queued_goal: Option<codex_goals::PausedGoal>,
+    pub restore_paused_goal: Option<codex_goals::PausedGoal>,
 }
 impl Session {
     pub fn start(launch: Launch) -> Self {
@@ -321,6 +342,10 @@ impl Session {
             prelude,
             compact,
             opencode_command,
+            codex_goal,
+            goal_queue_waiting,
+            resume_queued_goal,
+            restore_paused_goal,
         } = options;
         let (profile, named_model, named_resume) = match named {
             Some(named) => (Some(named.profile), named.model, Some(named.resume)),
@@ -329,12 +354,22 @@ impl Session {
         let profile_account = profile.as_ref().map(|profile| profile.account().to_owned());
         let codex = matches!(&provider, Provider::Codex);
         let (steer_client, steer_server) = codex_steering::pair();
-        let usage = Arc::new(Mutex::new(None));
+        let usage = Arc::new(Mutex::new(std::collections::VecDeque::new()));
         let output = usage.clone();
         let named_completion = Arc::new(Mutex::new(None));
         let completed_output = named_completion.clone();
-        let provider_control = Arc::new(std::sync::atomic::AtomicBool::new(compact));
+        let provider_control = Arc::new(std::sync::atomic::AtomicBool::new(
+            compact
+                || restore_paused_goal.is_some()
+                || codex_goal
+                    .as_ref()
+                    .is_some_and(|command| !matches!(command, codex_goals::Command::Set(_))),
+        ));
         let control_receipt = provider_control.clone();
+        let pause_goal_on_stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop_policy = pause_goal_on_stop.clone();
+        let goal_queue_waiting = Arc::new(std::sync::atomic::AtomicBool::new(goal_queue_waiting));
+        let queue_waiting = goal_queue_waiting.clone();
         let configuration = crate::provider_configuration::current();
         let mut session = Self::spawn_worker(move |commands, events_tx| {
             // Work that must finish before the agent can change anything, such
@@ -387,6 +422,12 @@ impl Session {
                             named_resume,
                             completed_output,
                             compact,
+                            goal: codex_goal,
+                            provider_control: control_receipt,
+                            pause_goal_on_stop: stop_policy,
+                            queue_waiting,
+                            resume_queued_goal,
+                            restore_paused_goal,
                         },
                     ),
                     Provider::Claude => {
@@ -429,6 +470,8 @@ impl Session {
         session.codex_profile_account = profile_account;
         session.named_completion = named_completion;
         session.provider_control = provider_control;
+        session.pause_goal_on_stop = pause_goal_on_stop;
+        session.goal_queue_waiting = goal_queue_waiting;
         if codex {
             session.steering = Some(steer_client);
         }
@@ -509,7 +552,7 @@ impl Session {
             .submit_input_exact(text, images, identity)
     }
     pub(crate) fn take_usage(&self) -> Option<usage_capture::Snapshot> {
-        self.usage.lock().ok()?.take()
+        self.usage.lock().ok()?.pop_front()
     }
     fn spawn_worker(work: impl FnOnce(Receiver<Control>, &Sender<Event>) + Send + 'static) -> Self {
         let (events_tx, events) = mpsc::channel();
@@ -521,11 +564,13 @@ impl Session {
             events,
             control,
             completion: WorkerCompletion::observe(worker),
-            usage: Arc::new(Mutex::new(None)),
+            usage: Arc::new(Mutex::new(std::collections::VecDeque::new())),
             steering: None,
             codex_profile_account: None,
             named_completion: Arc::new(Mutex::new(None)),
             provider_control: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            pause_goal_on_stop: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            goal_queue_waiting: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
     #[cfg(test)]
@@ -542,13 +587,24 @@ impl Session {
     }
     #[cfg(test)]
     pub(crate) fn fixture_usage(&self, snapshot: usage_capture::Snapshot) {
-        *self.usage.lock().unwrap() = Some(snapshot);
+        self.usage.lock().unwrap().push_back(snapshot);
     }
     pub fn worker_completion(&self) -> WorkerCompletion {
         self.completion.clone()
     }
     pub fn stop(&self) {
         let _ = self.control.send(Control::Stop);
+    }
+    pub(crate) fn stop_for_user(&self) {
+        self.pause_goal_on_stop.store(true, Ordering::Release);
+        self.stop();
+    }
+    pub(crate) fn set_goal_queue_waiting(&self, waiting: bool) {
+        self.goal_queue_waiting.store(waiting, Ordering::Release);
+    }
+    #[cfg(test)]
+    pub(crate) fn goal_queue_is_waiting(&self) -> bool {
+        self.goal_queue_waiting.load(Ordering::Acquire)
     }
     pub fn reply(&self, id: Value, result: Value) -> Result<()> {
         Ok(self.control.send(Control::Reply { id, result })?)
@@ -697,8 +753,12 @@ pub(crate) fn codex_compact_command(text: &str) -> bool {
 #[path = "codex_compaction_tests.rs"]
 mod codex_compaction_tests;
 
+#[cfg(all(test, unix))]
+#[path = "codex_goal_tests.rs"]
+mod codex_goal_tests;
+
 struct CodexOptions {
-    usage: Arc<Mutex<Option<usage_capture::Snapshot>>>,
+    usage: Arc<Mutex<std::collections::VecDeque<usage_capture::Snapshot>>>,
     steering: codex_steering::Server,
     policy: Option<crate::composer_policy::Policy>,
     profile: Option<crate::codex_login_profiles::LaunchContext>,
@@ -706,6 +766,16 @@ struct CodexOptions {
     named_resume: Option<crate::named_profile_resume::Authority>,
     completed_output: Arc<Mutex<Option<crate::named_profile_resume::Acknowledged>>>,
     compact: bool,
+    goal: Option<codex_goals::Command>,
+    provider_control: Arc<std::sync::atomic::AtomicBool>,
+    pause_goal_on_stop: Arc<std::sync::atomic::AtomicBool>,
+    queue_waiting: Arc<std::sync::atomic::AtomicBool>,
+    resume_queued_goal: Option<codex_goals::PausedGoal>,
+    restore_paused_goal: Option<codex_goals::PausedGoal>,
+}
+enum DeferredGoalControl {
+    Restore(codex_goals::PausedGoal),
+    Resume(codex_goals::Command),
 }
 fn run(
     launch: Launch,
@@ -724,6 +794,12 @@ fn run(
         named_resume,
         completed_output,
         compact,
+        goal: initial_goal,
+        provider_control,
+        pause_goal_on_stop,
+        queue_waiting,
+        mut resume_queued_goal,
+        restore_paused_goal,
     } = options;
     if let Some(policy) = &policy {
         policy.preflight()?;
@@ -784,23 +860,153 @@ fn run(
     let mut early_steering_frames = Vec::new();
     let mut compact_requested = None::<Instant>;
     let mut compact_confirmed = false;
+    let mut goals = codex_goals::Tracker::default();
+    let mut awaiting_goal_continuation = false;
+    let mut stopping_goal = None::<Instant>;
+    let mut paused_for_queue = false;
+    let mut checking_restore = None::<codex_goals::PausedGoal>;
+    let mut pending_goal_settings = None::<(Instant, DeferredGoalControl)>;
+    const INTERRUPT_REQUEST: u64 = 6_000_000_001;
+    const GOAL_SETTINGS_REQUEST: u64 = 7_000_000_001;
     loop {
         while let Ok(command) = commands.try_recv() {
             match command {
                 Control::Stop => {
+                    if stopping_goal.is_some() {
+                        continue;
+                    }
+                    if pause_goal_on_stop.load(Ordering::Acquire)
+                        && (goals.active() || goals.pending())
+                        && let Some(thread) = capture.thread_id()
+                    {
+                        if goals.active() && !goals.pending() {
+                            goals.send(
+                                codex_goals::Command::Pause,
+                                thread,
+                                None,
+                                &mut transport,
+                            )?;
+                        }
+                        if let Some((thread, turn)) = capture.identity() {
+                            transport.write(&request(
+                                INTERRUPT_REQUEST,
+                                "turn/interrupt",
+                                json!({"threadId":thread,"turnId":turn}),
+                            ))?;
+                        }
+                        stopping_goal = Some(Instant::now());
+                        continue;
+                    }
                     events.send(Event::Finished)?;
                     return Ok(());
                 }
                 Control::Reply { id, result } => {
                     transport.write(&json!({"id":id,"result":result}))?
                 }
-                Control::Steer { reply, .. } => {
-                    let _ =
-                        reply.send(Err("Codex steering uses its own active-turn channel".into()));
+                Control::Steer { text, reply } => {
+                    if let Some(command) = codex_goals::parse(&text)
+                        && let Some(thread) = capture.thread_id()
+                    {
+                        if matches!(
+                            command,
+                            codex_goals::Command::Set(_)
+                                | codex_goals::Command::Pause
+                                | codex_goals::Command::Resume
+                                | codex_goals::Command::Clear
+                        ) {
+                            paused_for_queue = false;
+                            resume_queued_goal = None;
+                        }
+                        if let Err(error) =
+                            goals.send(command, thread, Some(reply.clone()), &mut transport)
+                        {
+                            let _ = reply.try_send(Err(error.to_string()));
+                        }
+                    } else {
+                        let _ = reply
+                            .send(Err("Codex steering uses its own active-turn channel".into()));
+                    }
                 }
             }
         }
-        if completed {
+        goals.expire()?;
+        ensure!(
+            pending_goal_settings
+                .as_ref()
+                .is_none_or(|(started, _)| started.elapsed() < Duration::from_secs(30)),
+            "Codex did not confirm the selected goal settings"
+        );
+        if stopping_goal.is_some()
+            && goals.active()
+            && !goals.pending()
+            && let Some(thread) = capture.thread_id()
+        {
+            goals.send(codex_goals::Command::Pause, thread, None, &mut transport)?;
+        }
+        if checking_restore.is_some() && !goals.pending() {
+            let expected = checking_restore.take().expect("checked restore");
+            let thread = capture.thread_id().expect("bound restore thread");
+            if goals.paused_objective_is(&expected) {
+                goals.send(
+                    codex_goals::Command::ResumeForQueue,
+                    thread,
+                    None,
+                    &mut transport,
+                )?;
+            } else {
+                // The user or provider changed the goal while the queue was
+                // paused. Do not reactivate a different or completed goal.
+                events.send(Event::Goal {
+                    thread: thread.into(),
+                    goal: goals.goal.clone(),
+                    notice: None,
+                    queue_action: Some(false),
+                    user_mutation: false,
+                })?;
+            }
+        }
+        // A local queued message must run before the next automatic goal
+        // turn. Pause while the current turn is still active; restore only
+        // after the queued turns have drained or the queue is paused/removed.
+        if stopping_goal.is_none()
+            && !goals.pending()
+            && let Some(thread) = capture.thread_id()
+        {
+            if queue_waiting.load(Ordering::Acquire) && goals.active() {
+                goals.send(
+                    codex_goals::Command::PauseForQueue,
+                    thread,
+                    None,
+                    &mut transport,
+                )?;
+                paused_for_queue = true;
+            } else if paused_for_queue && !queue_waiting.load(Ordering::Acquire) {
+                if goals.paused() {
+                    goals.send(
+                        codex_goals::Command::ResumeForQueue,
+                        thread,
+                        None,
+                        &mut transport,
+                    )?;
+                }
+                paused_for_queue = false;
+            }
+        }
+        ensure!(
+            stopping_goal.is_none_or(|started| started.elapsed() < Duration::from_secs(30)),
+            "Codex did not confirm goal interruption"
+        );
+        if stopping_goal.is_some()
+            && !goals.active()
+            && !goals.pending()
+            && capture.identity().is_none()
+        {
+            completed = true;
+        }
+        if awaiting_goal_continuation && !goals.active() && !goals.pending() {
+            completed = true;
+        }
+        if completed && !(stopping_goal.is_some() && goals.pending()) {
             steering.close();
             if transport.is_flushed()? {
                 if successful && let Some(ack) = acknowledged.take() {
@@ -835,6 +1041,42 @@ fn run(
             transport.next()?
         };
         if let Some(frame) = frame {
+            if frame["id"].as_u64() == Some(GOAL_SETTINGS_REQUEST) && frame.get("method").is_none()
+            {
+                let (_, control) = pending_goal_settings
+                    .take()
+                    .context("Unexpected goal settings response")?;
+                ensure!(
+                    frame.get("error").is_none() && frame["result"].is_object(),
+                    "Codex could not apply the selected goal settings"
+                );
+                let thread = capture
+                    .thread_id()
+                    .context("Goal settings lost their thread")?;
+                match control {
+                    DeferredGoalControl::Restore(expected) => {
+                        checking_restore = Some(expected);
+                        goals.send(
+                            codex_goals::Command::CheckForResume,
+                            thread,
+                            None,
+                            &mut transport,
+                        )?;
+                    }
+                    DeferredGoalControl::Resume(command) => {
+                        goals.send(command, thread, None, &mut transport)?
+                    }
+                }
+                awaiting_goal_continuation = true;
+                continue;
+            }
+            if frame["id"].as_u64() == Some(INTERRUPT_REQUEST) && frame.get("method").is_none() {
+                ensure!(
+                    frame.get("error").is_none() && frame.get("result").is_some(),
+                    "Codex could not interrupt the active goal turn"
+                );
+                continue;
+            }
             if let Some(profile) = profile.as_ref()
                 && frame["id"].as_u64() == Some(ACCOUNT_REQUEST)
             {
@@ -861,7 +1103,12 @@ fn run(
                     )?;
                 }
                 account_pending = false;
-                write_thread_request(&mut transport, &launch, instructions.as_deref())?;
+                write_thread_request(
+                    &mut transport,
+                    &launch,
+                    instructions.as_deref(),
+                    policy.as_ref(),
+                )?;
                 stage = 2;
                 continue; // Never forward account metadata to transcript/events.
             }
@@ -882,6 +1129,12 @@ fn run(
                 continue;
             }
             if steering.response(&frame) {
+                continue;
+            }
+            if let Some(thread) = capture.thread_id()
+                && (goals.response(&frame, thread, events)?
+                    || goals.notification(&frame, thread, events)?)
+            {
                 continue;
             }
             if stage < 4
@@ -923,7 +1176,12 @@ fn run(
                             ))?;
                             continue;
                         }
-                        write_thread_request(&mut transport, &launch, instructions.as_deref())?;
+                        write_thread_request(
+                            &mut transport,
+                            &launch,
+                            instructions.as_deref(),
+                            policy.as_ref(),
+                        )?;
                     }
                     2 => {
                         if let Some(profile) = &profile {
@@ -970,6 +1228,61 @@ fn run(
                             "Codex returned an invalid or duplicate thread identity"
                         );
                         events.send(Event::Session(id.into()))?;
+                        if !compact {
+                            let deferred = if let Some(objective) = restore_paused_goal.as_ref() {
+                                Some(DeferredGoalControl::Restore(objective.clone()))
+                            } else if matches!(&initial_goal, Some(codex_goals::Command::Resume)) {
+                                Some(DeferredGoalControl::Resume(codex_goals::Command::Resume))
+                            } else {
+                                None
+                            };
+                            if let Some(control) = deferred
+                                && let Some(policy) = &policy
+                            {
+                                let resolved =
+                                    crate::composer_policy::ResolvedCodexModel::from_thread_result(
+                                        id,
+                                        &frame["result"],
+                                    )
+                                    .ok();
+                                let mut settings = policy.codex_turn_fields(
+                                    id,
+                                    resolved.as_ref(),
+                                    crate::composer_policy::CollaborationHistory::Unknown,
+                                )?;
+                                settings["threadId"] = json!(id);
+                                settings["serviceTier"] =
+                                    policy.codex_speed().map_or(Value::Null, |tier| json!(tier));
+                                transport.write(&request(
+                                    GOAL_SETTINGS_REQUEST,
+                                    "thread/settings/update",
+                                    settings,
+                                ))?;
+                                pending_goal_settings = Some((Instant::now(), control));
+                                stage = 4;
+                                continue;
+                            }
+                            if let Some(objective) = restore_paused_goal.as_ref() {
+                                checking_restore = Some(objective.clone());
+                                goals.send(
+                                    codex_goals::Command::CheckForResume,
+                                    id,
+                                    None,
+                                    &mut transport,
+                                )?;
+                                awaiting_goal_continuation = true;
+                                stage = 4;
+                                continue;
+                            }
+                            if let Some(command) = initial_goal.as_ref()
+                                && !matches!(command, codex_goals::Command::Set(_))
+                            {
+                                goals.send(command.clone(), id, None, &mut transport)?;
+                                awaiting_goal_continuation = true;
+                                stage = 4;
+                                continue;
+                            }
+                        }
                         let mut params = turn_params(id, &launch, &image_paths);
                         if let Some(policy) = &policy {
                             let resolved =
@@ -1007,10 +1320,21 @@ fn run(
                             transport.write(&request(3, "turn/start", params))?;
                         }
                     }
-                    3 if !compact => ensure!(
-                        capture.bind_turn(&frame["result"]["turn"]["id"]),
-                        "Codex returned a missing, invalid or duplicate turn identity"
-                    ),
+                    3 if !compact => {
+                        ensure!(
+                            capture.bind_turn(&frame["result"]["turn"]["id"]),
+                            "Codex returned a missing, invalid or duplicate turn identity"
+                        );
+                        if let Some(command @ codex_goals::Command::Set(_)) = initial_goal.as_ref()
+                        {
+                            goals.send(
+                                command.clone(),
+                                capture.thread_id().expect("bound thread"),
+                                None,
+                                &mut transport,
+                            )?;
+                        }
+                    }
                     _ => {}
                 }
                 stage += 1;
@@ -1042,6 +1366,19 @@ fn run(
                         "Codex returned an invalid provisional turn identity"
                     );
                     provisional_turn = true;
+                } else if stage >= 4
+                    && capture.owns_thread(&frame["params"])
+                    && capture.identity().is_none()
+                    && (awaiting_goal_continuation || goals.active() || goals.pending())
+                {
+                    ensure!(
+                        capture.bind_turn(&frame["params"]["turn"]["id"]),
+                        "Codex returned an invalid continuation turn"
+                    );
+                    let (thread, turn) = capture.identity().expect("bound continuation");
+                    steering.activate(thread, turn);
+                    provider_control.store(false, Ordering::Release);
+                    awaiting_goal_continuation = false;
                 }
             } else if frame["method"] == "turn/completed" {
                 if stage == 3 && capture.owns_thread(&frame["params"]) {
@@ -1058,7 +1395,12 @@ fn run(
                 if let Some(snapshot) = capture.complete(&frame["params"])
                     && let Ok(mut output) = usage.lock()
                 {
-                    *output = Some(snapshot);
+                    ensure!(
+                        output.len() < 4096,
+                        "Codex usage receipts are waiting for persistence"
+                    );
+                    output.push_back(snapshot);
+                    events.send(Event::Usage)?;
                 }
                 if frame["params"]["turn"]["status"] == "failed" {
                     bail!("Codex turn failed: {}", frame["params"]["turn"]["error"]);
@@ -1081,7 +1423,31 @@ fn run(
                     "Codex returned an invalid turn completion status"
                 );
                 successful = frame["params"]["turn"]["status"] == "completed";
-                completed = true;
+                let resume_queued = successful
+                    && !queue_waiting.load(Ordering::Acquire)
+                    && resume_queued_goal
+                        .as_ref()
+                        .is_some_and(|objective| goals.paused_objective_is(objective));
+                if resume_queued {
+                    goals.send(
+                        codex_goals::Command::ResumeForQueue,
+                        capture.thread_id().expect("bound thread"),
+                        None,
+                        &mut transport,
+                    )?;
+                    resume_queued_goal = None;
+                }
+                if successful && (goals.active() || goals.pending() || resume_queued) {
+                    steering.close();
+                    ensure!(
+                        capture.next_turn(),
+                        "Codex continuation lost its completed turn"
+                    );
+                    events.send(Event::TurnBoundary)?;
+                    awaiting_goal_continuation = true;
+                } else {
+                    completed = true;
+                }
             } else {
                 if frame["method"] == "thread/tokenUsage/updated" {
                     ensure!(
@@ -1098,8 +1464,26 @@ fn write_thread_request(
     transport: &mut transport::Transport,
     launch: &Launch,
     instructions: Option<&str>,
+    policy: Option<&crate::composer_policy::Policy>,
 ) -> Result<()> {
     let mut params = json!({"cwd":launch.cwd,"approvalPolicy":"untrusted","sandbox":"read-only"});
+    if let Some(policy) = policy {
+        // A restored goal can start at thread/resume before turn/start is
+        // dispatched. Apply the already-admitted access/model preferences at
+        // the earlier native boundary too.
+        if policy.access == crate::composer_policy::Access::FullAccess {
+            params["approvalPolicy"] = json!("never");
+            params["sandbox"] = json!("danger-full-access");
+        }
+        if let Some(effort) = policy.codex_effort() {
+            params["config"] = json!({"model_reasoning_effort":effort});
+        }
+        if let Some(tier) = policy.codex_speed() {
+            params["serviceTier"] = json!(tier);
+        } else if launch.session.is_some() {
+            params["serviceTier"] = json!("default");
+        }
+    }
     if let Some(model) = &launch.model {
         params["model"] = json!(model);
     }

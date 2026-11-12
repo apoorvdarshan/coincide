@@ -55,6 +55,9 @@ fn finished(session: &Session) -> Vec<Value> {
             Event::Failed(error) => panic!("Grok failed: {error}"),
             Event::Frame(frame) => frames.push(frame),
             Event::Session(_) => {}
+            Event::Goal { .. } | Event::Usage | Event::TurnBoundary => {
+                panic!("unexpected Codex goal event from Grok")
+            }
         }
     }
 }
@@ -155,6 +158,9 @@ sys.stdin.readline()
             }
             Event::Finished => break,
             Event::Failed(error) => panic!("{error}"),
+            Event::Goal { .. } | Event::Usage | Event::TurnBoundary => {
+                panic!("unexpected Codex goal event from Grok")
+            }
         }
     }
     assert!(native_session && saw_permission && saw_question && saw_plan);
