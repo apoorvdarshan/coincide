@@ -302,20 +302,21 @@ impl Coincide {
         draft: &str,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
         if !self
             .selected
             .as_ref()
             .is_some_and(|thread| text(thread, "id") == id)
             || !self.composer.read(cx).value().is_empty()
         {
-            return;
+            return false;
         }
         self.composer
             .update(cx, |input, cx| input.set_value(draft, window, cx));
         if let Some(thread) = self.selected.as_mut() {
             thread["draft"] = json!(draft);
         }
+        true
     }
     pub(super) fn poll_composer_follow_ups(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let mut retained = Vec::new();
@@ -340,8 +341,32 @@ impl Coincide {
                 None | Some(NativeFollowUpStatus::Pending) => retained.push(delivery),
                 Some(status) => {
                     let delivered = matches!(status, NativeFollowUpStatus::Delivered { .. });
-                    if let NativeFollowUpStatus::Retained(_) = &status {
-                        self.restore_follow_up_draft(&delivery.thread, &delivery.draft, window, cx);
+                    let restored = matches!(status, NativeFollowUpStatus::Retained(_))
+                        && !delivery.queued
+                        && self.restore_follow_up_draft(
+                            &delivery.thread,
+                            &delivery.draft,
+                            window,
+                            cx,
+                        );
+                    let queued = matches!(
+                        status,
+                        NativeFollowUpStatus::Delivered {
+                            dispatch: Dispatch::Queue,
+                            ..
+                        }
+                    ) && !delivery.queued;
+                    // Queue entries have their own UI, and a restored draft is
+                    // back in the composer. Remove only this optimistic row.
+                    if (restored || queued)
+                        && self
+                            .pending_sent
+                            .as_ref()
+                            .is_some_and(|(thread, draft, ..)| {
+                                thread == &delivery.thread && draft == &delivery.draft
+                            })
+                    {
+                        self.drop_pending_send(&delivery.thread);
                     }
                     if let NativeFollowUpStatus::Retained(reason) = &status {
                         if reason.contains("delivery is unknown") {
