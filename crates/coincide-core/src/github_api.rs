@@ -1182,7 +1182,9 @@ mod tests {
     #[test]
     fn fake_cli_timeout_output_limit_and_private_stderr() {
         let cancelled = AtomicBool::new(false);
-        let (dir, mut runner) = fake("sleep 5");
+        // Use only shell builtins so concurrent PATH changes cannot turn the
+        // intended timeout into an unrelated missing-executable failure.
+        let (dir, mut runner) = fake("while :; do :; done");
         runner.timeout = Duration::from_millis(60);
         let started = Instant::now();
         assert!(
