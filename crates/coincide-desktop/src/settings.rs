@@ -459,9 +459,24 @@ impl Coincide {
 
     pub(super) fn refresh_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match call(&self.engine, "settings.read", json!({})) {
-            Ok(settings) if settings != self.settings => self.accept_settings(settings, window, cx),
-            Ok(_) => {}
-            Err(error) => self.settings_status = format!("Settings could not be loaded: {error}"),
+            Ok(settings) => {
+                self.settings_refresh_pending = false;
+                if self
+                    .settings_status
+                    .starts_with("Settings could not be loaded:")
+                {
+                    self.settings_status.clear();
+                    cx.notify();
+                }
+                if settings != self.settings {
+                    self.accept_settings(settings, window, cx);
+                }
+            }
+            Err(error) if engine_busy(&error) => self.settings_refresh_pending = true,
+            Err(error) => {
+                self.settings_refresh_pending = false;
+                self.settings_status = format!("Settings could not be loaded: {error}");
+            }
         }
     }
 
@@ -515,7 +530,7 @@ impl Coincide {
         }
     }
 
-    fn setting_toggle(
+    pub(super) fn setting_toggle(
         &self,
         label: &'static str,
         caption: &'static str,
@@ -1317,7 +1332,9 @@ impl Coincide {
                         .child(content),
                 ),
             )
-            .child(div().text_sm().child(self.settings_status.clone()))
+            .when(!self.settings_status.is_empty(), |view| {
+                view.child(div().text_sm().child(self.settings_status.clone()))
+            })
             .into_any_element()
     }
 

@@ -16,6 +16,9 @@ mod usage_dashboard;
 mod usage_dashboard_ui;
 mod usage_history_mount;
 mod usage_history_view;
+#[cfg(target_os = "macos")]
+mod usage_menubar;
+mod usage_menubar_model;
 mod voice_credentials;
 mod voice_settings;
 mod voice_shortcut;
@@ -520,6 +523,7 @@ struct Coincide {
     settings: Value,
     awake_status: Value,
     settings_status: String,
+    settings_refresh_pending: bool,
     appearance_dark: bool,
     applied_theme: Option<(bool, String)>,
     schedules_open: bool,
@@ -1686,6 +1690,7 @@ impl Coincide {
             settings,
             awake_status: json!({}),
             settings_status: String::new(),
+            settings_refresh_pending: false,
             appearance_dark: true,
             applied_theme: None,
             schedules_open: false,
@@ -3846,6 +3851,9 @@ impl Coincide {
         }
         self.poll_window_chrome(window, cx);
         self.poll_sidebar_message_search(cx);
+        if self.settings_refresh_pending {
+            self.refresh_settings(window, cx);
+        }
         // Opening Settings › Usage reads saved local history, as Swift's `appeared()`;
         // plan limits wait for Refresh.
         let usage_visible =
@@ -6901,6 +6909,8 @@ fn main() -> Result<()> {
         app_shell::install(cx);
         transcript::init(cx);
         Theme::change(ThemeMode::Dark, None, cx);
+        #[cfg(target_os = "macos")]
+        usage_menubar::install(engine.clone(), cx);
         cx.set_global(Launch {
             engine,
             native_editors,

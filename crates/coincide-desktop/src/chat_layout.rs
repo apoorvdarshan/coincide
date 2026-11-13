@@ -3,7 +3,7 @@ use super::*;
 
 // Existing provider-owned branding, already used by the Coincide website.
 // Keep bytes local and embedded; rendering never downloads an image.
-const PROVIDER_LOGOS: [(&str, &[u8]); 6] = [
+pub(super) const PROVIDER_LOGOS: [(&str, &[u8]); 6] = [
     (
         "codex",
         include_bytes!("../assets/providers/logo-codex.png"),
