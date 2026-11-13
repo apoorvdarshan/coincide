@@ -911,6 +911,19 @@ struct PickerRestore {
     source: crate::composer_commands::Submission,
     ui_draft: String,
 }
+fn picker_restore_matches(
+    pending: &PickerRestore,
+    selected: &Value,
+    stored: &Value,
+    ui_draft: &str,
+    buffered_send: bool,
+) -> bool {
+    pending.source.thread["id"] == selected["id"]
+        && pending.source.same_selection(selected)
+        && (pending.observation_only
+            || ((pending.ui_draft == ui_draft || buffered_send)
+                && pending.source.same_content(stored, &pending.source.draft)))
+}
 impl ComposerSelection {
     pub(super) fn close_capability_reads(&mut self) {
         self.capability_cache.request_shutdown();
@@ -1484,11 +1497,13 @@ impl Coincide {
             )?;
             let mut pending = if let Some(pending) = retry {
                 anyhow::ensure!(
-                    pending.source.thread["id"] == selected["id"]
-                        && pending.source.same_selection(selected)
-                        && (pending.observation_only
-                            || (pending.ui_draft == ui_draft
-                                && pending.source.same_content(&current, &pending.source.draft))),
+                    picker_restore_matches(
+                        &pending,
+                        selected,
+                        &current,
+                        &ui_draft,
+                        self.has_buffered_selection_send(&id),
+                    ),
                     "Composer changed; provider restoration cancelled"
                 );
                 pending
@@ -1650,7 +1665,8 @@ impl Coincide {
             anyhow::ensure!(
                 self.pending_drafts
                     .get(&id)
-                    .is_none_or(|pending| pending.text == submission.draft),
+                    .is_none_or(|pending| pending.text == submission.draft)
+                    || (command.changes_selection() && self.has_buffered_selection_send(&id)),
                 "A newer pending draft exists; command draft retained"
             );
             let mut engine = try_state(&self.engine)?;
@@ -1692,16 +1708,20 @@ impl Coincide {
                     )
                 };
                 let current = self.committed_composer_draft(cx);
-                if self
-                    .selected
-                    .as_ref()
-                    .is_some_and(|thread| submission.same_content(thread, &current))
-                {
+                let buffered_send = command.changes_selection()
+                    && self.has_buffered_selection_send(&text(&submission.thread, "id"));
+                if self.selected.as_ref().is_some_and(|thread| {
+                    submission.same_content(thread, &current)
+                        || (buffered_send
+                            && thread["id"] == submission.thread["id"]
+                            && submission.same_selection(thread))
+                }) {
                     let id = text(&submission.thread, "id");
-                    if self
-                        .pending_drafts
-                        .get(&id)
-                        .is_some_and(|pending| pending.text == submission.draft)
+                    if !buffered_send
+                        && self
+                            .pending_drafts
+                            .get(&id)
+                            .is_some_and(|pending| pending.text == submission.draft)
                     {
                         self.pending_drafts.remove(&id);
                     }
@@ -1710,7 +1730,7 @@ impl Coincide {
                     } else {
                         self.selected = Some(thread);
                     }
-                    if !submission.keep_draft {
+                    if !submission.keep_draft && !buffered_send {
                         self.composer
                             .update(cx, |input, cx| input.set_value("", window, cx));
                     }
@@ -1829,7 +1849,10 @@ impl Coincide {
         if let Some((command, submission)) = self.selection_ui.pending_provider.take() {
             let current = self.committed_composer_draft(cx);
             if self.selected.as_ref().is_some_and(|thread| {
-                submission.same_content(thread, &current) && submission.same_selection(thread)
+                (submission.same_content(thread, &current)
+                    || (thread["id"] == submission.thread["id"]
+                        && self.has_buffered_selection_send(&text(&submission.thread, "id"))))
+                    && submission.same_selection(thread)
             }) {
                 self.perform_composer_command(command, submission, window, cx);
             } else {
@@ -4082,6 +4105,60 @@ impl Coincide {
 
 #[cfg(test)]
 mod tests {
+    #[::core::prelude::v1::test]
+    fn buffered_send_allows_picker_restore_only_for_the_original_selection_and_store() {
+        use super::*;
+        let original = json!({"id":"thread", "draft":"old draft", "selection":{"provider":"codex","modelID":"old"},
+            "draftContext":[{"path":"file"}], "rustDraftImages":[{"id":"image"}]});
+        let pending = PickerRestore {
+            provider: "claude".into(),
+            account: None,
+            observation_only: false,
+            source: crate::composer_commands::Submission::new(&original, "old draft"),
+            ui_draft: "old draft".into(),
+        };
+        assert!(!picker_restore_matches(
+            &pending,
+            &original,
+            &original,
+            "new draft",
+            false
+        ));
+        assert!(picker_restore_matches(
+            &pending,
+            &original,
+            &original,
+            "new draft",
+            true
+        ));
+        let mut changed = original.clone();
+        changed["selection"]["modelID"] = json!("other");
+        assert!(!picker_restore_matches(
+            &pending,
+            &changed,
+            &original,
+            "new draft",
+            true
+        ));
+        changed = original.clone();
+        changed["id"] = json!("other-thread");
+        assert!(!picker_restore_matches(
+            &pending,
+            &changed,
+            &original,
+            "new draft",
+            true
+        ));
+        changed = original.clone();
+        changed["draftContext"] = json!([{"path":"different"}]);
+        assert!(!picker_restore_matches(
+            &pending,
+            &original,
+            &changed,
+            "new draft",
+            true
+        ));
+    }
     #[::core::prelude::v1::test]
     fn footer_labels_collapse_in_swifts_order_without_spending_space_on_absent_speed() {
         let widths = [180., 75., 0., 110., 80., 65.];

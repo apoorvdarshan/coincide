@@ -233,6 +233,16 @@ pub(super) fn init(cx: &mut App) {
     ]);
 }
 impl Coincide {
+    pub(super) fn has_buffered_selection_send(&self, thread_id: &str) -> bool {
+        self.pending_follow_up
+            .iter()
+            .chain(self.pending_follow_up_backlog.iter())
+            .any(|pending| {
+                pending.thread == thread_id
+                    && pending.buffer_id.is_some()
+                    && pending.selection_wait == SelectionWait::Waiting
+            })
+    }
     pub(super) fn cancel_pending_selection_waits(&mut self) {
         for pending in self
             .pending_follow_up

@@ -4984,25 +4984,9 @@ impl Coincide {
                     return;
                 }
                 composer_follow_up_mount::SendRoute::WaitForSelection => {
-                    let draft = self.composer.read(cx).value().to_string();
-                    let has_images = v["rustDraftImages"]
-                        .as_array()
-                        .is_some_and(|images| !images.is_empty());
-                    if draft.trim().is_empty()
-                        && !has_images
-                        && !coincide_core::composer_context::has_context(&v["draftContext"])
-                        && !self.attachment_imports.contains(&id)
-                    {
-                        return;
-                    }
-                    let mut pending =
-                        composer_follow_up_mount::PendingSend::new(v, draft, alternate)
-                            .with_behavior(self.captured_follow_up_behavior(v));
-                    pending.selection_wait = composer_follow_up_mount::SelectionWait::Waiting;
-                    pending.add_imports(self.attachment_imports.claim(&id));
-                    self.pending_follow_up = Some(pending);
-                    self.status = "Sending after the account or provider change.".into();
-                    cx.notify();
+                    // Preserve the submitted snapshot while the selection
+                    // resolves, so the editor is ready for the next draft.
+                    self.buffer_composer_send(alternate, window, cx);
                     return;
                 }
                 composer_follow_up_mount::SendRoute::Send => {}
