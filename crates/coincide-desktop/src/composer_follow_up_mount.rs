@@ -14,15 +14,21 @@ pub(super) enum SendRoute {
 }
 
 pub(super) fn send_route(running: bool, importing: bool, changing_selection: bool) -> SendRoute {
-    if importing {
+    if !running && changing_selection {
+        SendRoute::WaitForSelection
+    } else if importing {
         SendRoute::WaitForImages
     } else if running {
         SendRoute::FollowUp
-    } else if changing_selection {
-        SendRoute::WaitForSelection
     } else {
         SendRoute::Send
     }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SelectionWait {
+    None,
+    Waiting,
+    Failed,
 }
 pub(super) struct PendingDelivery {
     ticket: Option<NativeFollowUpTicket>,
@@ -40,6 +46,7 @@ pub(super) struct PendingSend {
     pub behavior: Behavior,
     pub selection: Value,
     pub waiting_for_import: bool,
+    pub selection_wait: SelectionWait,
     pub import_jobs: Vec<u64>,
     pub import_failed: bool,
     pub edited: bool,
@@ -65,6 +72,7 @@ impl PendingSend {
             behavior: choice::selected(thread, &Value::Null),
             selection: pending_scope(thread, false),
             waiting_for_import: false,
+            selection_wait: SelectionWait::None,
             import_jobs: Vec::new(),
             import_failed: false,
             edited: false,
@@ -78,6 +86,22 @@ impl PendingSend {
     pub fn with_behavior(mut self, behavior: Behavior) -> Self {
         self.behavior = behavior;
         self
+    }
+    /// Adopt only the acknowledged execution choice; the submitted text,
+    /// attachments, references and workspace remain the captured snapshot.
+    pub fn finish_selection(&mut self, thread: Option<&Value>) {
+        if self.selection_wait != SelectionWait::Waiting {
+            return;
+        }
+        let Some(thread) = thread.filter(|thread| text(thread, "id") == self.thread) else {
+            self.selection_wait = SelectionWait::Failed;
+            return;
+        };
+        for key in ["selection", "accessMode", "interactionMode"] {
+            self.selection[key] = thread[key].clone();
+            self.captured[key] = thread[key].clone();
+        }
+        self.selection_wait = SelectionWait::None;
     }
     pub fn add_imports(&mut self, jobs: Vec<u64>) {
         self.import_jobs.extend(jobs);
@@ -209,6 +233,30 @@ pub(super) fn init(cx: &mut App) {
     ]);
 }
 impl Coincide {
+    pub(super) fn cancel_pending_selection_waits(&mut self) {
+        for pending in self
+            .pending_follow_up
+            .iter_mut()
+            .chain(self.pending_follow_up_backlog.iter_mut())
+        {
+            pending.finish_selection(None);
+        }
+    }
+    pub(super) fn finish_pending_selection(&mut self, thread_id: &str, success: bool) {
+        let selected = self
+            .selected
+            .as_ref()
+            .filter(|thread| text(thread, "id") == thread_id && success)
+            .cloned();
+        for pending in self
+            .pending_follow_up
+            .iter_mut()
+            .chain(self.pending_follow_up_backlog.iter_mut())
+            .filter(|pending| pending.thread == thread_id)
+        {
+            pending.finish_selection(selected.as_ref());
+        }
+    }
     pub(super) fn captured_follow_up_behavior(&self, thread: &Value) -> Behavior {
         self.pending_follow_up_choice
             .as_ref()
@@ -262,6 +310,13 @@ impl Coincide {
             .unwrap_or_default();
         let mut next = PendingSend::new(thread, draft, alternate)
             .with_behavior(self.captured_follow_up_behavior(thread));
+        if (!self.running.contains(&id) && self.selection_change_pending())
+            || self.pending_follow_up.as_ref().is_some_and(|pending| {
+                pending.thread == id && pending.selection_wait == SelectionWait::Waiting
+            })
+        {
+            next.selection_wait = SelectionWait::Waiting;
+        }
         self.exclude_submitted_images(&mut next);
         let earlier = self
             .pending_follow_up
@@ -850,7 +905,9 @@ fn behavior_help(behavior: Behavior) -> &'static str {
 
 #[cfg(test)]
 mod send_route_tests {
-    use super::{PendingSend, SendRoute, buffered_text, send_route, separate_buffered_payload};
+    use super::{
+        PendingSend, SelectionWait, SendRoute, buffered_text, send_route, separate_buffered_payload,
+    };
     use serde_json::json;
 
     #[test]
@@ -863,8 +920,50 @@ mod send_route_tests {
     fn image_import_finishes_before_either_send_path() {
         assert_eq!(send_route(true, true, true), SendRoute::WaitForImages);
         assert_eq!(send_route(false, true, false), SendRoute::WaitForImages);
+        assert_eq!(send_route(false, true, true), SendRoute::WaitForSelection);
         assert_eq!(send_route(false, false, true), SendRoute::WaitForSelection);
         assert_eq!(send_route(false, false, false), SendRoute::Send);
+    }
+
+    #[test]
+    fn waiting_send_uses_the_acknowledged_selection_without_changing_its_payload() {
+        for provider in [
+            "codex",
+            "claude",
+            "opencode",
+            "cursor",
+            "grok",
+            "antigravity",
+        ] {
+            let old = json!({"id":"a", "selection":{"provider":"codex","modelID":"old"},
+                "draftContext":[{"path":"file"}],"rustDraftImages":[{"id":"image"}]});
+            let mut pending = PendingSend::new(&old, "message".into(), false);
+            pending.selection_wait = SelectionWait::Waiting;
+            let mut selected = old.clone();
+            selected["selection"] = json!({"provider":provider,"modelID":"new"});
+            pending.finish_selection(Some(&selected));
+            assert_eq!(pending.selection_wait, SelectionWait::None);
+            assert_eq!(pending.captured["selection"], selected["selection"]);
+            assert_eq!(pending.captured["draft"], "message");
+            assert_eq!(pending.captured["draftContext"], old["draftContext"]);
+            assert_eq!(pending.captured["rustDraftImages"], old["rustDraftImages"]);
+            assert!(pending.matches(&selected, "message"));
+            assert!(!pending.matches(&selected, "newer draft"));
+        }
+    }
+
+    #[test]
+    fn failed_or_foreign_selection_cannot_retarget_a_waiting_message() {
+        let thread = json!({"id":"a", "selection":{"provider":"codex","modelID":"old"}});
+        let other = json!({"id":"b", "selection":{"provider":"claude","modelID":"other"}});
+        for result in [None, Some(&other)] {
+            let mut pending = PendingSend::new(&thread, "message".into(), false);
+            pending.selection_wait = SelectionWait::Waiting;
+            pending.finish_selection(result);
+            assert_eq!(pending.selection_wait, SelectionWait::Failed);
+            assert_eq!(pending.captured["selection"], thread["selection"]);
+            assert_eq!(pending.captured["draft"], "message");
+        }
     }
 
     #[test]

@@ -1451,6 +1451,9 @@ impl Coincide {
         account: Value,
         cx: &mut Context<Self>,
     ) {
+        if self.selection_ui.pending_provider.is_some() {
+            self.cancel_pending_selection_waits();
+        }
         self.selection_ui.pending_provider = None;
         self.switch_provider_account("codex".into(), Some(account), None, cx);
     }
@@ -1561,7 +1564,7 @@ impl Coincide {
                 self.status =
                     "Checking the previous account's models. Your draft is retained.".into();
             }
-            Ok((response, _)) => {
+            Ok((response, completed)) => {
                 self.selection_ui.pending_provider_picker = None;
                 if response["selectionUnchanged"] == true {
                     self.selection_ui.context = None;
@@ -1587,6 +1590,10 @@ impl Coincide {
                         self.selection_ui.catalog_request = None;
                     }
                 }
+                self.finish_pending_selection(
+                    &text(&completed.source.thread, "id"),
+                    response["selectionUnchanged"] != true || response["executionReady"] != false,
+                );
             }
             Err(error) if engine_busy(&error) => {
                 self.selection_ui.pending_provider_picker = retry_on_busy;
@@ -1604,6 +1611,9 @@ impl Coincide {
                         selection_response(&mut engine, "agent.provider.cancelRestore", json!({}));
                 }
                 self.status = format!("Provider was not changed; draft retained: {error}");
+                if let Some(pending) = retry_on_busy.as_ref() {
+                    self.finish_pending_selection(&text(&pending.source.thread, "id"), false);
+                }
             }
         }
         cx.notify();
@@ -1730,8 +1740,14 @@ impl Coincide {
                         }
                     }
                     .into();
+                    if command.changes_selection() {
+                        self.finish_pending_selection(&id, true);
+                    }
                 } else {
                     self.status="Command acknowledged; newer conversation/draft retained. No message was sent.".into();
+                    if command.changes_selection() {
+                        self.finish_pending_selection(&text(&submission.thread, "id"), false);
+                    }
                 }
             }
             Err(error) if engine_busy(&error) => {
@@ -1741,6 +1757,9 @@ impl Coincide {
             Err(error) => {
                 self.selection_ui.pending_provider = None;
                 self.status = format!("Command was not sent; draft retained: {error}");
+                if command.changes_selection() {
+                    self.finish_pending_selection(&text(&submission.thread, "id"), false);
+                }
             }
         }
         cx.notify();
@@ -1801,6 +1820,7 @@ impl Coincide {
                 self.select_native_account_from_picker(pending.account, cx);
             } else {
                 self.status="Account selection cancelled because the conversation changed. Your draft is retained.".into();
+                self.finish_pending_selection(&text(&pending.scope, "id"), false);
             }
         }
         if let Some(pending) = self.selection_ui.pending_provider_picker.take() {
@@ -1818,6 +1838,7 @@ impl Coincide {
                         selection_response(&mut engine, "agent.provider.cancelRestore", json!({}));
                 }
                 self.status = "Provider restoration cancelled because the composer changed. Your draft was retained.".into();
+                self.finish_pending_selection(&text(&submission.thread, "id"), false);
             }
         }
         self.observe_saved_profile_once(cx);
@@ -1982,6 +2003,7 @@ impl Coincide {
         }
     }
     pub(super) fn invalidate_native_conversation_view(&mut self) {
+        self.cancel_pending_selection_waits();
         self.selection_ui.capability_cache.invalidate();
         self.selection_ui.context = None;
         self.selection_ui.automatic_profile_context = None;
@@ -3444,7 +3466,6 @@ impl Coincide {
                         if selected {
                             return;
                         }
-                        this.selection_ui.pending_provider = None;
                         this.switch_codex_account_from_picker(account.clone(), cx);
                     })),
             );

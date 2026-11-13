@@ -4984,9 +4984,24 @@ impl Coincide {
                     return;
                 }
                 composer_follow_up_mount::SendRoute::WaitForSelection => {
-                    let reason = "Finish changing the account or provider, then send again.";
-                    self.show_local_error(reason);
-                    self.status = reason.into();
+                    let draft = self.composer.read(cx).value().to_string();
+                    let has_images = v["rustDraftImages"]
+                        .as_array()
+                        .is_some_and(|images| !images.is_empty());
+                    if draft.trim().is_empty()
+                        && !has_images
+                        && !coincide_core::composer_context::has_context(&v["draftContext"])
+                        && !self.attachment_imports.contains(&id)
+                    {
+                        return;
+                    }
+                    let mut pending =
+                        composer_follow_up_mount::PendingSend::new(v, draft, alternate)
+                            .with_behavior(self.captured_follow_up_behavior(v));
+                    pending.selection_wait = composer_follow_up_mount::SelectionWait::Waiting;
+                    pending.add_imports(self.attachment_imports.claim(&id));
+                    self.pending_follow_up = Some(pending);
+                    self.status = "Sending after the account or provider change.".into();
                     cx.notify();
                     return;
                 }
@@ -6000,7 +6015,46 @@ impl Render for Coincide {
             self.pending_follow_up = self.pending_follow_up_backlog.pop_front();
         }
         if let Some(mut pending) = self.pending_follow_up.take() {
-            if pending.import_failed && !pending.waiting_for_import && !pending.original_visible {
+            if pending.selection_wait == composer_follow_up_mount::SelectionWait::Waiting {
+                self.pending_follow_up = Some(pending);
+            } else if pending.selection_wait == composer_follow_up_mount::SelectionWait::Failed {
+                if pending.original_visible {
+                    self.status =
+                        "Account or provider was not changed; your message is still in the draft."
+                            .into();
+                    cx.notify();
+                } else if pending.waiting_for_import {
+                    self.pending_follow_up = Some(pending);
+                } else {
+                    let result = try_state(&self.engine).and_then(|mut engine| {
+                        if pending.import_failed {
+                            engine.retain_failed_captured_native_send(&pending.captured)
+                        } else {
+                            engine.retain_selection_failed_native_send(&pending.captured)
+                        }
+                    });
+                    match result {
+                        Ok(()) => {
+                            self.finish_pending_images(pending.image_send, true);
+                            self.remove_buffered_send(&pending);
+                            self.status = "Message saved for editing after the account or provider change failed.".into();
+                            self.refresh_queue(cx);
+                            cx.notify();
+                        }
+                        Err(error) => {
+                            if !engine_busy(&error) {
+                                self.status = format!(
+                                    "Message retained while saving it for editing: {error}"
+                                );
+                            }
+                            self.pending_follow_up = Some(pending);
+                        }
+                    }
+                }
+            } else if pending.import_failed
+                && !pending.waiting_for_import
+                && !pending.original_visible
+            {
                 let has_payload = !pending.draft.trim().is_empty()
                     || coincide_core::composer_context::has_context(
                         &pending.captured["draftContext"],

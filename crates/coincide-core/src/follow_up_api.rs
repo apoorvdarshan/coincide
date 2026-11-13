@@ -347,6 +347,17 @@ impl Engine {
         )?;
         Ok(())
     }
+    /// A failed account/provider change must not send a buffered message to
+    /// the previous selection. Keep it available for editing instead.
+    pub fn retain_selection_failed_native_send(&mut self, captured: &Value) -> Result<()> {
+        self.queue_captured_native_send_inner(
+            captured,
+            false,
+            true,
+            Some("Account or provider change failed; review this message before sending."),
+        )?;
+        Ok(())
+    }
     /// Named follow-ups use the selected account's actual private catalog and
     /// policy, just like normal turn admission; never borrow a default proof.
     pub(super) fn validate_native_follow_up_policy(&self, thread: &Value) -> Result<()> {

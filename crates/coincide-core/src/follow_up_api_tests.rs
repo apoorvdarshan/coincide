@@ -86,6 +86,42 @@ fn failed_image_import_keeps_the_captured_message_for_editing_without_auto_deliv
 }
 
 #[test]
+fn failed_selection_keeps_buffered_message_for_editing_without_delivery() {
+    let Fixture {
+        _dir,
+        mut engine,
+        id,
+        release,
+        control,
+        ..
+    } = fixture();
+    let captured = engine.store.thread(&id).unwrap();
+    engine
+        .store
+        .patch_draft(&id, "new independent draft")
+        .unwrap();
+    engine
+        .retain_selection_failed_native_send(&captured)
+        .unwrap();
+    let saved = engine.store.thread(&id).unwrap();
+    assert_eq!(saved["draft"], "new independent draft");
+    let messages = crate::message_queue::read(&saved).unwrap();
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].text, captured["draft"]);
+    assert_eq!(messages[0].state, crate::message_queue::State::Failed);
+    assert!(
+        messages[0]
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("provider change failed")
+    );
+    assert!(!engine.enabled_queues.contains(&id));
+    assert!(control.try_recv().is_err());
+    finish_fake(&mut engine, &id, release);
+}
+
+#[test]
 fn captured_steer_waits_for_previous_ack_and_then_steers_without_overwriting_new_text() {
     let Fixture {
         _dir,
