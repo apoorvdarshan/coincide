@@ -64,6 +64,8 @@ mod composer_follow_up_mount;
 mod composer_history;
 mod composer_pending_images;
 mod composer_plan_card;
+#[cfg(test)]
+mod composer_return_tests;
 mod composer_selection;
 #[cfg(test)]
 mod composer_steering;
@@ -1453,11 +1455,11 @@ impl Coincide {
                 }
             }),
             cx.subscribe_in(&composer, window, |this, _, event, window, cx| {
-                if matches!(event, InputEvent::PressEnter { shift: false, .. })
-                    && this.settings["sendOnReturn"].as_bool().unwrap_or(true)
-                    && !this.settings_open
-                    && this.chat_visible()
-                {
+                if chat_inspector::composer_enter_sends(
+                    event,
+                    this.settings["sendOnReturn"].as_bool().unwrap_or(true),
+                    this.chat_route(),
+                ) {
                     this.send(window, cx);
                 }
             }),
