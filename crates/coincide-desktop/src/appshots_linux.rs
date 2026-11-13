@@ -5,6 +5,7 @@
 use super::{Capture, Permissions};
 use anyhow::{Context, Result, bail, ensure};
 use atspi::{Role, State, StateSet, proxy::accessible::AccessibleProxyBlocking};
+// AT-SPI 0.30's blocking proxies still use zbus 5's connection and value types.
 use std::{
     cell::Cell,
     collections::HashSet,
@@ -29,6 +30,7 @@ use x11rb::{
     rust_connection::{DefaultStream, PollMode, RustConnection, Stream},
     utils::RawFdContainer,
 };
+use zbus5 as zbus;
 
 const WAYLAND: &str = "Automatic Appshots requires an X11 session. Wayland requires a window selection portal; automatic front-window capture is unavailable in this build.";
 static INPUT: Mutex<Option<InputOwner>> = Mutex::new(None);

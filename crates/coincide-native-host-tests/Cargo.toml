@@ -27,6 +27,7 @@ uuid.workspace = true
 base64 = "0.23"
 gtk = "0.18"
 x11rb = { version = "=0.14.0", features = ["composite", "xinput", "screensaver", "dpms", "res", "xtest"] }
-zbus = "=5.19.0"
+zbus = "=6.2.1"
+zbus5 = { package = "zbus", version = "=5.19.0" }
 atspi = { version = "=0.30.0", default-features = false, features = ["proxies"] }
 libc = "0.2"

@@ -48,7 +48,7 @@ apple-native-keyring-store = { version = "=1.0.2", default-features = false, fea
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus-secret-service-keyring-store = { version = "=1.0.1", default-features = false, features = ["crypto-rust"] }
 # Avahi advertising for Coincide Remote; already in the graph through the secret store.
-zbus = "=5.19.0"
+zbus = "=6.2.1"
 
 [target.'cfg(windows)'.dependencies]
 windows-native-keyring-store = { version = "=1.1.0", default-features = false }

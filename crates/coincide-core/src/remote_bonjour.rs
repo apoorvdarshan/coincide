@@ -147,10 +147,9 @@ mod macos {
 
 #[cfg(target_os = "linux")]
 mod linux {
-    use zbus::{
-        blocking::{Connection, Proxy},
-        zvariant::OwnedObjectPath,
-    };
+    // zbus 6 has no blocking module: a connection built outside `block_on`
+    // runs on zbus's own helper thread, and `zbus::block_on` drives each call.
+    use zbus::{Connection, OwnedObjectPath, Proxy, block_on};
 
     /// An Avahi entry group; Avahi removes it with this connection.
     pub struct Group {
@@ -160,22 +159,23 @@ mod linux {
 
     impl Group {
         pub fn register(name: &str, port: u16, txt: Vec<Vec<u8>>) -> anyhow::Result<Self> {
-            let connection = Connection::system()?;
-            let server = Proxy::new(
+            let connection = block_on(Connection::system())?;
+            let server = block_on(Proxy::new(
                 &connection,
                 "org.freedesktop.Avahi",
                 "/",
                 "org.freedesktop.Avahi.Server",
-            )?;
-            let path: OwnedObjectPath = server.call("EntryGroupNew", &())?;
-            let group = Proxy::new(
+            ))?;
+            let path: OwnedObjectPath =
+                block_on(server.call::<_, _, OwnedObjectPath>("EntryGroupNew", &()))?;
+            let group = block_on(Proxy::new(
                 &connection,
                 "org.freedesktop.Avahi",
                 path,
                 "org.freedesktop.Avahi.EntryGroup",
-            )?;
+            ))?;
             // Any interface and protocol (-1), no flags, default domain and host.
-            group.call::<_, _, ()>(
+            block_on(group.call::<_, _, ()>(
                 "AddService",
                 &(
                     -1i32,
@@ -188,8 +188,8 @@ mod linux {
                     port,
                     txt,
                 ),
-            )?;
-            group.call::<_, _, ()>("Commit", &())?;
+            ))?;
+            block_on(group.call::<_, _, ()>("Commit", &()))?;
             Ok(Self {
                 group,
                 _connection: connection,
@@ -199,7 +199,7 @@ mod linux {
 
     impl Drop for Group {
         fn drop(&mut self) {
-            let _ = self.group.call::<_, _, ()>("Free", &());
+            let _ = block_on(self.group.call::<_, _, ()>("Free", &()));
         }
     }
 }

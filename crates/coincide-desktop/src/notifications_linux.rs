@@ -7,7 +7,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     time::Duration,
 };
-use zbus::blocking::{Connection, Proxy, connection::Builder};
+use zbus::{Connection, Proxy, block_on, connection::Builder};
 #[derive(Default)]
 pub(crate) struct BusServer {
     connection: Option<Connection>,
@@ -17,11 +17,12 @@ impl BusServer {
     fn connection(&mut self) -> Result<&Connection> {
         if self.connection.is_none() {
             self.connection = Some(
-                Builder::session()
-                    .map_err(|_| anyhow::anyhow!("Desktop notification bus unavailable"))?
-                    .method_timeout(Duration::from_secs(2))
-                    .build()
-                    .map_err(|_| anyhow::anyhow!("Desktop notification bus unavailable"))?,
+                block_on(
+                    Builder::session()
+                        .method_timeout(Duration::from_secs(2))
+                        .build(),
+                )
+                .map_err(|_| anyhow::anyhow!("Desktop notification bus unavailable"))?,
             );
         }
         Ok(self.connection.as_ref().unwrap())
@@ -31,27 +32,27 @@ impl Server for BusServer {
     fn owner(&mut self) -> Result<String> {
         let result = (|| -> Result<(String, bool)> {
             let connection = self.connection()?;
-            let notifications = Proxy::new(
+            let notifications = block_on(Proxy::new(
                 connection,
                 "org.freedesktop.Notifications",
                 "/org/freedesktop/Notifications",
                 "org.freedesktop.Notifications",
-            )?;
-            let capabilities: Vec<String> = notifications
-                .call("GetCapabilities", &())
+            ))?;
+            let capabilities: Vec<String> = block_on(notifications.call("GetCapabilities", &()))
                 .map_err(|_| anyhow::anyhow!("Desktop notification service unavailable"))?;
             ensure!(
                 capabilities.len() <= 64 && capabilities.iter().all(|c| c.len() <= 256),
                 "Invalid notification service capabilities"
             );
-            let bus = Proxy::new(
+            let bus = block_on(Proxy::new(
                 connection,
                 "org.freedesktop.DBus",
                 "/org/freedesktop/DBus",
                 "org.freedesktop.DBus",
-            )?;
-            let name: String = bus.call("GetNameOwner", &("org.freedesktop.Notifications",))?;
-            let guid: String = bus.call("GetId", &())?;
+            ))?;
+            let name: String =
+                block_on(bus.call("GetNameOwner", &("org.freedesktop.Notifications",)))?;
+            let guid: String = block_on(bus.call("GetId", &()))?;
             ensure!(
                 name.starts_with(':')
                     && name.len() <= 200
@@ -84,21 +85,21 @@ impl Server for BusServer {
             .split_once('|')
             .ok_or_else(|| anyhow::anyhow!("Notification receipt identity unavailable"))?;
         let connection = self.connection()?;
-        let bus = Proxy::new(
+        let bus = block_on(Proxy::new(
             connection,
             "org.freedesktop.DBus",
             "/org/freedesktop/DBus",
             "org.freedesktop.DBus",
-        )?;
-        let current: String = bus.call("GetId", &())?;
+        ))?;
+        let current: String = block_on(bus.call("GetId", &()))?;
         ensure!(current == guid, "Notification bus instance changed");
-        let proxy = Proxy::new(
+        let proxy = block_on(Proxy::new(
             connection,
             name,
             "/org/freedesktop/Notifications",
             "org.freedesktop.Notifications",
-        )?;
-        let hints: HashMap<&str, zbus::zvariant::Value<'_>> = HashMap::new();
+        ))?;
+        let hints: HashMap<&str, zbus::Variant<'_>> = HashMap::new();
         let actions: Vec<&str> = Vec::new();
         // Escape the optional preview as literal body text on servers supporting
         // markup; never put user text into action IDs, hints or service names.
@@ -111,43 +112,41 @@ impl Server for BusServer {
         } else {
             plain.to_owned()
         };
-        proxy
-            .call(
-                "Notify",
-                &(
-                    "Coincide",
-                    replace,
-                    "",
-                    payload.title.as_str(),
-                    body.as_str(),
-                    actions,
-                    hints,
-                    -1i32,
-                ),
-            )
-            .map_err(|_| anyhow::anyhow!("Desktop notification acknowledgement unavailable"))
+        block_on(proxy.call(
+            "Notify",
+            &(
+                "Coincide",
+                replace,
+                "",
+                payload.title.as_str(),
+                body.as_str(),
+                actions,
+                hints,
+                -1i32,
+            ),
+        ))
+        .map_err(|_| anyhow::anyhow!("Desktop notification acknowledgement unavailable"))
     }
     fn close(&mut self, owner: &str, id: u32) -> Result<()> {
         let (guid, name) = owner
             .split_once('|')
             .ok_or_else(|| anyhow::anyhow!("Notification receipt identity unavailable"))?;
         let connection = self.connection()?;
-        let bus = Proxy::new(
+        let bus = block_on(Proxy::new(
             connection,
             "org.freedesktop.DBus",
             "/org/freedesktop/DBus",
             "org.freedesktop.DBus",
-        )?;
-        let current: String = bus.call("GetId", &())?;
+        ))?;
+        let current: String = block_on(bus.call("GetId", &()))?;
         ensure!(current == guid, "Notification bus instance changed");
-        let proxy = Proxy::new(
+        let proxy = block_on(Proxy::new(
             connection,
             name,
             "/org/freedesktop/Notifications",
             "org.freedesktop.Notifications",
-        )?;
-        proxy
-            .call("CloseNotification", &(id,))
+        ))?;
+        block_on(proxy.call("CloseNotification", &(id,)))
             .map_err(|_| anyhow::anyhow!("Desktop notification close acknowledgement unavailable"))
     }
 }
@@ -183,7 +182,7 @@ mod tests {
             summary: &str,
             body: &str,
             actions: Vec<String>,
-            hints: HashMap<String, zbus::zvariant::OwnedValue>,
+            hints: HashMap<String, zbus::OwnedVariant>,
             timeout: i32,
         ) -> u32 {
             assert_eq!(app_name, "Coincide");
@@ -213,14 +212,13 @@ mod tests {
             Ok("private-synthetic-server-v1")
         );
         let calls = Arc::new(Mutex::new(Calls::default()));
-        let server = Builder::session()
-            .unwrap()
-            .name("org.freedesktop.Notifications")
-            .unwrap()
-            .serve_at("/org/freedesktop/Notifications", Service(calls.clone()))
-            .unwrap()
-            .build()
-            .unwrap();
+        let server = block_on(
+            Builder::session()
+                .name("org.freedesktop.Notifications")
+                .serve_at("/org/freedesktop/Notifications", Service(calls.clone()))
+                .build(),
+        )
+        .unwrap();
         let mut native = backend();
         assert!(calls.lock().unwrap().replacements.is_empty());
         assert_eq!(native.permission().unwrap(), Permission::Authorized);

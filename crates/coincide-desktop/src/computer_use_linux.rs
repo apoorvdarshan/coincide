@@ -5,6 +5,7 @@
 use super::{linux_policy as policy, *};
 use crate::appshots_platform::backend as shared;
 use atspi::{Role, State, StateSet};
+// Match the zbus version used by AT-SPI's blocking proxies.
 use base64::Engine as _;
 use serde_json::json;
 use std::{
@@ -24,6 +25,7 @@ use x11rb::{
     },
     rust_connection::RustConnection,
 };
+use zbus5 as zbus;
 type R<T> = Result<T, Failure>;
 #[track_caller]
 fn stale() -> Failure {
