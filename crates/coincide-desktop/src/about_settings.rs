@@ -108,6 +108,7 @@ impl Coincide {
                     .rounded_md()
                     .border_1()
                     .border_color(self.color(0x29303d))
+                    .bg(self.color(0x111722))
                     .p_1()
                     .children(rows),
             )

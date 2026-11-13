@@ -1939,12 +1939,15 @@ impl Coincide {
             .flex()
             .flex_col()
             .child(self.settings_subpage_header("Computer Use", "computer-use-settings-done", cx))
-            .child(
-                div()
-                    .p_2()
-                    .text_sm()
-                    .child(self.computer_use_status.clone()),
-            );
+            .when(!self.computer_use_status.is_empty(), |pane| {
+                pane.child(
+                    div()
+                        .px_4()
+                        .pt_3()
+                        .text_sm()
+                        .child(self.computer_use_status.clone()),
+                )
+            });
         if let Some(mount) = &self.computer_use_mount {
             pane = pane.child(
                 div()
@@ -1952,7 +1955,11 @@ impl Coincide {
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
-                    .child(mount.panel()),
+                    .child(
+                        div()
+                            .p_4()
+                            .child(self.settings_group("Access", mount.panel())),
+                    ),
             );
         }
         pane.into_any_element()

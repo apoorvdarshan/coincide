@@ -617,7 +617,13 @@ impl Coincide {
             .p_5()
             .flex()
             .flex_col()
-            .gap_3();
+            .gap_3()
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(self.color(0xe4e9f2).opacity(0.68))
+                    .child("Choose which agents are available in Coincide."),
+            );
         for descriptor in coincide_core::provider_catalog::PROVIDERS {
             let provider = descriptor.id;
             let section = Section::Provider(provider);
@@ -632,16 +638,19 @@ impl Coincide {
                     .flex()
                     .items_center()
                     .gap_3()
-                    .p_3()
-                    .rounded_md()
+                    .p_4()
+                    .rounded(px(10.))
                     .border_1()
                     .border_color(self.color(0x29303d))
+                    .bg(self.color(0x111722))
                     .child(icon_tile(section, 30.))
                     .child(
-                        div()
-                            .flex_1()
-                            .child(descriptor.display_name)
-                            .child(div().text_xs().child(summary)),
+                        div().flex_1().child(descriptor.display_name).child(
+                            div()
+                                .text_xs()
+                                .text_color(self.color(0xe4e9f2).opacity(0.65))
+                                .child(summary),
+                        ),
                     )
                     .child(
                         gpui_kit::component::switch::Switch::new(SharedString::from(format!(
@@ -747,8 +756,17 @@ impl Coincide {
             .items_center()
             .gap_3()
             .p_4()
+            .border_b_1()
+            .border_color(self.color(0x29303d))
             .child(icon_tile(section, 44.))
-            .child(div().flex_1().min_w_0().text_xl().child(section.label()))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_xl()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(section.label()),
+            )
             .child(
                 Button::new("provider-preferences-done")
                     .label("Done")
@@ -766,12 +784,18 @@ impl Coincide {
             .flex()
             .flex_col()
             .gap_4()
-            .child(status)
             .child(
                 div()
-                    .rounded_md()
+                    .rounded(px(10.))
+                    .bg(self.color(0x111722))
+                    .child(status),
+            )
+            .child(
+                div()
+                    .rounded(px(10.))
                     .border_1()
                     .border_color(self.color(0x29303d))
+                    .bg(self.color(0x111722))
                     .p_4()
                     .flex()
                     .items_center()
@@ -797,7 +821,12 @@ impl Coincide {
                     .child("Uses the provider’s command-line tool and your existing sign-in."),
             );
         if enabled {
-            pane = pane.child(accounts);
+            pane = pane.child(
+                div()
+                    .rounded(px(10.))
+                    .bg(self.color(0x111722))
+                    .child(accounts),
+            );
         }
         match provider {
             ProviderId::Codex => {
@@ -826,11 +855,21 @@ impl Coincide {
         catalogs.push(self.selection_ui.catalog.clone());
         let content = self.settings_scroll.frame(
             provider_key(provider),
-            pane.child(executable)
-                .child(self.models_settings_panel(&catalogs, cx))
-                .child(environment)
-                .child(setup)
-                .child(div().text_sm().child(self.settings_status.clone())),
+            pane.child(
+                div()
+                    .rounded(px(10.))
+                    .bg(self.color(0x111722))
+                    .child(executable),
+            )
+            .child(self.models_settings_panel(&catalogs, cx))
+            .child(
+                div()
+                    .rounded(px(10.))
+                    .bg(self.color(0x111722))
+                    .child(environment),
+            )
+            .child(div().rounded(px(10.)).bg(self.color(0x111722)).child(setup))
+            .child(div().text_sm().child(self.settings_status.clone())),
         );
         div()
             .flex_1()

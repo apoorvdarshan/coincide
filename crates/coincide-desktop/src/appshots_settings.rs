@@ -172,75 +172,138 @@ impl Coincide {
                         }),
                 )
             });
-        let mut pane=div().id("appshots-settings").flex_1().min_w_0().min_h_0().overflow_y_scroll().p_5().flex().flex_col().gap_4()
-            .child("Capture the window you’re working in and ask an agent about it.")
-            .child(self.labeled_row("Turn on Appshots", None, Switch::new("appshots-enabled").accessibility_label("Turn on Appshots").color(self.color(0xe4e9f2)).checked(settings.enabled).on_click(cx.listener(move|this,checked:&bool,window,cx|this.change_appshot_setting("enabled",json!(*checked),window,cx)))))
-            .child(div().text_xs().child("Capture the frontmost window of the app you’re using and attach it to a chat, ready for your question."))
+        let mut capture = div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .child(
+                self.labeled_row(
+                    "Turn on Appshots",
+                    Some("Capture the frontmost window and attach it to a chat.".into()),
+                    Switch::new("appshots-enabled")
+                        .accessibility_label("Turn on Appshots")
+                        .color(self.color(0xe4e9f2))
+                        .checked(settings.enabled)
+                        .on_click(cx.listener(move |this, checked: &bool, window, cx| {
+                            this.change_appshot_setting("enabled", json!(*checked), window, cx)
+                        })),
+                ),
+            )
             .child(self.labeled_row("Take an appshot with", None, trigger));
         if settings.custom {
-            pane = pane
+            capture = capture
                 .child(
-                    div().track_focus(&self.appshots.shortcut_focus).child(
-                        Button::new("appshots-record")
-                            .label(if self.appshots.recording {
-                                "Press new shortcut…".to_owned()
-                            } else {
-                                settings
-                                    .shortcut
-                                    .clone()
-                                    .unwrap_or_else(|| "Record a shortcut".into())
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.appshots.recording = true;
-                                this.appshots.invalidate();
-                                this.appshots.sync(&this.settings);
-                                this.appshots.shortcut_focus.focus(window, cx);
-                                cx.notify();
-                            })),
-                    ),
+                    div()
+                        .px_3()
+                        .py_2()
+                        .track_focus(&self.appshots.shortcut_focus)
+                        .child(
+                            Button::new("appshots-record")
+                                .label(if self.appshots.recording {
+                                    "Press new shortcut…".to_owned()
+                                } else {
+                                    settings
+                                        .shortcut
+                                        .clone()
+                                        .unwrap_or_else(|| "Record a shortcut".into())
+                                })
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.appshots.recording = true;
+                                    this.appshots.invalidate();
+                                    this.appshots.sync(&this.settings);
+                                    this.appshots.shortcut_focus.focus(window, cx);
+                                    cx.notify();
+                                })),
+                        ),
                 )
-                .child("Use Command or Control with a key. Delete removes it; Escape cancels.");
+                .child(
+                    div()
+                        .px_3()
+                        .pb_2()
+                        .text_xs()
+                        .text_color(self.color(0xe4e9f2).opacity(0.65))
+                        .child(
+                            "Use Command or Control with a key. Delete removes it; Escape cancels.",
+                        ),
+                );
         }
-        pane=pane.child(self.labeled_row("Include the window’s text", None, Switch::new("appshots-text").accessibility_label("Include the window’s text").color(self.color(0xe4e9f2)).checked(settings.includes_text).on_click(cx.listener(move|this,checked:&bool,window,cx|this.change_appshot_setting("includesWindowText",json!(*checked),window,cx)))))
-            .child("Adds text the app exposes through Accessibility as a card beside the picture. Password fields are excluded.")
-            .child(self.labeled_row("Play a sound", None, Switch::new("appshots-sound").accessibility_label("Play a sound").color(self.color(0xe4e9f2)).checked(settings.sound).on_click(cx.listener(move|this,checked:&bool,window,cx|this.change_appshot_setting("playsSound",json!(*checked),window,cx)))))
-            .child(format!("Status: {}",self.appshots.status))
-            .child(div().text_lg().child("Permissions"))
-            .child(format!("Screen Recording: {} · Accessibility: {}",if self.appshots.permissions.screen{"Allowed"}else{"Not granted"},if self.appshots.permissions.accessibility{"Allowed"}else{"Not granted"}));
-        for (action, label) in [
-            (0u8, "Refresh permissions"),
-            (1, "Grant Screen Recording access"),
-            (2, "Grant Accessibility access"),
-        ] {
-            if action != 0 && !cfg!(target_os = "macos") {
-                continue;
-            }
-            pane = pane.child(
+        capture = capture
+            .child(self.labeled_row("Include the window’s text", Some("Adds accessible window text beside the picture; password fields are excluded.".into()), Switch::new("appshots-text").accessibility_label("Include the window’s text").color(self.color(0xe4e9f2)).checked(settings.includes_text).on_click(cx.listener(move|this,checked:&bool,window,cx|this.change_appshot_setting("includesWindowText",json!(*checked),window,cx)))))
+            .child(self.labeled_row("Play a sound", None, Switch::new("appshots-sound").accessibility_label("Play a sound").color(self.color(0xe4e9f2)).checked(settings.sound).on_click(cx.listener(move|this,checked:&bool,window,cx|this.change_appshot_setting("playsSound",json!(*checked),window,cx)))));
+        let mut permissions = div()
+            .p_4()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(
                 div()
                     .flex()
                     .items_center()
                     .justify_between()
-                    .child(match action {
-                        0 => "Permissions",
-                        1 => "Screen Recording",
-                        _ => "Accessibility",
-                    })
+                    .gap_3()
                     .child(
-                        Button::new(("appshots-permission", action as usize))
-                            .label(if action == 0 {
-                                "Refresh"
-                            } else {
-                                "Grant Access"
-                            })
+                        div()
+                            .text_sm()
+                            .text_color(self.color(0xe4e9f2).opacity(0.7))
+                            .child("Appshots status"),
+                    )
+                    .child(
+                        Button::new(("appshots-permission", 0usize))
+                            .label("Refresh")
                             .small()
-                            .accessibility_label(label)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.appshots.permissions = appshots_platform::permissions(action);
+                            .accessibility_label("Refresh permissions")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.appshots.permissions = appshots_platform::permissions(0);
                                 this.appshots.invalidate();
                                 this.appshots.sync(&this.settings);
                                 cx.notify();
                             })),
                     ),
+            )
+            .child(div().text_sm().child(self.appshots.status.clone()));
+        for (action, title, allowed, label) in [
+            (
+                1u8,
+                "Screen Recording",
+                self.appshots.permissions.screen,
+                "Grant Screen Recording access",
+            ),
+            (
+                2u8,
+                "Accessibility",
+                self.appshots.permissions.accessibility,
+                "Grant Accessibility access",
+            ),
+        ] {
+            permissions = permissions.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_3()
+                    .child(
+                        div().flex_1().min_w_0().child(title).child(
+                            div()
+                                .text_xs()
+                                .text_color(self.color(0xe4e9f2).opacity(0.65))
+                                .child(if allowed { "Allowed" } else { "Not granted" }),
+                        ),
+                    )
+                    .when(cfg!(target_os = "macos") && !allowed, |row| {
+                        row.child(
+                            Button::new(("appshots-permission", action as usize))
+                                .label("Grant Access")
+                                .small()
+                                .accessibility_label(label)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.appshots.permissions =
+                                        appshots_platform::permissions(action);
+                                    this.appshots.invalidate();
+                                    this.appshots.sync(&this.settings);
+                                    cx.notify();
+                                })),
+                        )
+                    }),
             );
         }
         #[cfg(target_os = "macos")]
@@ -248,23 +311,60 @@ impl Coincide {
             ("Privacy_ScreenCapture", "Open Screen Recording settings"),
             ("Privacy_Accessibility", "Open Accessibility settings"),
         ] {
-            pane = pane.child(Button::new(anchor).label(label).small().ghost().on_click(
-                cx.listener(move |_, _, _, cx| {
-                    cx.open_url(&format!(
-                        "x-apple.systempreferences:com.apple.preference.security?{anchor}"
-                    ))
-                }),
-            ));
+            permissions = permissions.child(
+                div().flex().justify_start().child(
+                    Button::new(anchor)
+                        .label(label)
+                        .small()
+                        .ghost()
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            cx.open_url(&format!(
+                                "x-apple.systempreferences:com.apple.preference.security?{anchor}"
+                            ))
+                        })),
+                ),
+            );
         }
-        div().id("appshots-settings-surface").flex_1().min_h_0().min_w_0().flex().flex_col()
+        if !self.appshots.permissions.detail.is_empty() {
+            permissions = permissions.child(
+                div()
+                    .text_sm()
+                    .child(self.appshots.permissions.detail.clone()),
+            );
+        }
+        let privacy = div().p_4().flex().flex_col().gap_2()
+            .child("Appshots wait in the composer until you send them. A recently used writable chat receives the picture; otherwise Coincide opens a new chat.")
+            .child(div().text_sm().text_color(self.color(0xe4e9f2).opacity(0.7)).child("Only the frontmost eligible window is captured. Coincide’s windows, protected windows and detected password entry are skipped. Pictures stay in local attachments until you send them."))
+            .when(self.appshots.private_cleanup_pending(), |pane| pane.child(Button::new("appshots-retry-private-cleanup").label("Retry private capture cleanup").on_click(cx.listener(|this,_,_,cx|{this.appshots.retry_private_cleanup();cx.notify();}))))
+            .when(!self.appshots.outcome.is_empty(), |pane| pane.child(div().text_sm().child(format!("Last appshot: {}", self.appshots.outcome))));
+        let pane = div()
+            .id("appshots-settings")
+            .flex_1()
+            .min_w_0()
+            .min_h_0()
+            .overflow_y_scroll()
+            .p_4()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(self.color(0xe4e9f2).opacity(0.7))
+                    .child("Capture the window you’re working in and ask an agent about it."),
+            )
+            .child(self.settings_group("Capture", capture))
+            .child(self.settings_group("Permissions", permissions))
+            .child(self.settings_group("Privacy", privacy));
+        div()
+            .id("appshots-settings-surface")
+            .flex_1()
+            .min_h_0()
+            .min_w_0()
+            .flex()
+            .flex_col()
             .child(self.settings_subpage_header("Appshots", "appshots-settings-done", cx))
-            .child(self.settings_scroll.frame("appshots",
-        pane.child(self.appshots.permissions.detail.clone())
-            .child(div().text_lg().child("Privacy"))
-            .child("Appshots never send on their own. The picture waits in the composer. A writable chat used in the last minute receives it; otherwise a new projectless chat is created.")
-            .child("Only the frontmost eligible window is captured, never the whole screen. Coincide’s windows, protected windows and detected password entry are skipped. Captures stay with local attachments until you send. OS privacy and text availability differ by platform.")
-            .when(self.appshots.private_cleanup_pending(),|pane|pane.child(Button::new("appshots-retry-private-cleanup").label("Retry private capture cleanup").on_click(cx.listener(|this,_,_,cx|{this.appshots.retry_private_cleanup();cx.notify();}))))
-            .child(format!("Last appshot: {}",self.appshots.outcome))))
+            .child(self.settings_scroll.frame("appshots", pane))
             .into_any_element()
     }
 }

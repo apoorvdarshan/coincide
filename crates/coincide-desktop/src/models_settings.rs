@@ -771,6 +771,7 @@ impl Coincide {
             .border_1()
             .border_color(border)
             .rounded_md()
+            .bg(self.color(0x10141c))
             .child(
                 div()
                     .flex()
@@ -779,6 +780,7 @@ impl Coincide {
                     .py_1()
                     .border_b_1()
                     .border_color(border)
+                    .bg(self.color(0x202a3b))
                     .text_sm()
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(div().flex_1().min_w_0().child("Model"))
@@ -863,7 +865,7 @@ impl Coincide {
                     .items_center()
                     .gap_2()
                     .px_2()
-                    .py_1()
+                    .py(px(7.))
                     .border_b_1()
                     .border_color(border)
                     .when(selected, |line| line.bg(accent.opacity(0.22)))
@@ -1184,6 +1186,11 @@ impl Coincide {
             .flex()
             .flex_col()
             .gap_3()
+            .p_4()
+            .rounded(px(12.))
+            .border_1()
+            .border_color(border)
+            .bg(self.color(0x111722))
             .when(in_provider_page, |panel| panel.child(div().text_lg().child("Models")))
             .child(div().text_sm().text_color(muted).child(
                 "Choose a default for new threads, favorite models, or hide them from the picker. Command- or Control-click selects several.",

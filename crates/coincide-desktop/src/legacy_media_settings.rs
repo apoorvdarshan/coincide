@@ -66,10 +66,9 @@ impl Row {
         let mut row = Self::candidate(&r.candidate);
         row.status = r.status.clone();
         row.detail = format!(
-            "{} bytes · {} · SHA256 {}",
+            "{} bytes · {}",
             r.byte_len.unwrap_or(0),
-            r.mime_type.as_deref().unwrap_or("unavailable"),
-            r.source_sha256.as_deref().unwrap_or("unavailable")
+            r.mime_type.as_deref().unwrap_or("unavailable")
         );
         row
     }
@@ -765,21 +764,20 @@ impl LegacyMediaSettingsPanel {
 impl Render for LegacyMediaSettingsPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let busy = self.busy();
-        let mut pane=div().id("legacy-media-settings").size_full().flex().flex_col().gap_2().p_3()
-            .child("Historical images")
-            .child("Restore selected historical images into a local display overlay. Source files, conversation originals and unsent drafts stay unchanged. Nothing is sent to a provider.")
+        let mut pane=div().id("legacy-media-settings").size_full().flex().flex_col().gap_3().p_4()
+            .child("Restore images from your previous Coincide library. Your original files and drafts stay unchanged; nothing is sent to a provider.")
             .child(Input::new(&self.prefix))
             .child(format!("Selected source folder: {}",self.folder.as_ref().map(|p|short(&p.to_string_lossy(),500)).unwrap_or_else(||"Choose with the native folder picker".into())))
             .child(div().min_w_0().flex().flex_wrap().gap_2()
                 .child(Button::new("legacy-media-folder").label("Choose source folder…").disabled(busy||self.thread_id.is_none()).on_click(cx.listener(|this,_,_,cx|this.choose(cx))))
-                .child(Button::new("legacy-media-relative").label(if self.relative {"Relative paths: use this folder"}else{"Relative paths: unresolved"}).disabled(busy).on_click(cx.listener(|this,_,_,cx|{this.relative = !this.relative;this.mapping_changed(cx);}))))
-            .child(Button::new("legacy-media-approve").label("Approve exact mapping and inspect").disabled(busy||self.folder.is_none()||self.thread_id.is_none()).on_click(cx.listener(|this,_,_,cx|this.approve_and_inspect(cx))))
+                .child(Button::new("legacy-media-relative").label(if self.relative {"Relative paths: use this folder"}else{"Relative paths: not included"}).disabled(busy).on_click(cx.listener(|this,_,_,cx|{this.relative = !this.relative;this.mapping_changed(cx);}))))
+            .child(div().flex().justify_start().child(Button::new("legacy-media-approve").label("Confirm folder and find images").disabled(busy||self.folder.is_none()||self.thread_id.is_none()).on_click(cx.listener(|this,_,_,cx|this.approve_and_inspect(cx)))))
             .child(div().text_sm().child(short(&self.flow.notice,1500)))
             .child(div().min_w_0().flex().flex_wrap().gap_2()
-                .child(Button::new("legacy-media-validate").label("Validate selected references").disabled(busy||self.flow.ids(Phase::Inspected).is_none()).on_click(cx.listener(|this,_,_,cx|this.validate(cx))))
-                .child(Button::new("legacy-media-confirm").label("Confirm copying selected Ready images").primary().disabled(busy||self.flow.ids(Phase::Preview).is_none()||self.receipts.len()>=8).on_click(cx.listener(|this,_,_,cx|this.confirm(cx))))
-                .child(Button::new("legacy-media-cancel").label("Cancel operation").disabled(self.pending.is_none()).on_click(cx.listener(|this,_,_,cx|this.cancel(cx)))))
-            .child(format!("Selected: {}/20 · Item offset: {} · Source SHA256: {}",self.flow.selected.len(),self.flow.page_offset,self.flow.source_hash.as_deref().unwrap_or("not inspected")));
+                .child(Button::new("legacy-media-validate").label("Check selected images").disabled(busy||self.flow.ids(Phase::Inspected).is_none()).on_click(cx.listener(|this,_,_,cx|this.validate(cx))))
+                .child(Button::new("legacy-media-confirm").label("Restore selected images").primary().disabled(busy||self.flow.ids(Phase::Preview).is_none()||self.receipts.len()>=8).on_click(cx.listener(|this,_,_,cx|this.confirm(cx))))
+                .child(Button::new("legacy-media-cancel").label("Cancel").disabled(self.pending.is_none()).on_click(cx.listener(|this,_,_,cx|this.cancel(cx)))))
+            .child(format!("{} of 20 selected",self.flow.selected.len()));
         let mut body = div()
             .id("legacy-media-rows")
             .flex_1()
@@ -827,16 +825,18 @@ impl Render for LegacyMediaSettingsPanel {
         if let Some(offset) = self.flow.next_offset {
             body = body.child(
                 Button::new("legacy-media-next")
-                    .label("Inspect next bounded page")
+                    .label("Load more")
                     .disabled(busy || self.capability.is_none())
                     .on_click(cx.listener(move |this, _, _, cx| this.inspect(offset, cx))),
             );
         }
         if self.flow.phase == Phase::Preview {
-            body=body.child("Preview only: select Ready entries to copy. Missing, changed, outside-root and unsupported references remain explicit; no fallback lookup.");
+            body=body.child("Select the images marked Ready to restore. Missing, changed or unsupported files won’t be copied.");
         }
         if !self.receipts.is_empty() || !self.awaiting_receipts.is_empty() {
-            body=body.child("Retained completion receipts (memory only; no crash-safe recovery journal). Unresolved copied image identities stay owned here. Parent must reconcile them before acknowledgment or shutdown.");
+            body = body.child(
+                "Image recovery is finishing. Keep Coincide open until the results are saved.",
+            );
         }
         for (id, receipt) in &self.receipts {
             let id = *id;
@@ -859,7 +859,7 @@ impl Render for LegacyMediaSettingsPanel {
             }
             body = body.child(
                 Button::new(SharedString::from(format!("legacy-media-reconcile-{id}")))
-                    .label("Hand receipt to parent for reconciliation")
+                    .label("Finish image recovery")
                     .on_click(cx.listener(move |_, _, _, cx| {
                         cx.emit(LegacyMediaSettingsEvent::RecoveryOwnershipRequested {
                             receipt_id: id,

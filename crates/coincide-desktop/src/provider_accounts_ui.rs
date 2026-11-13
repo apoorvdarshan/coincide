@@ -878,8 +878,15 @@ impl Panel {
             .pending_names
             .retain(|(key, _)| key != provider);
         if let Some(editor) = self.accounts.editors.get_mut(provider) {
-            editor.notice = error.to_string();
             editor.load_requested = engine_busy(error);
+            // Initial reads retry in the background. Keep real failures and
+            // refused edits visible, but don't flash a lock-contention error
+            // while an unopened account list is being loaded.
+            editor.notice = if editor.load_requested && !editor.loaded {
+                String::new()
+            } else {
+                error.to_string()
+            };
         }
     }
     pub(super) fn discard_accounts(
@@ -1081,10 +1088,10 @@ impl Panel {
             .flex()
             .flex_col()
             .gap_3()
-            .p_3()
-            .rounded_md()
+            .p_4()
+            .rounded(px(10.))
             .border_1()
-            .border_color(rgb(0x29303d))
+            .border_color(cx.theme().border)
             .child(div().font_weight(FontWeight::SEMIBOLD).child("Accounts"))
             .child(
                 div().flex().flex_col().gap_1().child("Default").child(

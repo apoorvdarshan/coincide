@@ -1057,7 +1057,8 @@ impl Coincide {
             .gap_1()
             .border_b_1()
             .border_color(self.color(0x29303d))
-            .pb_2()
+            .px_3()
+            .py_2()
             .child(
                 div()
                     .flex()
@@ -1164,7 +1165,6 @@ impl Coincide {
         let mut panel = div()
             .id("keyboard-settings")
             .track_focus(&self.keyboard.focus)
-            .p_3()
             .flex()
             .flex_col()
             .gap_3()
@@ -1185,24 +1185,24 @@ impl Coincide {
         if retained > 0 {
             panel = panel.child(div().text_sm().child(format!("{retained} saved shortcut(s) belong to commands this version does not have and are kept unchanged.")));
         }
-        let heading =
-            |title: &'static str| div().mt_2().font_weight(FontWeight::SEMIBOLD).child(title);
         for menu in Menu::ALL {
-            panel = panel.child(heading(menu.title()));
+            let mut rows = div().w_full().flex().flex_col();
             for command in Command::ALL
                 .into_iter()
                 .filter(|command| command.menu() == menu && command.jump_index().is_none())
             {
-                panel = panel.child(self.keyboard_row(command, writable, cx));
+                rows = rows.child(self.keyboard_row(command, writable, cx));
             }
+            panel = panel.child(self.settings_group(menu.title(), rows));
         }
-        panel = panel.child(heading("Go to Thread"));
+        let mut thread_rows = div().w_full().flex().flex_col();
         for command in Command::ALL
             .into_iter()
             .filter(|command| command.jump_index().is_some())
         {
-            panel = panel.child(self.keyboard_row(command, writable, cx));
+            thread_rows = thread_rows.child(self.keyboard_row(command, writable, cx));
         }
+        panel = panel.child(self.settings_group("Go to Thread", thread_rows));
         panel = panel.child(
             div()
                 .text_sm()
@@ -1247,7 +1247,7 @@ impl Coincide {
                 .child(Button::new("shortcuts-reset-confirm").label("Reset All").on_click(cx.listener(|this,_,window,cx| {this.keyboard.reset_confirm=false; this.save_shortcut(Change::ResetSupported,window,cx); })))
                 .child(Button::new("shortcuts-reset-cancel").label("Cancel").on_click(cx.listener(|this,_,_,cx| {this.keyboard.reset_confirm=false; cx.notify();}))));
         }
-        panel = panel.child(heading("Terminal"));
+        let mut terminal_rows = div().w_full().flex().flex_col();
         for (title, keys) in TERMINAL_KEYS {
             let keys = keys
                 .iter()
@@ -1255,17 +1255,22 @@ impl Coincide {
                 .map(|key| key.display())
                 .collect::<Vec<_>>()
                 .join(" or ");
-            panel = panel.child(
+            terminal_rows = terminal_rows.child(
                 div()
                     .flex()
                     .flex_wrap()
                     .items_center()
                     .gap_2()
+                    .px_3()
+                    .py_2()
+                    .border_b_1()
+                    .border_color(self.color(0x29303d))
                     .child(div().flex_1().min_w(px(190.)).child(*title))
                     .child(div().text_sm().child(keys)),
             );
         }
         panel
+            .child(self.settings_group("Terminal", terminal_rows))
             .child(div().text_sm().child(TERMINAL_NOTE))
             .into_any_element()
     }

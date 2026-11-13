@@ -366,18 +366,17 @@ impl Panel {
     pub fn pane(&self, provider: Provider, cx: &mut Context<Self>) -> AnyElement {
         let editor = &self.editors[index(provider)];
         let busy = self.pending.is_some() || self.workers.closed();
-        div().id(if provider==Provider::OpenAi{"voice-openai-key"}else{"voice-groq-key"}).p_3().flex().flex_col().gap_2()
-            .child(format!("{} Voice API key",name(provider)))
-            .child(format!("Recordings are sent to {} under your account and its data policies. This key is separate from chat provider accounts.",name(provider)))
+        div().id(if provider==Provider::OpenAi{"voice-openai-key"}else{"voice-groq-key"}).p_4().flex().flex_col().gap_2()
+            .child(div().font_weight(FontWeight::SEMIBOLD).child(format!("{} Voice API key",name(provider))))
+            .child(div().text_sm().text_color(cx.theme().muted_foreground).child(format!("Recordings are sent to {} under your account and its data policies. This key is separate from chat provider accounts.",name(provider))))
             .child(Input::new(&editor.input))
-            .child(Button::new(("voice-key-save", index(provider))).label("Save / Replace").disabled(busy||!editor.dirty).on_click(cx.listener(move|this,_,_,cx|{
-                this.save(provider,cx);
-            })))
-            .child(Button::new(("voice-key-load", index(provider))).label("Load Saved Key").disabled(busy||editor.dirty).on_click(cx.listener(move|this,_,_,cx|this.action(provider,Action::Load,cx))))
-            .child(Button::new(("voice-key-test", index(provider))).label("Test Key").disabled(busy||editor.dirty).on_click(cx.listener(move|this,_,_,cx|this.action(provider,Action::Test,cx))))
-            .child(Button::new(("voice-key-remove", index(provider))).label("Remove Key").disabled(busy).on_click(cx.listener(move|this,_,_,cx|this.action(provider,Action::Delete,cx))))
-            .child(Button::new(("voice-key-discard", index(provider))).label("Discard Typed Key").disabled(busy||!editor.dirty).on_click(cx.listener(move|this,_,window,cx|{this.discard(provider,window,cx);})))
-            .child(Button::new(("voice-key-cancel", index(provider))).label("Cancel pending result").disabled(self.pending.is_none()).on_click(cx.listener(|this,_,_,cx|{this.cancellation.store(true,Ordering::Release);cx.notify();})))
+            .child(div().flex().flex_wrap().items_center().gap_2()
+                .child(Button::new(("voice-key-save", index(provider))).label("Save / Replace").small().disabled(busy||!editor.dirty).on_click(cx.listener(move|this,_,_,cx|{this.save(provider,cx);})))
+                .child(Button::new(("voice-key-load", index(provider))).label("Load Saved Key").small().disabled(busy||editor.dirty).on_click(cx.listener(move|this,_,_,cx|this.action(provider,Action::Load,cx))))
+                .child(Button::new(("voice-key-test", index(provider))).label("Test Key").small().disabled(busy||editor.dirty).on_click(cx.listener(move|this,_,_,cx|this.action(provider,Action::Test,cx))))
+                .child(Button::new(("voice-key-remove", index(provider))).label("Remove Key").small().disabled(busy).on_click(cx.listener(move|this,_,_,cx|this.action(provider,Action::Delete,cx))))
+                .when(editor.dirty, |row| row.child(Button::new(("voice-key-discard", index(provider))).label("Discard Typed Key").small().disabled(busy).on_click(cx.listener(move|this,_,window,cx|{this.discard(provider,window,cx);}))))
+                .when(self.pending.is_some(), |row| row.child(Button::new(("voice-key-cancel", index(provider))).label("Cancel pending result").small().on_click(cx.listener(|this,_,_,cx|{this.cancellation.store(true,Ordering::Release);cx.notify();})))) )
             .when(provider == Provider::OpenAi && self.codex_has_key, |pane| {
                 pane.child(div().flex().items_center().gap_3().pt_2()
                     .child(div().flex_1().flex().flex_col()
@@ -385,7 +384,7 @@ impl Panel {
                         .child(div().text_xs().child(format!("Codex is signed in with an API key. Coincide can copy that key to its own {VAULT} item; it never reads ChatGPT sign-ins."))))
                     .child(Button::new("voice-key-codex").label("Use Codex’s Key…").disabled(busy).on_click(cx.listener(|this, _, window, cx| this.confirm_codex_import(window, cx)))))
             })
-            .child(editor.status.clone()).into_any_element()
+            .when(!editor.status.is_empty(), |pane| pane.child(div().text_sm().child(editor.status.clone()))).into_any_element()
     }
 }
 impl Render for Panel {
