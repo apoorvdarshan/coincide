@@ -185,6 +185,45 @@ impl State {
     }
 }
 
+fn appearance_option(
+    value: &'static str,
+    label: &'static str,
+    selected: bool,
+    thumbnail: Div,
+    ink: Rgba,
+    border: Rgba,
+) -> Button {
+    Button::new(SharedString::from(format!("appearance-{value}")))
+        .ghost()
+        // The thumbnail and its caption are taller than the standard button.
+        .h_auto()
+        .px_0()
+        .py_0()
+        .accessibility_label(label)
+        .selected(selected)
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap(px(5.))
+                .py_1()
+                .child(
+                    div()
+                        .rounded(px(9.))
+                        .when(selected, |frame| frame.border_2().border_color(ink))
+                        .when(!selected, |frame| frame.border_1().border_color(border))
+                        .child(thumbnail),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(ink.opacity(if selected { 1. } else { 0.6 }))
+                        .child(label),
+                ),
+        )
+}
+
 impl Coincide {
     pub(super) fn sync_general_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let size = slider_size(self.conversation_font_size());
@@ -354,7 +393,7 @@ impl Coincide {
         let mode = self.setting_text("appearance", "system");
         let dark = theme(self.settings["darkTheme"].as_str(), true);
         let light = theme(self.settings["lightTheme"].as_str(), false);
-        let mut picker = div().flex().gap(px(14.)).py(px(2.));
+        let mut picker = div().flex().flex_wrap().gap(px(14.)).py(px(2.));
         for (value, label) in [("system", "System"), ("light", "Light"), ("dark", "Dark")] {
             let selected = mode == value;
             let thumbnail = match value {
@@ -383,42 +422,17 @@ impl Coincide {
                     ),
             };
             picker = picker.child(
-                Button::new(SharedString::from(format!("appearance-{value}")))
-                    .ghost()
-                    .accessibility_label(label)
-                    .selected(selected)
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .items_center()
-                            .gap(px(5.))
-                            .py_1()
-                            .child(
-                                div()
-                                    .rounded(px(9.))
-                                    .when(selected, |frame| {
-                                        frame.border_2().border_color(self.color(0xe4e9f2))
-                                    })
-                                    .when(!selected, |frame| {
-                                        frame.border_1().border_color(self.color(0x29303d))
-                                    })
-                                    .child(thumbnail),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(self.color(0xe4e9f2).opacity(if selected {
-                                        1.
-                                    } else {
-                                        0.6
-                                    }))
-                                    .child(label),
-                            ),
-                    )
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.change_setting("appearance", json!(value), window, cx)
-                    })),
+                appearance_option(
+                    value,
+                    label,
+                    selected,
+                    thumbnail,
+                    self.color(0xe4e9f2),
+                    self.color(0x29303d),
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.change_setting("appearance", json!(value), window, cx)
+                })),
             );
         }
         self.labeled_row("Appearance", None, picker)
@@ -773,7 +787,115 @@ fn notification_denied_guidance() -> (&'static str, Option<(&'static str, &'stat
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{
+        CommandLineTool, PALETTES, RESTORED_KEYS, TOOL, appearance_option, command_line_tool,
+        restore_defaults_patch, slider_size, theme, theme_patch,
+    };
+    use gpui_base::ElementExt;
+    use gpui_kit::{
+        Bounds, Context, IntoElement, Modifiers, Pixels, Render, Window, div, point, prelude::*,
+        px, rgb,
+    };
+    use serde_json::{Value, json};
+
+    #[gpui_kit::test]
+    #[ignore = "invoked in an isolated HOME by appearance_thumbnail_layout"]
+    fn appearance_thumbnail_and_label_are_clickable(cx: &mut gpui_kit::TestAppContext) {
+        use std::{
+            cell::Cell,
+            rc::Rc,
+            sync::{Arc, Mutex},
+        };
+
+        struct AppearanceProbe {
+            clicks: Rc<Cell<usize>>,
+            bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
+        }
+        impl Render for AppearanceProbe {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let clicks = self.clicks.clone();
+                let bounds = self.bounds.clone();
+                div().size(px(200.)).child(
+                    appearance_option(
+                        "system",
+                        "System",
+                        true,
+                        div().w(px(68.)).h(px(46.)),
+                        rgb(0xffffff),
+                        rgb(0x333333),
+                    )
+                    .on_click(move |_, _, _| clicks.set(clicks.get() + 1))
+                    .on_prepaint(move |frame, _, _| *bounds.lock().unwrap() = Some(frame)),
+                )
+            }
+        }
+
+        cx.update(gpui_kit::init);
+        let clicks = Rc::new(Cell::new(0));
+        let bounds = Arc::new(Mutex::new(None));
+        let (_, cx) = cx.add_window_view({
+            let clicks = clicks.clone();
+            let bounds = bounds.clone();
+            move |_, _| AppearanceProbe { clicks, bounds }
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let bounds = bounds
+            .lock()
+            .unwrap()
+            .expect("appearance control is painted");
+        assert!(
+            bounds.size.height > px(60.),
+            "the full preview and caption must fit"
+        );
+        cx.simulate_click(
+            point(
+                bounds.origin.x + px(20.),
+                bounds.origin.y + bounds.size.height - px(7.),
+            ),
+            Modifiers::default(),
+        );
+        assert_eq!(clicks.get(), 1, "the caption must be clickable");
+    }
+
+    #[::core::prelude::v1::test]
+    fn appearance_thumbnail_layout() {
+        let fixture = tempfile::tempdir().unwrap();
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--ignored",
+                "--exact",
+                "general_settings::tests::appearance_thumbnail_and_label_are_clickable",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env_clear()
+            .env("HOME", fixture.path())
+            .env("USERPROFILE", fixture.path())
+            .env("TMPDIR", fixture.path())
+            .env("TMP", fixture.path())
+            .env("TEMP", fixture.path())
+            .env("PATH", "")
+            .env("LANG", "en_US.UTF-8")
+            .current_dir(fixture.path());
+        #[cfg(windows)]
+        for key in ["SystemRoot", "WINDIR"] {
+            if let Some(value) = std::env::var_os(key) {
+                command.env(key, value);
+            }
+        }
+        let output = command.output().unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "Appearance test failed\n{stdout}\n{stderr}"
+        );
+        assert!(
+            stdout.contains("1 passed"),
+            "Appearance test did not run\n{stdout}\n{stderr}"
+        );
+    }
 
     #[::core::prelude::v1::test]
     fn picking_a_theme_of_the_hidden_mode_switches_appearance() {

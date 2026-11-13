@@ -64,6 +64,8 @@ mod composer_follow_up_mount;
 mod composer_history;
 mod composer_pending_images;
 mod composer_plan_card;
+#[cfg(test)]
+mod composer_return_tests;
 mod composer_selection;
 #[cfg(test)]
 mod composer_steering;
@@ -1453,11 +1455,11 @@ impl Coincide {
                 }
             }),
             cx.subscribe_in(&composer, window, |this, _, event, window, cx| {
-                if matches!(event, InputEvent::PressEnter { shift: false, .. })
-                    && this.settings["sendOnReturn"].as_bool().unwrap_or(true)
-                    && !this.settings_open
-                    && this.chat_visible()
-                {
+                if chat_inspector::composer_enter_sends(
+                    event,
+                    this.settings["sendOnReturn"].as_bool().unwrap_or(true),
+                    this.chat_route(),
+                ) {
                     this.send(window, cx);
                 }
             }),
@@ -1939,12 +1941,15 @@ impl Coincide {
             .flex()
             .flex_col()
             .child(self.settings_subpage_header("Computer Use", "computer-use-settings-done", cx))
-            .child(
-                div()
-                    .p_2()
-                    .text_sm()
-                    .child(self.computer_use_status.clone()),
-            );
+            .when(!self.computer_use_status.is_empty(), |pane| {
+                pane.child(
+                    div()
+                        .px_4()
+                        .pt_3()
+                        .text_sm()
+                        .child(self.computer_use_status.clone()),
+                )
+            });
         if let Some(mount) = &self.computer_use_mount {
             pane = pane.child(
                 div()
@@ -1952,7 +1957,11 @@ impl Coincide {
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
-                    .child(mount.panel()),
+                    .child(
+                        div()
+                            .p_4()
+                            .child(self.settings_group("Access", mount.panel())),
+                    ),
             );
         }
         pane.into_any_element()

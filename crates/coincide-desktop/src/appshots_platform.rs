@@ -207,6 +207,29 @@ mod backend {
             )
         }
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn native_permissions_cross_the_bridge_as_booleans() {
+            unsafe extern "C" {
+                fn AXIsProcessTrusted() -> u8;
+                fn CGPreflightScreenCaptureAccess() -> bool;
+            }
+            // Action zero only reads the current state; it never prompts.
+            let value = unsafe { json(coincide_appshots_permissions(0)) }.unwrap();
+            assert_eq!(
+                value["accessibility"].as_bool(),
+                Some(unsafe { AXIsProcessTrusted() != 0 })
+            );
+            assert_eq!(
+                value["screen"].as_bool(),
+                Some(unsafe { CGPreflightScreenCaptureAccess() })
+            );
+        }
+    }
 }
 pub fn configure(shortcut: Option<&str>) -> Result<()> {
     backend::configure(shortcut)

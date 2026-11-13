@@ -24,6 +24,10 @@ const FRAME_DOCUMENT: &str = "settings-window.json";
 const DEFAULT_SIZE: (f32, f32) = (860., 640.);
 const MIN_SIZE: (f32, f32) = (760., 500.);
 
+pub(super) fn settings_rendered_inline(open: bool, separate: bool, pending: bool) -> bool {
+    open && !separate && !pending
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Frame {
     x: f32,
@@ -284,7 +288,11 @@ impl Coincide {
     }
 
     pub(super) fn settings_in_main_window(&self) -> bool {
-        self.settings_open && self.settings_window.is_none() && !self.settings_window_pending
+        settings_rendered_inline(
+            self.settings_open,
+            self.settings_window.is_some(),
+            self.settings_window_pending,
+        )
     }
 
     pub(super) fn close_settings_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {

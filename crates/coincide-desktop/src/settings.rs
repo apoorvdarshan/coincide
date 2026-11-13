@@ -554,6 +554,42 @@ impl Coincide {
         .into_any_element()
     }
 
+    /// A grouped settings section, using the selected app theme instead of a
+    /// fixed system-blue card. Rows inside retain their own actions and focus.
+    pub(super) fn settings_group(
+        &self,
+        title: impl Into<SharedString>,
+        body: impl IntoElement,
+    ) -> Div {
+        div()
+            .w_full()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                div()
+                    .px_1()
+                    .text_sm()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(self.color(0xe4e9f2).opacity(0.72))
+                    .child(title.into()),
+            )
+            .child(self.settings_card(body))
+    }
+
+    pub(super) fn settings_card(&self, body: impl IntoElement) -> Div {
+        div()
+            .w_full()
+            .min_w_0()
+            .rounded(px(12.))
+            .border_1()
+            .border_color(self.color(0x29303d))
+            .bg(self.color(0x111722))
+            .overflow_hidden()
+            .child(body)
+    }
+
     fn setting_choices(
         &self,
         label: &'static str,
@@ -688,7 +724,16 @@ impl Coincide {
             .justify_between()
             .gap_3()
             .p_4()
-            .child(div().flex_1().min_w_0().text_xl().child(title))
+            .border_b_1()
+            .border_color(self.color(0x29303d))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_xl()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(title),
+            )
             .child(
                 Button::new(done_id)
                     .label("Done")
@@ -739,12 +784,12 @@ impl Coincide {
                             .flex_1()
                             .min_h_0()
                             .overflow_y_scroll()
-                            .child(self.voice_preferences(cx))
-                            .child(self.voice_credentials.clone())
-                            .child(self.transcription_panel.clone())
-                            .child(self.microphone_panel.clone())
-                            .child(div().p_3().text_sm().child("Recording uses the executable, model, language and CPU-thread settings above, with a 60-second limit. Enable Microphone prepares access; Record starts capture. Stop and Transcribe Recording are separate actions. Your transcript waits in the composer."))
-                            .child(div().p_3().text_sm().child(self.status.clone()))
+                            .child(div().px_4().pt_4().pb_6().flex().flex_col().gap_4()
+                                .child(self.settings_group("Dictation", self.voice_preferences(cx)))
+                                .child(self.settings_card(self.voice_credentials.clone()))
+                                .child(self.settings_card(self.transcription_panel.clone()))
+                                .child(self.settings_card(self.microphone_panel.clone()))
+                                .when(!self.status.is_empty(), |pane| pane.child(div().text_sm().child(self.status.clone()))))
                         )
                             .into_any_element()
                     })
@@ -793,11 +838,11 @@ impl Coincide {
                                 .id("browser-settings-scroll")
                                 .track_scroll(&scroll).pr_4()
                                 .flex_1().min_h_0().overflow_y_scroll()
-                                .when(self.browser.is_none(),|view|view.child(div().p_3().child("The browser is unavailable; profile changes and password filling are disabled.")))
-                                .child(self.browser_settings_panel.clone())
-                                .child(div().p_3().text_lg().child("Passwords"))
-                                .child(self.credential_panel.clone())
-                                .child(self.passkey_settings(cx)))
+                                .child(div().px_4().pt_4().pb_6().flex().flex_col().gap_4()
+                                    .when(self.browser.is_none(),|view|view.child(div().text_sm().child("The browser is unavailable; profile changes and password filling are disabled.")))
+                                    .child(self.settings_group("Browser", self.browser_settings_panel.clone()))
+                                    .child(self.settings_group("Passwords", self.credential_panel.clone()))
+                                    .child(self.settings_card(self.passkey_settings(cx)))))
                             .child(gpui_kit::component::scroll::Scrollbar::vertical(&scroll)
                                 .mode(gpui_kit::component::scroll::ScrollbarMode::Always)),
                     )
@@ -850,7 +895,17 @@ impl Coincide {
                 .cloned()
                 .unwrap_or(fallback)
         };
-        let mut content = div().w_full().min_w_0().flex().flex_col().gap_2();
+        let mut content =
+            div()
+                .w_full()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap(if filtering == S::General {
+                    px(0.)
+                } else {
+                    px(8.)
+                });
         let mut count = 0;
         if matches(
             S::Archive,
@@ -1071,7 +1126,17 @@ impl Coincide {
             count += 1;
             content = content.child(self.revealable(R::OpenIn, self.open_target_settings(cx)));
         }
-        content = choice_rows(
+        if filtering == S::General {
+            content = div()
+                .w_full()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap_4()
+                .child(self.settings_group("Appearance & workspace", content));
+        }
+        let mut conversation = div().w_full().min_w_0().flex().flex_col();
+        conversation = choice_rows(
             vec![
                 (
                     S::Conversation,
@@ -1161,7 +1226,7 @@ impl Coincide {
                     vec![("On", json!(true)), ("Off", json!(false))],
                 ),
             ],
-            content,
+            conversation,
             &mut count,
             cx,
         );
@@ -1171,7 +1236,7 @@ impl Coincide {
         ) {
             count += 1;
             let default_browser = setting("opensLinksInDefaultBrowser", json!(false)) == true;
-            content = content
+            conversation = conversation
                 .child(self.setting_choices(
                     "Open links in your default browser",
                     "opensLinksInDefaultBrowser",
@@ -1189,7 +1254,14 @@ impl Coincide {
         }
         if matches(S::Conversation, "send return composer keys") {
             count += 1;
-            content=content.child(div().p_3().text_sm().child("Shift-Return inserts a new line. Command / Control + Return sends from the composer. Find uses Command / Control + F; Settings uses Command / Control + comma. Customize app commands in Keyboard."));
+            conversation=conversation.child(div().p_3().text_sm().text_color(self.color(0xe4e9f2).opacity(0.65)).child("Shift-Return inserts a new line. Command / Control + Return sends from the composer. Find uses Command / Control + F; Settings uses Command / Control + comma. Customize app commands in Keyboard."));
+        }
+        if matches(S::Conversation, "") {
+            content = if filtering == S::General {
+                content.child(self.settings_group("Chat", conversation))
+            } else {
+                content.child(conversation)
+            };
         }
         if matches(
             S::Keyboard,
@@ -1198,30 +1270,33 @@ impl Coincide {
             count += 1;
             content = content.child(self.keyboard_settings(cx));
         }
+        let mut automation = div().w_full().min_w_0().flex().flex_col();
         if matches(
             S::Automation,
             "notify notifications background alerts permission",
         ) {
             count += 1;
-            content = content.child(self.revealable(R::Notifications, self.notifications_row(cx)));
+            automation =
+                automation.child(self.revealable(R::Notifications, self.notifications_row(cx)));
         }
         if matches(S::Automation, "keep awake sleep display power") {
             count += 1;
-            content = content.child(self.revealable(R::KeepAwake, self.awake_settings(cx)));
+            automation = automation.child(self.revealable(R::KeepAwake, self.awake_settings(cx)));
         }
         if matches(
             S::Automation,
             "remote iphone ipad device pairing tailscale network phone tablet",
         ) {
             count += 1;
-            content = content.child(self.revealable(R::Remote, self.remote_panel.clone()));
+            automation = automation.child(self.revealable(R::Remote, self.remote_panel.clone()));
         }
         if matches(
             S::Automation,
             "command line control coincide-rs terminal cli automation",
         ) {
             count += 1;
-            content = content.child(self.revealable(R::CommandLine, self.command_line_rows(cx)));
+            automation =
+                automation.child(self.revealable(R::CommandLine, self.command_line_rows(cx)));
         }
         for (section, id, label, terms) in [
             (
@@ -1281,16 +1356,26 @@ impl Coincide {
         ] {
             if matches(section, terms) {
                 count += 1;
-                content = content.child(
-                    div().p_3().child(
-                        Button::new(SharedString::from(format!("settings-{id}")))
-                            .label(label)
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.open_settings_subpage(id, window, cx)
-                            })),
-                    ),
+                let row = div().p_3().child(
+                    Button::new(SharedString::from(format!("settings-{id}")))
+                        .label(label)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.open_settings_subpage(id, window, cx)
+                        })),
                 );
+                if section == S::Automation {
+                    automation = automation.child(row);
+                } else {
+                    content = content.child(row);
+                }
             }
+        }
+        if matches(S::Automation, "") {
+            content = if filtering == S::General {
+                content.child(self.settings_group("Automation", automation))
+            } else {
+                content.child(automation)
+            };
         }
         if filtering == S::General {
             content = content.child(self.restore_general_defaults_row(cx));
@@ -1308,18 +1393,7 @@ impl Coincide {
             .overflow_hidden()
             .flex()
             .flex_col()
-            .gap_3()
-            .p_4()
-            .child(
-                div()
-                    .flex()
-                    .justify_between()
-                    .items_center()
-                    .child(div().flex_1().min_w_0().text_xl().child(filtering.label()))
-                    .child(Button::new("settings-done").label("Done").on_click(
-                        cx.listener(|this, _, window, cx| this.close_settings_panel(window, cx)),
-                    )),
-            )
+            .child(self.settings_subpage_header(filtering.label(), "settings-done", cx))
             .child(
                 self.settings_scroll.frame(
                     filtering.id(),
@@ -1329,7 +1403,7 @@ impl Coincide {
                         .min_w_0()
                         .min_h_0()
                         .overflow_y_scroll()
-                        .child(content),
+                        .child(div().px_4().pt_4().pb_6().child(content)),
                 ),
             )
             .when(!self.settings_status.is_empty(), |view| {

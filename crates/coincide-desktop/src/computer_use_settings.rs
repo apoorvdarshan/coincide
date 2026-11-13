@@ -79,6 +79,22 @@ fn titles_of(threads: &[Uuid], titles: &BTreeMap<Uuid, String>) -> Vec<String> {
     names.sort_by_key(|name| name.to_lowercase());
     names
 }
+
+fn activity_titles(
+    threads: &[Uuid],
+    titles: &BTreeMap<Uuid, String>,
+    owner: Option<&str>,
+) -> Vec<String> {
+    let mut names = titles_of(threads, titles);
+    if let Some(owner) = owner {
+        let owner = if owner.is_empty() { "a thread" } else { owner };
+        if !names.iter().any(|name| name == owner) {
+            names.push(owner.to_owned());
+            names.sort_by_key(|name| name.to_lowercase());
+        }
+    }
+    names
+}
 impl ComputerUseSettingsPanel {
     pub fn new(handle: Handle, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let poll = cx.spawn_in(window, async move |this, cx| {
@@ -164,7 +180,7 @@ impl Render for ComputerUseSettingsPanel {
         let active = self.status.enabled && self.status.native_compiled && !self.status.stopped;
         let permission = active && !self.status.busy;
         let enabled = self.status.enabled;
-        let using = titles_of(&self.in_use, &self.titles);
+        let using = activity_titles(&self.in_use, &self.titles, self.owner.as_deref());
         let attention = if enabled && self.status.stopped {
             Some("Computer Use stopped unexpectedly. Quit and reopen Coincide to use it again.")
         } else {
@@ -286,5 +302,8 @@ mod tests {
         let titles = BTreeMap::from([(a, "beta".to_owned()), (b, "Alpha".to_owned())]);
         assert_eq!(titles_of(&[a, b, c], &titles), ["Alpha", "beta"]);
         assert!(titles_of(&[c], &titles).is_empty());
+        assert_eq!(activity_titles(&[], &titles, Some("Alpha")), ["Alpha"]);
+        assert_eq!(activity_titles(&[b], &titles, Some("Alpha")), ["Alpha"]);
+        assert_eq!(activity_titles(&[], &titles, Some("")), ["a thread"]);
     }
 }

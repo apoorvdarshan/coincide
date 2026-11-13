@@ -421,9 +421,10 @@ impl Coincide {
             let mut group = div()
                 .flex()
                 .flex_col()
-                .rounded_md()
+                .rounded(px(10.))
                 .border_1()
-                .border_color(self.color(0x29303d));
+                .border_color(self.color(0x29303d))
+                .bg(self.color(0x111722));
             for (index, row) in threads.into_iter().enumerate() {
                 let id = row.id.clone();
                 let delete = row.id.clone();
@@ -437,7 +438,7 @@ impl Coincide {
                         .flex()
                         .items_center()
                         .gap_2()
-                        .p_2()
+                        .p_3()
                         .when(index > 0, |row| {
                             row.border_t_1().border_color(self.color(0x29303d))
                         })

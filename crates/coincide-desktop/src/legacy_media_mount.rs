@@ -962,13 +962,12 @@ impl Coincide {
             .child(self.settings_subpage_header("Historical images", "historical-media-done", cx))
             .when(retained > 0 || !pending.is_empty(), |view| view.child(div().p_2().text_sm().child("Keep this app open until image recovery finishes.")))
             .when(self.media.close_requested||self.media.shutdown_requested,|view|view.child(div().p_2().child("Closing is paused until image work finishes and every receipt is saved and acknowledged.")))
-            .child(div().p_2().text_sm().child(self.media.status.clone()))
-            .child(Button::new("historical-media-retry-saved").label("Retry saved receipt acknowledgments").disabled(!saved)
-                .on_click(cx.listener(|this,_,_,cx|{
-                    let ids=this.media.owner.pending_receipts().into_iter().map(|(id,_)|id).filter(|id|this.media.owner.durable_ownership(*id).is_some()).collect::<Vec<_>>();
-                    for id in ids{this.acknowledge_media_ownership(id,cx);}
-                })))
-            .child(div().flex_1().min_h_0().child(self.media.panel.clone())).into_any_element()
+            .when(!self.media.status.is_empty(), |view| view.child(div().px_4().pt_3().text_sm().child(self.media.status.clone())))
+            .when(saved, |view| view.child(div().px_4().pt_3().flex().justify_start().child(Button::new("historical-media-retry-saved").label("Retry saved recovery").on_click(cx.listener(|this,_,_,cx|{
+                let ids=this.media.owner.pending_receipts().into_iter().map(|(id,_)|id).filter(|id|this.media.owner.durable_ownership(*id).is_some()).collect::<Vec<_>>();
+                for id in ids{this.acknowledge_media_ownership(id,cx);}
+            })))))
+            .child(div().p_4().flex_1().min_h_0().child(self.settings_card(self.media.panel.clone()).h_full().min_h_0())).into_any_element()
     }
 }
 #[cfg(test)]

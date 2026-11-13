@@ -81,7 +81,9 @@ bool coincide_appshots_triggered(void) {return atomic_exchange(&pending,false);}
 char *coincide_appshots_permissions(int action) {
   if(action==1) CGRequestScreenCaptureAccess();
   if(action==2) AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)@{@"AXTrustedCheckOptionPrompt":@YES});
-  return ASJSON(@{@"screen":@(CGPreflightScreenCaptureAccess()),@"accessibility":@(AXIsProcessTrusted())});
+  // AXIsProcessTrusted returns a byte-sized Boolean. Box both values as
+  // actual JSON booleans so the Rust bridge does not read 1 as false.
+  return ASJSON(@{@"screen":CGPreflightScreenCaptureAccess() ? @YES : @NO,@"accessibility":AXIsProcessTrusted() ? @YES : @NO});
 }
 static CFTypeRef ASCopy(AXUIElementRef element,CFStringRef key) {
   CFTypeRef out=NULL; if(AXUIElementCopyAttributeValue(element,key,&out)!=kAXErrorSuccess) {if(out)CFRelease(out);return NULL;}return out;

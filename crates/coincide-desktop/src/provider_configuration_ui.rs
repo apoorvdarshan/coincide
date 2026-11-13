@@ -622,7 +622,11 @@ impl Panel {
                     } else if let Some(editor) = self.editors.get_mut(&reply.provider) {
                         editor.load_requested = !editor.loaded && engine_busy(&error);
                         editor.failed = !engine_busy(&error);
-                        editor.notice = error.to_string();
+                        editor.notice = if editor.load_requested {
+                            String::new()
+                        } else {
+                            error.to_string()
+                        };
                     }
                 }
             }
@@ -783,10 +787,10 @@ impl Panel {
             .flex()
             .flex_col()
             .gap_2()
-            .p_3()
+            .p_4()
             .border_1()
-            .border_color(rgb(0x29303d))
-            .rounded_md();
+            .border_color(cx.theme().border)
+            .rounded(px(10.));
         match part {
             Part::Accounts => unreachable!("accounts are rendered above"),
             Part::Status => {
@@ -880,22 +884,24 @@ impl Panel {
                         |pane| pane.child(div().text_xs().child(editor.notice.clone())),
                     )
                     .child(
-                        Button::new("provider-config-reload")
-                            .label("Reload Saved Settings")
-                            .small()
-                            .ghost()
-                            .disabled(busy || dirty)
-                            .tooltip(if dirty {
-                                "Discard changes before reloading saved settings"
-                            } else {
-                                "Read current saved settings again"
-                            })
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                if this.active != reload_provider {
-                                    return;
-                                }
-                                this.start(&reload_provider, Request::Load, cx);
-                            })),
+                        div().flex().justify_start().child(
+                            Button::new("provider-config-reload")
+                                .label("Reload Saved Settings")
+                                .small()
+                                .ghost()
+                                .disabled(busy || dirty)
+                                .tooltip(if dirty {
+                                    "Discard changes before reloading saved settings"
+                                } else {
+                                    "Read current saved settings again"
+                                })
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    if this.active != reload_provider {
+                                        return;
+                                    }
+                                    this.start(&reload_provider, Request::Load, cx);
+                                })),
+                        ),
                     );
             }
             Part::Executable => {

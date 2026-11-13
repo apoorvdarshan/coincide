@@ -23,6 +23,18 @@ impl ChatRoute {
         self.selected && self.available()
     }
 }
+
+/// The composer can submit while Settings is open in its own window. The
+/// route already excludes inline Settings and other full-window surfaces.
+pub(super) fn composer_enter_sends(
+    event: &InputEvent,
+    send_on_return: bool,
+    route: ChatRoute,
+) -> bool {
+    matches!(event, InputEvent::PressEnter { shift: false, .. })
+        && send_on_return
+        && route.visible()
+}
 pub(super) fn panel(
     route: ChatRoute,
     workspace: bool,
@@ -76,7 +88,7 @@ impl Coincide {
     pub(super) fn global_schedules_route(&self) -> bool {
         self.schedules_open && self.schedule_editor.all_conversations
     }
-    fn chat_route(&self) -> ChatRoute {
+    pub(super) fn chat_route(&self) -> ChatRoute {
         ChatRoute {
             selected: self.selected.is_some(),
             settings: self.settings_in_main_window(),
