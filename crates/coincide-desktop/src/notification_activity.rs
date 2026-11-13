@@ -117,30 +117,30 @@ fn sample() -> Observation {
     // identifier. Bounded failures leave the lock state unknown.
     observation.locked = (|| -> Option<bool> {
         use std::time::Duration;
-        use zbus::blocking::{Proxy, connection::Builder};
-        let bus = Builder::system()
-            .ok()?
-            .method_timeout(Duration::from_millis(150))
-            .build()
-            .ok()?;
-        let manager = Proxy::new(
+        use zbus::{Proxy, block_on, connection::Builder};
+        let bus = block_on(
+            Builder::system()
+                .method_timeout(Duration::from_millis(150))
+                .build(),
+        )
+        .ok()?;
+        let manager = block_on(Proxy::new(
             &bus,
             "org.freedesktop.login1",
             "/org/freedesktop/login1",
             "org.freedesktop.login1.Manager",
-        )
+        ))
         .ok()?;
-        let path: zbus::zvariant::OwnedObjectPath = manager
-            .call("GetSessionByPID", &(std::process::id(),))
-            .ok()?;
-        let session = Proxy::new(
+        let path: zbus::OwnedObjectPath =
+            block_on(manager.call("GetSessionByPID", &(std::process::id(),))).ok()?;
+        let session = block_on(Proxy::new(
             &bus,
             "org.freedesktop.login1",
             path,
             "org.freedesktop.login1.Session",
-        )
+        ))
         .ok()?;
-        session.get_property::<bool>("LockedHint").ok()
+        block_on(session.get_property::<bool>("LockedHint")).ok()
     })();
     observation
 }

@@ -34,7 +34,7 @@ tag_prefix = "ios-v"
 bundle_id = "com.apoorvdarshan.coincide.remote"
 asc_app_id = "6829516823"
 team_id = "23RV7FYH36"
-# Coincide Remote alone, generated from project-remote.yml and committed (Coincide.xcodeproj holds the Mac app too).
+# Coincide Remote alone, generated from project-remote.yml and committed.
 project = "CoincideRemote.xcodeproj"
 scheme = "CoincideRemote"
 app_target = "CoincideRemote"
@@ -55,9 +55,6 @@ checkout = [
   "/CoincideRemote.xcodeproj/",
   "/CoincideRemote/",
   "/CoincideRemoteKit/",
-  "/Coincide/Voice/Shared/",
-  "/CoincideKit/Voice/DictationInsertion.swift",
-  "/CoincideKit/Models/BotPersonalityPreset.swift",
 ]
 
 # IOS_UPLOAD_LISTING: the promotional text, description, keywords and support and marketing URLs in APPSTORE.md.

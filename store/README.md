@@ -10,28 +10,13 @@ configuration, [`store-release.toml`](store-release.toml), and two thin callers 
   `store-plan` job prints, read-only, what a tag run would change.
 - `.github/workflows/store-checks.yml`: checks this folder, the callers and the project on pull requests.
 
-The Mac app is separate: it releases from `v<version>` tags through `.github/workflows/release.yml`
-([docs/releasing.md](../docs/releasing.md)), and an `ios-v` tag never starts that workflow.
+The desktop release pipeline is separate and currently fails closed until a Rust release pipeline is ready ([desktop release status](../docs/releasing.md)). An `ios-v` tag never starts it.
 
 ## The project
 
-store-release archives `CoincideRemote.xcodeproj`, which holds Coincide Remote alone. `project-remote.yml` generates
-it from the same target template and scheme that `project.yml` uses for `Coincide.xcodeproj`
-(`project-shared.yml`), so both projects build the same app. Unlike `Coincide.xcodeproj` it is committed, because
-store-release reads `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` from its `project.pbxproj`.
+store-release archives the committed `CoincideRemote.xcodeproj`. Generate it with `xcodegen generate --spec project-remote.yml`; the iOS test project uses `project-remote-tests.yml`. Commit generated changes, and resolve and commit `Package.resolved` after changing Swift package pins. CI verifies the committed project and runs the iOS unit and UI suites for iOS release tags.
 
-- `xcodegen generate` writes it again after `Coincide.xcodeproj` (`postGenCommand` in `project.yml`). Commit the
-  result whenever it changes, for instance after adding a file to `CoincideRemote/`. CI's **Build and test** fails
-  when the committed project differs from what XcodeGen (the version `ci.yml` pins) writes.
-- The App Store build resolves Swift packages only from the committed
-  `CoincideRemote.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved`. After changing a package pin
-  in `project-shared.yml`, run
-  `xcodebuild -resolvePackageDependencies -project CoincideRemote.xcodeproj -scheme CoincideRemote` and commit the
-  file; CI fails until it matches.
-- `MARKETING_VERSION` in `project-remote.yml` is Coincide Remote's version, `0.1.0` for now. The tag must match it:
-  `ios-v0.1.0`. The Mac app's version is `MARKETING_VERSION` in `project.yml`.
-- The build number is the larger of `CURRENT_PROJECT_VERSION` (1) and App Store Connect's highest build plus one.
-- Builds from this project sign with team `23RV7FYH36`; they don't read `Signing.xcconfig`.
+`MARKETING_VERSION` in `project-remote.yml` is the iOS version; the `ios-v` tag must match it. The build number is the larger of `CURRENT_PROJECT_VERSION` and App Store Connect's highest build plus one. The release project signs with team `23RV7FYH36` and does not read `Signing.xcconfig`.
 
 ## Switches
 

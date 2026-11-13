@@ -415,17 +415,26 @@ impl Session {
     /// channel. The call is bounded; the adapter answers after the provider
     /// accepted or rejected the message.
     pub(crate) fn steer_text(&self, text: &str) -> Result<()> {
+        let receiver = self.begin_steer_text(text)?;
+        match receiver.recv_timeout(Duration::from_secs(10)) {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) => bail!(error),
+            Err(_) => bail!("The provider did not accept the steering message in time"),
+        }
+    }
+    /// Submit without blocking the desktop thread. The caller owns the reply
+    /// and must treat a missing acknowledgement as an uncertain delivery.
+    pub(crate) fn begin_steer_text(
+        &self,
+        text: &str,
+    ) -> Result<Receiver<std::result::Result<(), String>>> {
         ensure!(!text.trim().is_empty(), "Steering text must be nonempty");
         let (reply, receiver) = mpsc::sync_channel(1);
         self.control.send(Control::Steer {
             text: text.to_owned(),
             reply,
         })?;
-        match receiver.recv_timeout(Duration::from_secs(10)) {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(error)) => bail!(error),
-            Err(_) => bail!("The provider did not accept the steering message in time"),
-        }
+        Ok(receiver)
     }
     pub(crate) fn can_steer(&self) -> bool {
         self.steering

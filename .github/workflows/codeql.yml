@@ -1,7 +1,7 @@
 # Static analysis (SAST) of the GitHub Actions workflows with GitHub CodeQL, on every pull request,
 # every push to main, weekly and on demand.
 #
-# Swift (CoincideKit and the app) is analyzed by codeql-swift.yml. Its extractor needs a macOS
+# Swift (Coincide Remote for iOS) is analyzed by codeql-swift.yml. Its extractor needs a macOS
 # runner and a full traced xcodebuild, so it runs weekly and on release tags only.
 
 name: CodeQL
