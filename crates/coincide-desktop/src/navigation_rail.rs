@@ -43,7 +43,7 @@ impl Coincide {
             .pt(px(if cfg!(target_os = "macos") { 56. } else { 6. }))
             .pb(px(12.))
             .gap(px(6.))
-            .bg(self.color(0x151922))
+            .bg(self.color(0x111722))
             .border_r_1()
             .border_color(self.color(0x29303d))
             .when(cfg!(target_os = "macos"), |view| {

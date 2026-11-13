@@ -52,65 +52,94 @@ impl Coincide {
             .flex()
             .items_center()
             .justify_between()
-            .h(px(30.))
-            .px_2()
+            .h(px(38.))
+            .px_3()
+            .gap_2()
+            .bg(self.color(0x111722))
             .border_b_1()
             .border_color(self.color(0x29303d))
             .child(
                 div()
-                    .text_xs()
-                    .text_color(self.color(0xe4e9f2).opacity(0.6))
+                    .text_sm()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(self.color(0xe4e9f2).opacity(0.85))
                     .child(title),
             )
             .child(
-                Button::new("workspace-tools")
-                    .icon(gpui_kit::assets::IconName::Ellipsis)
-                    .ghost()
-                    .compact()
-                    .xsmall()
-                    .accessibility_label("Workspace views")
-                    .tooltip("Workspace views")
-                    .accessible_menu_with_anchor(Anchor::TopRight, move |mut menu, _, _| {
-                        for (index, label) in
-                            ["Changes", "Local Git", "Pull Requests", "Review comments"]
-                                .into_iter()
-                                .enumerate()
-                        {
-                            let owner = owner.clone();
-                            menu = menu.item(
-                                PopupMenuItem::new(label).checked(index == active).on_click(
-                                    move |_, window, cx| {
-                                        let _ = owner.update(cx, |this, cx| {
-                                            this.github_open = index == 2;
-                                            this.github_threads_open = index == 3;
-                                            this.git_tools_open = index == 1;
-                                            this.github_threads_scope_stale = false;
-                                            this.remember_current_inspector(cx);
-                                            this.sync_workspace_context(cx);
-                                            if index == 3 {
-                                                let loaded =
-                                                    this.github_panel.read(cx).loaded_pr_scope(cx);
-                                                this.github_threads_seed = loaded.clone();
-                                                if let Some((repository, number, head)) = loaded {
-                                                    this.github_threads_panel.update(
-                                                        cx,
-                                                        |panel, cx| {
-                                                            panel.set_pr(
-                                                                repository, number, head, window,
-                                                                cx,
-                                                            )
-                                                        },
-                                                    );
-                                                }
-                                            }
-                                            cx.notify();
-                                        });
-                                    },
-                                ),
-                            );
-                        }
-                        menu
-                    }),
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        Button::new("workspace-tools")
+                            .icon(gpui_kit::assets::IconName::Ellipsis)
+                            .ghost()
+                            .compact()
+                            .xsmall()
+                            .accessibility_label("Workspace views")
+                            .tooltip("Workspace views")
+                            .accessible_menu_with_anchor(
+                                Anchor::TopRight,
+                                move |mut menu, _, _| {
+                                    for (index, label) in
+                                        ["Changes", "Local Git", "Pull Requests", "Review comments"]
+                                            .into_iter()
+                                            .enumerate()
+                                    {
+                                        let owner = owner.clone();
+                                        menu = menu.item(
+                                            PopupMenuItem::new(label)
+                                                .checked(index == active)
+                                                .on_click(move |_, window, cx| {
+                                                    let _ =
+                                                        owner.update(cx, |this, cx| {
+                                                            this.github_open = index == 2;
+                                                            this.github_threads_open = index == 3;
+                                                            this.git_tools_open = index == 1;
+                                                            this.github_threads_scope_stale = false;
+                                                            this.remember_current_inspector(cx);
+                                                            this.sync_workspace_context(cx);
+                                                            if index == 3 {
+                                                                let loaded = this
+                                                                    .github_panel
+                                                                    .read(cx)
+                                                                    .loaded_pr_scope(cx);
+                                                                this.github_threads_seed =
+                                                                    loaded.clone();
+                                                                if let Some((
+                                                                    repository,
+                                                                    number,
+                                                                    head,
+                                                                )) = loaded
+                                                                {
+                                                                    this.github_threads_panel
+                                                                        .update(cx, |panel, cx| {
+                                                                            panel.set_pr(
+                                                                                repository, number,
+                                                                                head, window, cx,
+                                                                            )
+                                                                        });
+                                                                }
+                                                            }
+                                                            cx.notify();
+                                                        });
+                                                }),
+                                        );
+                                    }
+                                    menu
+                                },
+                            ),
+                    )
+                    .child(
+                        Button::new("close-chat-inspector")
+                            .icon(gpui_kit::assets::IconName::Close)
+                            .ghost()
+                            .compact()
+                            .small()
+                            .accessibility_label("Close panel")
+                            .tooltip("Close panel")
+                            .on_click(cx.listener(|this, _, _, cx| this.close_chat_inspector(cx))),
+                    ),
             )
             .into_any_element()
     }

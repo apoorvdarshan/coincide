@@ -4,7 +4,7 @@ use crate::{chat_inspector, settings_window};
 use gpui_kit::{
     App, Context, Entity, Focusable, InputEvent as _, IntoElement, KeyDownEvent, KeyUpEvent,
     Keystroke, Render, Subscription, TestAppContext, VisualTestContext, Window, WindowOptions,
-    component::input::{InputEvent, Textarea, TextareaState},
+    component::input::{Textarea, TextareaState},
     div,
     prelude::*,
     px,

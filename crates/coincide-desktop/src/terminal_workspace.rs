@@ -2409,8 +2409,12 @@ impl TerminalWorkspace {
                     .children(banner)
                     .children(close),
             )
-            .child(div().text_sm().child(pane.notice.clone()))
-            .child(div().text_sm().child(composition_notice))
+            .when(!pane.notice.is_empty(), |view| {
+                view.child(div().px_2().text_sm().child(pane.notice.clone()))
+            })
+            .when(!composition_notice.is_empty(), |view| {
+                view.child(div().px_2().text_sm().child(composition_notice))
+            })
             .into_any_element()
     }
     /// Swift TerminalTabContentView: the tab's panes side by side or stacked
@@ -2607,9 +2611,10 @@ impl TerminalWorkspace {
             .flex()
             .flex_shrink_0()
             .items_center()
-            .h(px(30.))
-            .px(px(6.))
+            .h(px(36.))
+            .px_2()
             .gap_1()
+            .bg(cx.theme().foreground.opacity(0.05))
             .border_b_1()
             .border_color(cx.theme().border)
             .child(strip)
@@ -2875,12 +2880,12 @@ impl TerminalWorkspace {
             .flex()
             .items_center()
             .gap(px(5.))
-            .h(px(22.))
-            .min_w(px(72.))
-            .max_w(px(200.))
+            .h(px(26.))
+            .min_w(px(84.))
+            .max_w(px(180.))
             .pl(px(8.))
             .pr(px(4.))
-            .rounded(px(4.))
+            .rounded(px(6.))
             .cursor_pointer()
             .when(selected, |item| item.bg(foreground.opacity(0.1)))
             .when(!selected, |item| {
@@ -2899,7 +2904,7 @@ impl TerminalWorkspace {
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .text_size(px(11.))
+                    .text_size(px(12.))
                     .text_color(if exited {
                         muted.opacity(0.6)
                     } else if selected {

@@ -1486,6 +1486,15 @@ fn footer_compaction(widths: [f32; 6], available: f32) -> [bool; 6] {
     result
 }
 
+/// Reserve the action buttons and their gaps before sizing the model controls.
+/// The plan action is wider than the ordinary round Send button.
+fn footer_trailing_width(meters: f32, voice: bool, running: bool, primary: f32) -> f32 {
+    92. + meters
+        + if voice { 30. } else { 0. }
+        + if running { 30. } else { 0. }
+        + (primary - 28.).max(0.)
+}
+
 impl Coincide {
     pub(super) fn selection_change_pending(&self) -> bool {
         self.selection_ui.pending_native_account.is_some()
@@ -3279,6 +3288,7 @@ impl Coincide {
     pub(super) fn composer_selection_footer(
         &self,
         window: &Window,
+        implement_visible: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let Some(thread) = &self.selected else {
@@ -3368,7 +3378,7 @@ impl Coincide {
             f32::from(
                 window
                     .text_system()
-                    .shape_line(label.into(), px(13.), &[run], None)
+                    .shape_line(label.into(), px(14.), &[run], None)
                     .width,
             )
         };
@@ -3386,18 +3396,16 @@ impl Coincide {
             measure(mode) + 28.,
         ];
         // Attach, voice, send and optional usage/context meters keep their space.
-        let trailing = 76.
-            + self.composer_meter_width(cx)
-            + if coincide_core::voice::Settings::decode(&self.settings).enabled {
-                30.
+        let trailing = footer_trailing_width(
+            self.composer_meter_width(cx),
+            coincide_core::voice::Settings::decode(&self.settings).enabled,
+            self.running.contains(&text(thread, "id")),
+            if implement_visible {
+                measure("Implement") + 24.
             } else {
-                0.
-            }
-            + if self.running.contains(&text(thread, "id")) {
-                30.
-            } else {
-                0.
-            };
+                28.
+            },
+        );
         let compact = footer_compaction(widths, (available - trailing).max(0.));
         let mut controls = div().flex().items_center().gap(px(2.));
 
@@ -4954,6 +4962,21 @@ mod tests {
         assert_eq!(
             super::footer_compaction(widths, 140.),
             [true, true, false, true, true, true]
+        );
+    }
+
+    #[::core::prelude::v1::test]
+    fn footer_keeps_room_for_the_wider_implement_action_in_a_split_view() {
+        let widths = [170., 70., 0., 110., 80., 65.];
+        let available = 500.;
+        let send = super::footer_trailing_width(28., false, false, 28.);
+        let implement = super::footer_trailing_width(28., false, false, 90.);
+        let compact_send = super::footer_compaction(widths, available - send);
+        let compact_implement = super::footer_compaction(widths, available - implement);
+        assert!(implement > send);
+        assert!(
+            compact_implement.iter().filter(|compact| **compact).count()
+                > compact_send.iter().filter(|compact| **compact).count()
         );
     }
 

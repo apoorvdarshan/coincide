@@ -1798,6 +1798,18 @@ impl Coincide {
                         }); }))
                 }),
         );
+        if !global {
+            header = header.child(
+                Button::new("close-chat-inspector")
+                    .icon(Symbol::Close)
+                    .ghost()
+                    .compact()
+                    .small()
+                    .accessibility_label("Close panel")
+                    .tooltip("Close panel")
+                    .on_click(cx.listener(|this, _, _, cx| this.close_chat_inspector(cx))),
+            );
+        }
         let mut content = div()
             .id("schedule-panel")
             .flex()

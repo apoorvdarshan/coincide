@@ -11,6 +11,75 @@ impl Render for BotDrag {
         div().child("Move bot")
     }
 }
+
+/// Sidebar previews are short snippets, so show Markdown's readable text
+/// without changing the stored message or the text used by search. Snippets
+/// may end in the middle of a link or emphasis after the cache truncates them.
+fn preview_text(raw: &str) -> String {
+    let raw = raw.trim();
+    if !raw.contains(['*', '_', '`', '[', '!', '#', '>', '~', '\\']) {
+        return raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    }
+    let truncated = raw.ends_with('…');
+    let mut source = raw.strip_suffix('…').unwrap_or(raw).to_owned();
+    if truncated {
+        if let Some(link) = source.rfind("](")
+            && !source[link + 2..].contains(')')
+            && source[..link].contains('[')
+        {
+            source.truncate(link + 2);
+            source.push_str("#)");
+        } else if source.rfind('[') > source.rfind(']') {
+            source.push_str("](#)");
+        }
+        for marker in ["**", "__", "`"] {
+            if source.matches(marker).count() % 2 == 1 {
+                source.push_str(marker);
+            }
+        }
+    }
+    fn collect(node: &markdown::mdast::Node, output: &mut String) {
+        use markdown::mdast::Node;
+        match node {
+            Node::Image(image) => output.push_str(&image.alt),
+            Node::ImageReference(image) => output.push_str(&image.alt),
+            Node::Break(_) => output.push(' '),
+            Node::Html(_) => {}
+            _ => {
+                if let Some(children) = node.children() {
+                    for (index, child) in children.iter().enumerate() {
+                        if index > 0
+                            && matches!(
+                                node,
+                                Node::Root(_) | Node::List(_) | Node::Table(_) | Node::TableRow(_)
+                            )
+                        {
+                            output.push(' ');
+                        }
+                        collect(child, output);
+                    }
+                } else {
+                    output.push_str(&node.to_string());
+                }
+            }
+        }
+    }
+    let mut options = markdown::ParseOptions::gfm();
+    options.constructs.math_text = false;
+    let mut result = String::new();
+    if let Ok(tree) = markdown::to_mdast(&source, &options) {
+        collect(&tree, &mut result);
+    }
+    let result = result.split_whitespace().collect::<Vec<_>>().join(" ");
+    if result.is_empty() {
+        return raw.to_owned();
+    }
+    if truncated {
+        format!("{result}…")
+    } else {
+        result
+    }
+}
 /// Swift's personality chip names; a personality the user wrote reads Custom.
 fn personality_name(bot: &Value) -> Option<String> {
     let personality = bot.get("personality").filter(|value| value.is_object())?;
@@ -248,6 +317,8 @@ impl Coincide {
                 .to_owned();
             let preview = latest
                 .and_then(|thread| thread.navigation.as_ref()?.preview.clone())
+                .map(|preview| preview_text(&preview))
+                .filter(|preview| !preview.is_empty())
                 .unwrap_or_else(|| "Say hello".into());
             use sidebar_thread_status::RowStatus;
             let activity = sidebar_thread_status::strongest_status(
@@ -398,6 +469,8 @@ impl Coincide {
                                                     .gap_1()
                                                     .child(
                                                         div()
+                                                            .flex_1()
+                                                            .min_w_0()
                                                             .truncate()
                                                             .text_size(px(13.))
                                                             .font_weight(if unseen.is_some() {
@@ -414,7 +487,7 @@ impl Coincide {
                                                             .items_center()
                                                             .gap_1()
                                                             .when(running, |row| row.child(gpui_kit::component::spinner::Spinner::new().xsmall()))
-                                                            .when(approval, |row| row.child(div().px_1().rounded_sm().text_size(px(10.)).text_color(theme.warning).child("Approval")))
+                                                            .when(approval, |row| row.child(div().px(px(5.)).rounded_full().bg(theme.warning.opacity(0.18)).text_size(px(10.)).font_weight(FontWeight::SEMIBOLD).text_color(theme.warning).child("Approval")))
                                                             .when(failed, |row| {
                                                                 row.child(
                                                                     div()
@@ -452,16 +525,11 @@ impl Coincide {
                                             .child(
                                                 div()
                                                     .truncate()
-                                                    .text_size(px(13.))
+                                                    .text_size(px(11.5))
                                                     .text_color(ink.opacity(0.62))
-                                                    .child(preview.trim().to_owned()),
+                                                    .child(preview.clone()),
                                             ),
                                     )
-                                    .when(running, |row| {
-                                        row.child(
-                                            gpui_kit::component::spinner::Spinner::new().small(),
-                                        )
-                                    })
                                     .when(!active_schedules.is_empty(), |row| {
                                         row.child(
                                             div()
@@ -593,6 +661,33 @@ pub(super) fn bot_conversations<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[::core::prelude::v1::test]
+    fn preview_shows_readable_markdown_even_when_the_cached_snippet_is_truncated() {
+        assert_eq!(
+            preview_text("Quick read: **a substantial native app…"),
+            "Quick read: a substantial native app…"
+        );
+        assert_eq!(
+            preview_text("Stopped. Pushed in [PR #61…"),
+            "Stopped. Pushed in PR #61…"
+        );
+        assert_eq!(
+            preview_text("See [PR #61](https://example.test/pull/61) and `cargo test`."),
+            "See PR #61 and cargo test."
+        );
+        assert_eq!(
+            preview_text("Show ![diagram](diagram.png) now"),
+            "Show diagram now"
+        );
+        assert_eq!(
+            preview_text("Use foo_bar and 2 * 3."),
+            "Use foo_bar and 2 * 3."
+        );
+        assert_eq!(
+            preview_text("Keep \\*literal\\* markers"),
+            "Keep *literal* markers"
+        );
+    }
     #[::core::prelude::v1::test]
     fn bot_tooltip_lists_personality_latest_conversation_agent_folder_and_status() {
         let home = std::path::Path::new("/Users/fixture");

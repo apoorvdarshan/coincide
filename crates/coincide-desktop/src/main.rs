@@ -2290,13 +2290,17 @@ impl Coincide {
                     .flex()
                     .items_center()
                     .flex_shrink_0()
-                    .min_w(px(76.))
-                    .max_w(px(200.))
-                    .h(px(28.))
+                    .min_w(px(88.))
+                    .max_w(px(180.))
+                    .h(px(30.))
                     .px_2()
                     .gap_1()
-                    .rounded(px(6.))
-                    .bg(self.color(if selected { 0x181d28 } else { 0x10141c }))
+                    .rounded(px(7.))
+                    .bg(self.color(if selected { 0x202a3b } else { 0x111722 }))
+                    .text_color(
+                        self.color(0xe4e9f2)
+                            .opacity(if selected { 1. } else { 0.68 }),
+                    )
                     .cursor_pointer()
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.browser_action(BrowserAction::SelectTab, Some(select_id.clone()), cx)
@@ -2345,8 +2349,9 @@ impl Coincide {
                 .tooltip(label)
                 .ghost()
                 .compact()
-                .xsmall()
-                .h(px(26.))
+                .small()
+                .w(px(28.))
+                .h(px(28.))
         };
         Some(
             div()
@@ -2358,6 +2363,7 @@ impl Coincide {
                 .min_w_0()
                 .min_h_0()
                 .h_full()
+                .bg(self.color(0x10141c))
                 .border_l_1()
                 .border_color(self.color(0x29303d))
                 .child(
@@ -2365,9 +2371,10 @@ impl Coincide {
                         .flex()
                         .items_center()
                         .flex_shrink_0()
-                        .h(px(36.))
+                        .h(px(38.))
                         .px_2()
                         .gap_1()
+                        .bg(self.color(0x111722))
                         .child(
                             div()
                                 .id("browser-tabs")
@@ -2406,9 +2413,12 @@ impl Coincide {
                         .flex()
                         .items_center()
                         .flex_shrink_0()
-                        .h(px(36.))
+                        .h(px(38.))
                         .px_2()
                         .gap_1()
+                        .bg(self.color(0x111722))
+                        .border_b_1()
+                        .border_color(self.color(0x29303d))
                         .child(
                             icon(
                                 "browser-back",
@@ -2439,18 +2449,25 @@ impl Coincide {
                         )
                         .child(controls)
                         .child(
-                            icon(
-                                "browser-reload",
-                                if loading {
-                                    gpui_kit::assets::IconName::LoaderCircle
-                                } else {
-                                    gpui_kit::assets::IconName::RefreshCw
-                                },
-                                "Reload Preview",
-                            )
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.browser_action(BrowserAction::Reload, None, cx)
-                            })),
+                            Button::new("browser-reload")
+                                .ghost()
+                                .compact()
+                                .small()
+                                .w(px(28.))
+                                .h(px(28.))
+                                .accessibility_label("Reload Preview")
+                                .tooltip("Reload Preview")
+                                .when(loading, |button| {
+                                    button.child(
+                                        gpui_kit::component::spinner::Spinner::new().xsmall(),
+                                    )
+                                })
+                                .when(!loading, |button| {
+                                    button.icon(gpui_kit::assets::IconName::RefreshCw)
+                                })
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.browser_action(BrowserAction::Reload, None, cx)
+                                })),
                         ),
                 )
                 .when(!url.is_empty() && url != "about:blank", |view| {
@@ -2458,6 +2475,7 @@ impl Coincide {
                         div()
                             .px_2()
                             .pb_1()
+                            .bg(self.color(0x111722))
                             .min_w_0()
                             .truncate()
                             .text_xs()
@@ -6606,7 +6624,7 @@ impl Render for Coincide {
                                                 .gap_1()
                                                 .gap(px(6.))
                                                 .mt_2()
-                                                .child(self.composer_selection_footer(window, cx))
+                                                .child(self.composer_selection_footer(window, implement_button.is_some(), cx))
                                                 .child(
                                                     Button::new("attach-images")
                                                         .icon(gpui_kit::assets::IconName::Paperclip)
