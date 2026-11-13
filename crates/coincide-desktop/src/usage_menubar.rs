@@ -27,6 +27,9 @@ struct Bar {
     running: bool,
     was_running: bool,
     last_refresh: Option<Instant>,
+    retry_codex: bool,
+    retry_claude: bool,
+    last_retry: Option<Instant>,
     last_settings: Option<Instant>,
     last_snapshot: Option<Value>,
     last_draw: Option<Instant>,
@@ -89,6 +92,9 @@ impl Bar {
             running: false,
             was_running: false,
             last_refresh: None,
+            retry_codex: false,
+            retry_claude: false,
+            last_retry: None,
             last_settings: None,
             last_snapshot: None,
             last_draw: None,
@@ -105,11 +111,15 @@ impl Bar {
     }
     fn receive_settings(&mut self, settings: Value, now: Instant) {
         if self.settings != settings {
+            let was_visible = self.visible();
             if self.settings["providers"] != settings["providers"] {
                 self.cached.clear();
                 self.last_refresh = None;
             }
             self.settings = settings;
+            if !was_visible && self.visible() {
+                self.last_refresh = None;
+            }
             self.last_draw = None;
         }
         self.last_settings = Some(now);
@@ -125,13 +135,13 @@ impl Bar {
             && !matches!(self.codex.panel.read(cx).phase(), Phase::Loading)
         {
             self.codex.set_context(self.selected.as_ref(), cx);
-            self.codex.refresh(cx);
+            self.retry_codex = !self.codex.try_refresh(cx);
         }
         if usage_dashboard_ui::provider_id("claude")
             .is_some_and(|id| crate::settings_navigation::provider_enabled(&self.settings, id))
             && self.history.dashboard.claude.state != Some(LimitState::Reading)
         {
-            self.history.dashboard.claude.refresh(&self.engine);
+            self.retry_claude = !self.history.dashboard.claude.try_refresh(&self.engine);
         }
     }
     fn tick(
@@ -188,6 +198,7 @@ impl Bar {
         self.was_running = running;
         if target_changed {
             self.codex.set_context(self.selected.as_ref(), cx);
+            self.retry_codex = false;
             self.last_refresh = None;
         }
         let due = self.last_refresh.is_none_or(|at| {
@@ -198,6 +209,28 @@ impl Bar {
             self.refresh(cx, now);
         }
         let history_changed = self.history.poll(cx);
+        let history_busy = self.history.dashboard.data.is_none()
+            && self.history.dashboard.error.as_deref() == Some(crate::usage_dashboard::USAGE_BUSY);
+        if (self.retry_codex || self.retry_claude || history_busy)
+            && self
+                .last_retry
+                .is_none_or(|at| now.duration_since(at) >= Duration::from_secs(2))
+        {
+            self.last_retry = Some(now);
+            if history_busy && !self.history.dashboard.loading {
+                self.history.load_dashboard();
+            }
+            if self.retry_codex {
+                self.retry_codex = usage_dashboard_ui::provider_id("codex").is_some_and(|id| {
+                    crate::settings_navigation::provider_enabled(&self.settings, id)
+                }) && !self.codex.try_refresh(cx);
+            }
+            if self.retry_claude {
+                self.retry_claude = usage_dashboard_ui::provider_id("claude").is_some_and(|id| {
+                    crate::settings_navigation::provider_enabled(&self.settings, id)
+                }) && !self.history.dashboard.claude.try_refresh(&self.engine);
+            }
+        }
         let prior = self.codex.panel.read(cx).phase().clone();
         self.codex.poll(cx);
         let changed = history_changed || prior != *self.codex.panel.read(cx).phase();

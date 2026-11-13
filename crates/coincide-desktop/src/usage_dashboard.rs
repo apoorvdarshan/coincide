@@ -12,6 +12,8 @@ use coincide_core::{
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
 
+pub(crate) const USAGE_BUSY: &str = "The app is busy. Refresh to try again.";
+
 /// One provider account as Usage lists it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Account {
@@ -62,7 +64,7 @@ pub(crate) fn read(engine: &SharedEngine) -> Result<Data, String> {
             Err(std::sync::TryLockError::WouldBlock) if Instant::now() < deadline => {
                 std::thread::sleep(Duration::from_millis(25))
             }
-            Err(_) => return Err("The app is busy. Refresh to try again.".into()),
+            Err(_) => return Err(USAGE_BUSY.into()),
         }
     };
     let (records, skipped) = turn_records(&bytes).map_err(|_| {
@@ -178,12 +180,25 @@ impl ClaudeLimits {
         Ok((id, generation, state))
     }
     pub fn refresh(&mut self, engine: &SharedEngine) {
-        if self.closed {
-            return;
+        if !self.try_refresh(engine) {
+            self.state = Some(LimitState::Unavailable(
+                "The limits check could not start. Refresh to try again.".into(),
+            ));
         }
+    }
+    /// Returns false only when no request was admitted because the engine is
+    /// busy. Keep the previous account observation for a later retry.
+    pub fn try_refresh(&mut self, engine: &SharedEngine) -> bool {
+        if self.closed {
+            return true;
+        }
+        let response = match crate::call(engine, "usage.claudeLimits.refresh", json!({})) {
+            Err(error) if crate::engine_busy(&error) => return false,
+            response => response,
+        };
         self.request = None;
         self.state = Some(
-            match crate::call(engine, "usage.claudeLimits.refresh", json!({}))
+            match response
                 .map_err(|_| ())
                 .and_then(|value| Self::decode(&value))
             {
@@ -196,6 +211,7 @@ impl ClaudeLimits {
                 ),
             },
         );
+        true
     }
     /// Collects a running read's outcome. True when it changed.
     pub fn poll(&mut self, engine: &SharedEngine) -> bool {
@@ -410,6 +426,22 @@ impl Dashboard {
 mod tests {
     use super::*;
     use crate::codex_limits_view::{Credits as CodexCredits, WindowReport};
+
+    #[::core::prelude::v1::test]
+    fn claude_busy_start_keeps_previous_state_for_background_retry() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = std::sync::Arc::new(std::sync::Mutex::new(coincide_core::api::Engine::new(
+            coincide_core::store::Store::open(&dir.path().join("state.sqlite")).unwrap(),
+        )));
+        let guard = engine.lock().unwrap();
+        let mut limits = ClaudeLimits {
+            state: Some(LimitState::NotChecked),
+            ..Default::default()
+        };
+        assert!(!limits.try_refresh(&engine));
+        assert_eq!(limits.state, Some(LimitState::NotChecked));
+        drop(guard);
+    }
 
     fn report(position: &str, used: Option<f64>, minutes: Option<u64>) -> WindowReport {
         WindowReport {
