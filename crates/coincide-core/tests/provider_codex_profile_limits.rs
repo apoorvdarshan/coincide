@@ -67,6 +67,7 @@ if mode=='revoke':
   gate.send(b'waiting')
   assert gate.recv(1)==b'R'
  (home/'auth.json').write_text('synthetic file identity change, not authentication');(home/'auth.json').chmod(0o600)
+ (home/'auth-written').touch()
 result={'rateLimits':None} if mode=='missing' else {'rateLimits':{'primary':{'usedPercent':float((home/'fixture-percent').read_text()) if named else 99},'credits':{'hasCredits':True,'balance':'3.00'}}}
 write({'id':r['id'],'result':result})
 sys.stdin.readline()
@@ -507,7 +508,9 @@ fn limits_fixture_child() {
             .unwrap(),
         1
     );
-    while !home_a.join("auth.json").exists() {
+    // The fixture must finish setting private permissions before the next
+    // request inspects the changed auth file.
+    while !home_a.join("auth-written").exists() {
         assert!(Instant::now() < deadline);
         std::thread::sleep(Duration::from_millis(2));
     }
