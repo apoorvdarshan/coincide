@@ -360,11 +360,13 @@ fn a_stop_during_the_prelude_ends_the_turn_without_launching_the_agent() {
         Vec::new(),
         None,
         None,
-        None,
-        Some(Box::new(move || {
-            started_tx.send(()).unwrap();
-            let _ = release_rx.recv();
-        })),
+        agent::LaunchOptions {
+            prelude: Some(Box::new(move || {
+                started_tx.send(()).unwrap();
+                let _ = release_rx.recv();
+            })),
+            ..Default::default()
+        },
     );
     started_rx.recv().unwrap();
     session.stop();

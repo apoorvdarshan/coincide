@@ -65,6 +65,10 @@ sys.stdin.readline()
             }
             Event::Finished => break,
             Event::Failed(message) => panic!("{message}"),
+            Event::Usage => {}
+            Event::Goal { .. } | Event::TurnBoundary => {
+                panic!("unexpected goal event from ordinary turn")
+            }
         }
     }
     assert!(native && approval);
@@ -132,6 +136,10 @@ sys.stdin.readline()
                 break;
             }
             Event::Failed(error) => panic!("{error}"),
+            Event::Usage => {}
+            Event::Goal { .. } | Event::TurnBoundary => {
+                panic!("unexpected goal event from ordinary turn")
+            }
         }
     }
 }

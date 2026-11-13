@@ -204,6 +204,9 @@ pub struct ProviderCommand {
     /// What the command takes after its name, such as `[file]`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub argument_hint: Option<String>,
+    /// Alternative command names reported by the provider.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aliases: Vec<String>,
     pub kind: CommandKind,
     /// Part of the agent itself, rather than added by the user, a project or a plugin.
     #[serde(default)]
@@ -219,7 +222,113 @@ fn bounded(value: &Value, limit: usize) -> Option<String> {
 fn valid_name(name: &str) -> bool {
     !name.is_empty() && name.len() <= 256 && !name.chars().any(|c| c.is_control())
 }
+fn aliases(entry: &Value, name: &str) -> Vec<String> {
+    let mut result = Vec::new();
+    for alias in entry["aliases"].as_array().into_iter().flatten().take(32) {
+        let Some(alias) = alias
+            .as_str()
+            .map(str::trim)
+            .filter(|alias| valid_name(alias))
+        else {
+            continue;
+        };
+        if !alias.eq_ignore_ascii_case(name)
+            && !result
+                .iter()
+                .any(|seen: &String| seen.eq_ignore_ascii_case(alias))
+        {
+            result.push(alias.to_owned());
+        }
+    }
+    result
+}
 impl ProviderCommand {
+    /// Enabled Codex skills, including plugin skills, reported for this folder.
+    pub fn from_codex(result: &Value, cwd: &Path) -> Vec<Self> {
+        let mut seen = std::collections::HashSet::new();
+        result["data"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .take(64)
+            .filter(|group| {
+                group["cwd"].as_str().is_some_and(|path| {
+                    Path::new(path) == cwd
+                        || std::fs::canonicalize(path)
+                            .ok()
+                            .zip(std::fs::canonicalize(cwd).ok())
+                            .is_some_and(|(a, b)| a == b)
+                })
+            })
+            .flat_map(|group| group["skills"].as_array().into_iter().flatten())
+            .filter_map(|entry| {
+                let name = entry["name"].as_str()?.trim();
+                if entry["enabled"] != true
+                    || !valid_name(name)
+                    || !seen.insert(name.to_lowercase())
+                {
+                    return None;
+                }
+                Some(Self {
+                    name: name.into(),
+                    description: bounded(&entry["shortDescription"], 1024)
+                        .or_else(|| bounded(&entry["description"], 1024)),
+                    argument_hint: None,
+                    aliases: aliases(entry, name),
+                    kind: CommandKind::Skill,
+                    is_built_in: false,
+                    is_slash_command: false,
+                })
+            })
+            .take(MAX_COMMANDS)
+            .collect()
+    }
+    /// OpenCode reports slash commands and skills as separate scoped lists.
+    pub fn from_opencode(commands: &Value, skills: &Value, cwd: &Path) -> Vec<Self> {
+        let mut result = Vec::new();
+        for (value, skill) in [(commands, false), (skills, true)] {
+            if !opencode_location_matches(value, cwd) {
+                continue;
+            }
+            for entry in value["data"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .take(MAX_COMMANDS)
+            {
+                let Some(name) = entry["name"]
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|name| valid_name(name))
+                else {
+                    continue;
+                };
+                let kind = if skill {
+                    CommandKind::Skill
+                } else {
+                    CommandKind::Command
+                };
+                if result.iter().any(|previous: &Self| {
+                    previous.name.eq_ignore_ascii_case(name) && previous.kind == kind
+                }) {
+                    continue;
+                }
+                result.push(Self {
+                    name: name.into(),
+                    description: bounded(&entry["description"], 1024),
+                    argument_hint: None,
+                    aliases: aliases(entry, name),
+                    kind,
+                    is_built_in: false,
+                    is_slash_command: !skill,
+                });
+                if result.len() >= MAX_COMMANDS {
+                    return result;
+                }
+            }
+        }
+        result
+    }
     /// Claude's `initialize` command list, deduplicated by name. Claude's own commands are
     /// built in; the rest (skills, custom and plugin commands) are offered as skills too.
     pub fn from_claude(entries: &[Value]) -> Vec<Self> {
@@ -236,6 +345,7 @@ impl ProviderCommand {
                     name: name.into(),
                     description: bounded(&entry["description"], 1024),
                     argument_hint: bounded(&entry["argumentHint"], 256),
+                    aliases: aliases(entry, name),
                     kind: if built_in {
                         CommandKind::Command
                     } else {
@@ -261,7 +371,8 @@ impl ProviderCommand {
                 Some(Self {
                     name: name.into(),
                     description: bounded(&entry["description"], 1024),
-                    argument_hint: None,
+                    argument_hint: bounded(&entry["input"]["hint"], 256),
+                    aliases: aliases(entry, name),
                     kind: CommandKind::Command,
                     is_built_in: false,
                     is_slash_command: true,
@@ -282,16 +393,24 @@ impl ProviderCommand {
             .enumerate()
             .filter_map(|(index, command)| {
                 let name = command.name.to_lowercase();
-                let rank = if name == query {
+                let aliases = command
+                    .aliases
+                    .iter()
+                    .map(|alias| alias.to_lowercase())
+                    .collect::<Vec<_>>();
+                let rank = if name == query || aliases.iter().any(|alias| alias == &query) {
                     0
-                } else if name.starts_with(&query)
+                } else if aliases.iter().any(|alias| alias.starts_with(&query))
+                    || name.starts_with(&query)
                     || name
                         .rsplit(':')
                         .next()
                         .is_some_and(|last| last.starts_with(&query))
                 {
                     1
-                } else if name.contains(&query) {
+                } else if name.contains(&query)
+                    || aliases.iter().any(|alias| alias.contains(&query))
+                {
                     2
                 } else if command
                     .description
@@ -308,6 +427,15 @@ impl ProviderCommand {
         ranked.sort_by_key(|(rank, index, _)| (*rank, *index));
         ranked.into_iter().map(|(_, _, command)| command).collect()
     }
+}
+pub fn opencode_location_matches(value: &Value, cwd: &Path) -> bool {
+    value["location"]["directory"].as_str().is_some_and(|path| {
+        Path::new(path) == cwd
+            || std::fs::canonicalize(path)
+                .ok()
+                .zip(std::fs::canonicalize(cwd).ok())
+                .is_some_and(|(a, b)| a == b)
+    })
 }
 
 /// The commands a `provider/event` frame reports: Claude's successful `initialize` response
@@ -335,12 +463,15 @@ pub fn reported_commands(params: &Value) -> Option<Vec<ProviderCommand>> {
 /// What each thread's sessions reported, and per agent, account and folder what it reported
 /// last, for threads that have not run it yet. In memory only, as in the Swift app; the
 /// fallback never crosses folders, so one project's skills are not offered in another.
+type SessionCommandScope = (String, String, Option<String>);
 #[derive(Default)]
 pub struct ReportedCommands {
-    sessions: HashMap<String, HashMap<String, Vec<ProviderCommand>>>,
+    sessions: HashMap<String, HashMap<SessionCommandScope, Vec<ProviderCommand>>>,
     session_order: VecDeque<String>,
     folders: HashMap<(String, String, String), Vec<ProviderCommand>>,
     folder_order: VecDeque<(String, String, String)>,
+    running: HashMap<String, (String, String)>,
+    pending_acp: HashMap<String, VecDeque<(String, String, Vec<ProviderCommand>)>>,
 }
 const MAX_THREADS: usize = 256;
 const MAX_FOLDERS: usize = 64;
@@ -351,6 +482,50 @@ fn account_key(account: &Value) -> String {
     }
 }
 impl ReportedCommands {
+    pub(crate) fn begin_run(&mut self, thread: &str) {
+        self.running.remove(thread);
+        self.pending_acp.remove(thread);
+    }
+    pub(crate) fn end_run(&mut self, thread: &str) {
+        self.running.remove(thread);
+        self.pending_acp.remove(thread);
+    }
+    /// ACP can publish its command list before session/new returns. Hold only
+    /// bounded early reports until the worker confirms the native session ID.
+    pub(crate) fn acp_report(
+        &mut self,
+        thread: &str,
+        provider: &str,
+        session: &str,
+        commands: Vec<ProviderCommand>,
+    ) -> Option<Vec<ProviderCommand>> {
+        if session.is_empty() || session.len() > 512 || session.chars().any(char::is_control) {
+            return None;
+        }
+        if let Some(bound) = self.running.get(thread) {
+            return (bound.0 == provider && bound.1 == session).then_some(commands);
+        }
+        let pending = self.pending_acp.entry(thread.into()).or_default();
+        if pending.len() >= 8 {
+            pending.pop_front();
+        }
+        pending.push_back((provider.into(), session.into(), commands));
+        None
+    }
+    pub(crate) fn bind_run(
+        &mut self,
+        thread: &str,
+        provider: &str,
+        session: &str,
+    ) -> Option<Vec<ProviderCommand>> {
+        self.running
+            .insert(thread.into(), (provider.into(), session.into()));
+        self.pending_acp.remove(thread)?.into_iter().rev().find_map(
+            |(source_provider, source_session, commands)| {
+                (source_provider == provider && source_session == session).then_some(commands)
+            },
+        )
+    }
     pub fn record(
         &mut self,
         thread: &str,
@@ -383,10 +558,14 @@ impl ReportedCommands {
             }
             self.folders.insert(key, commands.clone());
         }
-        self.sessions
-            .entry(thread.into())
-            .or_default()
-            .insert(provider.into(), commands);
+        self.sessions.entry(thread.into()).or_default().insert(
+            (
+                provider.into(),
+                account_key(account),
+                folder.map(|path| path.to_string_lossy().into_owned()),
+            ),
+            commands,
+        );
     }
     /// The commands and skills `provider` offers in the thread: what its session there
     /// reported, else what it last reported in the same folder with the same account.
@@ -397,11 +576,13 @@ impl ReportedCommands {
         account: &Value,
         folder: Option<&Path>,
     ) -> (&[ProviderCommand], &'static str) {
-        if let Some(commands) = self
-            .sessions
-            .get(thread)
-            .and_then(|providers| providers.get(provider))
-        {
+        if let Some(commands) = self.sessions.get(thread).and_then(|providers| {
+            providers.get(&(
+                provider.into(),
+                account_key(account),
+                folder.map(|path| path.to_string_lossy().into_owned()),
+            ))
+        }) {
             return (commands, "session");
         }
         if let Some(commands) = folder.and_then(|folder| {
@@ -781,7 +962,7 @@ mod tests {
     #[test]
     fn claude_and_acp_reports_parse_dedupe_and_bound_commands() {
         let claude = json!({"provider":"claude","providerFrame":{"type":"control_response","response":{"request_id":"coincide-initialize","subtype":"success","response":{"commands":[
-            {"name":"compact","description":"Clear history","builtin":true},
+            {"name":"compact","description":"Clear history","builtin":true,"aliases":["summarize","SUMMARIZE", "bad\nname"]},
             {"name":" review ","description":"  Review a PR ","argumentHint":"[pr]"},
             {"name":"Review"},
             {"name":""},
@@ -792,6 +973,11 @@ mod tests {
         assert_eq!(commands.len(), 2);
         assert_eq!(commands[0].kind, CommandKind::Command);
         assert!(commands[0].is_built_in);
+        assert_eq!(commands[0].aliases, ["summarize"]);
+        assert_eq!(
+            ProviderCommand::matching("summarize", &commands)[0].name,
+            "compact"
+        );
         assert_eq!(commands[1].name, "review");
         assert_eq!(commands[1].description.as_deref(), Some("Review a PR"));
         assert_eq!(commands[1].argument_hint.as_deref(), Some("[pr]"));
@@ -819,6 +1005,7 @@ mod tests {
             ["web", "plan"]
         );
         assert_eq!(commands[1].description, None);
+        assert_eq!(commands[0].argument_hint.as_deref(), Some("query"));
         // An ACP update replaces the list, even with nothing in it.
         let mut cleared = acp.clone();
         cleared["providerFrame"]["params"]["update"]["availableCommands"] = json!([]);
@@ -834,6 +1021,7 @@ mod tests {
             name: name.into(),
             description: description.map(str::to_owned),
             argument_hint: None,
+            aliases: Vec::new(),
             kind: CommandKind::Skill,
             is_built_in: false,
             is_slash_command: true,
@@ -861,6 +1049,113 @@ mod tests {
     }
 
     #[test]
+    fn codex_skills_include_enabled_plugins_only_for_the_requested_folder() {
+        let result = json!({"data":[
+            {"cwd":"/synthetic/one","skills":[
+                {"name":"browser:control","description":"Browse", "enabled":true,"pluginId":"browser"},
+                {"name":"disabled","description":"hidden", "enabled":false},
+                {"name":"BROWSER:CONTROL","description":"duplicate", "enabled":true}]},
+            {"cwd":"/synthetic/two","skills":[{"name":"other","description":"other", "enabled":true}]}
+        ]});
+        let commands = ProviderCommand::from_codex(&result, Path::new("/synthetic/one"));
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].name, "browser:control");
+        assert_eq!(commands[0].kind, CommandKind::Skill);
+        assert!(!commands[0].is_slash_command);
+    }
+    #[test]
+    fn opencode_commands_and_skills_are_bound_to_the_requested_workspace() {
+        let commands = json!({"location":{"directory":"/synthetic/project"},"data":[{"name":"review","description":"Review changes"}]});
+        let skills = json!({"location":{"directory":"/synthetic/project"},"data":[{"id":"id-one","name":"research","description":"Research"}]});
+        let found =
+            ProviderCommand::from_opencode(&commands, &skills, Path::new("/synthetic/project"));
+        assert_eq!(found.len(), 2);
+        assert!(found[0].is_slash_command);
+        assert_eq!(found[1].kind, CommandKind::Skill);
+        assert!(!found[1].is_slash_command);
+        assert!(
+            ProviderCommand::from_opencode(&commands, &skills, Path::new("/synthetic/other"))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn acp_commands_wait_for_the_exact_native_session() {
+        let mut reported = ReportedCommands::default();
+        reported.begin_run("thread");
+        assert!(
+            reported
+                .acp_report(
+                    "thread",
+                    "cursor",
+                    "other-session",
+                    vec![command("wrong", None)]
+                )
+                .is_none()
+        );
+        assert!(
+            reported
+                .acp_report(
+                    "thread",
+                    "cursor",
+                    "actual-session",
+                    vec![command("custom", None)]
+                )
+                .is_none()
+        );
+        let commands = reported
+            .bind_run("thread", "cursor", "actual-session")
+            .unwrap();
+        assert_eq!(commands[0].name, "custom");
+        assert!(
+            reported
+                .acp_report(
+                    "thread",
+                    "cursor",
+                    "other-session",
+                    vec![command("wrong", None)]
+                )
+                .is_none()
+        );
+        assert!(
+            reported
+                .acp_report(
+                    "thread",
+                    "grok",
+                    "actual-session",
+                    vec![command("wrong", None)]
+                )
+                .is_none()
+        );
+        let changed = reported
+            .acp_report(
+                "thread",
+                "cursor",
+                "actual-session",
+                vec![command("new-plugin", None)],
+            )
+            .unwrap();
+        assert_eq!(changed[0].name, "new-plugin");
+        reported.end_run("thread");
+        reported.begin_run("thread");
+        assert!(
+            reported
+                .acp_report(
+                    "thread",
+                    "cursor",
+                    "actual-session",
+                    vec![command("prior", None)]
+                )
+                .is_none()
+        );
+        assert!(
+            reported
+                .bind_run("thread", "cursor", "replacement-session")
+                .is_none()
+        );
+    }
+
+    #[test]
     fn reported_commands_stay_in_their_thread_or_same_folder_and_account() {
         let mut reported = ReportedCommands::default();
         let folder = Path::new("/synthetic/project");
@@ -872,8 +1167,27 @@ mod tests {
             vec![command("review", None)],
         );
         assert_eq!(
-            reported.lookup("one", "claude", &Value::Null, None).1,
+            reported
+                .lookup("one", "claude", &Value::Null, Some(folder))
+                .1,
             "session"
+        );
+        assert_eq!(
+            reported
+                .lookup("one", "claude", &json!("work"), Some(folder))
+                .1,
+            "none"
+        );
+        assert_eq!(
+            reported
+                .lookup(
+                    "one",
+                    "claude",
+                    &Value::Null,
+                    Some(Path::new("/synthetic/other"))
+                )
+                .1,
+            "none"
         );
         assert_eq!(
             reported

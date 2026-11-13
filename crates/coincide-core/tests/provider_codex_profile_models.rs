@@ -62,7 +62,8 @@ if r['method']=='model/list':
  write({'id':r['id'],'result':{'data':[{'model':model},{'model':'gpt-6-astra','supportedReasoningEfforts':[{'reasoningEffort':'medium'}]},{'model':'openai.gpt-6-astra','supportedReasoningEfforts':[{'reasoningEffort':'high'}]}],'nextCursor':None}})
  sys.stdin.readline();sys.exit(0)
 assert r['method']=='thread/start' and r['params']['model']==model
-assert r['params']['approvalPolicy']=='untrusted' and r['params']['sandbox']=='read-only'
+assert r['params']['approvalPolicy']==('never' if access=='fullAccess' else 'untrusted')
+assert r['params']['sandbox']==('danger-full-access' if access=='fullAccess' else 'read-only')
 native=home.name+'-fresh-model-thread'
 if mode=='revoke-after-start':
  (home/'auth.json').write_text('synthetic revocation marker, not credentials');(home/'auth.json').chmod(0o600)

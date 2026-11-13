@@ -59,10 +59,11 @@ mod composer_context_view;
 mod composer_file_picker;
 mod composer_follow_up_mount;
 mod composer_history;
+mod composer_pending_images;
 mod composer_plan_card;
 mod composer_selection;
+#[cfg(test)]
 mod composer_steering;
-mod composer_steering_mount;
 mod composer_suggestions;
 mod computer_use;
 mod computer_use_mount;
@@ -222,10 +223,32 @@ fn call(engine: &SharedEngine, method: &str, params: Value) -> Result<Value> {
     }
     Ok(response["result"].clone())
 }
+fn send_error_message(reason: &str) -> String {
+    let lower = reason.to_ascii_lowercase();
+    if lower.contains("catalog") || lower.contains("model proof") {
+        "The selected model or its options are unavailable. Choose a model and try again.".into()
+    } else {
+        format!("Message not sent: {reason}")
+    }
+}
 
 /// Trusted draft persistence only; decide and write under the same try-lock.
 fn persist_pending_draft(engine: &SharedEngine, id: &str, text: &str) -> Result<()> {
+    persist_pending_draft_guarded(engine, id, text, || true)
+}
+
+fn persist_pending_draft_guarded(
+    engine: &SharedEngine,
+    id: &str,
+    text: &str,
+    still_current: impl FnOnce() -> bool,
+) -> Result<()> {
     let mut engine = try_state(engine)?;
+    // Check after acquiring the same lock used by Send. A stale background
+    // write cannot pass its check before Send and then land afterwards.
+    if !still_current() {
+        return Ok(());
+    }
     if engine.admissions_frozen() {
         return engine.persist_frozen_draft(id, text);
     }
@@ -451,7 +474,6 @@ struct Coincide {
     keyboard: keyboard_settings::State,
     usage_history: usage_history_mount::Mount,
     codex_limits: codex_limits_mount::Mount,
-    steering: composer_steering::SteeringController,
     computer_use_mount: Option<computer_use_mount::Mount>,
     computer_use_open: bool,
     computer_use_status: String,
@@ -550,6 +572,7 @@ struct Coincide {
     pending_native_selection: Option<Option<String>>,
     startup_selection_pending: bool,
     pending_drafts: std::collections::HashMap<String, PendingDraft>,
+    submitted_drafts: draft_close::SubmittedDrafts,
     draft_saver: draft_saver::Saver,
     composer: Entity<TextareaState>,
     model_input: Entity<InputState>,
@@ -560,7 +583,7 @@ struct Coincide {
     composer_suggestions: composer_suggestions::Suggestions,
     /// The prompt an Up/Down walk is showing, and the text it placed.
     composer_history: Option<composer_history::Recall>,
-    attachment_import_threads: std::collections::HashSet<String>,
+    attachment_imports: composer_attachments::ImageImports,
     attachment_root: Option<std::path::PathBuf>,
     image_previews: std::collections::HashMap<String, ImagePreview>,
     image_preview_order: std::collections::VecDeque<String>,
@@ -583,14 +606,19 @@ struct Coincide {
     pending_select: Option<String>,
     /// Text a refused send puts back in the composer on the next frame, where
     /// a window is available to edit the field.
-    restore_composer: Option<String>,
+    restore_composer: Option<(String, String)>,
     /// A follow-up whose engine call found the lock busy, retried each tick.
-    pending_follow_up: Option<(String, String, bool)>,
+    pending_follow_up: Option<composer_follow_up_mount::PendingSend>,
+    pending_follow_up_backlog: std::collections::VecDeque<composer_follow_up_mount::PendingSend>,
+    pending_queue_actions: std::collections::VecDeque<queue::PendingQueueAction>,
+    buffered_send_lease: coincide_core::native_ui_edits::NativeUiEditLease,
+    quit_after_pending_sends: bool,
     /// A Queue/Steer choice made while the engine was busy, written later.
     pending_follow_up_choice: Option<(String, coincide_core::composer_follow_up::Behavior)>,
     /// A just-sent message drawn before the stored thread contains it, with
     /// the item count it was sent from.
     pending_sent: Option<(String, String, usize, u64)>,
+    pending_images: composer_pending_images::PendingImages,
     /// Identity for the optimistic row, so a refresh keeps the same element.
     pending_seq: u64,
     /// The last dispatch the engine reported per conversation, so a busy frame
@@ -977,6 +1005,9 @@ impl Coincide {
         }
     }
     fn save_pending_draft(&mut self, id: &str) {
+        if self.pending_successor_waiting(id) {
+            return;
+        }
         let engine = self.engine.clone();
         if let Some(error) = draft_close::save_one(&mut self.pending_drafts, id, |id, text| {
             persist_pending_draft(&engine, id, text)
@@ -988,6 +1019,15 @@ impl Coincide {
                 self.status = format!("Draft remains in this window; not yet saved: {error}");
             }
         }
+    }
+    fn pending_successor_waiting(&self, id: &str) -> bool {
+        self.pending_follow_up
+            .as_ref()
+            .is_some_and(|pending| pending.thread == id && pending.edited)
+            || self
+                .pending_follow_up_backlog
+                .iter()
+                .any(|pending| pending.thread == id)
     }
     fn flush_native_selection(&mut self) -> bool {
         let Some(selected) = self.pending_native_selection.as_ref() else {
@@ -1019,6 +1059,8 @@ impl Coincide {
     fn preserve_pending_draft(&self, thread: &mut Value) {
         if let Some(draft) = self.pending_drafts.get(&text(thread, "id")) {
             thread["draft"] = json!(draft.text);
+        } else {
+            self.submitted_drafts.project(thread);
         }
     }
     fn new(
@@ -1106,7 +1148,6 @@ impl Coincide {
         let remote_panel = cx.new(|_| remote_settings::RemoteSettingsPanel::new(engine.clone()));
         let usage_history = usage_history_mount::Mount::new(engine.clone(), cx);
         let codex_limits = codex_limits_mount::Mount::new(engine.clone(), cx);
-        let steering = composer_steering::SteeringController::new(engine.clone());
         let settings_search = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
         let provider_configuration_panel = cx.new(|cx| {
             provider_configuration_ui::Panel::new(
@@ -1600,7 +1641,6 @@ impl Coincide {
             keyboard,
             usage_history,
             codex_limits,
-            steering,
             computer_use_mount,
             computer_use_open: false,
             computer_use_status,
@@ -1697,6 +1737,7 @@ impl Coincide {
             pending_native_selection: None,
             startup_selection_pending: true,
             pending_drafts: Default::default(),
+            submitted_drafts: Default::default(),
             draft_saver,
             composer,
             model_input,
@@ -1717,7 +1758,7 @@ impl Coincide {
             composer_files,
             composer_suggestions: Default::default(),
             composer_history: None,
-            attachment_import_threads: Default::default(),
+            attachment_imports: Default::default(),
             attachment_root,
             image_previews: Default::default(),
             image_preview_order: Default::default(),
@@ -1733,8 +1774,13 @@ impl Coincide {
             pending_select: None,
             restore_composer: None,
             pending_follow_up: None,
+            pending_follow_up_backlog: Default::default(),
+            pending_queue_actions: Default::default(),
+            buffered_send_lease: native_editors.editor(),
+            quit_after_pending_sends: false,
             pending_follow_up_choice: None,
             pending_sent: None,
+            pending_images: Default::default(),
             pending_seq: 0,
             dispatch_cache: Default::default(),
             status: browser_error.unwrap_or_else(|| "Rust preview · separate data store".into()),
@@ -3823,13 +3869,6 @@ impl Coincide {
         }
         self.codex_limits.set_context(self.selected.as_ref(), cx);
         self.codex_limits.poll(cx);
-        if let Some(thread) = &self.selected {
-            let draft = self.committed_composer_draft(cx);
-            self.steering.observe_draft(&text(thread, "id"), &draft);
-        }
-        if self.steering.poll() {
-            cx.notify();
-        }
         self.poll_composer_follow_ups(window, cx);
         self.poll_browser(window, cx);
         self.sync_browser_settings(window, cx);
@@ -3871,7 +3910,14 @@ impl Coincide {
                 self.splice_transcript(0..self.transcript_count, self.transcript_count);
                 cx.notify();
             }
-            if was_running && !is_running {
+            let staged_goal_selection = selected_thread.as_ref().is_some_and(|id| {
+                status["stagedGoalSelections"]
+                    .as_array()
+                    .is_some_and(|ids| ids.iter().any(|value| value.as_str() == Some(id.as_str())))
+            });
+            if !is_running && staged_goal_selection {
+                self.flush_yielded_goal_selection(cx);
+            } else if was_running && !is_running {
                 self.flush_staged_selection(cx);
             }
             self.observe_thread_activity(&status, window, cx);
@@ -3888,6 +3934,7 @@ impl Coincide {
                         self.transcript_count = count;
                         self.selected = Some(v);
                         self.reconcile_pending_send();
+                        self.reconcile_buffered_sends();
                         let count = self
                             .selected
                             .as_ref()
@@ -4304,12 +4351,25 @@ impl Coincide {
         let Some(thread) = self.selected.as_mut() else {
             return;
         };
+        if !self.pending_drafts.contains_key(&text(thread, "id")) {
+            self.submitted_drafts.project(thread);
+        }
         if thread["draft"].as_str() == Some(draft.as_str()) {
             return;
         }
         thread["draft"] = json!(draft);
         let id = text(thread, "id");
-        self.draft_saver.record(&id, &draft);
+        if let Some(pending) = self.pending_follow_up.as_mut()
+            && pending.thread == id
+        {
+            pending.edited = true;
+        }
+        self.submitted_drafts.changed(&id, &draft);
+        if self.pending_successor_waiting(&id) {
+            self.draft_saver.invalidate();
+        } else {
+            self.draft_saver.record(&id, &draft);
+        }
         self.pending_drafts.insert(
             id,
             PendingDraft {
@@ -4612,9 +4672,10 @@ impl Coincide {
             .collect()
     }
     fn draft_images(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let images = self.selected.as_ref()?["rustDraftImages"]
-            .as_array()?
-            .clone();
+        let thread = self.selected.as_ref()?;
+        let images = self
+            .pending_images
+            .visible(&text(thread, "id"), thread["rustDraftImages"].as_array()?);
         if images.is_empty() {
             return None;
         }
@@ -4677,17 +4738,25 @@ impl Coincide {
     }
     /// Draw the message the user just sent before the stored thread has it, so
     /// a send appears in the conversation at once instead of a second later.
-    pub(crate) fn show_pending_send(&mut self, id: &str, message: &str) {
+    pub(crate) fn show_pending_send(&mut self, id: &str, message: &str) -> Option<u64> {
+        let images = self
+            .selected
+            .as_ref()
+            .and_then(|thread| {
+                thread["rustDraftImages"]
+                    .as_array()
+                    .map(|images| self.pending_images.visible(id, images))
+            })
+            .unwrap_or_default();
         let Some(thread) = self
             .selected
             .as_mut()
             .filter(|thread| text(thread, "id") == id)
         else {
-            return;
+            return None;
         };
-        let images = thread["rustDraftImages"].clone();
         let Some(items) = thread["items"].as_array_mut() else {
-            return;
+            return None;
         };
         let baseline = items.len();
         let seq = self.pending_seq.wrapping_add(1);
@@ -4699,9 +4768,11 @@ impl Coincide {
             "createdAt": 0,
             "pendingSend": true
         });
-        if images.as_array().is_some_and(|images| !images.is_empty()) {
-            pending["rustImages"] = images;
+        if !images.is_empty() {
+            pending["rustImages"] = json!(images);
         }
+        self.pending_images.begin(seq, id, images);
+        self.submitted_drafts.begin(seq, id, message);
         items.push(pending);
         self.pending_sent = Some((id.to_owned(), message.to_owned(), baseline, seq));
         let count = items.len();
@@ -4709,6 +4780,40 @@ impl Coincide {
         self.splice_transcript(start..self.transcript_count, count - start);
         self.transcript_count = count;
         self.transcript_list.scroll_to_end();
+        Some(seq)
+    }
+    fn finish_pending_images(&mut self, sequence: Option<u64>, delivered: bool) {
+        let Some((id, submitted)) = sequence.and_then(|seq| self.pending_images.finish(seq)) else {
+            return;
+        };
+        if delivered
+            && let Some(thread) = self
+                .selected
+                .as_mut()
+                .filter(|thread| text(thread, "id") == id)
+            && let Some(images) = thread["rustDraftImages"].as_array_mut()
+        {
+            images.retain(|image| !submitted.contains(image));
+        }
+    }
+    fn finish_submitted_draft(&mut self, sequence: Option<u64>, delivered_and_cleared: bool) {
+        let Some(submitted) = sequence.and_then(|seq| self.submitted_drafts.finish(seq)) else {
+            return;
+        };
+        if delivered_and_cleared
+            && let Some((thread, text)) = submitted.successor_to_save()
+            && !self.pending_drafts.contains_key(thread)
+        {
+            self.pending_drafts.insert(
+                thread.into(),
+                PendingDraft {
+                    text: text.into(),
+                    retry: true,
+                    failed: false,
+                },
+            );
+            self.draft_saver.record(thread, text);
+        }
     }
     /// Show a failure in the conversation itself: the composer's status row is
     /// gone, and a refused send must not fail silently.
@@ -4793,23 +4898,52 @@ impl Coincide {
         {
             return;
         }
-        items.push(json!({
+        let mut pending = json!({
             "id": format!("pending-send-{seq}"),
             "kind": "user",
             "text": message,
             "createdAt": 0,
             "pendingSend": true
-        }));
+        });
+        if let Some(images) = self.pending_images.images(seq) {
+            pending["rustImages"] = json!(images);
+        }
+        items.push(pending);
     }
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.send_selected(false, window, cx);
     }
     fn send_selected(&mut self, alternate: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.send_selected_inner(alternate, window, cx, false);
+    }
+    fn send_selected_inner(
+        &mut self,
+        alternate: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        from_pending: bool,
+    ) {
         if self.voice.preview.is_some() {
             self.cancel_composer_dictation(cx);
         }
         // A hidden composer may retain focus after opening the Git pane.
         if !self.chat_visible() {
+            return;
+        }
+        if !from_pending
+            && (self.pending_follow_up.is_some() || !self.pending_follow_up_backlog.is_empty())
+        {
+            if let Some(thread) = &self.selected {
+                let draft = self.composer.read(cx).value().to_string();
+                if let Some(command) =
+                    composer_commands::intercept(thread, &draft, |command| command)
+                {
+                    let submission = composer_commands::Submission::new(thread, &draft);
+                    self.perform_composer_command(command, submission, window, cx);
+                    return;
+                }
+            }
+            self.buffer_composer_send(alternate, window, cx);
             return;
         }
         // Sending nothing while a plan is offered implements it, as in Swift.
@@ -4827,44 +4961,68 @@ impl Coincide {
             let context = thread.get("draftContext").unwrap_or(&Value::Null);
             if let Err(error) = coincide_core::composer_context::validate(context) {
                 self.status = format!("Attached references were retained: {error}");
+                self.show_local_error(&format!("Message not sent: {error}"));
                 cx.notify();
                 return;
             }
-        }
-        if self.selection_send_blocked() {
-            self.retry_selected_account_readiness();
-            self.status = self.selected_account_wait_status().into();
-            cx.notify();
-            return;
-        }
-        if self
-            .selected
-            .as_ref()
-            .is_some_and(|v| self.running.contains(&text(v, "id")))
-        {
-            self.send_follow_up(alternate, window, cx);
-            return;
         }
         if let Some(v) = self.selected.as_ref() {
-            if self.attachment_import_threads.contains(&text(v, "id")) {
-                self.status = "Wait for image imports to finish before sending.".into();
-                cx.notify();
+            let id = text(v, "id");
+            match composer_follow_up_mount::send_route(
+                self.running.contains(&id),
+                self.attachment_imports.contains(&id),
+                self.selection_change_pending(),
+            ) {
+                composer_follow_up_mount::SendRoute::WaitForImages => {
+                    // Claim the import jobs and move the submission out of
+                    // the editor now. Its own snapshot waits for those jobs.
+                    self.buffer_composer_send(alternate, window, cx);
+                    return;
+                }
+                composer_follow_up_mount::SendRoute::FollowUp => {
+                    self.send_follow_up(alternate, window, cx);
+                    return;
+                }
+                composer_follow_up_mount::SendRoute::WaitForSelection => {
+                    // Preserve the submitted snapshot while the selection
+                    // resolves, so the editor is ready for the next draft.
+                    self.buffer_composer_send(alternate, window, cx);
+                    return;
+                }
+                composer_follow_up_mount::SendRoute::Send => {}
+            }
+            let mut pending = composer_follow_up_mount::PendingSend::new(
+                v,
+                self.composer.read(cx).value().to_string(),
+                alternate,
+            )
+            .with_behavior(self.captured_follow_up_behavior(v));
+            self.exclude_submitted_images(&mut pending);
+            if self.wait_for_send_catalog(cx) {
+                self.pending_follow_up = Some(pending);
                 return;
             }
-            let id = text(v, "id");
             // Send reads as instant: the draft leaves the composer now, and a
             // refused send puts it back. Waiting for the engine made a plain
             // sentence sit in the field for a second.
             let sent = self.composer.read(cx).value().to_string();
-            self.composer
-                .update(cx, |input, cx| input.set_value("", window, cx));
+            self.draft_saver.invalidate();
+            if self
+                .pending_drafts
+                .get(&id)
+                .is_some_and(|draft| draft.text == sent)
+            {
+                self.pending_drafts.remove(&id);
+            }
             if let Some(thread) = self.selected.as_mut() {
                 thread["draft"] = json!("");
                 thread.as_object_mut().unwrap().remove("draftContext");
             }
+            self.composer
+                .update(cx, |input, cx| input.set_value("", window, cx));
             // The engine call runs off the UI thread: the window never freezes
             // behind a send, and a refused send still restores the text.
-            self.show_pending_send(&id, &sent);
+            let image_send = self.show_pending_send(&id, &sent);
             let engine = self.engine.clone();
             let sent_for_call = sent.clone();
             let id_for_call = id.clone();
@@ -4880,9 +5038,11 @@ impl Coincide {
                     })
                     .await;
                 let _ = this.update(cx, |this, cx| {
+                    this.record_composer_draft(cx);
                     match result {
                         Ok(_) => {
-                            this.pending_drafts.remove(&id);
+                            this.finish_pending_images(image_send, true);
+                            this.finish_submitted_draft(image_send, true);
                             if !this.running.contains(&id) {
                                 this.running.push(id.clone());
                                 this.splice_transcript(
@@ -4894,13 +5054,12 @@ impl Coincide {
                             this.transcript_list.scroll_to_end();
                         }
                         Err(error) => {
+                            this.finish_pending_images(image_send, false);
+                            this.finish_submitted_draft(image_send, false);
                             this.retry_selected_account_readiness();
                             this.drop_pending_send(&id);
-                            this.restore_composer = Some(sent.clone());
-                            this.show_local_error(&format!("Message not sent: {error}"));
-                            if let Some(thread) = this.selected.as_mut() {
-                                thread["draft"] = json!(sent);
-                            }
+                            this.restore_composer = Some((id.clone(), sent.clone()));
+                            this.show_local_error(&send_error_message(&error.to_string()));
                             this.status = error.to_string();
                         }
                     }
@@ -4926,6 +5085,7 @@ impl Coincide {
         let mut item = item.clone();
         presentation::normalize_opencode_tool(&mut item);
         presentation::normalize_legacy_reasoning(&mut item);
+        presentation::normalize_inactive_work(&mut item, self.is_running_turn_item(index));
         if presentation::is_question_tool(&item) || presentation::is_duplicate_reasoning_tool(&item)
         {
             return None;
@@ -5060,12 +5220,14 @@ impl Coincide {
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
+            let active_turn = self.is_running_turn_item(index);
             let normalized = items
                 .iter()
                 .map(|item| {
                     let mut item = item.clone();
                     presentation::normalize_opencode_tool(&mut item);
                     presentation::normalize_legacy_reasoning(&mut item);
+                    presentation::normalize_inactive_work(&mut item, active_turn);
                     item
                 })
                 .collect::<Vec<_>>();
@@ -5811,6 +5973,8 @@ impl Render for Coincide {
             && let Some(draft) = self.pending_drafts.get(&text(thread, "id"))
         {
             thread["draft"] = json!(draft.text);
+        } else if let Some(thread) = self.selected.as_mut() {
+            self.submitted_drafts.project(thread);
         }
         if let Some(v) = self.selected.as_ref() {
             let draft = text(v, "draft");
@@ -5834,24 +5998,294 @@ impl Render for Coincide {
             self.pending_follow_up_choice = None;
             self.choose_follow_up(behavior, cx);
         }
-        if let Some((id, draft, alternate)) = self.pending_follow_up.take() {
-            if self
+        if self.pending_follow_up.is_none() {
+            self.pending_follow_up = self.pending_follow_up_backlog.pop_front();
+        }
+        if let Some(mut pending) = self.pending_follow_up.take() {
+            if pending.selection_wait == composer_follow_up_mount::SelectionWait::Waiting {
+                self.pending_follow_up = Some(pending);
+            } else if pending.selection_wait == composer_follow_up_mount::SelectionWait::Failed {
+                if pending.original_visible {
+                    self.status =
+                        "Account or provider was not changed; your message is still in the draft."
+                            .into();
+                    cx.notify();
+                } else if pending.waiting_for_import {
+                    self.pending_follow_up = Some(pending);
+                } else {
+                    let result = try_state(&self.engine).and_then(|mut engine| {
+                        if pending.import_failed {
+                            engine.retain_failed_captured_native_send(&pending.captured)
+                        } else {
+                            engine.retain_selection_failed_native_send(&pending.captured)
+                        }
+                    });
+                    match result {
+                        Ok(()) => {
+                            self.finish_pending_images(pending.image_send, true);
+                            self.remove_buffered_send(&pending);
+                            self.status = "Message saved for editing after the account or provider change failed.".into();
+                            self.refresh_queue(cx);
+                            cx.notify();
+                        }
+                        Err(error) => {
+                            if !engine_busy(&error) {
+                                self.status = format!(
+                                    "Message retained while saving it for editing: {error}"
+                                );
+                            }
+                            self.pending_follow_up = Some(pending);
+                        }
+                    }
+                }
+            } else if pending.import_failed
+                && !pending.waiting_for_import
+                && !pending.original_visible
+            {
+                let has_payload = !pending.draft.trim().is_empty()
+                    || coincide_core::composer_context::has_context(
+                        &pending.captured["draftContext"],
+                    )
+                    || pending.captured["rustDraftImages"]
+                        .as_array()
+                        .is_some_and(|images| !images.is_empty());
+                if !has_payload {
+                    self.finish_pending_images(pending.image_send, false);
+                    self.remove_buffered_send(&pending);
+                    self.status =
+                        "The image could not be imported; paste it again to send it.".into();
+                    cx.notify();
+                } else {
+                    let result = try_state(&self.engine).and_then(|mut engine| {
+                        engine.retain_failed_captured_native_send(&pending.captured)
+                    });
+                    match result {
+                        Ok(()) => {
+                            if let Some(selected) = self
+                                .selected
+                                .as_mut()
+                                .filter(|thread| text(thread, "id") == pending.thread)
+                                && let (Some(submitted), Some(images)) = (
+                                    pending.captured["rustDraftImages"].as_array(),
+                                    selected["rustDraftImages"].as_array_mut(),
+                                )
+                            {
+                                images.retain(|image| !submitted.contains(image));
+                            }
+                            self.finish_pending_images(pending.image_send, true);
+                            self.remove_buffered_send(&pending);
+                            self.status =
+                                "Message saved for editing after an image import failed.".into();
+                            self.refresh_queue(cx);
+                            cx.notify();
+                        }
+                        Err(error) => {
+                            let reason = error.to_string();
+                            if !engine_busy(&error)
+                                && pending.last_error.as_deref() != Some(reason.as_str())
+                            {
+                                pending.last_error = Some(reason);
+                                self.show_local_error("The image failed to import; your earlier message is retained and was not sent.");
+                            }
+                            self.pending_follow_up = Some(pending);
+                        }
+                    }
+                }
+            } else if let Some(thread) = self
                 .selected
                 .as_ref()
-                .is_some_and(|thread| text(thread, "id") == id)
+                .filter(|thread| text(thread, "id") == pending.thread)
             {
-                // An edited draft is a new intent; never overwrite it with a
-                // previously queued retry or send the stale text in its place.
-                if self.composer.read(cx).value().as_ref() == draft {
-                    self.send_follow_up(alternate, window, cx);
+                if pending.waiting_for_import || pending.import_failed {
+                    self.pending_follow_up = Some(pending);
+                } else if pending.buffer_id.is_none()
+                    && !self.attachment_imports.contains(&pending.thread)
+                    && pending.matches(thread, self.composer.read(cx).value().as_ref())
+                {
+                    if let Some(sequence) = pending.image_send {
+                        self.pending_images.finish(sequence);
+                    }
+                    self.send_selected_inner(pending.alternate, window, cx, true);
+                } else {
+                    let clear_original =
+                        !pending.edited && self.composer.read(cx).value().as_ref() == pending.draft;
+                    if clear_original {
+                        self.draft_saver.invalidate();
+                    }
+                    let result = try_state(&self.engine).and_then(|mut engine| {
+                        engine.admit_captured_native_send(
+                            &pending.captured,
+                            clear_original,
+                            pending.behavior,
+                            pending.alternate,
+                        )
+                    });
+                    match result {
+                        Ok(coincide_core::api::CapturedNativeSend::Waiting) => {
+                            self.pending_follow_up = Some(pending);
+                        }
+                        Ok(coincide_core::api::CapturedNativeSend::Saved {
+                            enabled,
+                            cleared,
+                            ticket,
+                            error,
+                        }) => {
+                            let same_selection =
+                                pending.captured["selection"] == thread["selection"];
+                            if let Some(selected) = self.selected.as_mut() {
+                                if cleared {
+                                    selected["draft"] = json!("");
+                                }
+                                if let (Some(submitted), Some(images)) = (
+                                    pending.captured["rustDraftImages"].as_array(),
+                                    selected["rustDraftImages"].as_array_mut(),
+                                ) {
+                                    images.retain(|image| !submitted.contains(image));
+                                }
+                                if selected["draftContext"] == pending.captured["draftContext"] {
+                                    selected.as_object_mut().unwrap().remove("draftContext");
+                                }
+                            }
+                            if cleared {
+                                if self
+                                    .pending_drafts
+                                    .get(&pending.thread)
+                                    .is_some_and(|draft| draft.text == pending.draft)
+                                {
+                                    self.pending_drafts.remove(&pending.thread);
+                                }
+                                self.composer
+                                    .update(cx, |input, cx| input.set_value("", window, cx));
+                            }
+                            self.finish_pending_images(pending.image_send, true);
+                            self.remove_buffered_send(&pending);
+                            let delivering = ticket.is_some();
+                            if let Some(ticket) = ticket {
+                                self.track_queued_delivery(ticket, pending.thread.clone());
+                            }
+                            self.status = if delivering {
+                                "Delivering your message."
+                            } else if enabled {
+                                "Previous message queued; your current draft is preserved."
+                            } else if same_selection {
+                                "Previous message saved in the paused queue; resume it to send."
+                            } else {
+                                "Previous message saved in the queue; its original model must be selected before sending."
+                            }.into();
+                            if let Some(error) = error {
+                                self.show_local_error(&format!(
+                                    "Message saved, but delivery could not start: {error}"
+                                ));
+                            } else if !enabled {
+                                self.show_local_error(if same_selection {
+                                    "Your previous message is saved in the paused queue. Resume the queue to send it."
+                                } else {
+                                    "Your previous message is saved in the queue. Select its original provider and model, then resume the queue to send it."
+                                });
+                            }
+                            self.refresh_queue(cx);
+                            cx.notify();
+                        }
+                        Err(error) => {
+                            let reason = error.to_string();
+                            if !engine_busy(&error)
+                                && pending.last_error.as_deref() != Some(reason.as_str())
+                            {
+                                let message = format!(
+                                    "Previous message is waiting and has not been sent: {reason}"
+                                );
+                                self.show_local_error(&message);
+                                pending.last_error = Some(reason);
+                            }
+                            self.pending_follow_up = Some(pending);
+                        }
+                    }
                 }
+            } else if pending.waiting_for_import || pending.import_failed {
+                self.pending_follow_up = Some(pending);
             } else {
-                self.pending_follow_up = Some((id, draft, alternate));
+                let result = try_state(&self.engine).and_then(|mut engine| {
+                    engine.admit_captured_native_send(
+                        &pending.captured,
+                        !pending.edited && pending.buffer_id.is_none(),
+                        pending.behavior,
+                        pending.alternate,
+                    )
+                });
+                match result {
+                    Ok(coincide_core::api::CapturedNativeSend::Waiting) => {
+                        self.pending_follow_up = Some(pending);
+                    }
+                    Ok(coincide_core::api::CapturedNativeSend::Saved {
+                        enabled,
+                        cleared,
+                        ticket,
+                        error,
+                    }) => {
+                        if cleared
+                            && self
+                                .pending_drafts
+                                .get(&pending.thread)
+                                .is_some_and(|draft| draft.text == pending.draft)
+                        {
+                            self.pending_drafts.remove(&pending.thread);
+                        }
+                        self.finish_pending_images(pending.image_send, true);
+                        if let Some(ticket) = ticket {
+                            self.track_queued_delivery(ticket, pending.thread.clone());
+                        }
+                        if let Some(error) = error {
+                            self.show_local_error(&format!(
+                                "Message saved, but delivery could not start: {error}"
+                            ));
+                        }
+                        self.status = if enabled {
+                            "The earlier conversation's message is queued."
+                        } else {
+                            "The earlier conversation's message is saved in its paused queue."
+                        }
+                        .into();
+                    }
+                    Err(error) => {
+                        if !engine_busy(&error) {
+                            self.status = format!("Earlier message is still waiting: {error}");
+                        }
+                        self.pending_follow_up = Some(pending);
+                    }
+                }
             }
         }
-        if let Some(text) = self.restore_composer.take() {
-            self.composer
-                .update(cx, |input, cx| input.set_value(text, window, cx));
+        if self.pending_follow_up.is_none() && self.pending_follow_up_backlog.is_empty() {
+            self.buffered_send_lease.set_dirty(false);
+            if self.quit_after_pending_sends {
+                self.quit_after_pending_sends = false;
+                self.continue_quit(window, cx);
+            }
+        }
+        self.poll_queue_action(window, cx);
+        if let Some((id, text)) = self.restore_composer.clone()
+            && self
+                .selected
+                .as_ref()
+                .is_some_and(|thread| thread["id"] == id)
+        {
+            self.restore_composer = None;
+            if self.composer.read(cx).value().is_empty() {
+                self.composer
+                    .update(cx, |input, cx| input.set_value(text.clone(), window, cx));
+                if let Some(thread) = self.selected.as_mut() {
+                    thread["draft"] = json!(text);
+                }
+                self.draft_saver.record(&id, &text);
+                self.pending_drafts.insert(
+                    id.clone(),
+                    PendingDraft {
+                        text,
+                        retry: true,
+                        failed: false,
+                    },
+                );
+            }
         }
         if let Some(id) = self.pending_select.clone()
             && let Some(thread) = &self.selected
@@ -5974,7 +6408,7 @@ impl Render for Coincide {
             None
         };
         let show_composer = self.chat_visible();
-        let importing_images = self.attachment_import_threads.contains(&selected_id);
+        let importing_images = self.attachment_imports.contains(&selected_id);
         let queue_pane = self.queue_pane(cx);
         let plan_card = if self.chat_visible() {
             self.plan_card(window, cx)
@@ -6040,6 +6474,11 @@ impl Render for Coincide {
                                             .child(pane),
                                     )
                                 })
+                                .when_some(queue_pane, |view, queue| {
+                                    view.child(
+                                        div().w_full().max_w(px(presentation::CONTENT_WIDTH)).mb_1().child(queue),
+                                    )
+                                })
                                 .child(
                                     self.composer_file_key_scope(div(), cx)
                                         .w_full()
@@ -6064,7 +6503,6 @@ impl Render for Coincide {
                                                 .min_h_0()
                                                 .max_h(px(160.))
                                                 .flex_shrink_1()
-                                                .when(self.composer_files.opened, |view| view.flex_shrink_0())
                                                 .flex()
                                                 .flex_col()
                                                 .overflow_hidden()
@@ -6076,24 +6514,14 @@ impl Render for Coincide {
                                                         .min_h_0()
                                                         .max_h(px(160.))
                                                         .flex_shrink_1()
-                                                        .when(self.composer_files.opened, |view| view.flex_shrink_0())
                                                         .overflow_y_scroll()
-                                                        .when(self.composer_files.opened, |view| view.when_some(self.composer_file_pane(cx), |view, files| view.child(files)))
-                                                        .when(!self.composer_files.opened, |view| view
-                                                        .when_some(
-                                                            self.composer_steering_pane(cx),
-                                                            |view, steering| view.child(steering),
-                                                        )
                                                         .when_some(
                                                             self.composer_context_pane(cx),
                                                             |view, context| view.child(context),
                                                         )
-                                                        .when_some(queue_pane, |view, queue| {
-                                                            view.child(queue)
-                                                        })
                                                         .when_some(draft_images, |view, images| {
                                                             view.child(images)
-                                                        }))
+                                                        })
                                                 )
                                                 .child(
                                                     gpui_kit::component::scroll::Scrollbar::vertical(
@@ -6161,7 +6589,7 @@ impl Render for Coincide {
                                                 .gap_1()
                                                 .gap(px(6.))
                                                 .mt_2()
-                                                .when(!self.composer_files.opened, |view| view.child(self.composer_selection_footer(window, cx)))
+                                                .child(self.composer_selection_footer(window, cx))
                                                 .child(
                                                     Button::new("attach-images")
                                                         .icon(gpui_kit::assets::IconName::Paperclip)
@@ -6184,7 +6612,6 @@ impl Render for Coincide {
                                                 .when(implement_button.is_none(), |view| view.child(
                                                     Button::new("send")
                                                         .primary()
-                                                        .disabled(importing_images || self.selection_send_blocked())
                                                         .accessibility_label(composer_follow_up_mount::dispatch_label(self.composer_send_dispatch(false)))
                                                         .tooltip(composer_follow_up_mount::dispatch_label(self.composer_send_dispatch(false)))
                                                         .icon(composer_follow_up_mount::dispatch_icon(self.composer_send_dispatch(false)))

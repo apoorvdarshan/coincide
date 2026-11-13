@@ -41,12 +41,17 @@ impl Engine {
     /// Sending Stop requests cancellation; it does not acknowledge worker exit
     /// or successful provider/process cleanup. Existing poll still owns results.
     pub fn request_provider_stop(&mut self, thread_id: &str) -> Result<()> {
+        let user_initiated = !self.admissions_frozen();
         let run = self
             .runs
             .get_mut(thread_id)
             .context("Thread is not running")?;
         run.cancelled = true;
-        run.session.stop();
+        if user_initiated {
+            run.session.stop_for_user();
+        } else {
+            run.session.stop();
+        }
         self.notification_events.cancel_requests(thread_id);
         self.enabled_queues.remove(thread_id);
         Ok(())

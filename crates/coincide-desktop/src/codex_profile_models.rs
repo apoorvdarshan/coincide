@@ -41,7 +41,7 @@ fn named_astra_default_available(caps: Option<&Value>) -> bool {
             && caps["appDefaultAvailable"] == true
     })
 }
-struct NamedModelOptions<'a> {
+pub(super) struct NamedModelOptions<'a> {
     access: Option<&'a str>,
     interaction: Option<&'a str>,
     effort: Option<&'a Value>,
@@ -50,7 +50,7 @@ struct NamedModelOptions<'a> {
     expected_interaction: Option<&'a Value>,
 }
 impl Coincide {
-    fn refresh_named_profile_models(
+    pub(super) fn refresh_named_profile_models(
         &mut self,
         id: &str,
         selection: &Value,
@@ -78,19 +78,42 @@ impl Coincide {
                     thread_id: Some(id.into()),
                 };
                 if !request.request_id.is_empty() && catalog_response_matches(&value, &request) {
-                    self.selection_ui.catalog = value;
+                    if should_replace_catalog(
+                        &self.selection_ui.catalog,
+                        &value,
+                        &request,
+                        self.catalog_request_visible(&request),
+                    ) {
+                        self.selection_ui.catalog = value;
+                    }
                     self.selection_ui.catalog_request = Some(request);
                     self.selection_ui.catalog_last_poll = None;
                 } else {
+                    self.selection_ui.named_catalog_retry_after = Some((
+                        id.to_owned(),
+                        text(selection, "accountID"),
+                        Instant::now() + Duration::from_secs(60),
+                    ));
                     self.status = "Invalid named-profile model catalog response".into();
                 }
             }
-            Err(error) => self.status = format!("Profile model refresh failed: {error}"),
+            Err(error) => {
+                self.selection_ui.named_catalog_retry_after = Some((
+                    id.to_owned(),
+                    text(selection, "accountID"),
+                    Instant::now() + Duration::from_secs(60),
+                ));
+                if !catalog_scope(&self.selection_ui.catalog, thread)
+                    || self.selection_ui.catalog["state"] != "ready"
+                {
+                    self.status = format!("Profile model refresh failed: {error}");
+                }
+            }
         }
         self.selection_ui.context = None;
         cx.notify();
     }
-    fn select_named_profile_model(
+    pub(super) fn select_named_profile_model(
         &mut self,
         id: &str,
         selection: &Value,
@@ -99,6 +122,12 @@ impl Coincide {
         options: Option<NamedModelOptions<'_>>,
         cx: &mut Context<Self>,
     ) {
+        if options.is_none()
+            && let Some(request) = request
+            && self.defer_picker_model(id, "codex", model, request, cx)
+        {
+            return;
+        }
         let Some(thread) = self.selected.as_ref().filter(|thread| {
             thread["id"] == id && thread["selection"] == *selection && named_thread(thread)
         }) else {

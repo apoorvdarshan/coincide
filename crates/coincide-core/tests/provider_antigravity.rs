@@ -249,6 +249,9 @@ fn antigravity_fixture_child() {
                 failed = true;
                 break;
             }
+            Ok(Event::Goal { .. } | Event::Usage | Event::TurnBoundary) => {
+                panic!("unexpected Codex goal event from Antigravity")
+            }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             Err(error) => panic!("{error}"),
         }

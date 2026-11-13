@@ -66,7 +66,11 @@ if r['method']=='model/list':
  write({'id':r['id'],'result':{'data':[row,{'model':'default','serviceTiers':[{'id':'priority','name':'Synthetic hostile default'}]},{'model':'gpt-6-astra','serviceTiers':[{'id':'priority','name':'Synthetic hostile Astra'}]}],'nextCursor':None}})
  sys.stdin.readline();sys.exit(0)
 assert named and r['method']=='thread/start' and r['params']['model']==model
-assert r['params']['approvalPolicy']=='untrusted' and r['params']['sandbox']=='read-only'
+assert r['params']['approvalPolicy']==('never' if access=='fullAccess' else 'untrusted')
+assert r['params']['sandbox']==('danger-full-access' if access=='fullAccess' else 'read-only')
+assert r['params']['config']['model_reasoning_effort']==('high' if model=='synthetic-a' else 'medium')
+if tier in ['omit','default']:assert 'serviceTier' not in r['params']
+else:assert r['params']['serviceTier']==tier
 native=home.name+'-plan-session'
 result={'thread':{'id':native},'model':model}
 if ack!='missing':result['serviceTier']=ack

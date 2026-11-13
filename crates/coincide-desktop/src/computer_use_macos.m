@@ -1195,8 +1195,10 @@ static NSDictionary *CUExecute(CUContext *ctx, NSDictionary *r) {
   }
   if ([op isEqualToString:@"permissions"] || [op hasPrefix:@"request_"])
     return @{
-      @"ax" : @(AXIsProcessTrusted()),
-      @"screen" : @(CGPreflightScreenCaptureAccess())
+      // AXIsProcessTrusted returns a byte-sized Boolean. Boxing it directly
+      // serializes 0/1 as JSON numbers, which the Rust bridge rejects.
+      @"ax" : AXIsProcessTrusted() ? @YES : @NO,
+      @"screen" : CGPreflightScreenCaptureAccess() ? @YES : @NO
     };
   if (!AXIsProcessTrusted())
     return CUError(@"permission_denied");

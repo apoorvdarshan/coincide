@@ -23,7 +23,8 @@ expected=json.load(open('expected.json'))
 r=read();write({'id':r['id'],'result':{}})
 assert read()['method']=='initialized'
 r=read();assert r['method']==expected['threadMethod']
-assert r['params']['approvalPolicy']=='untrusted' and r['params']['sandbox']=='read-only'
+assert r['params']['approvalPolicy']==expected['threadApproval'] and r['params']['sandbox']==expected['threadSandbox']
+if expected['threadMethod']=='thread/resume': assert r['params']['serviceTier']=='default'
 result={'thread':{'id':'owned-source'}}
 if expected['resolved'] is not None:result['model']=expected['resolved']
 write({'id':r['id'],'result':result})
@@ -54,7 +55,7 @@ sys.stdin.readline()
         fields["model"] = json!(model);
         fields["collaborationMode"] = json!({"mode":if interaction=="plan"{"plan"}else{"default"},"settings":{"model":model,"reasoning_effort":null,"developer_instructions":null}});
     }
-    fs::write(dir.path().join("expected.json"),json!({"threadMethod":if resume{"thread/resume"}else{"thread/start"},"resolved":resolved,"policy":fields,"mustFail":must_fail}).to_string()).unwrap();
+    fs::write(dir.path().join("expected.json"),json!({"threadMethod":if resume{"thread/resume"}else{"thread/start"},"threadApproval":if access=="approval"{"untrusted"}else{"never"},"threadSandbox":if access=="approval"{"read-only"}else{"danger-full-access"},"resolved":resolved,"policy":fields,"mustFail":must_fail}).to_string()).unwrap();
     let session = Session::start_with_mode_policy(
         Provider::Codex,
         Launch {

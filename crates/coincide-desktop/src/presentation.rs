@@ -250,6 +250,14 @@ pub(super) fn normalize_legacy_reasoning(item: &mut Value) {
     }
 }
 
+/// A previous or interrupted turn cannot still own provider work. Keep the
+/// recorded result untouched, but don't display its old running status as live.
+pub(super) fn normalize_inactive_work(item: &mut Value, active_turn: bool) {
+    if !active_turn && item["status"] == "running" {
+        item["status"] = json!("stopped");
+    }
+}
+
 /// Older OpenCode rows were stored as raw `toolCall` JSON without the display
 /// fields Swift's tool cells expect. Derive the same header metadata at render
 /// time so existing threads are fixed without rewriting their transcripts.
@@ -501,6 +509,33 @@ impl Coincide {
 #[cfg(test)]
 mod work_header_tests {
     use super::*;
+
+    #[::core::prelude::v1::test]
+    fn stale_running_work_stops_spinning_for_every_provider_without_faking_a_result() {
+        for provider in [
+            "codex",
+            "claude",
+            "opencode",
+            "cursor",
+            "grok",
+            "antigravity",
+        ] {
+            let original = json!({"kind":"tool","provider":provider,"status":"running","text":"opaque provider data"});
+            let mut active = original.clone();
+            normalize_inactive_work(&mut active, true);
+            assert_eq!(active, original);
+            let mut old = original.clone();
+            normalize_inactive_work(&mut old, false);
+            assert_eq!(old["status"], "stopped");
+            assert_eq!(old["text"], original["text"]);
+            assert_eq!(work_header(&old).unwrap().status, None);
+            for status in ["completed", "failed", "declined"] {
+                let mut done = json!({"kind":"tool","provider":provider,"status":status});
+                normalize_inactive_work(&mut done, false);
+                assert_eq!(done["status"], status);
+            }
+        }
+    }
 
     #[::core::prelude::v1::test]
     fn explicit_swift_statuses_are_displayed_without_aliasing_unknown_values() {

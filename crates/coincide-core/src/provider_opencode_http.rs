@@ -43,7 +43,10 @@ impl Http {
         timeout: Duration,
     ) -> Result<Value> {
         ensure!(
-            matches!(path, "/api/model" | "/api/provider" | "/api/integration"),
+            matches!(
+                path,
+                "/api/model" | "/api/provider" | "/api/integration" | "/api/command" | "/api/skill"
+            ),
             "Invalid OpenCode metadata path"
         );
         self.request_at("GET", path, None, timeout, Some(directory))
@@ -61,7 +64,8 @@ impl Http {
         ensure!(path.starts_with("/api/"), "Invalid OpenCode API path");
         url.set_path(path);
         if let Some(directory) = directory {
-            url.query_pairs_mut().append_pair("directory", directory);
+            url.query_pairs_mut()
+                .append_pair("location[directory]", directory);
         }
         let request = ureq::http::Request::builder()
             .method(method)
@@ -205,6 +209,42 @@ impl Sse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn metadata_uses_the_workspace_query_and_header_authentication() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let worker = std::thread::spawn(move || {
+            let (mut connection, _) = listener.accept().unwrap();
+            connection
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut bytes = [0; 512];
+            while !request.windows(4).any(|part| part == b"\r\n\r\n") {
+                let count = connection.read(&mut bytes).unwrap();
+                assert!(count > 0);
+                request.extend_from_slice(&bytes[..count]);
+            }
+            connection.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}").unwrap();
+            String::from_utf8(request).unwrap()
+        });
+        let http = Http::new(
+            url::Url::parse(&format!("http://{addr}/")).unwrap(),
+            "synthetic-password",
+        );
+        http.catalog("/api/skill", "/project with space", Duration::from_secs(3))
+            .unwrap();
+        let request = worker.join().unwrap();
+        let first = request.lines().next().unwrap();
+        assert!(first.starts_with("GET /api/skill?location%5Bdirectory%5D=%2Fproject+with+space "));
+        assert!(!first.contains("synthetic-password"));
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("authorization: basic ")
+        );
+    }
     #[test]
     fn untrusted_listening_line_cannot_redirect_credentials() {
         assert!(listening_url("server listening on http://127.0.0.1:1234").is_some());

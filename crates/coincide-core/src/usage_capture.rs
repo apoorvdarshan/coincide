@@ -59,6 +59,20 @@ impl Capture {
     pub(crate) fn identity(&self) -> Option<(&str, &str)> {
         Some((&self.thread.as_ref()?.0, &self.turn.as_ref()?.0))
     }
+    pub(crate) fn thread_id(&self) -> Option<&str> {
+        Some(&self.thread.as_ref()?.0)
+    }
+    /// A native goal can start another turn on the same provider thread.
+    pub(crate) fn next_turn(&mut self) -> bool {
+        if !self.finished {
+            return false;
+        }
+        self.turn = None;
+        self.raw = None;
+        self.finished = false;
+        self.early_usage.clear();
+        true
+    }
     pub(crate) fn owns_thread(&self, params: &Value) -> bool {
         self.thread.is_some() && SourceId::parse(&params["threadId"]) == self.thread
     }

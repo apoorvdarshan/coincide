@@ -53,6 +53,12 @@ impl Saver {
             });
         }
     }
+
+    /// A submitted draft must not be written again by an older debounce job.
+    pub(super) fn invalidate(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
+        self.latest.store(self.generation, Ordering::Release);
+    }
 }
 
 impl Drop for Saver {
@@ -82,7 +88,9 @@ fn run(engine: SharedEngine, receiver: Receiver<Request>, latest: Arc<AtomicU64>
         }
         let mut attempts = 0;
         loop {
-            match persist_pending_draft(&engine, &request.thread, &request.text) {
+            match persist_pending_draft_guarded(&engine, &request.thread, &request.text, || {
+                latest.load(Ordering::Acquire) == request.generation
+            }) {
                 Ok(()) => break,
                 Err(error) if attempts < 20 && engine_busy(&error) => {
                     attempts += 1;
@@ -94,5 +102,43 @@ fn run(engine: SharedEngine, receiver: Receiver<Request>, latest: Arc<AtomicU64>
                 Err(_) => break,
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use coincide_core::store::Store;
+
+    #[::core::prelude::v1::test]
+    fn invalidated_debounce_cannot_restore_a_submitted_draft() {
+        let root = tempfile::tempdir().unwrap();
+        let engine: SharedEngine = Arc::new(Mutex::new(Engine::new(
+            Store::open(&root.path().join("state.sqlite")).unwrap(),
+        )));
+        let thread = call(&engine, "threads.create", json!({"cwd":root.path()})).unwrap();
+        let id = text(&thread, "id");
+        let generation = AtomicU64::new(1);
+        persist_pending_draft(&engine, &id, "submitted").unwrap();
+        // Send consumes the saved text; a previously scheduled save must not
+        // put it back, even when it only reaches the lock afterwards.
+        persist_pending_draft(&engine, &id, "").unwrap();
+        generation.store(2, Ordering::Release);
+        persist_pending_draft_guarded(&engine, &id, "submitted", || {
+            generation.load(Ordering::Acquire) == 1
+        })
+        .unwrap();
+        assert_eq!(
+            call(&engine, "threads.read", json!({"threadId":id})).unwrap()["draft"],
+            ""
+        );
+        persist_pending_draft_guarded(&engine, &id, "new draft", || {
+            generation.load(Ordering::Acquire) == 2
+        })
+        .unwrap();
+        assert_eq!(
+            call(&engine, "threads.read", json!({"threadId":id})).unwrap()["draft"],
+            "new draft"
+        );
     }
 }

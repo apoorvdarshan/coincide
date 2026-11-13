@@ -514,6 +514,52 @@ fn approval_metadata(connection: &Connection, session: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "requires COINCIDE_TEST_NATIVE_CURSOR pointing at an installed Cursor CLI"]
+    fn native_cursor_discovers_user_and_project_mcps_with_the_private_profile() {
+        let cli = std::env::var("COINCIDE_TEST_NATIVE_CURSOR").expect("set the test CLI path");
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let private = dir.path().join("private");
+        let work = dir.path().join("work");
+        fs::create_dir_all(home.join(".cursor")).unwrap();
+        fs::create_dir_all(work.join(".cursor")).unwrap();
+        fs::create_dir_all(&private).unwrap();
+        fs::write(
+            home.join(".cursor/mcp.json"),
+            serde_json::to_vec(
+                &json!({"mcpServers":{"SYNTHETIC_GLOBAL":{"command":"/nonexistent/synthetic"}}}),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            work.join(".cursor/mcp.json"),
+            serde_json::to_vec(
+                &json!({"mcpServers":{"SYNTHETIC_PROJECT":{"command":"/nonexistent/synthetic"}}}),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let output = std::process::Command::new(cli)
+            .args(["--disable-project-configs", "mcp", "list"])
+            .current_dir(&work)
+            .env_clear()
+            .env("PATH", "/opt/homebrew/bin:/usr/bin:/bin")
+            .env("HOME", &home)
+            .env("CURSOR_CONFIG_DIR", &private)
+            .env("CURSOR_DATA_DIR", private.join("artifacts"))
+            .env("AGENT_CLI_CREDENTIAL_STORE", "memory")
+            .env("TERM", "dumb")
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains("SYNTHETIC_GLOBAL"));
+        assert!(stdout.contains("SYNTHETIC_PROJECT"));
+    }
     fn source() -> (tempfile::TempDir, PathBuf, Vec<u8>) {
         let dir = tempfile::tempdir().unwrap();
         let source = dir.path().join("original");

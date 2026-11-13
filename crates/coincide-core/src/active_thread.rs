@@ -50,6 +50,7 @@ impl Engine {
         }
         if self.active_thread != selected {
             self.cancel_provider_restore();
+            self.composer_file_owner = Uuid::new_v4();
             self.active_thread = selected;
             self.revision += 1;
         }

@@ -312,6 +312,121 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn pausing_queue_checks_a_paused_goal_without_touching_the_composer() {
+        use std::{fs, os::unix::fs::PermissionsExt};
+        let (root, mut engine, binary) = super::super::provider_configuration::tests::fixture();
+        fs::write(&binary, r#"#!/usr/bin/env python3
+import json,sys
+def read(): return json.loads(sys.stdin.readline())
+def write(v): print(json.dumps(v),flush=True)
+r=read(); write({'id':r['id'],'result':{}}); assert read()['method']=='initialized'
+r=read(); assert r['method']=='thread/resume'; write({'id':r['id'],'result':{'thread':{'id':'native-thread'},'model':'synthetic-model'}})
+r=read(); assert r['method']=='thread/settings/update'; write({'id':r['id'],'result':{}})
+r=read(); assert r['method']=='thread/goal/get'; write({'id':r['id'],'result':{'goal':{'threadId':'native-thread','objective':'changed elsewhere','status':'paused'}}})
+sys.stdin.readline()
+"#).unwrap();
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+        super::super::provider_configuration::tests::save(
+            &mut engine,
+            "codex",
+            &binary,
+            "synthetic",
+        );
+        let configuration = engine
+            .provider_launch_configuration("codex")
+            .unwrap()
+            .unwrap();
+        let mut thread = engine
+            .execute("threads.create", &serde_json::json!({"cwd":root.path()}))
+            .unwrap();
+        let id = thread["id"].as_str().unwrap().to_owned();
+        thread["selection"] = serde_json::json!({"provider":"codex","modelID":"default"});
+        crate::agent::set_provider_session(&mut thread, "codex", "native-thread");
+        queue::add(&mut thread, "queued message").unwrap();
+        thread["rustCodexGoalAutoResume"] = serde_json::json!({"sessionID":"native-thread","accountID":"default","objective":"test"});
+        thread["draft"] = serde_json::json!("unsent draft");
+        thread["rustDraftImages"] = serde_json::json!([{"future":"untouched"}]);
+        thread["draftContext"] = serde_json::json!([{"future":"untouched"}]);
+        engine.store.save(&thread).unwrap();
+        engine
+            .remember_native_configuration_session(
+                "codex",
+                &id,
+                "native-thread",
+                Some(configuration.stamp()),
+            )
+            .unwrap();
+        let before_items = thread["items"].clone();
+        engine
+            .execute("agent.queue.pause", &serde_json::json!({"threadId":id}))
+            .unwrap();
+        assert!(
+            engine.runs.contains_key(&id),
+            "goal check must start without sending the draft"
+        );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while engine.runs.contains_key(&id) {
+            engine.poll();
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        let saved = engine.store.thread(&id).unwrap();
+        assert_eq!(saved["draft"], "unsent draft");
+        assert_eq!(saved["rustDraftImages"], thread["rustDraftImages"]);
+        assert_eq!(saved["draftContext"], thread["draftContext"]);
+        assert_eq!(saved["items"], before_items);
+        assert!(saved["rustCodexGoalAutoResume"].is_null());
+        assert_eq!(queue::read(&saved).unwrap()[0].state, State::Pending);
+    }
+    #[test]
+    fn queued_row_finishes_at_turn_boundary_while_goal_worker_continues() {
+        let (_dir, mut engine, id) = fixture();
+        let mut thread = engine.store.thread(&id).unwrap();
+        let message = queue::read(&thread).unwrap()[0].clone();
+        thread["rustMessageQueue"][0]["state"] = serde_json::json!("dispatching");
+        engine.store.save(&thread).unwrap();
+        let (release, wait) = std::sync::mpsc::channel();
+        let session = crate::agent::Session::fixture_worker(move |commands, events| {
+            wait.recv().unwrap();
+            events.send(crate::agent::Event::TurnBoundary).unwrap();
+            let _ = commands.recv();
+            let _ = events.send(crate::agent::Event::Finished);
+        });
+        engine.insert_running(
+            id.clone(),
+            super::super::Running {
+                configuration: None,
+                resume_safe: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+                usage_context: Some(crate::agent::usage_capture::TurnContext::new(&thread)),
+                session,
+                provider: "codex".into(),
+                transcript_start: 0,
+                pending: std::collections::HashMap::new(),
+                schedule_claim: None,
+                queue_claim: Some(message.id),
+                cancelled: false,
+                events: std::collections::VecDeque::new(),
+                persistence_error: None,
+            },
+        );
+        release.send(()).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            engine.poll();
+            if queue::read(&engine.store.thread(&id).unwrap()).unwrap()[0].state == State::Completed
+            {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        assert!(engine.runs.contains_key(&id));
+        assert!(engine.runs[&id].queue_claim.is_none());
+        engine.freeze_admissions();
+        engine.request_provider_stop(&id).unwrap();
+    }
     fn fixture() -> (tempfile::TempDir, Engine, String) {
         let directory = tempfile::tempdir().unwrap();
         let mut store = Store::open(&directory.path().join("state.sqlite")).unwrap();

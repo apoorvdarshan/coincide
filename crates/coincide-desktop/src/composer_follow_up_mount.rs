@@ -5,11 +5,211 @@ use coincide_core::{
     api::{NativeFollowUpStatus, NativeFollowUpTicket},
     composer_follow_up::{self as choice, Behavior, Dispatch},
 };
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum SendRoute {
+    WaitForImages,
+    FollowUp,
+    WaitForSelection,
+    Send,
+}
+
+pub(super) fn send_route(running: bool, importing: bool, changing_selection: bool) -> SendRoute {
+    if !running && changing_selection {
+        SendRoute::WaitForSelection
+    } else if importing {
+        SendRoute::WaitForImages
+    } else if running {
+        SendRoute::FollowUp
+    } else {
+        SendRoute::Send
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SelectionWait {
+    None,
+    Waiting,
+    Failed,
+}
 pub(super) struct PendingDelivery {
     ticket: Option<NativeFollowUpTicket>,
     thread: String,
     draft: String,
     queued: bool,
+    image_send: Option<u64>,
+}
+/// A send waiting for a local prerequisite, bound to the original settings.
+#[derive(Clone)]
+pub(super) struct PendingSend {
+    pub thread: String,
+    pub draft: String,
+    pub alternate: bool,
+    pub behavior: Behavior,
+    pub selection: Value,
+    pub waiting_for_import: bool,
+    pub selection_wait: SelectionWait,
+    pub import_jobs: Vec<u64>,
+    pub import_failed: bool,
+    pub edited: bool,
+    pub captured: Value,
+    pub last_error: Option<String>,
+    /// The first deferred message may still be visible until another Send.
+    pub original_visible: bool,
+    /// Local-only row shown until this buffered message reaches the queue.
+    pub buffer_id: Option<String>,
+    /// Keeps this submission's previews hidden while it is being saved.
+    pub image_send: Option<u64>,
+}
+impl PendingSend {
+    pub fn new(thread: &Value, draft: String, alternate: bool) -> Self {
+        let mut captured = pending_scope(thread, false);
+        captured["id"] = thread["id"].clone();
+        captured["draft"] = json!(draft);
+        captured["rustDraftImages"] = thread["rustDraftImages"].clone();
+        Self {
+            thread: text(thread, "id"),
+            draft,
+            alternate,
+            behavior: choice::selected(thread, &Value::Null),
+            selection: pending_scope(thread, false),
+            waiting_for_import: false,
+            selection_wait: SelectionWait::None,
+            import_jobs: Vec::new(),
+            import_failed: false,
+            edited: false,
+            captured,
+            last_error: None,
+            original_visible: true,
+            buffer_id: None,
+            image_send: None,
+        }
+    }
+    pub fn with_behavior(mut self, behavior: Behavior) -> Self {
+        self.behavior = behavior;
+        self
+    }
+    /// Adopt only the acknowledged execution choice; the submitted text,
+    /// attachments, references and workspace remain the captured snapshot.
+    pub fn finish_selection(&mut self, thread: Option<&Value>) {
+        if self.selection_wait != SelectionWait::Waiting {
+            return;
+        }
+        let Some(thread) = thread.filter(|thread| text(thread, "id") == self.thread) else {
+            self.selection_wait = SelectionWait::Failed;
+            return;
+        };
+        for key in ["selection", "accessMode", "interactionMode"] {
+            self.selection[key] = thread[key].clone();
+            self.captured[key] = thread[key].clone();
+        }
+        self.selection_wait = SelectionWait::None;
+    }
+    pub fn add_imports(&mut self, jobs: Vec<u64>) {
+        self.import_jobs.extend(jobs);
+        self.waiting_for_import = !self.import_jobs.is_empty();
+    }
+    pub fn complete_import(&mut self, job: u64, imported: &[Value], failed: bool) -> bool {
+        let Some(index) = self.import_jobs.iter().position(|owned| *owned == job) else {
+            return false;
+        };
+        self.import_jobs.remove(index);
+        let mut images = self.captured["rustDraftImages"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        for image in imported {
+            if !images.contains(image) {
+                images.push(image.clone());
+            }
+        }
+        self.captured["rustDraftImages"] = json!(images);
+        self.selection["images"] = self.captured["rustDraftImages"].clone();
+        self.import_failed |= failed;
+        self.waiting_for_import = !self.import_jobs.is_empty();
+        true
+    }
+    #[cfg(test)]
+    pub fn during_import(thread: &Value, draft: String, alternate: bool) -> Self {
+        let mut pending = Self::new(thread, draft, alternate);
+        pending.selection = pending_scope(thread, true);
+        pending.waiting_for_import = true;
+        pending
+    }
+    pub fn matches(&self, thread: &Value, draft: &str) -> bool {
+        self.thread == text(thread, "id")
+            && self.draft == draft
+            && self.selection == pending_scope(thread, self.waiting_for_import)
+    }
+}
+
+/// If the previous submission is still visible, retain only newly appended
+/// text as the next message. A deliberately retyped identical message remains
+/// a separate send. An unchanged second click is the same pending intent.
+pub(super) fn buffered_text(first: &PendingSend, thread: &str, current: &str) -> Option<String> {
+    if first.thread != thread || !first.original_visible {
+        return Some(current.to_owned());
+    }
+    if !first.edited && current == first.draft {
+        return None;
+    }
+    if first.edited
+        && !first.draft.is_empty()
+        && let Some(tail) = current.strip_prefix(&first.draft)
+        && !tail.trim().is_empty()
+    {
+        return Some(tail.to_owned());
+    }
+    Some(current.to_owned())
+}
+
+/// Earlier submissions own their images and references; do not attach them a
+/// second time merely because their previews are still awaiting admission.
+pub(super) fn separate_buffered_payload(next: &mut PendingSend, earlier: &[PendingSend]) {
+    let images = next.captured["rustDraftImages"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let contexts = next.captured["draftContext"].as_array().cloned();
+    let prior = earlier
+        .iter()
+        .filter(|entry| entry.thread == next.thread)
+        .collect::<Vec<_>>();
+    let images: Vec<Value> = images
+        .into_iter()
+        .filter(|image| {
+            !prior.iter().any(|entry| {
+                entry.captured["rustDraftImages"]
+                    .as_array()
+                    .is_some_and(|rows| rows.contains(image))
+            })
+        })
+        .collect();
+    next.captured["rustDraftImages"] = json!(images);
+    next.selection["images"] = next.captured["rustDraftImages"].clone();
+    if let Some(contexts) = contexts {
+        let remaining: Vec<Value> = contexts
+            .into_iter()
+            .filter(|context| {
+                !prior.iter().any(|entry| {
+                    entry.captured["draftContext"]
+                        .as_array()
+                        .is_some_and(|rows| rows.contains(context))
+                })
+            })
+            .collect();
+        next.captured["draftContext"] = json!(remaining);
+        next.selection["draftContext"] = next.captured["draftContext"].clone();
+    }
+}
+fn pending_scope(thread: &Value, ignore_images: bool) -> Value {
+    let mut scope = json!({"selection":thread["selection"],"accessMode":thread["accessMode"],
+        "interactionMode":thread["interactionMode"],"projectID":thread["projectID"],
+        "projectPath":thread["projectPath"],"worktreePath":thread["worktreePath"],
+        "draftContext":thread["draftContext"],"followUpBehavior":thread["followUpBehavior"],
+        "botID":thread["botID"],"rustBotContext":thread["rustBotContext"]});
+    if !ignore_images {
+        scope["images"] = thread["rustDraftImages"].clone();
+    }
+    scope
 }
 #[derive(Clone, Default, PartialEq, gpui_kit::Action)]
 #[action(namespace = coincide_follow_up, no_json, no_register)]
@@ -33,12 +233,241 @@ pub(super) fn init(cx: &mut App) {
     ]);
 }
 impl Coincide {
+    pub(super) fn has_buffered_selection_send(&self, thread_id: &str) -> bool {
+        self.pending_follow_up
+            .iter()
+            .chain(self.pending_follow_up_backlog.iter())
+            .any(|pending| {
+                pending.thread == thread_id
+                    && pending.buffer_id.is_some()
+                    && pending.selection_wait == SelectionWait::Waiting
+            })
+    }
+    pub(super) fn cancel_pending_selection_waits(&mut self) {
+        for pending in self
+            .pending_follow_up
+            .iter_mut()
+            .chain(self.pending_follow_up_backlog.iter_mut())
+        {
+            pending.finish_selection(None);
+        }
+    }
+    pub(super) fn finish_pending_selection(&mut self, thread_id: &str, success: bool) {
+        let selected = self
+            .selected
+            .as_ref()
+            .filter(|thread| text(thread, "id") == thread_id && success)
+            .cloned();
+        for pending in self
+            .pending_follow_up
+            .iter_mut()
+            .chain(self.pending_follow_up_backlog.iter_mut())
+            .filter(|pending| pending.thread == thread_id)
+        {
+            pending.finish_selection(selected.as_ref());
+        }
+    }
+    pub(super) fn captured_follow_up_behavior(&self, thread: &Value) -> Behavior {
+        self.pending_follow_up_choice
+            .as_ref()
+            .filter(|(id, _)| *id == text(thread, "id"))
+            .map(|(_, behavior)| *behavior)
+            .unwrap_or_else(|| choice::selected(thread, &self.settings))
+    }
+    /// The previous send can still own stored images while awaiting its ACK.
+    pub(super) fn exclude_submitted_images(&self, pending: &mut PendingSend) {
+        let images = pending.captured["rustDraftImages"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        let visible = self.pending_images.visible(&pending.thread, &images);
+        if visible != images {
+            pending.captured["rustDraftImages"] = json!(visible);
+            if !pending.waiting_for_import {
+                pending.selection["images"] = pending.captured["rustDraftImages"].clone();
+            }
+        }
+    }
+    pub(super) fn buffer_composer_send(
+        &mut self,
+        alternate: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.record_composer_draft(cx);
+        if self.pending_follow_up_backlog.len() >= 32 {
+            self.show_local_error("The message queue is full. Your draft is still here.");
+            cx.notify();
+            return;
+        }
+        let Some(thread) = self.selected.as_ref() else {
+            return;
+        };
+        let id = text(thread, "id");
+        let visible = self.composer.read(cx).value().to_string();
+        let previous = self
+            .pending_follow_up
+            .as_ref()
+            .filter(|entry| entry.thread == id)
+            .or_else(|| {
+                self.pending_follow_up_backlog
+                    .iter()
+                    .find(|entry| entry.thread == id)
+            });
+        let draft = previous
+            .map(|entry| buffered_text(entry, &id, &visible))
+            .unwrap_or_else(|| Some(visible.clone()))
+            .unwrap_or_default();
+        let mut next = PendingSend::new(thread, draft, alternate)
+            .with_behavior(self.captured_follow_up_behavior(thread));
+        if (!self.running.contains(&id) && self.selection_change_pending())
+            || self.pending_follow_up.as_ref().is_some_and(|pending| {
+                pending.thread == id && pending.selection_wait == SelectionWait::Waiting
+            })
+        {
+            next.selection_wait = SelectionWait::Waiting;
+        }
+        self.exclude_submitted_images(&mut next);
+        let earlier = self
+            .pending_follow_up
+            .iter()
+            .chain(self.pending_follow_up_backlog.iter())
+            .cloned()
+            .collect::<Vec<_>>();
+        separate_buffered_payload(&mut next, &earlier);
+        if let Err(error) =
+            coincide_core::composer_context::validate(&next.captured["draftContext"])
+        {
+            self.show_local_error(&format!("Message not queued: {error}"));
+            cx.notify();
+            return;
+        }
+        next.add_imports(self.attachment_imports.claim(&id));
+        if next.draft.trim().is_empty()
+            && !coincide_core::composer_context::has_context(&next.captured["draftContext"])
+            && next.captured["rustDraftImages"]
+                .as_array()
+                .is_none_or(Vec::is_empty)
+            && !next.waiting_for_import
+        {
+            return;
+        }
+        next.original_visible = false;
+        next.edited = true; // The visible composer is now a different draft.
+        next.buffer_id = Some(format!("buffered-send-{}", uuid::Uuid::new_v4()));
+        let images = next.captured["rustDraftImages"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        if !images.is_empty() {
+            self.pending_seq = self.pending_seq.wrapping_add(1);
+            self.pending_images.begin(self.pending_seq, &id, images);
+            next.image_send = Some(self.pending_seq);
+        }
+        if let Some(first) = self
+            .pending_follow_up
+            .as_mut()
+            .filter(|entry| entry.thread == id)
+        {
+            first.original_visible = false;
+        }
+        self.pending_follow_up_backlog.push_back(next);
+        self.buffered_send_lease.set_dirty(true);
+        self.draft_saver.invalidate();
+        if let Some(thread) = self.selected.as_mut() {
+            thread["draft"] = json!("");
+        }
+        self.pending_drafts.insert(
+            id,
+            PendingDraft {
+                text: String::new(),
+                retry: true,
+                failed: false,
+            },
+        );
+        self.composer
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.reconcile_buffered_sends();
+        if let Some(count) = self
+            .selected
+            .as_ref()
+            .and_then(|thread| thread["items"].as_array().map(Vec::len))
+        {
+            let start = self.transcript_count.min(count);
+            self.splice_transcript(start..self.transcript_count, count - start);
+            self.transcript_count = count;
+            self.transcript_list.scroll_to_end();
+        }
+        self.status = "Preparing your message.".into();
+        cx.notify();
+    }
+
+    pub(super) fn reconcile_buffered_sends(&mut self) {
+        let Some(thread) = self.selected.as_mut() else {
+            return;
+        };
+        let id = text(thread, "id");
+        let Some(items) = thread["items"].as_array_mut() else {
+            return;
+        };
+        for entry in self
+            .pending_follow_up
+            .iter()
+            .chain(self.pending_follow_up_backlog.iter())
+        {
+            let Some(buffer_id) = entry.buffer_id.as_ref().filter(|_| entry.thread == id) else {
+                continue;
+            };
+            if let Some(item) = items.iter_mut().find(|item| item["id"] == *buffer_id) {
+                if entry.captured["rustDraftImages"]
+                    .as_array()
+                    .is_some_and(|images| !images.is_empty())
+                {
+                    item["rustImages"] = entry.captured["rustDraftImages"].clone();
+                }
+                continue;
+            }
+            let mut item = json!({"id":buffer_id,"kind":"user","text":entry.draft,"createdAt":0,"bufferedSend":true});
+            if entry.captured["rustDraftImages"]
+                .as_array()
+                .is_some_and(|images| !images.is_empty())
+            {
+                item["rustImages"] = entry.captured["rustDraftImages"].clone();
+            }
+            items.push(item);
+        }
+    }
+
+    pub(super) fn remove_buffered_send(&mut self, pending: &PendingSend) {
+        let Some(buffer_id) = &pending.buffer_id else {
+            return;
+        };
+        let Some(thread) = self
+            .selected
+            .as_mut()
+            .filter(|thread| text(thread, "id") == pending.thread)
+        else {
+            return;
+        };
+        let Some(items) = thread["items"].as_array_mut() else {
+            return;
+        };
+        if let Some(index) = items.iter().position(|item| item["id"] == *buffer_id) {
+            items.remove(index);
+            if index < self.transcript_count {
+                self.splice_transcript(index..index + 1, 0);
+                self.transcript_count -= 1;
+            }
+        }
+    }
+
     pub(super) fn track_queued_delivery(&mut self, ticket: NativeFollowUpTicket, thread: String) {
         self.follow_up_deliveries.push(PendingDelivery {
             ticket: Some(ticket),
             thread,
             draft: String::new(),
             queued: true,
+            image_send: None,
         });
     }
 
@@ -67,7 +496,7 @@ impl Coincide {
             }))
     }
     fn composer_send_visible(&self) -> bool {
-        self.chat_visible() && !self.composer_files.opened
+        self.chat_visible()
     }
     pub(super) fn follow_up_button(&self, compact: bool, cx: &mut Context<Self>) -> AnyElement {
         let Some(thread) = self.selected.as_ref() else {
@@ -225,7 +654,7 @@ impl Coincide {
             return;
         };
         let id = text(&thread, "id");
-        if self.attachment_import_threads.contains(&id) {
+        if self.attachment_imports.contains(&id) {
             self.show_local_error("Wait for image imports to finish before sending a follow-up.");
             cx.notify();
             return;
@@ -251,10 +680,16 @@ impl Coincide {
                 .as_ref()
                 .is_some_and(|(owner, _)| owner == &id)
         {
-            self.pending_follow_up = Some((id, draft, alternate));
+            let mut pending = PendingSend::new(&thread, draft, alternate)
+                .with_behavior(self.captured_follow_up_behavior(&thread));
+            self.exclude_submitted_images(&mut pending);
+            self.pending_follow_up = Some(pending);
             cx.notify();
             return;
         }
+        // The saved source is now owned by the follow-up operation. Revoke
+        // its debounced write before the provider can acknowledge and clear it.
+        self.draft_saver.invalidate();
         let result = self
             .engine
             .try_lock()
@@ -263,32 +698,36 @@ impl Coincide {
         match result {
             Ok(ticket) => {
                 self.pending_follow_up = None;
-                self.show_pending_send(&id, &draft);
+                let image_send = self.show_pending_send(&id, &draft);
                 self.pending_drafts.remove(&id);
-                self.composer
-                    .update(cx, |input, cx| input.set_value("", window, cx));
                 if let Some(thread) = self.selected.as_mut()
                     && text(thread, "id") == id
                 {
                     thread["draft"] = json!("");
                 }
+                self.composer
+                    .update(cx, |input, cx| input.set_value("", window, cx));
                 self.follow_up_deliveries.push(PendingDelivery {
                     ticket: Some(ticket),
                     thread: id,
                     draft,
                     queued: false,
+                    image_send,
                 });
             }
             Err(error)
                 if engine_busy(&error)
                     || error.to_string().contains("Collect the previous follow-up") =>
             {
-                self.pending_follow_up = Some((id, draft, alternate));
+                let mut pending = PendingSend::new(&thread, draft, alternate)
+                    .with_behavior(self.captured_follow_up_behavior(&thread));
+                self.exclude_submitted_images(&mut pending);
+                self.pending_follow_up = Some(pending);
             }
             Err(error) => {
                 self.pending_follow_up = None;
                 let reason = error.to_string();
-                self.show_local_error(&format!("Message not sent: {reason}"));
+                self.show_local_error(&send_error_message(&reason));
                 self.status = reason;
             }
         }
@@ -341,6 +780,16 @@ impl Coincide {
                 None | Some(NativeFollowUpStatus::Pending) => retained.push(delivery),
                 Some(status) => {
                     let delivered = matches!(status, NativeFollowUpStatus::Delivered { .. });
+                    let draft_cleared = matches!(
+                        status,
+                        NativeFollowUpStatus::Delivered {
+                            draft_cleared: true,
+                            ..
+                        }
+                    );
+                    self.record_composer_draft(cx);
+                    self.finish_pending_images(delivery.image_send, delivered);
+                    self.finish_submitted_draft(delivery.image_send, delivered && draft_cleared);
                     let restored = matches!(status, NativeFollowUpStatus::Retained(_))
                         && !delivery.queued
                         && self.restore_follow_up_draft(
@@ -393,25 +842,6 @@ impl Coincide {
                         ),
                         NativeFollowUpStatus::Pending => unreachable!(),
                     };
-                    if delivered
-                        && !delivery.queued
-                        && self
-                            .selected
-                            .as_ref()
-                            .is_some_and(|thread| thread["id"] == delivery.thread)
-                        && self.committed_composer_draft(cx) == delivery.draft
-                        && let Ok(thread) = call(
-                            &self.engine,
-                            "threads.read",
-                            json!({"threadId":delivery.thread}),
-                        )
-                        && thread["draft"] == ""
-                    {
-                        self.pending_drafts.remove(&delivery.thread);
-                        self.selected = Some(thread);
-                        self.composer
-                            .update(cx, |input, cx| input.set_value("", window, cx));
-                    }
                     self.refresh_queue(cx);
                     cx.notify();
                 }
@@ -480,5 +910,146 @@ fn behavior_help(behavior: Behavior) -> &'static str {
         Behavior::Interrupt => {
             "Stop the current turn, wait for its worker to return and save, then send"
         }
+    }
+}
+
+#[cfg(test)]
+mod send_route_tests {
+    use super::{
+        PendingSend, SelectionWait, SendRoute, buffered_text, send_route, separate_buffered_payload,
+    };
+    use serde_json::json;
+
+    #[test]
+    fn running_turn_routes_to_follow_up_even_while_selection_is_refreshing() {
+        assert_eq!(send_route(true, false, true), SendRoute::FollowUp);
+        assert_eq!(send_route(true, false, false), SendRoute::FollowUp);
+    }
+
+    #[test]
+    fn image_import_finishes_before_either_send_path() {
+        assert_eq!(send_route(true, true, true), SendRoute::WaitForImages);
+        assert_eq!(send_route(false, true, false), SendRoute::WaitForImages);
+        assert_eq!(send_route(false, true, true), SendRoute::WaitForSelection);
+        assert_eq!(send_route(false, false, true), SendRoute::WaitForSelection);
+        assert_eq!(send_route(false, false, false), SendRoute::Send);
+    }
+
+    #[test]
+    fn waiting_send_uses_the_acknowledged_selection_without_changing_its_payload() {
+        for provider in [
+            "codex",
+            "claude",
+            "opencode",
+            "cursor",
+            "grok",
+            "antigravity",
+        ] {
+            let old = json!({"id":"a", "selection":{"provider":"codex","modelID":"old"},
+                "draftContext":[{"path":"file"}],"rustDraftImages":[{"id":"image"}]});
+            let mut pending = PendingSend::new(&old, "message".into(), false);
+            pending.selection_wait = SelectionWait::Waiting;
+            let mut selected = old.clone();
+            selected["selection"] = json!({"provider":provider,"modelID":"new"});
+            pending.finish_selection(Some(&selected));
+            assert_eq!(pending.selection_wait, SelectionWait::None);
+            assert_eq!(pending.captured["selection"], selected["selection"]);
+            assert_eq!(pending.captured["draft"], "message");
+            assert_eq!(pending.captured["draftContext"], old["draftContext"]);
+            assert_eq!(pending.captured["rustDraftImages"], old["rustDraftImages"]);
+            assert!(pending.matches(&selected, "message"));
+            assert!(!pending.matches(&selected, "newer draft"));
+        }
+    }
+
+    #[test]
+    fn failed_or_foreign_selection_cannot_retarget_a_waiting_message() {
+        let thread = json!({"id":"a", "selection":{"provider":"codex","modelID":"old"}});
+        let other = json!({"id":"b", "selection":{"provider":"claude","modelID":"other"}});
+        for result in [None, Some(&other)] {
+            let mut pending = PendingSend::new(&thread, "message".into(), false);
+            pending.selection_wait = SelectionWait::Waiting;
+            pending.finish_selection(result);
+            assert_eq!(pending.selection_wait, SelectionWait::Failed);
+            assert_eq!(pending.captured["selection"], thread["selection"]);
+            assert_eq!(pending.captured["draft"], "message");
+        }
+    }
+
+    #[test]
+    fn deferred_send_never_follows_a_changed_draft_or_model() {
+        let mut thread = json!({"id":"conversation", "selection":{"provider":"codex","modelID":"one"}, "accessMode":"approval", "interactionMode":"build"});
+        let pending = PendingSend::new(&thread, "message".into(), false);
+        assert!(pending.matches(&thread, "message"));
+        assert!(!pending.matches(&thread, "new message"));
+        thread["selection"]["modelID"] = json!("two");
+        assert!(!pending.matches(&thread, "message"));
+        thread["selection"]["modelID"] = json!("one");
+        thread["draftContext"] = json!([{"id":"new reference"}]);
+        assert!(!pending.matches(&thread, "message"));
+        thread["draftContext"] = json!(null);
+        let importing = PendingSend::during_import(&thread, "message".into(), false);
+        thread["rustDraftImages"] = json!([{"id":"new image"}]);
+        assert!(importing.matches(&thread, "message"));
+        assert!(!pending.matches(&thread, "message"));
+    }
+
+    #[test]
+    fn deferred_send_captures_original_text_model_and_imported_images() {
+        let mut thread = json!({"id":"conversation", "selection":{"provider":"codex","modelID":"one"}, "rustDraftImages":[{"id":"before"}]});
+        let mut pending = PendingSend::during_import(&thread, "original".into(), false);
+        thread["draft"] = json!("next message");
+        thread["rustDraftImages"] = json!([{"id":"before"},{"id":"imported"}]);
+        pending.add_imports(vec![1]);
+        assert!(pending.complete_import(1, &[json!({"id":"imported"})], false));
+        thread["rustDraftImages"] = json!([{"id":"before"},{"id":"imported"},{"id":"next-import"}]);
+        thread["selection"]["modelID"] = json!("two");
+        assert!(!pending.matches(&thread, "next message"));
+        assert_eq!(pending.captured["draft"], "original");
+        assert_eq!(pending.captured["selection"]["modelID"], "one");
+        assert_eq!(
+            pending.captured["rustDraftImages"],
+            json!([{"id":"before"},{"id":"imported"}])
+        );
+    }
+
+    #[test]
+    fn a_second_send_keeps_only_new_text_but_preserves_an_intentional_retype() {
+        let thread = json!({"id":"a","selection":{"provider":"codex"}});
+        let mut first = PendingSend::new(&thread, "first".into(), false);
+        assert_eq!(buffered_text(&first, "a", "first"), None);
+        first.edited = true;
+        assert_eq!(
+            buffered_text(&first, "a", "first second"),
+            Some(" second".into())
+        );
+        assert_eq!(buffered_text(&first, "a", "first"), Some("first".into()));
+        first.original_visible = false;
+        assert_eq!(
+            buffered_text(&first, "a", "first again"),
+            Some("first again".into())
+        );
+        assert_eq!(
+            buffered_text(&first, "another", "new thread"),
+            Some("new thread".into())
+        );
+    }
+
+    #[test]
+    fn buffered_messages_do_not_reuse_earlier_images_or_references() {
+        let mut thread = json!({"id":"a","selection":{"provider":"codex"},
+            "rustDraftImages":[{"id":"first"}],
+            "draftContext":[{"id":"reference-one"}]});
+        let first = PendingSend::new(&thread, "first".into(), false);
+        thread["rustDraftImages"] = json!([{"id":"first"},{"id":"second"}]);
+        thread["draftContext"] = json!([{"id":"reference-one"},{"id":"reference-two"}]);
+        let mut next = PendingSend::new(&thread, "second".into(), false);
+        separate_buffered_payload(&mut next, &[first]);
+        assert_eq!(next.captured["rustDraftImages"], json!([{"id":"second"}]));
+        assert_eq!(
+            next.captured["draftContext"],
+            json!([{"id":"reference-two"}])
+        );
+        assert_eq!(next.captured["draft"], "second");
     }
 }

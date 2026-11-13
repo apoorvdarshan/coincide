@@ -34,6 +34,7 @@ impl Coincide {
         cx: &mut Context<Self>,
     ) {
         let source = self.selected.as_ref().map(picker_view_scope);
+        let source_id = source.as_ref().map(|scope| text(scope, "id"));
         let result = self
             .selected
             .as_ref()
@@ -44,8 +45,7 @@ impl Coincide {
                     selected,
                     account.as_deref(),
                     self.running.contains(&text(selected, "id")),
-                    self.attachment_import_threads
-                        .contains(&text(selected, "id")),
+                    self.attachment_imports.contains(&text(selected, "id")),
                 )
             });
         match result {
@@ -56,6 +56,9 @@ impl Coincide {
                 self.accept_saved_provider_selection(thread);
                 self.selection_ui.capability_cache.invalidate();
                 self.status="Account selected. Your draft is retained; no message was sent. Refresh models when needed.".into();
+                if let Some(id) = source_id.as_deref() {
+                    self.finish_pending_selection(id, true);
+                }
             }
             Err(error) if engine_busy(&error) => {
                 self.selection_ui.pending_native_account =
@@ -65,6 +68,9 @@ impl Coincide {
             Err(error) => {
                 self.selection_ui.pending_native_account = None;
                 self.status = format!("Account was not changed: {error}");
+                if let Some(id) = source_id.as_deref() {
+                    self.finish_pending_selection(id, false);
+                }
             }
         }
         cx.notify();

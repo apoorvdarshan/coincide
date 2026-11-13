@@ -41,7 +41,7 @@ mod handoff_prompt;
 pub mod project_defaults;
 #[path = "queue_edit_api.rs"]
 mod queue_edit_api;
-pub use follow_up_api::{NativeFollowUpStatus, NativeFollowUpTicket};
+pub use follow_up_api::{CapturedNativeSend, NativeFollowUpStatus, NativeFollowUpTicket};
 #[path = "active_thread.rs"]
 mod active_thread;
 #[path = "admission_freeze.rs"]
@@ -105,6 +105,7 @@ mod composer_context_api;
 mod composer_file_reference;
 #[path = "composer_suggestions_api.rs"]
 mod composer_suggestions_api;
+pub use composer_suggestions_api::{NativeCommandDiscovery, NativeCommandReceipt};
 #[path = "terminal_activity_api.rs"]
 mod terminal_activity_api;
 #[path = "terminal_context_api.rs"]
@@ -198,6 +199,9 @@ enum SendOrigin {
     Ordinary,
     Scheduled,
     Queued(Box<queue_dispatch::QueueClaim>),
+    /// Resume an exact goal paused by Coincide after the user pauses/removes
+    /// its local queue. This private origin never borrows the user's draft.
+    GoalResume(agent::codex_goals::PausedGoal),
 }
 impl SendOrigin {
     fn consumes_composer(&self) -> bool {
@@ -290,6 +294,7 @@ pub struct Engine {
     pending_usage: HashMap<String, agent::usage_capture::Record>,
     steering_operations: HashMap<String, steering_api::Operation>,
     enabled_queues: HashSet<String>,
+    goal_selection_waiting: HashSet<String>,
     native_follow_up: follow_up_api::State,
     turn_results: thread_activity_api::TurnResults,
     turn_checkpoints: checkpoint_api::State,
@@ -412,6 +417,7 @@ impl Engine {
             pending_usage: HashMap::new(),
             steering_operations: HashMap::new(),
             enabled_queues: HashSet::new(),
+            goal_selection_waiting: HashSet::new(),
             native_follow_up: follow_up_api::State::default(),
             turn_results: Default::default(),
             turn_checkpoints: checkpoint_api::State::default(),
@@ -707,7 +713,7 @@ impl Engine {
             }
             "terminal.close"=>{ensure!(self.terminals.remove(required(p,"terminalId")?).is_some(),"Terminal not found");self.revision+=1;Ok(json!({"closed":true}))}
             "app.status" => Ok(
-                json!({"version":env!("CARGO_PKG_VERSION"),"revision":self.revision,"running":self.runs.keys().collect::<Vec<_>>(),"runClocks":self.run_clocks_status(),"starting":self.runs.keys().filter(|id|!self.answered_runs.contains(*id)).collect::<Vec<_>>(),"preview":true,"activeThread":self.active_thread,"persistencePending":self.unsaved_threads.len(),"schedulerError":self.schedule_error,"pendingApprovals":self.pending_approvals(),"turnResults":self.turn_results.status()}),
+                json!({"version":env!("CARGO_PKG_VERSION"),"revision":self.revision,"running":self.runs.keys().collect::<Vec<_>>(),"stagedGoalSelections":self.goal_selection_waiting.iter().collect::<Vec<_>>(),"runClocks":self.run_clocks_status(),"starting":self.runs.keys().filter(|id|!self.answered_runs.contains(*id)).collect::<Vec<_>>(),"preview":true,"activeThread":self.active_thread,"persistencePending":self.unsaved_threads.len(),"schedulerError":self.schedule_error,"pendingApprovals":self.pending_approvals(),"turnResults":self.turn_results.status()}),
             ),
             "app.capabilities" => {
                 let mut methods = vec![
@@ -982,6 +988,7 @@ impl Engine {
                 {
                     v["selection"] = selection;
                     self.save_composer_choice(&source, &mut v, p)?; self.revision += 1;
+                    self.finish_staged_goal_selection(id);
                     return Ok(v);
                 }
                 if p.get("effort").is_some_and(Value::is_null) && !v["selection"]["effort"].is_null()
@@ -990,6 +997,7 @@ impl Engine {
                     // This exact one-field repair needs no provider/catalog IO.
                     v["selection"] = selection;
                     self.save_composer_choice(&source, &mut v, p)?; self.revision += 1;
+                    self.finish_staged_goal_selection(id);
                     return Ok(v);
                 }
                 if p.get("speed").is_some_and(Value::is_null) && !v["selection"]["speed"].is_null()
@@ -997,6 +1005,7 @@ impl Engine {
                 {
                     v["selection"] = selection;
                     self.save_composer_choice(&source, &mut v, p)?; self.revision += 1;
+                    self.finish_staged_goal_selection(id);
                     return Ok(v);
                 }
                 let current_proof = self.composer_current_selection_proof(&v)?;
@@ -1010,6 +1019,7 @@ impl Engine {
                 v["selection"] = selection;
                 crate::composer_selection::apply_modes_with_proof(p,&mut v,target_proof.as_ref())?;
                 self.save_composer_choice(&source, &mut v, p)?; self.revision += 1;
+                self.finish_staged_goal_selection(id);
                 Ok(v)
             }
             "agent.pending" => {
@@ -1197,7 +1207,7 @@ impl Engine {
         // Scheduled/queued turns never consume the user's unrelated composer.
         let context = match origin {
             SendOrigin::Queued(claim) => claim.context().clone(),
-            SendOrigin::Scheduled => Value::Null,
+            SendOrigin::Scheduled | SendOrigin::GoalResume(_) => Value::Null,
             SendOrigin::Ordinary => v["draftContext"].clone(),
         };
         crate::composer_context::validate(&context)?;
@@ -1382,6 +1392,51 @@ impl Engine {
         } else {
             allowed_session
         };
+        // Codex slash controls are client commands, not chat text. Only the
+        // exact, attachment-free user command has authority to compact the
+        // existing provider session; quoted history is never interpreted.
+        let native_compact = matches!(provider.as_str(), "codex" | "opencode")
+            && agent::codex_compact_command(prompt)
+            && draft_images.is_empty()
+            && !crate::composer_context::has_context(&context)
+            && bot_instructions.is_none();
+        ensure!(
+            !native_compact || session.is_some(),
+            "Start a provider conversation before compacting its context"
+        );
+        let restore_paused_goal = if let SendOrigin::GoalResume(expected) = origin {
+            ensure!(
+                agent::codex_goals::queued_resume_objective(&v, session.as_deref(), true).as_ref()
+                    == Some(expected),
+                "Paused goal belongs to another conversation or account"
+            );
+            Some(expected.clone())
+        } else {
+            None
+        };
+        let codex_goal = (provider == "codex"
+            && !origin.scheduled()
+            && restore_paused_goal.is_none()
+            && draft_images.is_empty()
+            && !crate::composer_context::has_context(&context)
+            && bot_instructions.is_none())
+        .then(|| agent::codex_goals::parse(prompt))
+        .flatten();
+        if let Some(agent::codex_goals::Command::Set(objective)) = &codex_goal {
+            // The first turn carries any cross-provider history and the
+            // thread's runtime capabilities. Goal state itself receives
+            // the exact objective through its native control request.
+            ensure!(
+                runtime_prompt.starts_with(prompt),
+                "Goal context changed before sending"
+            );
+            runtime_prompt.replace_range(..prompt.len(), objective);
+        }
+        let opencode_command = (provider == "opencode"
+            && prompt.trim_start().starts_with('/')
+            && draft_images.is_empty()
+            && !crate::composer_context::has_context(&context))
+        .then(|| prompt.to_owned());
         let seen = if let Some(authority) = &named_resume {
             authority.seen()
         } else if session.is_some() {
@@ -1389,12 +1444,20 @@ impl Engine {
         } else {
             0
         };
-        let (outgoing, handoff_images) = handoff_prompt::build(
-            v["items"].as_array().map(Vec::as_slice).unwrap_or(&[]),
-            seen,
-            &runtime_prompt,
-            &draft_images,
-        )?;
+        let (outgoing, handoff_images) = if restore_paused_goal.is_some()
+            || codex_goal
+                .as_ref()
+                .is_some_and(|command| !matches!(command, agent::codex_goals::Command::Set(_)))
+        {
+            (String::new(), Vec::new())
+        } else {
+            handoff_prompt::build(
+                v["items"].as_array().map(Vec::as_slice).unwrap_or(&[]),
+                seen,
+                &runtime_prompt,
+                &draft_images,
+            )?
+        };
         let images = handoff_images
             .iter()
             .map(|image| image.prepare_in(&data))
@@ -1447,36 +1510,47 @@ impl Engine {
         } else {
             None
         };
-        append(&mut v, "user", prompt, None);
-        if crate::composer_context::has_context(&context) {
-            v["items"].as_array_mut().unwrap().last_mut().unwrap()["context"] = context;
-        }
-        if !draft_images.is_empty() {
-            v["items"].as_array_mut().unwrap().last_mut().unwrap()["rustImages"] =
-                serde_json::to_value(&draft_images)?;
-        }
-        if origin.consumes_composer() {
-            v["rustDraftImages"] = json!([]);
-            v["draft"] = json!("");
-            v.as_object_mut().unwrap().remove("draftContext");
-        }
-        v["updatedAt"] = json!(swift_timestamp());
-        if v["title"] == "New conversation" {
-            v["title"] = json!(if prompt.trim().is_empty() {
-                if draft_images.is_empty() {
-                    "Reference conversation".into()
+        let goal_queue_waiting = provider == "codex"
+            && (self.goal_selection_waiting.contains(&id)
+                || (self.enabled_queues.contains(&id)
+                    && crate::message_queue::read(&v).is_ok_and(|messages| {
+                        messages
+                            .iter()
+                            .any(|message| message.state == crate::message_queue::State::Pending)
+                    })));
+        let resume_queued_goal = agent::codex_goals::queued_resume_objective(
+            &v,
+            session.as_deref(),
+            matches!(origin, SendOrigin::Queued(_)),
+        );
+        if restore_paused_goal.is_none() {
+            append(&mut v, "user", prompt, None);
+            if crate::composer_context::has_context(&context) {
+                v["items"].as_array_mut().unwrap().last_mut().unwrap()["context"] = context;
+            }
+            if !draft_images.is_empty() {
+                v["items"].as_array_mut().unwrap().last_mut().unwrap()["rustImages"] =
+                    serde_json::to_value(&draft_images)?;
+            }
+            if origin.consumes_composer() {
+                v["rustDraftImages"] = json!([]);
+                v["draft"] = json!("");
+                v.as_object_mut().unwrap().remove("draftContext");
+            }
+            v["updatedAt"] = json!(swift_timestamp());
+            if v["title"] == "New conversation" {
+                v["title"] = json!(if prompt.trim().is_empty() {
+                    if draft_images.is_empty() {
+                        "Reference conversation".into()
+                    } else {
+                        "Image conversation".into()
+                    }
                 } else {
-                    "Image conversation".into()
-                }
-            } else {
-                prompt.chars().take(70).collect::<String>()
-            });
+                    prompt.chars().take(70).collect::<String>()
+                });
+            }
         }
-        if let Some(expected) = original.as_ref() {
-            self.store.save_native_follow_up_turn(expected, &v)?;
-        } else {
-            self.store.save(&v)?;
-        }
+        self.store.save_starting_turn(&v, original.as_ref())?;
         // The durable claim and this exact runtime owner are both selected
         // before Session starts its worker. No post-launch claim lookup exists.
         let queue_claim = match origin {
@@ -1488,7 +1562,11 @@ impl Engine {
             .and_then(|items| items.last())
             .map(|item| text(item, "id"))
             .unwrap_or_default();
-        let checkpoint = self.prepare_turn_checkpoint(&id, &user_item_id, &cwd);
+        let checkpoint = if restore_paused_goal.is_some() {
+            None
+        } else {
+            self.prepare_turn_checkpoint(&id, &user_item_id, &cwd)
+        };
         self.insert_running(
             id,
             Running {
@@ -1509,8 +1587,16 @@ impl Engine {
                     images,
                     bot_instructions,
                     mode_policy,
-                    named_launch,
-                    checkpoint,
+                    agent::LaunchOptions {
+                        named: named_launch,
+                        prelude: checkpoint,
+                        compact: native_compact,
+                        opencode_command,
+                        codex_goal,
+                        goal_queue_waiting,
+                        resume_queued_goal,
+                        restore_paused_goal,
+                    },
                 ),
                 provider,
                 transcript_start: v["items"].as_array().map_or(0, Vec::len),
@@ -1527,6 +1613,7 @@ impl Engine {
     }
     fn insert_running(&mut self, id: String, run: Running) {
         self.answered_runs.remove(&id);
+        self.composer_commands.begin_run(&id);
         self.provider_workers.push(run.session.worker_completion());
         self.run_clocks.insert(
             id.clone(),
@@ -1678,6 +1765,7 @@ impl Engine {
                 if can_enable {
                     self.enabled_queues.insert(id.into());
                 }
+                self.sync_goal_queue_waiting(id);
                 self.revision += 1;
                 return Ok(
                     json!({"message":message,"error":thread["rustQueueError"],"enabled":self.enabled_queues.contains(id)}),
@@ -1722,9 +1810,105 @@ impl Engine {
             _ => bail!("Unsupported queue command"),
         }
         self.revision += 1;
+        self.sync_goal_queue_waiting(id);
+        if matches!(method, "agent.queue.pause" | "agent.queue.remove")
+            && let Err(error) = self.resume_paused_goal_if_ready(id)
+        {
+            self.schedule_error = Some(format!(
+                "The queue changed, but the paused goal could not resume: {error}"
+            ));
+        }
         Ok(
             json!({"messages":queue::read(&thread)?,"error":thread["rustQueueError"],"enabled":self.enabled_queues.contains(id)}),
         )
+    }
+    fn sync_goal_queue_waiting(&self, id: &str) {
+        if let Some(run) = self.runs.get(id).filter(|run| run.provider == "codex") {
+            let waiting = self.goal_selection_waiting.contains(id)
+                || (self.enabled_queues.contains(id)
+                    && self
+                        .store
+                        .thread(id)
+                        .and_then(|thread| crate::message_queue::read(&thread))
+                        .map(|messages| {
+                            messages.iter().any(|message| {
+                                message.state == crate::message_queue::State::Pending
+                            })
+                        })
+                        .unwrap_or(true));
+            run.session.set_goal_queue_waiting(waiting);
+        }
+    }
+    /// A native selection editor may stage a change while a turn is running.
+    /// A continuing goal yields at the boundary so that choice can take effect.
+    pub fn defer_goal_for_staged_selection(
+        &mut self,
+        expected: &Value,
+        staged: bool,
+    ) -> Result<()> {
+        self.require_admissions()?;
+        let id = required(expected, "id")?;
+        ensure!(
+            self.active_thread.as_deref() == Some(id),
+            "Selection belongs to another conversation"
+        );
+        let current = self.store.thread(id)?;
+        ensure!(
+            current["selection"] == expected["selection"],
+            "Selection changed while staging"
+        );
+        if self.runs.get(id).is_some_and(|run| run.provider == "codex") {
+            if staged {
+                self.goal_selection_waiting.insert(id.into());
+            } else {
+                self.goal_selection_waiting.remove(id);
+            }
+            self.sync_goal_queue_waiting(id);
+        }
+        Ok(())
+    }
+    fn finish_staged_goal_selection(&mut self, id: &str) {
+        self.goal_selection_waiting.remove(id);
+        self.sync_goal_queue_waiting(id);
+        if let Err(error) = self.resume_paused_goal_if_ready(id) {
+            self.schedule_error = Some(format!(
+                "Selection saved, but the paused goal could not resume: {error}"
+            ));
+        }
+    }
+    fn resume_paused_goal_if_ready(&mut self, id: &str) -> Result<()> {
+        if self.runs.contains_key(id)
+            || self.unsaved_threads.contains_key(id)
+            || self.goal_selection_waiting.contains(id)
+            || self.admissions_frozen()
+        {
+            return Ok(());
+        }
+        let thread = self.store.thread(id)?;
+        if !thread["rustCodexGoalAutoResume"].is_object() {
+            return Ok(());
+        }
+        let messages = crate::message_queue::read(&thread)?;
+        if messages
+            .iter()
+            .any(|message| message.state == crate::message_queue::State::Dispatching)
+            || (self.enabled_queues.contains(id)
+                && messages
+                    .iter()
+                    .any(|message| message.state == crate::message_queue::State::Pending))
+        {
+            return Ok(());
+        }
+        let session = agent::provider_session(&thread, "codex");
+        if let Some(objective) =
+            agent::codex_goals::queued_resume_objective(&thread, session.as_deref(), true)
+        {
+            self.send_turn(
+                &json!({"threadId":id,"text":"/goal resume"}),
+                SendOrigin::GoalResume(objective),
+            )?;
+        }
+        Ok(())
     }
     fn poll_message_queues(&mut self) {
         if self.admissions_frozen() {
@@ -1734,6 +1918,7 @@ impl Engine {
         for id in ids {
             if self.runs.contains_key(&id)
                 || self.unsaved_threads.contains_key(&id)
+                || self.goal_selection_waiting.contains(&id)
                 || self.native_follow_up.pending_thread(&id)
             {
                 continue;
@@ -2085,17 +2270,31 @@ impl Engine {
                     }
                 }
             };
-            let events = std::mem::take(&mut self.runs.get_mut(&id).unwrap().events);
+            let mut events = std::mem::take(&mut self.runs.get_mut(&id).unwrap().events);
             let mut finished = false;
             let mut failure = None;
             let mut completion_alert = None;
             let transcript_start = self.runs[&id].transcript_start;
-            for event in events {
-                if matches!(&event, Event::Finished | Event::Failed(_)) {
+            while let Some(event) = events.pop_front() {
+                // One usage record and its transcript save commit together.
+                // A very fast continuation may finish more than once before
+                // the UI polls; leave later receipts for the next save.
+                if matches!(&event, Event::Usage) && self.pending_usage.contains_key(&id) {
+                    events.push_front(event);
+                    break;
+                }
+                if matches!(&event, Event::Usage | Event::Finished | Event::Failed(_))
+                    && !self.pending_usage.contains_key(&id)
+                {
                     let run = self.runs.get_mut(&id).unwrap();
-                    if let Some(context) = run.usage_context.take()
-                        && let Some(snapshot) = run.session.take_usage()
-                    {
+                    if let Some(snapshot) = run.session.take_usage() {
+                        let context = if matches!(&event, Event::Usage) {
+                            run.usage_context
+                                .replace(agent::usage_capture::TurnContext::new(&v))
+                        } else {
+                            run.usage_context.take()
+                        }
+                        .unwrap_or_else(|| agent::usage_capture::TurnContext::new(&v));
                         self.pending_usage
                             .insert(id.clone(), context.finish(snapshot));
                     }
@@ -2131,9 +2330,104 @@ impl Engine {
                         } else {
                             agent::set_provider_session(&mut v, &self.runs[&id].provider, &session);
                         }
+                        let provider = self.runs[&id].provider.clone();
+                        if let Some(commands) =
+                            self.composer_commands.bind_run(&id, &provider, &session)
+                        {
+                            let account = if v["selection"]["provider"] == provider {
+                                v["selection"]["accountID"].clone()
+                            } else {
+                                Value::Null
+                            };
+                            let folder = self
+                                .working_directory(&v)
+                                .ok()
+                                .and_then(|path| path.canonicalize().ok());
+                            self.composer_commands.record(
+                                &id,
+                                &provider,
+                                &account,
+                                folder.as_deref(),
+                                commands,
+                            );
+                        }
+                    }
+                    Event::Goal {
+                        thread,
+                        goal,
+                        notice,
+                        queue_action,
+                        user_mutation,
+                    } => {
+                        if self.runs[&id].provider == "codex"
+                            && agent::provider_session(&v, "codex").as_deref()
+                                == Some(thread.as_str())
+                        {
+                            let account = self.runs[&id]
+                                .session
+                                .codex_profile_account()
+                                .or_else(|| v["selection"]["accountID"].as_str())
+                                .unwrap_or("default")
+                                .to_owned();
+                            v["rustCodexGoal"] =
+                                json!({"sessionID":thread,"accountID":account,"goal":goal});
+                            if queue_action == Some(true) && !self.runs[&id].cancelled {
+                                if let Some(objective) =
+                                    goal.as_ref().and_then(|goal| goal["objective"].as_str())
+                                {
+                                    v["rustCodexGoalAutoResume"] = json!({"sessionID":thread,"accountID":account,"objective":objective,"createdAt":goal.as_ref().unwrap()["createdAt"],"updatedAt":goal.as_ref().unwrap()["updatedAt"]});
+                                }
+                            } else if queue_action == Some(false)
+                                || user_mutation
+                                || self.runs[&id].cancelled
+                            {
+                                v.as_object_mut().unwrap().remove("rustCodexGoalAutoResume");
+                            }
+                            if let Some(notice) = notice {
+                                append(&mut v, "notice", &notice, None);
+                            }
+                        }
+                    }
+                    Event::Usage => {}
+                    Event::TurnBoundary => {
+                        // A queued turn can finish while the native goal
+                        // continues in the same worker. Settle its owned row
+                        // at that boundary, not when the whole goal ends.
+                        if !self.runs[&id].cancelled
+                            && self.runs[&id].persistence_error.is_none()
+                            && let Some(claim) = self.runs.get_mut(&id).unwrap().queue_claim.take()
+                            && let Err(error) = crate::message_queue::finish(
+                                &mut v,
+                                &claim,
+                                crate::message_queue::State::Completed,
+                                None,
+                            )
+                        {
+                            self.runs.get_mut(&id).unwrap().queue_claim = Some(claim);
+                            self.runs.get_mut(&id).unwrap().persistence_error =
+                                Some(error.to_string());
+                            self.runs[&id].session.stop();
+                        }
+                        if !self.runs[&id].cancelled
+                            && self.runs[&id].persistence_error.is_none()
+                            && !self.runs[&id].session.is_provider_control()
+                        {
+                            if let Some(account) = self.runs[&id].session.codex_profile_account() {
+                                agent::mark_provider_seen_for_account(
+                                    &mut v,
+                                    &self.runs[&id].provider,
+                                    account,
+                                );
+                            } else {
+                                agent::mark_provider_seen(&mut v, &self.runs[&id].provider);
+                            }
+                        }
                     }
                     Event::Finished => {
                         finished = true;
+                        if self.runs[&id].cancelled {
+                            v.as_object_mut().unwrap().remove("rustCodexGoalAutoResume");
+                        }
                         if completion_alert.is_none() {
                             completion_alert = v["items"]
                                 .as_array()
@@ -2263,12 +2557,27 @@ impl Engine {
                                     crate::composer_suggestions::reported_commands(p)
                                 {
                                     let provider = self.runs[&id].provider.clone();
+                                    let frame = &p["providerFrame"];
+                                    let commands = if frame["method"] == "session/update" {
+                                        frame["params"]["sessionId"].as_str().and_then(|session| {
+                                            self.composer_commands
+                                                .acp_report(&id, &provider, session, commands)
+                                        })
+                                    } else {
+                                        Some(commands)
+                                    };
+                                    let Some(commands) = commands else {
+                                        continue;
+                                    };
                                     let account = if v["selection"]["provider"] == provider {
                                         v["selection"]["accountID"].clone()
                                     } else {
                                         Value::Null
                                     };
-                                    let folder = self.working_directory(&v).ok();
+                                    let folder = self
+                                        .working_directory(&v)
+                                        .ok()
+                                        .and_then(|path| path.canonicalize().ok());
                                     self.composer_commands.record(
                                         &id,
                                         &provider,
@@ -2291,7 +2600,12 @@ impl Engine {
                             }
                             "item/started" | "item/completed" => {
                                 let item = &p["item"];
-                                if let Some(kind) = completed_message_kind(item, method) {
+                                if self.runs[&id].provider == "codex"
+                                    && apply_compaction_item(&mut v, item, method, transcript_start)
+                                {
+                                    // Manual and automatic compaction are provider events;
+                                    // keep one status row instead of showing raw JSON as a tool.
+                                } else if let Some(kind) = completed_message_kind(item, method) {
                                     let external = text(item, "id");
                                     let items = v["items"].as_array_mut().unwrap();
                                     if let Some(existing) = items
@@ -2375,10 +2689,14 @@ impl Engine {
                     }
                 }
             }
+            if !events.is_empty() {
+                self.runs.get_mut(&id).unwrap().events.extend(events);
+            }
             if finished
                 && failure.is_none()
                 && !self.runs[&id].cancelled
                 && self.runs[&id].persistence_error.is_none()
+                && !self.runs[&id].session.is_provider_control()
             {
                 if let Some(account) = self.runs[&id].session.codex_profile_account() {
                     agent::mark_provider_seen_for_account(
@@ -2421,10 +2739,11 @@ impl Engine {
                     self.notification_events.stage(&v, &item, kind, None);
                 }
             }
-            if let Err(error) = self
-                .store
-                .save_with_usage(&v, self.pending_usage.get(&id).map(|record| &record.0))
-            {
+            if let Err(error) = self.store.save_streaming_with_usage(
+                &v,
+                self.pending_usage.get(&id).map(|record| &record.0),
+                finished,
+            ) {
                 let message = format!("Transcript could not be saved: {error}");
                 self.enabled_queues.remove(&id);
                 self.unsaved_threads.insert(id.clone(), v);
@@ -2454,6 +2773,7 @@ impl Engine {
             }
             self.revision += 1;
             if finished {
+                self.composer_commands.end_run(&id);
                 self.record_turn_result(&id, failure.is_some());
                 self.finish_turn_checkpoint(&id);
             }
@@ -2481,7 +2801,11 @@ impl Engine {
             self.unsaved_threads.retain(|id, thread| {
                 if self
                     .store
-                    .save_with_usage(thread, self.pending_usage.get(id).map(|record| &record.0))
+                    .save_streaming_with_usage(
+                        thread,
+                        self.pending_usage.get(id).map(|record| &record.0),
+                        !self.runs.contains_key(id),
+                    )
                     .is_err()
                 {
                     true
@@ -2534,6 +2858,53 @@ fn import_attachment(
 fn required<'a>(p: &'a Value, key: &str) -> Result<&'a str> {
     p[key].as_str().with_context(|| format!("Missing {key}"))
 }
+/// Display Codex's own compaction events without changing its compaction policy.
+fn apply_compaction_item(thread: &mut Value, item: &Value, method: &str, start: usize) -> bool {
+    if item["type"] != "contextCompaction" || !matches!(method, "item/started" | "item/completed") {
+        return false;
+    }
+    let Some(id) = item["id"]
+        .as_str()
+        .filter(|id| !id.is_empty() && id.len() <= 512 && !id.chars().any(char::is_control))
+    else {
+        return false;
+    };
+    let external = format!("compaction:{id}");
+    let label = if method == "item/completed" {
+        "Context compacted"
+    } else {
+        "Compacting context"
+    };
+    let existing = thread["items"].as_array_mut().and_then(|items| {
+        items
+            .iter_mut()
+            .skip(start)
+            .rev()
+            .find(|entry| entry["externalID"] == external)
+    });
+    if let Some(existing) = existing {
+        existing["text"] = json!(label);
+        existing["status"] = json!(if method == "item/completed" {
+            "completed"
+        } else {
+            "running"
+        });
+    } else {
+        append(thread, "notice", label, Some(&external));
+        if let Some(row) = thread["items"]
+            .as_array_mut()
+            .and_then(|items| items.last_mut())
+        {
+            row["status"] = json!(if method == "item/completed" {
+                "completed"
+            } else {
+                "running"
+            });
+        }
+    }
+    true
+}
+
 /// Completed assistant text and reasoning both stream as message items. A
 /// reasoning completion must update the existing reasoning row, never append a
 /// duplicate tool row containing the provider's JSON payload.
@@ -2577,6 +2948,28 @@ pub fn call(engine: &SharedEngine, method: &str, params: Value) -> Result<Value>
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn codex_automatic_and_manual_compaction_update_one_status_row() {
+        let mut thread = json!({"selection":{"provider":"codex","modelID":"model"},"items":[]});
+        let item = json!({"type":"contextCompaction","id":"compaction-1"});
+        assert!(apply_compaction_item(&mut thread, &item, "item/started", 0));
+        assert_eq!(thread["items"][0]["text"], "Compacting context");
+        assert!(apply_compaction_item(
+            &mut thread,
+            &item,
+            "item/completed",
+            0
+        ));
+        assert_eq!(thread["items"].as_array().unwrap().len(), 1);
+        assert_eq!(thread["items"][0]["text"], "Context compacted");
+        assert_eq!(thread["items"][0]["status"], "completed");
+        assert!(!apply_compaction_item(
+            &mut thread,
+            &json!({"type":"other","id":"x"}),
+            "item/completed",
+            0
+        ));
+    }
     #[test]
     fn completed_reasoning_is_a_reasoning_row_not_a_tool_payload() {
         assert_eq!(

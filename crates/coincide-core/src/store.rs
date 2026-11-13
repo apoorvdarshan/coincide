@@ -68,6 +68,25 @@ pub(crate) use store_thread_delete::{DeleteRow, DeleteVersion};
 pub struct Store {
     db: Option<Connection>,
     selection_scopes: composer_scope_store::Scopes,
+    deferred_search_active: std::collections::HashSet<String>,
+}
+
+fn mark_draft_write(tx: &rusqlite::Transaction<'_>, id: &str) -> Result<()> {
+    tx.execute(
+        "INSERT INTO native_draft_revisions(id,revision) VALUES (?1,randomblob(16)) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision",
+        [id],
+    )?;
+    Ok(())
+}
+
+fn draft_revision(db: &Connection, id: &str) -> Result<Option<Vec<u8>>> {
+    Ok(db
+        .query_row(
+            "SELECT revision FROM native_draft_revisions WHERE id=?1 COLLATE NOCASE",
+            [id],
+            |row| row.get(0),
+        )
+        .optional()?)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -309,6 +328,24 @@ impl Store {
             tx.commit()?;
         }
         navigation_cache::install(&mut db)?;
+        // A follow-up can be acknowledged after the user has started the next
+        // draft. Track draft writes separately from transcript and attachment
+        // updates, including an explicit rewrite to identical text.
+        db.execute_batch("CREATE TABLE IF NOT EXISTS native_draft_revisions(id TEXT PRIMARY KEY COLLATE NOCASE, revision BLOB NOT NULL CHECK(length(revision)=16));
+            CREATE TRIGGER IF NOT EXISTS native_draft_revision_insert AFTER INSERT ON threads BEGIN
+              INSERT INTO native_draft_revisions(id,revision) VALUES (NEW.id,randomblob(16)) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision;
+            END;
+            CREATE TRIGGER IF NOT EXISTS native_draft_revision_update AFTER UPDATE OF document ON threads
+              WHEN json_extract(OLD.document,'$.draft') IS NOT json_extract(NEW.document,'$.draft') BEGIN
+              INSERT INTO native_draft_revisions(id,revision) VALUES (NEW.id,randomblob(16)) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision;
+            END;
+            CREATE TRIGGER IF NOT EXISTS native_draft_revision_delete AFTER DELETE ON threads BEGIN
+              DELETE FROM native_draft_revisions WHERE id=OLD.id;
+            END;
+            CREATE TABLE IF NOT EXISTS thread_search_pending(id TEXT PRIMARY KEY COLLATE NOCASE);
+            CREATE TRIGGER IF NOT EXISTS thread_search_pending_delete AFTER DELETE ON threads BEGIN
+              DELETE FROM thread_search_pending WHERE id=OLD.id;
+            END;")?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -318,6 +355,7 @@ impl Store {
         Ok(Self {
             db: Some(db),
             selection_scopes: Default::default(),
+            deferred_search_active: Default::default(),
         })
     }
 
@@ -535,9 +573,9 @@ impl Store {
         let filter = if query.is_empty() {
             ""
         } else if indexed {
-            " AND id IN (SELECT thread_id FROM search_trigram WHERE body MATCH ?2) AND instr(search_body,?3)>0"
+            " AND ((id IN (SELECT thread_id FROM search_trigram WHERE body MATCH ?2) AND instr(search_body,?3)>0) OR id IN (SELECT id FROM thread_search_pending))"
         } else {
-            " AND instr(search_body,?2)>0"
+            " AND (instr(search_body,?2)>0 OR id IN (SELECT id FROM thread_search_pending))"
         };
         let sql = format!(
             "SELECT id,title,project_id,archived,pinned,snoozed_until,
@@ -569,7 +607,29 @@ impl Store {
             stmt.query_map(params![include_archived, query], mapper)?
                 .collect::<rusqlite::Result<Vec<_>>>()?
         };
-        Ok(result)
+        if query.is_empty() {
+            return Ok(result);
+        }
+        // Pending indexes retain a durable marker through crashes. Verify
+        // their current transcript only when someone actually searches, so
+        // streaming text is searchable without reindexing the whole chat.
+        let mut pending = self
+            .connection()?
+            .prepare("SELECT id FROM thread_search_pending")?;
+        let pending: std::collections::HashSet<String> = pending
+            .query_map([], |row| row.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        let mut verified = Vec::with_capacity(result.len());
+        for summary in result {
+            if !pending.contains(&summary.id)
+                || search_text(&self.thread(&summary.id)?)
+                    .to_lowercase()
+                    .contains(&query)
+            {
+                verified.push(summary);
+            }
+        }
+        Ok(verified)
     }
 
     pub fn thread(&self, id: &str) -> Result<Value> {
@@ -580,6 +640,16 @@ impl Store {
             |r| r.get(0),
         )?;
         Ok(serde_json::from_str(&document)?)
+    }
+
+    /// Read the thread and its draft-write identity in one SQLite snapshot.
+    pub(crate) fn thread_with_draft_revision(&self, id: &str) -> Result<(Value, Option<Vec<u8>>)> {
+        let (document, revision): (String, Option<Vec<u8>>) = self.connection()?.query_row(
+            "SELECT t.document,r.revision FROM threads t LEFT JOIN native_draft_revisions r ON r.id=t.id COLLATE NOCASE WHERE t.id=?1",
+            [id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        Ok((serde_json::from_str(&document)?, revision))
     }
 
     /// Bounded exact UUID identity lookup. Read only scalar IDs, never decode
@@ -617,6 +687,45 @@ impl Store {
     ) -> Result<()> {
         self.save_with_usage_and_settings(document, record, None, None)
     }
+    /// Persist streamed transcript changes without rebuilding the full-text
+    /// index on every event. Search verifies pending threads directly, even
+    /// after a crash, until the final turn save refreshes the indexes.
+    pub(crate) fn save_streaming_with_usage(
+        &mut self,
+        document: &Value,
+        record: Option<&Value>,
+        finished: bool,
+    ) -> Result<()> {
+        let id = validate_thread(document)?.to_owned();
+        let was_active = self.deferred_search_active.contains(&id);
+        if finished {
+            self.deferred_search_active.remove(&id);
+        } else {
+            self.deferred_search_active.insert(id.clone());
+        }
+        let result = self.save_with_usage_and_settings(document, record, None, None);
+        if result.is_err() {
+            if was_active {
+                self.deferred_search_active.insert(id);
+            } else {
+                self.deferred_search_active.remove(&id);
+            }
+        }
+        result
+    }
+    pub(crate) fn save_starting_turn(
+        &mut self,
+        document: &Value,
+        expected: Option<&Value>,
+    ) -> Result<()> {
+        let id = validate_thread(document)?.to_owned();
+        let was_active = !self.deferred_search_active.insert(id.clone());
+        let result = self.save_with_usage_and_settings(document, None, None, expected);
+        if result.is_err() && !was_active {
+            self.deferred_search_active.remove(&id);
+        }
+        result
+    }
     pub(crate) fn save_composer_choice(
         &mut self,
         document: &Value,
@@ -633,6 +742,7 @@ impl Store {
     ) -> Result<()> {
         self.connection()?;
         let id = validate_thread(document)?;
+        let defer_search = self.deferred_search_active.contains(id);
         let existing: Option<String> = self
             .connection()?
             .query_row(
@@ -716,20 +826,46 @@ impl Store {
         }
         provider_accounts::invalidate_changed_selection(&tx, document)?;
         tx.execute("INSERT INTO threads(id,document) VALUES (?1,?2) ON CONFLICT(id) DO UPDATE SET document=excluded.document", params![id,document.to_string()])?;
-        let body = search_text(document).to_lowercase();
-        let indexed: Option<String> = tx
-            .query_row(
-                "SELECT search_body FROM thread_summaries WHERE id=?1",
+        let has_summary: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM thread_summaries WHERE id=?1 COLLATE NOCASE)",
+            [id],
+            |row| row.get(0),
+        )?;
+        let pending: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM thread_search_pending WHERE id=?1 COLLATE NOCASE)",
+            [id],
+            |row| row.get(0),
+        )?;
+        // Rebuilding a large transcript's trigram index takes seconds even
+        // once a turn ends. Keep its durable fallback searchable until a
+        // future indexing strategy can update it incrementally.
+        let large_pending = pending && search_text_is_large(document);
+        if (defer_search || large_pending) && has_summary {
+            tx.execute(
+                "INSERT OR IGNORE INTO thread_search_pending(id) VALUES (?1)",
                 [id],
-                |r| r.get(0),
-            )
-            .optional()?;
-        let reindex = indexed.as_deref() != Some(body.as_str());
-        if reindex {
-            tx.execute("DELETE FROM search WHERE thread_id=?1", [id])?;
-            index_thread(&tx, document)?;
+            )?;
+            cache_thread(&tx, document, false)?;
+        } else {
+            let body = search_text(document).to_lowercase();
+            let indexed: Option<String> = tx
+                .query_row(
+                    "SELECT search_body FROM thread_summaries WHERE id=?1",
+                    [id],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let reindex = indexed.as_deref() != Some(body.as_str());
+            if reindex {
+                tx.execute("DELETE FROM search WHERE thread_id=?1", [id])?;
+                index_thread(&tx, document)?;
+            }
+            cache_thread(&tx, document, reindex)?;
+            tx.execute(
+                "DELETE FROM thread_search_pending WHERE id=?1 COLLATE NOCASE",
+                [id],
+            )?;
         }
-        cache_thread(&tx, document, reindex)?;
         if let Some(settings) = settings {
             tx.execute("INSERT INTO documents(name,document) VALUES ('settings.json',?1) ON CONFLICT(name) DO UPDATE SET document=excluded.document", [settings.to_string()])?;
         }
@@ -877,6 +1013,7 @@ impl Store {
         Ok(Self {
             db: Some(db),
             selection_scopes: Default::default(),
+            deferred_search_active: Default::default(),
         })
     }
 
@@ -1002,6 +1139,7 @@ impl Store {
         ensure!(draft.len() <= 1_048_576, "Draft exceeds 1 MiB");
         self.connection()?;
         let tx = self.connection_mut()?.transaction()?;
+        let previous_revision = draft_revision(&tx, id)?;
         let navigation = tx
             .query_row(
                 "SELECT metadata FROM thread_navigation WHERE id=?1 COLLATE NOCASE",
@@ -1020,6 +1158,11 @@ impl Store {
             params![id, draft],
         )?;
         ensure!(changed == 1, "Thread not found");
+        if draft_revision(&tx, id)? == previous_revision {
+            // The change trigger handles different text; an explicit rewrite
+            // of the same text still represents a new editing intent.
+            mark_draft_write(&tx, id)?;
+        }
         if let Some(metadata) = navigation {
             tx.execute(
                 "INSERT INTO thread_navigation(id,metadata) VALUES (?1,?2) ON CONFLICT(id) DO UPDATE SET metadata=excluded.metadata",
@@ -1049,10 +1192,20 @@ impl Store {
         }
         let reindex = patch.contains_key("title");
         let tx = self.connection_mut()?.transaction()?;
+        let previous_revision = if patch.contains_key("draft") {
+            Some(draft_revision(&tx, id)?)
+        } else {
+            None
+        };
         tx.execute(
             "UPDATE threads SET document=?2 WHERE id=?1",
             params![id, value.to_string()],
         )?;
+        if let Some(previous_revision) = previous_revision
+            && draft_revision(&tx, id)? == previous_revision
+        {
+            mark_draft_write(&tx, id)?;
+        }
         cache_thread(&tx, &value, reindex)?;
         if reindex {
             tx.execute("DELETE FROM search WHERE thread_id=?1", [id])?;
@@ -1915,6 +2068,17 @@ fn search_text(v: &Value) -> String {
     text
 }
 
+fn search_text_is_large(v: &Value) -> bool {
+    let mut bytes = v["title"].as_str().unwrap_or("").len();
+    for item in v["items"].as_array().into_iter().flatten() {
+        bytes = bytes.saturating_add(item["text"].as_str().unwrap_or("").len() + 1);
+        if bytes > 1024 * 1024 {
+            return true;
+        }
+    }
+    false
+}
+
 pub fn text(v: &Value, key: &str) -> String {
     v[key].as_str().unwrap_or("").to_owned()
 }
@@ -1936,6 +2100,110 @@ mod tests {
         fs::create_dir_all(source.join("threads")).unwrap();
         let db = Store::open(&dir.path().join("rust/store.sqlite")).unwrap();
         (dir, source, db)
+    }
+    #[test]
+    fn streaming_defers_expensive_indexes_but_search_stays_current_and_recovers_after_reopen() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("state.sqlite");
+        let mut store = Store::open(&path).unwrap();
+        let mut thread = store.new_thread("").unwrap();
+        let id = text(&thread, "id");
+        thread["title"] = json!("Fixture");
+        thread["items"] = json!([{"kind":"assistant","text":"old marker"}]);
+        store.save(&thread).unwrap();
+        let indexed: String = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT search_body FROM thread_summaries WHERE id=?1",
+                [&id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        thread["items"][0]["text"] = json!("new streamed needle");
+        store
+            .save_streaming_with_usage(&thread, None, false)
+            .unwrap();
+        thread["draft"] = json!("separate draft");
+        // Queue and attachment saves must not accidentally reindex the entire
+        // streaming transcript either.
+        store.save(&thread).unwrap();
+        let still_indexed: String = store
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT search_body FROM thread_summaries WHERE id=?1",
+                [&id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(still_indexed, indexed);
+        assert_eq!(store.summaries("needle", false).unwrap().len(), 1);
+        assert!(store.summaries("old marker", false).unwrap().is_empty());
+        assert_eq!(store.thread(&id).unwrap(), thread);
+
+        drop(store);
+        let mut reopened = Store::open(&path).unwrap();
+        assert_eq!(reopened.summaries("needle", false).unwrap().len(), 1);
+        assert!(reopened.summaries("old marker", false).unwrap().is_empty());
+        reopened
+            .save_streaming_with_usage(&thread, None, true)
+            .unwrap();
+        let pending: i64 = reopened
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT count(*) FROM thread_search_pending WHERE id=?1",
+                [&id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(pending, 0);
+        assert_eq!(reopened.summaries("needle", false).unwrap().len(), 1);
+        assert!(reopened.summaries("old marker", false).unwrap().is_empty());
+    }
+    #[test]
+    fn a_large_conversation_stays_searchable_without_rebuilding_the_index_at_turn_end() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("state.sqlite");
+        let mut store = Store::open(&path).unwrap();
+        let mut thread = store.new_thread("").unwrap();
+        let id = text(&thread, "id");
+        thread["items"] = json!([{"kind":"assistant","text":format!("{} unique searchable ending", "a".repeat(1_050_000))}]);
+        store
+            .save_streaming_with_usage(&thread, None, false)
+            .unwrap();
+        store
+            .save_streaming_with_usage(&thread, None, true)
+            .unwrap();
+        assert_eq!(
+            store.summaries("searchable ending", false).unwrap().len(),
+            1
+        );
+        assert_eq!(
+            store
+                .connection()
+                .unwrap()
+                .query_row(
+                    "SELECT count(*) FROM thread_search_pending WHERE id=?1",
+                    [&id],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            1
+        );
+        drop(store);
+        let mut reopened = Store::open(&path).unwrap();
+        thread["draft"] = json!("later draft");
+        reopened.save(&thread).unwrap();
+        assert_eq!(
+            reopened
+                .summaries("searchable ending", false)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(reopened.thread(&id).unwrap()["draft"], "later draft");
     }
     #[test]
     fn import_preserves_bytes_unknown_fields_sessions_and_source() {
@@ -2020,6 +2288,8 @@ mod tests {
                 INSERT INTO patch_write_audit VALUES ('threads','update'); END;
             CREATE TEMP TRIGGER audit_patch_summary AFTER UPDATE ON main.thread_summaries BEGIN
                 INSERT INTO patch_write_audit VALUES ('thread_summaries','update'); END;
+            CREATE TEMP TRIGGER audit_draft_revision AFTER UPDATE ON main.native_draft_revisions BEGIN
+                INSERT INTO patch_write_audit VALUES ('native_draft_revisions','update'); END;
             CREATE TEMP TRIGGER audit_patch_navigation_delete AFTER DELETE ON main.thread_navigation BEGIN
                 INSERT INTO patch_write_audit VALUES ('thread_navigation','delete'); END;
             CREATE TEMP TRIGGER audit_patch_navigation_insert AFTER INSERT ON main.thread_navigation BEGIN
@@ -2042,15 +2312,16 @@ mod tests {
         assert_eq!(
             audit,
             vec![
+                ("native_draft_revisions".into(), "update".into()),
                 ("thread_navigation".into(), "delete".into()),
                 ("thread_navigation".into(), "insert".into()),
                 ("thread_summaries".into(), "update".into()),
                 ("threads".into(), "update".into()),
             ]
         );
-        // Four observed writes plus their four temporary audit rows. Search
+        // Five observed writes plus their five temporary audit rows. Search
         // maintenance would add unaccounted writes and violate this assertion.
-        assert_eq!(db.connection().unwrap().total_changes() - before, 8);
+        assert_eq!(db.connection().unwrap().total_changes() - before, 10);
         assert_eq!(changed["items"], v["items"]);
         assert_eq!(changed["sessions"], v["sessions"]);
         assert_eq!(changed["draftContext"], v["draftContext"]);

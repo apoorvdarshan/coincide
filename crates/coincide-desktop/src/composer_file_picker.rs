@@ -1,5 +1,6 @@
 //! Project-file references with proven native completion and scoped suggestion keys.
 use super::*;
+use gpui_base::{Align, Placement, Positioner};
 use gpui_kit::component::tooltip::Tooltip;
 #[path = "composer_file_key_capture.rs"]
 mod capture;
@@ -148,7 +149,7 @@ impl Picker {
             // The summary is exactly one actual child when directory is present.
             // ScrollHandle uses measured child/viewport bounds in prepaint.
             self.results_scroll
-                .scroll_to_item(index + usize::from(!self.directory.is_empty()));
+                .scroll_to_item(index + usize::from(!self.automatic && !self.directory.is_empty()));
         }
     }
     fn busy(&self) -> bool {
@@ -876,7 +877,11 @@ impl Coincide {
             .on_click(cx.listener(|this, _, window, cx| this.open_composer_file_picker(window, cx)))
             .into_any_element()
     }
-    pub(super) fn composer_file_pane(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(super) fn composer_file_popup(
+        &self,
+        bounds: Bounds<Pixels>,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         if !self.composer_files.opened {
             return None;
         }
@@ -893,17 +898,30 @@ impl Coincide {
             .overflow_y_scroll()
             .flex()
             .flex_col()
-            .gap_1();
+            .py(px(6.));
         if state.files.is_empty() {
             results = results
-                .child(div().flex_shrink_0().text_xs().child(state.status.clone()))
-                .child(div().flex_shrink_0().child(if state.automatic {
-                    "Choose a path reference to complete this @query. File contents are not read."
-                } else {
-                    "Choose a path reference. Message text and file contents stay unchanged."
-                }));
+                .child(
+                    div()
+                        .px(px(16.))
+                        .flex_shrink_0()
+                        .text_xs()
+                        .text_color(self.color(0xe4e9f2).opacity(0.6))
+                        .child(if busy {
+                            "Searching files…".to_owned()
+                        } else if state.status.is_empty() {
+                            "No matching files".to_owned()
+                        } else {
+                            state.status.clone()
+                        }),
+                )
+                .when(!state.automatic, |view| {
+                    view.child(div().flex_shrink_0().child(
+                        "Choose a path reference. Message text and file contents stay unchanged.",
+                    ))
+                });
         }
-        if !state.directory.is_empty() {
+        if !state.automatic && !state.directory.is_empty() {
             let counts = format!(
                 "{} entries / {} paths · {} skipped{}{}",
                 state.files.len(),
@@ -942,97 +960,173 @@ impl Coincide {
             .track_focus(&state.focus)
             .role(Role::Group)
             .aria_label("Project file reference picker")
-            .h(px(150.))
+            .w(bounds.size.width)
+            .h(px(if state.automatic {
+                if state.files.is_empty() {
+                    40.
+                } else {
+                    state.files.len().min(8) as f32 * 30. + 12.
+                }
+            } else {
+                210.
+            }))
             .min_h_0()
             .flex_shrink_0()
             .overflow_hidden()
+            .occlude()
+            .rounded(px(14.))
+            .bg(self.color(0x181d28))
+            .border_1()
+            .border_color(self.color(0x29303d))
+            .shadow_lg()
+            .text_color(self.color(0xe4e9f2))
             .flex()
             .flex_col()
             .gap_1()
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(div().flex_1().child("Project file references"))
-                    .child(
-                        Button::new("composer-file-close")
-                            .label("Close")
-                            .compact()
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.close_composer_file_picker(window, cx)
-                            })),
-                    ),
-            )
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .flex()
-                    .gap_2()
-                    .when(!state.automatic, |view| {
-                        view.child(Input::new(&state.query))
-                    })
-                    .when(state.automatic, |view| {
-                        view.child(div().flex_1().truncate().child(format!(
-                                "@{}",
-                                state
-                                    .trigger
-                                    .as_ref()
-                                    .map(|ticket| ticket.query.as_str())
-                                    .unwrap_or("")
-                            )))
-                    })
-                    .child(
-                        Button::new("composer-file-search")
-                            .label("Search")
-                            .disabled(busy)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.search_composer_files(window, cx)
-                            })),
-                    ),
-            );
+            .when(!state.automatic, |view| {
+                view.child(
+                    div()
+                        .px(px(12.))
+                        .pt(px(8.))
+                        .flex_shrink_0()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(div().flex_1().child("Project file references"))
+                        .child(
+                            Button::new("composer-file-close")
+                                .label("Close")
+                                .compact()
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.close_composer_file_picker(window, cx)
+                                })),
+                        ),
+                )
+            })
+            .when(!state.automatic, |view| {
+                view.child(
+                    div()
+                        .px(px(12.))
+                        .flex_shrink_0()
+                        .flex()
+                        .gap_2()
+                        .child(Input::new(&state.query))
+                        .child(
+                            Button::new("composer-file-search")
+                                .label("Search")
+                                .disabled(busy)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.search_composer_files(window, cx)
+                                })),
+                        ),
+                )
+            });
         for (index, file) in state.files.iter().enumerate() {
             let candidate = file.clone();
+            let automatic_candidate = candidate.clone();
             let selected = state.automatic && state.keys.selected == Some(index);
             results = results.child(
                 div()
                     .id(("composer-file-row", index))
                     .role(Role::ListItem)
                     .aria_selected(selected)
-                    .when(selected,|row|row.bg(self.color(0x263d5e)))
-                    .aria_label(format!("Project file {}{}", file.path(),if selected {", selected"} else {""}))
-                    .h(px(32.))
+                    .when(selected, |row| row.bg(self.color(0x253046)))
+                    .aria_label(format!(
+                        "Project file {}{}",
+                        file.path(),
+                        if selected { ", selected" } else { "" }
+                    ))
+                    .when(state.automatic && !busy, |row| {
+                        row.cursor_pointer()
+                            .on_mouse_move(cx.listener(move |this, _: &MouseMoveEvent, _, cx| {
+                                if this.composer_files.keys.selected != Some(index) {
+                                    this.composer_files.keys.selected = Some(index);
+                                    cx.notify();
+                                }
+                            }))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _: &MouseDownEvent, window, cx| {
+                                    window.prevent_default();
+                                    cx.stop_propagation();
+                                    this.attach_composer_file(
+                                        automatic_candidate.clone(),
+                                        generation,
+                                        window,
+                                        cx,
+                                    )
+                                }),
+                            )
+                    })
+                    .h(px(30.))
                     .flex_shrink_0()
+                    .mx(px(6.))
+                    .px(px(8.))
+                    .rounded(px(6.))
                     .flex()
                     .items_center()
                     .gap_2()
+                    .text_xs()
+                    .child(
+                        Icon::new(if file.is_directory() {
+                            gpui_kit::assets::IconName::Folder
+                        } else {
+                            gpui_kit::assets::IconName::FileText
+                        })
+                        .small()
+                        .text_color(self.color(0xe4e9f2).opacity(0.6)),
+                    )
                     .child(
                         div()
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .child(if file.is_directory() { format!("{}/", file.path()) } else { file.path().to_owned() }),
-                    )
-                    .child(
-                        Button::new(("composer-file-attach", index))
-                            .label(if file.is_directory() {
-                                "Open folder"
-                            } else if state.automatic {
-                                "Attach and complete"
+                            .child(if file.is_directory() {
+                                format!("{}/", file.path())
                             } else {
-                                "Attach"
-                            })
-                            .accessibility_label(if file.is_directory() {format!("Open project folder {}",file.path())} else if state.automatic {format!("Attach project file reference {} and complete the current @query",file.path())} else {format!("Attach project file reference {}",file.path())})
-                            .compact()
-                            .disabled(busy)
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.attach_composer_file(candidate.clone(), generation, window, cx)
-                            })),
-                    ),
+                                file.path().to_owned()
+                            }),
+                    )
+                    .when(!state.automatic, |row| {
+                        row.child(
+                            Button::new(("composer-file-attach", index))
+                                .label(if file.is_directory() {
+                                    "Open folder"
+                                } else {
+                                    "Attach"
+                                })
+                                .accessibility_label(if file.is_directory() {
+                                    format!("Open project folder {}", file.path())
+                                } else {
+                                    format!("Attach project file reference {}", file.path())
+                                })
+                                .compact()
+                                .disabled(busy)
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.attach_composer_file(
+                                        candidate.clone(),
+                                        generation,
+                                        window,
+                                        cx,
+                                    )
+                                })),
+                        )
+                    }),
             );
         }
-        Some(pane.child(results).into_any_element())
+        Some(
+            deferred(
+                Positioner::side(bounds)
+                    .placement(Placement::Top)
+                    .align(Align::Start)
+                    .offset(px(6.))
+                    .margin(px(8.))
+                    .occlude()
+                    .child(pane.child(results)),
+            )
+            .with_priority(1)
+            .into_any_element(),
+        )
     }
 }
 

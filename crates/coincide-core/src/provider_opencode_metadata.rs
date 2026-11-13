@@ -293,6 +293,71 @@ pub(super) fn read(
         allowed,
     )
 }
+pub(super) fn commands(
+    executable: &std::path::Path,
+    cwd: &std::path::Path,
+    allowed: &impl Fn() -> bool,
+) -> Result<Vec<crate::composer_suggestions::ProviderCommand>> {
+    let directory = cwd
+        .to_str()
+        .context("OpenCode directory is not text")?
+        .to_owned();
+    let launch = Launch {
+        executable: executable.into(),
+        cwd: cwd.into(),
+        session: None,
+        prompt: String::new(),
+        model: None,
+        variant: None,
+        full_access: false,
+    };
+    let (_control, commands) = mpsc::channel();
+    let (events, _messages) = mpsc::channel();
+    let mut runtime = Runtime {
+        cancelled: Some(allowed),
+        commands,
+        queued: VecDeque::new(),
+        events: &events,
+        aborted_requests: Vec::new(),
+        owned_workers: Vec::new(),
+        #[cfg(test)]
+        request_join_entered: None,
+    };
+    let server = Server::start(&launch, &mut runtime)?;
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut previous = None;
+    loop {
+        ensure!(allowed(), "OpenCode command discovery cancelled");
+        let commands = runtime.catalog(&server.http, "/api/command", &directory)?;
+        let skills = runtime.catalog(&server.http, "/api/skill", &directory)?;
+        ensure!(
+            crate::composer_suggestions::opencode_location_matches(&commands, cwd)
+                && crate::composer_suggestions::opencode_location_matches(&skills, cwd),
+            "OpenCode returned another workspace's commands"
+        );
+        let mut found =
+            crate::composer_suggestions::ProviderCommand::from_opencode(&commands, &skills, cwd);
+        if !found
+            .iter()
+            .any(|entry| entry.is_slash_command && entry.name == "compact")
+        {
+            found.push(crate::composer_suggestions::ProviderCommand {
+                name: "compact".into(),
+                description: Some("Compact the current OpenCode conversation".into()),
+                argument_hint: None,
+                aliases: Vec::new(),
+                kind: crate::composer_suggestions::CommandKind::Command,
+                is_built_in: true,
+                is_slash_command: true,
+            });
+        }
+        if (!found.is_empty() && previous.as_ref() == Some(&found)) || Instant::now() >= deadline {
+            return Ok(found);
+        }
+        previous = Some(found);
+        thread::sleep(Duration::from_millis(250));
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;

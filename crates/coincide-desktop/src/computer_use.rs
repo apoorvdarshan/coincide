@@ -838,6 +838,27 @@ mod macos {
             }
         }
     }
+    #[cfg(test)]
+    mod native_permission_tests {
+        use super::*;
+
+        #[test]
+        fn native_permission_response_uses_json_booleans() {
+            // This only checks permission state; it never prompts or reads a
+            // window. Either granted or denied must cross the FFI as a bool.
+            unsafe extern "C" {
+                fn AXIsProcessTrusted() -> u8;
+                fn CGPreflightScreenCaptureAccess() -> bool;
+            }
+            let mut backend = NativeBackend::default();
+            let response = backend.invoke(json!({"op":"permissions"})).unwrap();
+            // SAFETY: both system functions only return the current status.
+            let accessibility = unsafe { AXIsProcessTrusted() != 0 };
+            let screen = unsafe { CGPreflightScreenCaptureAccess() };
+            assert_eq!(response["ax"].as_bool(), Some(accessibility), "{response}");
+            assert_eq!(response["screen"].as_bool(), Some(screen), "{response}");
+        }
+    }
 }
 #[cfg(all(target_os = "macos", feature = "native-computer-use"))]
 use macos::NativeBackend;

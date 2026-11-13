@@ -40,6 +40,10 @@ fn settle(session: &Session) -> Result<Vec<String>, String> {
             Event::Finished => return Ok(sessions),
             Event::Failed(error) => return Err(error),
             Event::Frame(_) => {}
+            Event::Usage => {}
+            Event::Goal { .. } | Event::TurnBoundary => {
+                panic!("unexpected goal event from the instruction fixture")
+            }
         }
     }
 }

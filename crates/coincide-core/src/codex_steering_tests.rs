@@ -102,15 +102,31 @@ fn timeout_remains_unknown_and_late_owned_rpc_error_cannot_fail_current_turn() {
     assert_eq!(ticket.receiver.recv().unwrap(), Outcome::Unknown);
     assert!(server.response(&json!({"id":request["id"],"error":{"message":"late rejection"}})));
     assert!(server.response(&json!({"id":request["id"],"result":{"turnId":"native-turn"}})));
-    for _ in 0..31 {
+    for _ in 0..40 {
         let ticket = client.submit("bounded").unwrap();
         let request = server.next_request().unwrap();
         server.response(&json!({"id":request["id"],"result":{"turnId":"native-turn"}}));
         assert_eq!(ticket.receiver.recv().unwrap(), Outcome::Accepted);
     }
-    let ticket = client.submit("over per-turn bound").unwrap();
-    assert!(server.next_request().is_none());
-    assert_eq!(ticket.receiver.recv().unwrap(), Outcome::Rejected);
+    assert_eq!(server.retired.len(), 32);
+    assert!(
+        server.response(&json!({"id":request["id"],"error":{"message":"very late rejection"}}))
+    );
+}
+
+#[test]
+fn continuation_turn_does_not_inherit_the_previous_answer_stream() {
+    let (client, mut server) = pair();
+    server.activate("thread", "first");
+    server.observe(&json!({"method":"item/started","params":{"threadId":"thread","turnId":"first","item":{"id":"answer","type":"agentMessage"}}}));
+    assert!(client.submit("waiting").is_err());
+    server.close();
+    server.activate("thread", "second");
+    let ticket = client.submit("follow-up").unwrap();
+    let request = server.next_request().unwrap();
+    assert_eq!(request["params"]["expectedTurnId"], "second");
+    assert!(server.response(&json!({"id":request["id"],"result":{"turnId":"second"}})));
+    assert_eq!(ticket.receiver.recv().unwrap(), Outcome::Accepted);
 }
 
 #[test]

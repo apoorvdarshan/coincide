@@ -272,6 +272,9 @@ sys.stdin.readline()
             },
             Event::Finished => break,
             Event::Failed(error) => panic!("{error}"),
+            Event::Goal { .. } | Event::Usage | Event::TurnBoundary => {
+                panic!("unexpected Codex goal event from Claude")
+            }
         }
     }
     assert_eq!((sessions, approvals, questions), (1, 1, 1));
@@ -434,6 +437,9 @@ sys.stdin.readline()
             Event::Frame(_) => {}
             Event::Finished => break,
             Event::Failed(error) => panic!("{error}"),
+            Event::Goal { .. } | Event::Usage | Event::TurnBoundary => {
+                panic!("unexpected Codex goal event from ACP")
+            }
         }
     }
     assert_eq!(ids, ["acp-session"]);

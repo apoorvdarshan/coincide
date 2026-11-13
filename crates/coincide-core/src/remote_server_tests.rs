@@ -231,13 +231,17 @@ fn off_by_default_and_nothing_is_read_until_enabled() {
     fixture.server.set_enabled(true);
     let port = running_port(&fixture.server);
     assert_ne!(port, 0);
+    let fingerprint = fixture.server.snapshot().fingerprint.unwrap();
     let saved = Settings::load(&fixture.server.directory);
     assert!(saved.is_enabled);
     assert_eq!(saved.port, Some(port));
     assert_eq!(saved.server_id, "FIXTURE-SERVER");
     fixture.server.set_enabled(false);
     assert_eq!(fixture.server.status(), &Status::Off);
-    assert!(TcpStream::connect((Ipv4Addr::LOCALHOST, port)).is_err());
+    // Another parallel fixture may reuse the just-released ephemeral port.
+    // What matters is that this server can no longer accept its pinned TLS
+    // connection, not whether an unrelated listener owns that port now.
+    assert!(connect(port, &fingerprint).is_err());
 }
 
 #[test]

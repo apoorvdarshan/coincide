@@ -132,6 +132,7 @@ impl Server {
     pub(crate) fn activate(&mut self, thread: &str, turn: &str) {
         if let Ok(mut view) = self.view.lock() {
             view.identity = Some((thread.into(), turn.into()));
+            view.assistant = None;
         }
     }
     pub(crate) fn observe(&mut self, frame: &Value) {
@@ -168,6 +169,9 @@ impl Server {
         {
             let pending = self.pending.take().unwrap();
             self.retired.push(pending.id);
+            if self.retired.len() > 32 {
+                self.retired.remove(0);
+            }
             let _ = pending.reply.try_send(Outcome::Unknown);
         }
         let command = match self.commands.try_recv() {
@@ -177,7 +181,7 @@ impl Server {
         let valid = self.view.lock().is_ok_and(|view| {
             view.identity.as_ref() == Some(&command.identity) && view.assistant.is_none()
         });
-        if !valid || self.pending.is_some() || self.retired.len() >= 32 {
+        if !valid || self.pending.is_some() {
             let _ = command.reply.try_send(Outcome::Rejected);
             return None;
         }
@@ -192,6 +196,9 @@ impl Server {
         Some(request)
     }
     pub(crate) fn response(&mut self, frame: &Value) -> bool {
+        if frame.get("method").is_some() {
+            return false;
+        }
         if frame["id"]
             .as_str()
             .is_some_and(|id| self.retired.iter().any(|old| old == id))
@@ -203,10 +210,18 @@ impl Server {
             .as_ref()
             .is_some_and(|p| frame["id"].as_str() == Some(p.id.as_str()))
         {
-            return false;
+            // The client generates UUIDs only for steering requests. An
+            // expired response may arrive after its bounded retirement entry
+            // was evicted; it is still an owned reply, not a startup failure.
+            return frame["id"]
+                .as_str()
+                .is_some_and(|id| Uuid::parse_str(id).is_ok());
         }
         let pending = self.pending.take().unwrap();
         self.retired.push(pending.id);
+        if self.retired.len() > 32 {
+            self.retired.remove(0);
+        }
         let outcome = if frame.get("error").is_some() {
             Outcome::Rejected
         } else if frame["result"]["turnId"] == pending.identity.1 {
@@ -220,6 +235,7 @@ impl Server {
     pub(crate) fn close(&mut self) {
         if let Ok(mut view) = self.view.lock() {
             view.identity = None;
+            view.assistant = None;
         }
         if let Some(pending) = self.pending.take() {
             let _ = pending.reply.try_send(Outcome::Unknown);
