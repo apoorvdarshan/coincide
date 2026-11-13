@@ -1030,7 +1030,8 @@ impl Coincide {
             self.draft_saver.invalidate_thread(id);
         }
     }
-    fn collect_draft_results(&mut self) {
+    fn collect_draft_results(&mut self) -> bool {
+        let mut changed = false;
         for completion in self.draft_saver.poll() {
             if self.pending_successor_waiting(&completion.thread) {
                 continue;
@@ -1044,18 +1045,25 @@ impl Coincide {
             match completion.outcome {
                 draft_saver::Outcome::Saved => {
                     self.pending_drafts.remove(&completion.thread);
+                    changed = true;
                 }
                 draft_saver::Outcome::Busy => {}
                 draft_saver::Outcome::Failed(error) => {
                     pending.retry = false;
                     pending.failed = true;
                     self.status = format!("Draft remains in this window; not yet saved: {error}");
+                    changed = true;
                 }
             }
         }
+        changed
     }
-    fn poll_draft_saves(&mut self) {
-        self.collect_draft_results();
+    fn poll_draft_saves(&mut self, cx: &mut Context<Self>) {
+        if self.collect_draft_results() {
+            // A waiting thread switch advances from render; a save receipt or
+            // an actual failure must schedule that next frame even when idle.
+            cx.notify();
+        }
         if !self.draft_saver.available() || !self.draft_saver.idle() {
             return;
         }
@@ -3763,7 +3771,7 @@ impl Coincide {
         }
         // Normal typing and navigation never write a long transcript on the
         // main thread. Close and quit retain their explicit persistence fence.
-        self.poll_draft_saves();
+        self.poll_draft_saves(cx);
         let drafts_saved = if self.media.close_requested
             || self.media.shutdown_requested
             || !self.draft_saver.available()
