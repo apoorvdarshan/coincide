@@ -62,11 +62,31 @@ fn provider_color_logo(provider: &str) -> Option<Arc<Image>> {
         .cloned()
 }
 
+#[derive(IntoElement)]
+struct ProviderTemplate {
+    svg: &'static [u8],
+    size: f32,
+}
+
+impl RenderOnce for ProviderTemplate {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let ink = if cx.theme().is_dark() {
+            0xf4f4f4
+        } else {
+            0x171717
+        };
+        Icon::default()
+            .data(self.svg)
+            .size(px(self.size))
+            .text_color(rgb(ink))
+    }
+}
+
 /// Draw the provider's own mark without an invented background. Monochrome
-/// templates inherit the surrounding text color, like the Swift app.
+/// templates use neutral ink appropriate for the current appearance.
 pub(super) fn provider_mark(provider: &str, size: f32) -> Option<Div> {
     let mark = if let Some(svg) = provider_template(provider) {
-        Icon::default().data(svg).size(px(size)).into_any_element()
+        ProviderTemplate { svg, size }.into_any_element()
     } else {
         img(provider_color_logo(provider)?)
             .size(px(size))

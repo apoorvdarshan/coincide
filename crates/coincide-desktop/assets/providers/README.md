@@ -6,8 +6,8 @@ vector conversions of those PDFs for GPUI rendering. Claude's colored mark is
 rasterized from the Swift app's `AgentClaude.pdf`, and Antigravity's colored
 mark comes from its `AgentAntigravity@3x.png` asset in the same commit. Native
 builds embed these local assets and perform no network requests. Monochrome
-marks follow the surrounding text color; the colored marks retain their
-original artwork.
+marks use neutral ink for the current appearance; the colored marks retain
+their original artwork.
 
 They identify Codex, Claude, Cursor, Grok, OpenCode and Antigravity. The marks
 remain the property of their respective owners. This change does not create
