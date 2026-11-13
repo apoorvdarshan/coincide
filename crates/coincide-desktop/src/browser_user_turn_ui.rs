@@ -151,9 +151,6 @@ impl Coincide {
                 let _ = view.read(cx).set_zoom(zoom);
             }
         }
-        eprintln!(
-            "browser_page dimensions={dimensions:?} viewport={viewport:?} measured={measured:?}"
-        );
         if let Some(size) = dimensions {
             *LAST_PAGE_DIMENSIONS
                 .get_or_init(|| std::sync::Mutex::new(None))

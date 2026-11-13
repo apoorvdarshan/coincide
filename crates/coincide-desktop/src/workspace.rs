@@ -5,8 +5,10 @@ use crate::worker_owner::{Admission, ShutdownStatus as WorkerOwnerStatus, Worker
 use anyhow::{Context as _, Result, ensure};
 use coincide_core::api::{SharedEngine, call};
 use gpui_kit::base::Disableable;
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     component::{
+        ActiveTheme as _, Sizable as _, StyledExt as _,
         button::*,
         input::{Input, InputState},
     },
@@ -14,7 +16,7 @@ use gpui_kit::{
 };
 use serde_json::{Value, json};
 use std::{
-    path::{Path, PathBuf},
+    path::Path,
     sync::mpsc,
     time::{Duration, Instant},
 };
@@ -478,22 +480,35 @@ impl Render for WorkspacePanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let binding = self.snapshot.as_ref().map(|s| s.binding.clone());
         let disabled = self.busy || binding.is_none();
+        let muted = cx.theme().foreground.opacity(0.65);
+        let border = cx.theme().border;
+        let surface = cx.theme().foreground.opacity(0.04);
+        let heading = |title: &'static str| {
+            div()
+                .pt_3()
+                .border_t_1()
+                .border_color(border)
+                .text_sm()
+                .font_semibold()
+                .child(title)
+        };
         let mut pane = div()
             .id("git-workspace")
             .size_full()
             .flex()
             .flex_col()
-            .gap_2()
-            .p_3()
+            .gap_3()
+            .p_4()
             .child(
                 div()
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(div().flex_1().child("Git workspace"))
+                    .child(div().flex_1().font_semibold().child("Git workspace"))
                     .child(
                         Button::new("git-refresh")
                             .label("Refresh")
+                            .small()
                             .disabled(self.busy || self.thread.is_none())
                             .on_click(cx.listener(|this, _, _, cx| {
                                 if let Some(thread) = this.thread.clone() {
@@ -502,11 +517,14 @@ impl Render for WorkspacePanel {
                             })),
                     ),
             )
-            .child(div().text_sm().child(self.notice.clone()));
+            .when(!self.notice.is_empty(), |pane| {
+                pane.child(div().text_sm().text_color(muted).child(self.notice.clone()))
+            });
         if let Some(binding) = &binding {
             pane = pane.child(
                 div()
                     .text_sm()
+                    .text_color(muted)
                     .child(format!("Root: {}\nHEAD: {}", binding.root, binding.head)),
             );
         }
@@ -519,14 +537,14 @@ impl Render for WorkspacePanel {
             .flex_col()
             .gap_2();
         if let Some(snapshot) = &self.snapshot {
-            body = body.child(format!(
+            body = body.child(div().text_sm().text_color(muted).child(format!(
                 "Branch: {} · {} changed paths",
                 snapshot.status["branch"].as_str().unwrap_or("detached"),
                 snapshot.status["entries"].as_array().map_or(0, Vec::len)
-            ));
+            )));
         }
         body = body.child(
-            div().flex().gap_2().children(
+            div().flex().flex_wrap().gap_2().children(
                 [(false, "Working diff"), (true, "Staged diff")]
                     .into_iter()
                     .map(|(staged, label)| {
@@ -536,6 +554,7 @@ impl Render for WorkspacePanel {
                             "git-working-diff"
                         })
                         .label(label)
+                        .small()
                         .disabled(disabled)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             if let Some(s) = &this.snapshot {
@@ -558,6 +577,10 @@ impl Render for WorkspacePanel {
                 body = body.child(
                     Button::new(SharedString::from(format!("git-path-{index}")))
                         .label(format!("{} {path}", entry["status"].as_str().unwrap_or("")))
+                        .ghost()
+                        .small()
+                        .w_full()
+                        .justify_start()
                         .disabled(disabled)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             if let Some(s) = &this.snapshot {
@@ -577,8 +600,9 @@ impl Render for WorkspacePanel {
                     body.child("Showing first 200 paths. Full diff includes all tracked changes.");
             }
         }
-        body = body.child("Staged checkpoints").child("Captures the staged index only. Unstaged and untracked files are excluded; HEAD and working files stay in place.")
-            .child(Input::new(&self.label)).child(Button::new("git-prepare-checkpoint").label("Review checkpoint creation…").disabled(disabled).on_click(cx.listener(|this,_,_,cx|this.prepare(false,cx))));
+        body = body.child(heading("Staged checkpoints"))
+            .child(div().text_sm().text_color(muted).child("Captures the staged index only. Unstaged and untracked files are excluded; HEAD and working files stay in place."))
+            .child(Input::new(&self.label)).child(div().flex().justify_start().child(Button::new("git-prepare-checkpoint").label("Review checkpoint creation…").small().disabled(disabled).on_click(cx.listener(|this,_,_,cx|this.prepare(false,cx)))));
         if let Some(snapshot) = &self.snapshot {
             for checkpoint in snapshot.checkpoints["checkpoints"]
                 .as_array()
@@ -594,6 +618,10 @@ impl Render for WorkspacePanel {
                             "Review {id} · {}",
                             checkpoint["commit"].as_str().unwrap_or("")
                         ))
+                        .ghost()
+                        .small()
+                        .w_full()
+                        .justify_start()
                         .disabled(disabled)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             if let Some(s) = &this.snapshot {
@@ -609,9 +637,9 @@ impl Render for WorkspacePanel {
                 body = body.child("Showing first 100 checkpoints.");
             }
         }
-        body = body.child("Worktrees").child("Reservation creates a new branch and an UNPOPULATED linked worktree in Coincide's data directory. No files are checked out. Population and launch are not available here.")
+        body = body.child(heading("Worktrees")).child(div().text_sm().text_color(muted).child("Reservation creates a new branch and an UNPOPULATED linked worktree in Coincide's data directory. No files are checked out. Population and launch are not available here."))
             .child(Input::new(&self.name)).child(Input::new(&self.branch))
-            .child(Button::new("git-prepare-worktree").label("Review worktree reservation…").disabled(disabled).on_click(cx.listener(|this,_,_,cx|this.prepare(true,cx))));
+            .child(div().flex().justify_start().child(Button::new("git-prepare-worktree").label("Review worktree reservation…").small().disabled(disabled).on_click(cx.listener(|this,_,_,cx|this.prepare(true,cx)))));
         if let Some(snapshot) = &self.snapshot {
             for tree in snapshot.worktrees["worktrees"]
                 .as_array()
@@ -619,7 +647,7 @@ impl Render for WorkspacePanel {
                 .flatten()
                 .take(100)
             {
-                body = body.child(div().text_sm().child(format!("{}\n{} · {}\nPopulation state is not reported by Git list; a reservation from this panel starts unpopulated.",tree["worktree"].as_str().unwrap_or(""),tree["branch"].as_str().unwrap_or("detached"),tree["HEAD"].as_str().unwrap_or(""))));
+                body = body.child(div().p_3().rounded(px(8.)).border_1().border_color(border).bg(surface).text_sm().child(format!("{}\n{} · {}\nPopulation state is not reported by Git list; a reservation from this panel starts unpopulated.",tree["worktree"].as_str().unwrap_or(""),tree["branch"].as_str().unwrap_or("detached"),tree["HEAD"].as_str().unwrap_or(""))));
             }
         }
         if self.snapshot.as_ref().is_some_and(|s| {
@@ -644,8 +672,14 @@ impl Render for WorkspacePanel {
             pane = pane.child(
                 div()
                     .id("git-confirmation")
-                    .p_2()
+                    .p_3()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
                     .border_1()
+                    .border_color(border)
+                    .rounded(px(10.))
+                    .bg(surface)
                     .child(
                         div()
                             .id("git-confirmation-details")
@@ -654,32 +688,43 @@ impl Render for WorkspacePanel {
                             .child(message),
                     )
                     .child(
-                        Button::new("git-confirm")
-                            .label("Confirm")
-                            .disabled(self.busy)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                if let Some(action) = this.confirmation.take() {
-                                    this.start(action, cx);
-                                }
-                            })),
-                    )
-                    .child(
-                        Button::new("git-cancel-confirmation")
-                            .label("Cancel")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.confirmation = None;
-                                cx.notify();
-                            })),
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .gap_2()
+                            .child(
+                                Button::new("git-confirm")
+                                    .label("Confirm")
+                                    .small()
+                                    .disabled(self.busy)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        if let Some(action) = this.confirmation.take() {
+                                            this.start(action, cx);
+                                        }
+                                    })),
+                            )
+                            .child(
+                                Button::new("git-cancel-confirmation")
+                                    .label("Cancel")
+                                    .small()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.confirmation = None;
+                                        cx.notify();
+                                    })),
+                            ),
                     ),
             );
         }
-        body = body.child(
-            Button::new("git-copy-diff")
-                .label("Copy full loaded diff")
-                .disabled(self.diff.is_empty())
-                .on_click(cx.listener(|this, _, _, cx| {
-                    cx.write_to_clipboard(ClipboardItem::new_string(this.diff.clone()));
-                })),
+        body = body.child(heading("Loaded diff")).child(
+            div().flex().justify_start().child(
+                Button::new("git-copy-diff")
+                    .label("Copy full loaded diff")
+                    .small()
+                    .disabled(self.diff.is_empty())
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(this.diff.clone()));
+                    })),
+            ),
         );
         body = body.child(
             div()
@@ -716,7 +761,7 @@ mod tests {
         assert_eq!(prefixed_branch("", "coincide/", ""), "");
     }
     use super::*;
-    use std::collections::HashMap;
+    use std::{collections::HashMap, path::PathBuf};
     struct Fixture {
         root: PathBuf,
         requests: Vec<(String, Value)>,

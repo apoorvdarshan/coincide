@@ -481,8 +481,10 @@ def main():
             command("import", "-window", window, str(artifacts / (stage + ".png")), env=env)
         AGENT_CONTROL = (48, 17)
         RELOAD = (17, 54)
-        BOOKMARK = (89, 54)
-        LIBRARY = (66, 54)
+        # The bookmark, library and saved-login controls are 28-point buttons
+        # with four points between them. Click their centers, not a neighbor.
+        BOOKMARK = (118, 54)
+        LIBRARY = (86, 54)
         def pane_controls(tab, url, http_requests):
             click_browser_icon(*AGENT_CONTROL, "browser-control-off")
             wait_for("persisted per-thread Agent Control off", lambda: rpc("browser.settings.read")["agentControl"].get(thread_id) is False)

@@ -109,8 +109,9 @@ impl Coincide {
             .selected(enabled)
             .ghost()
             .compact()
-            .xsmall()
-            .h(px(26.))
+            .small()
+            .w(px(28.))
+            .h(px(28.))
             .on_click(cx.listener(move |this, _, _, cx| this.toggle_browser_control(&thread, cx)))
     }
     pub(super) fn browser_pane_controls(
@@ -162,8 +163,9 @@ impl Coincide {
                     })
                     .ghost()
                     .compact()
-                    .xsmall()
-                    .h(px(26.))
+                    .small()
+                    .w(px(28.))
+                    .h(px(28.))
                     .disabled(!valid_page || bookmark_busy)
                     .on_click(cx.listener(move |this, _, window, cx| {
                         // Bind the existing settings worker owner to this exact native destination.
@@ -200,8 +202,9 @@ impl Coincide {
                     .tooltip("Bookmarks and History")
                     .ghost()
                     .compact()
-                    .xsmall()
-                    .h(px(26.))
+                    .small()
+                    .w(px(28.))
+                    .h(px(28.))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         if this.browser_library_visible() {
                             this.browser_library_thread = None;
@@ -222,8 +225,9 @@ impl Coincide {
                     .tooltip("Fill Saved Login")
                     .ghost()
                     .compact()
-                    .xsmall()
-                    .h(px(26.))
+                    .small()
+                    .w(px(28.))
+                    .h(px(28.))
                     .disabled(!self.browser.as_ref().is_some_and(|browser| {
                         browser.credential_fill_available()
                             && browser.credential_page(thread, cx).is_some()

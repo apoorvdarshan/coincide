@@ -1143,7 +1143,17 @@ impl Render for DiffPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let header = self.render_header(cx);
         let body = match &self.content {
-            Content::Loading => div().flex_1().into_any_element(),
+            Content::Loading => div()
+                .flex_1()
+                .flex()
+                .items_center()
+                .justify_center()
+                .gap_2()
+                .text_sm()
+                .text_color(cx.theme().muted_foreground)
+                .child(Spinner::new().small())
+                .child("Loading changes…")
+                .into_any_element(),
             Content::Empty(message) => {
                 let message = message.clone();
                 self.render_empty(&message, cx)
