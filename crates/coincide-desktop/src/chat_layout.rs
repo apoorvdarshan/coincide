@@ -1,12 +1,13 @@
 //! Shared chat structure and geometry, following the Swift desktop reference.
 use super::*;
 
-// Provider marks stay local and embedded. Claude and Antigravity use the
-// original colored marks from Coincide's existing asset catalog.
+// Provider marks stay local and embedded. The monochrome PDFs and their SVG
+// equivalents come from the Swift app's original template assets; Claude and
+// Antigravity retain their original colored artwork.
 pub(super) const PROVIDER_LOGOS: [(&str, &[u8]); 6] = [
     (
         "codex",
-        include_bytes!("../assets/providers/logo-codex.png"),
+        include_bytes!("../assets/providers/logo-codex.pdf"),
     ),
     (
         "claude",
@@ -14,12 +15,12 @@ pub(super) const PROVIDER_LOGOS: [(&str, &[u8]); 6] = [
     ),
     (
         "cursor",
-        include_bytes!("../assets/providers/logo-cursor.png"),
+        include_bytes!("../assets/providers/logo-cursor.pdf"),
     ),
-    ("grok", include_bytes!("../assets/providers/logo-grok.png")),
+    ("grok", include_bytes!("../assets/providers/logo-grok.pdf")),
     (
         "opencode",
-        include_bytes!("../assets/providers/logo-opencode.png"),
+        include_bytes!("../assets/providers/logo-opencode.pdf"),
     ),
     (
         "antigravity",
@@ -27,13 +28,28 @@ pub(super) const PROVIDER_LOGOS: [(&str, &[u8]); 6] = [
     ),
 ];
 
-pub(super) fn provider_logo(provider: &str) -> Option<Arc<Image>> {
+fn provider_template(provider: &str) -> Option<&'static [u8]> {
+    Some(match provider {
+        "codex" => include_bytes!("../assets/providers/logo-codex.svg"),
+        "cursor" => include_bytes!("../assets/providers/logo-cursor.svg"),
+        "grok" => include_bytes!("../assets/providers/logo-grok.svg"),
+        "opencode" => include_bytes!("../assets/providers/logo-opencode.svg"),
+        _ => return None,
+    })
+}
+
+pub(super) fn provider_known(provider: &str) -> bool {
+    PROVIDER_LOGOS.iter().any(|(name, _)| *name == provider)
+}
+
+fn provider_color_logo(provider: &str) -> Option<Arc<Image>> {
     static IMAGES: std::sync::OnceLock<std::collections::HashMap<&str, Arc<Image>>> =
         std::sync::OnceLock::new();
     IMAGES
         .get_or_init(|| {
             PROVIDER_LOGOS
                 .into_iter()
+                .filter(|(name, _)| provider_template(name).is_none())
                 .map(|(name, bytes)| {
                     (
                         name,
@@ -46,15 +62,15 @@ pub(super) fn provider_logo(provider: &str) -> Option<Arc<Image>> {
         .cloned()
 }
 
-/// Give monochrome marks a consistent provider-colored tile while preserving
-/// the original colored Claude and Antigravity artwork.
-pub(super) fn provider_badge(provider: &str, size: f32) -> Option<Div> {
-    let logo = provider_logo(provider)?;
-    let background = provider_badge_color(provider)?;
-    let mark = if matches!(provider, "claude" | "antigravity") {
-        0.82
+/// Draw the provider's own mark without an invented background. Monochrome
+/// templates inherit the surrounding text color, like the Swift app.
+pub(super) fn provider_mark(provider: &str, size: f32) -> Option<Div> {
+    let mark = if let Some(svg) = provider_template(provider) {
+        Icon::default().data(svg).size(px(size)).into_any_element()
     } else {
-        0.72
+        img(provider_color_logo(provider)?)
+            .size(px(size))
+            .into_any_element()
     };
     Some(
         div()
@@ -63,33 +79,19 @@ pub(super) fn provider_badge(provider: &str, size: f32) -> Option<Div> {
             .flex()
             .items_center()
             .justify_center()
-            .rounded(px(size * 0.23))
-            .bg(rgb(background))
-            .child(img(logo).size(px(size * mark))),
+            .child(mark),
     )
 }
 
-fn provider_badge_color(provider: &str) -> Option<u32> {
-    Some(match provider {
-        "codex" => 0x0e8067,
-        "claude" => 0x482b27,
-        "cursor" => 0x5959a9,
-        "grok" => 0x695581,
-        "opencode" => 0x9a641c,
-        "antigravity" => 0x202b43,
-        _ => return None,
-    })
-}
-
 pub(super) fn provider_label(provider: &str, label: String) -> AnyElement {
-    let image = provider_badge(provider, 15.);
+    let image = provider_mark(provider, 15.);
     div()
         .flex()
         .items_center()
         .gap(px(5.))
         .min_w_0()
         .when_some(image, |view, image| view.child(image))
-        .when(provider_logo(provider).is_none(), |view| {
+        .when(!provider_known(provider), |view| {
             view.child(Icon::new(gpui_kit::assets::IconName::Cpu).xsmall())
         })
         .child(div().truncate().child(label))
@@ -238,18 +240,34 @@ impl Coincide {
 mod tests {
     use super::{
         ComposerSizing, PROVIDER_LOGOS, composer_height, is_synthetic_turn_end, notice_label,
-        provider_badge_color,
+        provider_known, provider_template,
     };
 
     #[test]
-    fn all_supported_provider_logos_are_local_png_assets() {
+    fn provider_marks_render_their_original_templates_and_colors() {
+        let renderer = gpui_kit::SvgRenderer::new(std::sync::Arc::new(()));
         let mut names = std::collections::HashSet::new();
         for (provider, bytes) in PROVIDER_LOGOS {
             assert!(names.insert(provider));
-            assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"), "{provider}");
-            assert!(provider_badge_color(provider).is_some(), "{provider}");
+            assert!(provider_known(provider), "{provider}");
+            if let Some(template) = provider_template(provider) {
+                assert!(bytes.starts_with(b"%PDF"), "{provider}");
+                let rendered = renderer.render_single_frame(template, 1.).unwrap();
+                let pixels = rendered.as_bytes(0).unwrap();
+                assert!(pixels.chunks_exact(4).any(|p| p[3] > 0), "{provider}");
+                assert!(pixels.chunks_exact(4).any(|p| p[3] == 0), "{provider}");
+            } else {
+                let image = image::load_from_memory(bytes).unwrap().to_rgba8();
+                assert!(
+                    image
+                        .pixels()
+                        .any(|p| p[3] > 0 && (p[0] != p[1] || p[1] != p[2])),
+                    "{provider} must retain its original colors"
+                );
+            }
         }
         assert_eq!(names.len(), 6);
+        assert!(!provider_known("unknown"));
     }
 
     #[test]

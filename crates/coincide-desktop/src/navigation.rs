@@ -396,7 +396,7 @@ impl Coincide {
             _ => match thread
                 .navigation
                 .as_ref()
-                .and_then(|meta| chat_layout::provider_badge(meta.provider.as_deref()?, 14.))
+                .and_then(|meta| chat_layout::provider_mark(meta.provider.as_deref()?, 14.))
             {
                 Some(logo) => leading.child(logo),
                 None => leading.child(Icon::new(IconName::Cpu).xsmall()),

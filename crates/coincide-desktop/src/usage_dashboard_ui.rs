@@ -324,7 +324,7 @@ impl Coincide {
     }
 
     fn usage_logo(&self, provider: &str, size: f32) -> AnyElement {
-        match chat_layout::provider_badge(provider, size) {
+        match chat_layout::provider_mark(provider, size) {
             Some(logo) => logo.into_any_element(),
             None => Icon::new(gpui_kit::assets::IconName::Cpu)
                 .xsmall()

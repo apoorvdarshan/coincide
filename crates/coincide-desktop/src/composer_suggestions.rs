@@ -1032,7 +1032,7 @@ impl Coincide {
     fn suggestion_icon(&self, item: &Suggestion, selected: bool) -> AnyElement {
         use gpui_kit::assets::IconName;
         let logo = |provider: &str| {
-            chat_layout::provider_badge(provider, 14.).map(|badge| badge.into_any_element())
+            chat_layout::provider_mark(provider, 14.).map(|badge| badge.into_any_element())
         };
         let secondary = self
             .color(0xe4e9f2)

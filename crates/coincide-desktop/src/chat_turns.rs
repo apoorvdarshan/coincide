@@ -668,7 +668,7 @@ impl super::Coincide {
                         .child(child)
                         .when(header_logo && height == 40., |row| {
                             row.when_some(
-                                chat_layout::provider_badge(&provider, 16.),
+                                chat_layout::provider_mark(&provider, 16.),
                                 |row, logo| {
                                     row.child(
                                         div()

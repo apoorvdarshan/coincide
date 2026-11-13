@@ -3788,7 +3788,7 @@ impl Coincide {
                         slot.child(Icon::new(gpui_kit::assets::IconName::Check).xsmall())
                     }),
             );
-        if mixes && let Some(image) = chat_layout::provider_badge(provider, 14.) {
+        if mixes && let Some(image) = chat_layout::provider_mark(provider, 14.) {
             row_view = row_view.child(image);
         }
         row_view
@@ -3894,10 +3894,10 @@ impl Coincide {
                     .w(px(38.))
                     .rounded(px(7.))
                     .when(selected, |button| button.bg(self.picker_selection_bg()))
-                    .when_some(chat_layout::provider_badge(&id, 18.), |button, image| {
+                    .when_some(chat_layout::provider_mark(&id, 18.), |button, image| {
                         button.child(image)
                     })
-                    .when(chat_layout::provider_logo(&id).is_none(), |button| {
+                    .when(!chat_layout::provider_known(&id), |button| {
                         button.icon(gpui_kit::assets::IconName::Cpu)
                     })
                     .on_click(cx.listener(move |this, _, _, cx| {

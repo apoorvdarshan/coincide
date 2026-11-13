@@ -74,7 +74,7 @@ fn section_icon(section: Section) -> (gpui_kit::assets::IconName, u32) {
 
 fn icon_tile(section: Section, size: f32) -> AnyElement {
     if let Section::Provider(provider) = section
-        && let Some(logo) = chat_layout::provider_badge(provider_key(provider), size)
+        && let Some(logo) = chat_layout::provider_mark(provider_key(provider), size)
     {
         return logo.into_any_element();
     }

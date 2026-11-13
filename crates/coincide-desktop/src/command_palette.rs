@@ -1439,7 +1439,7 @@ impl CommandPalette {
         let icon = match &entry.icon {
             Some(PaletteIcon::Symbol(icon)) => div().text_color(secondary).child(*icon),
             Some(PaletteIcon::Provider(provider)) => {
-                match super::chat_layout::provider_badge(provider, 15.) {
+                match super::chat_layout::provider_mark(provider, 15.) {
                     Some(logo) => div().child(logo),
                     None => div().text_color(secondary).child(IconName::MessagesSquare),
                 }
