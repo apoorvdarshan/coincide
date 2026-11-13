@@ -16,7 +16,7 @@ use gpui_kit::{
 };
 use serde_json::{Value, json};
 use std::{
-    path::{Path, PathBuf},
+    path::Path,
     sync::mpsc,
     time::{Duration, Instant},
 };
@@ -761,7 +761,7 @@ mod tests {
         assert_eq!(prefixed_branch("", "coincide/", ""), "");
     }
     use super::*;
-    use std::collections::HashMap;
+    use std::{collections::HashMap, path::PathBuf};
     struct Fixture {
         root: PathBuf,
         requests: Vec<(String, Value)>,
