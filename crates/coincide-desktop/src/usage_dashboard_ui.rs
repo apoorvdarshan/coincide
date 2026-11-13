@@ -16,7 +16,36 @@ use gpui_kit::component::menu::PopupMenuItem;
 
 const PERIODS: [u32; 3] = [7, 30, 90];
 
-fn provider_id(provider: &str) -> Option<ProviderId> {
+/// Large changes stay readable within a narrow tile; the underlying value is unchanged.
+fn compact_trend(trend: f64) -> String {
+    let percent = trend.abs() * 100.;
+    if percent >= 10_000. {
+        format!("{}%", format::tokens(percent.round() as u64))
+    } else {
+        format::percent(trend.abs())
+    }
+}
+
+/// A calm 1/2/5 chart scale, like the system chart used in the Swift app.
+fn chart_ceiling(highest: f64) -> f64 {
+    if !highest.is_finite() || highest <= 0. {
+        return 1.;
+    }
+    let magnitude = 10_f64.powf(highest.log10().floor());
+    let step = highest / magnitude;
+    magnitude
+        * if step <= 1. {
+            1.
+        } else if step <= 2. {
+            2.
+        } else if step <= 5. {
+            5.
+        } else {
+            10.
+        }
+}
+
+pub(super) fn provider_id(provider: &str) -> Option<ProviderId> {
     Some(match provider {
         "claude" => ProviderId::Claude,
         "codex" => ProviderId::Codex,
@@ -27,7 +56,7 @@ fn provider_id(provider: &str) -> Option<ProviderId> {
         _ => return None,
     })
 }
-fn provider_name(provider: &str) -> &'static str {
+pub(super) fn provider_name(provider: &str) -> &'static str {
     provider_id(provider).map_or("Agent", |id| {
         coincide_core::provider_catalog::provider(id).display_name
     })
@@ -42,13 +71,14 @@ fn this_computer() -> &'static str {
 }
 
 /// An enabled account and what Usage knows of its limits.
-struct Card {
-    account: Account,
-    shows_name: bool,
-    state: LimitState,
+#[derive(Clone)]
+pub(super) struct Card {
+    pub account: Account,
+    pub shows_name: bool,
+    pub state: LimitState,
 }
 impl Card {
-    fn title(&self) -> String {
+    pub(super) fn title(&self) -> String {
         format::account_title(
             provider_name(self.account.provider),
             &self.account.name,
@@ -56,12 +86,88 @@ impl Card {
             self.shows_name,
         )
     }
-    fn limits(&self) -> Option<&Limits> {
+    pub(super) fn limits(&self) -> Option<&Limits> {
         match &self.state {
             LimitState::Ready(limits) => Some(limits),
             _ => None,
         }
     }
+}
+
+/// The menu-bar extra and the Usage page share the same account boundaries.
+pub(super) fn cards_for(
+    settings: &Value,
+    dashboard: &crate::usage_dashboard::Dashboard,
+    codex_target: Option<&str>,
+    codex_state: LimitState,
+) -> Vec<Card> {
+    let accounts = dashboard
+        .data
+        .as_ref()
+        .map(|data| data.accounts.clone())
+        .unwrap_or_else(|| {
+            PROVIDERS
+                .iter()
+                .map(|provider| Account {
+                    provider,
+                    id: report::DEFAULT_ACCOUNT.into(),
+                    name: "Default".into(),
+                    api_key: false,
+                    key_variable: None,
+                })
+                .collect()
+        });
+    let mut cards = Vec::new();
+    for provider in PROVIDERS {
+        if !provider_id(provider)
+            .is_some_and(|id| settings_navigation::provider_enabled(settings, id))
+        {
+            continue;
+        }
+        let own = accounts
+            .iter()
+            .filter(|account| account.provider == provider)
+            .collect::<Vec<_>>();
+        let shows_name = own.len() > 1;
+        for account in own {
+            let state = if account.api_key {
+                LimitState::Unavailable("This API key reports no usage figures. Coincide counts the tokens of turns it runs.".into())
+            } else if provider == "codex" {
+                let target = if account.is_default() {
+                    codex_target.is_none()
+                } else {
+                    codex_target == Some(account.id.as_str())
+                };
+                if target {
+                    codex_state.clone()
+                } else {
+                    LimitState::NotRead("Select a conversation that uses this account, then refresh, to read its limits.".into())
+                }
+            } else if provider == "claude" && account.is_default() {
+                dashboard
+                    .claude
+                    .state
+                    .clone()
+                    .unwrap_or(LimitState::NotChecked)
+            } else if provider == "claude" {
+                LimitState::NotRead(
+                    "This version reads plan limits for the default Claude Code account only."
+                        .into(),
+                )
+            } else {
+                LimitState::NotRead(format!(
+                    "This version of Coincide doesn’t read {} plan limits yet.",
+                    provider_name(provider)
+                ))
+            };
+            cards.push(Card {
+                account: account.clone(),
+                shows_name,
+                state,
+            });
+        }
+    }
+    cards
 }
 
 impl Coincide {
@@ -73,6 +179,13 @@ impl Coincide {
     /// The Refresh button: saved history again, and the limits Coincide reads.
     pub(super) fn refresh_usage(&mut self, cx: &mut Context<Self>) {
         self.usage_history.load_dashboard();
+        // On macOS, the status item owns the background reader while it is
+        // visible. Reusing it avoids two refreshes cancelling one another.
+        #[cfg(target_os = "macos")]
+        if crate::usage_menubar::refresh_for_usage(self.selected.as_ref(), cx) {
+            cx.notify();
+            return;
+        }
         if self.usage_provider_enabled("codex") {
             self.codex_limits.set_context(self.selected.as_ref(), cx);
             self.codex_limits.refresh(cx);
@@ -85,81 +198,23 @@ impl Coincide {
 
     /// Every enabled provider's accounts, with their limits as read.
     fn usage_cards(&self, cx: &App) -> Vec<Card> {
-        let dashboard = &self.usage_history.dashboard;
-        let accounts = dashboard
-            .data
-            .as_ref()
-            .map(|data| data.accounts.clone())
-            .unwrap_or_else(|| {
-                PROVIDERS
-                    .iter()
-                    .map(|provider| Account {
-                        provider,
-                        id: report::DEFAULT_ACCOUNT.into(),
-                        name: "Default".into(),
-                        api_key: false,
-                        key_variable: None,
-                    })
-                    .collect()
-            });
         let codex = self.codex_limits.panel.read(cx);
-        let codex_target = codex.account().map(str::to_owned);
-        let codex_state = crate::usage_dashboard::codex_state(codex.phase());
-        let mut cards = Vec::new();
-        for provider in PROVIDERS {
-            if !self.usage_provider_enabled(provider) {
-                continue;
-            }
-            let own = accounts
-                .iter()
-                .filter(|a| a.provider == provider)
-                .collect::<Vec<_>>();
-            let shows_name = own.len() > 1;
-            for account in own {
-                let state = if account.api_key {
-                    LimitState::Unavailable(
-                        "This API key reports no usage figures. Coincide counts the tokens of turns it runs."
-                            .into(),
-                    )
-                } else if provider == "codex" {
-                    let target = if account.is_default() {
-                        codex_target.is_none()
-                    } else {
-                        codex_target.as_deref() == Some(account.id.as_str())
-                    };
-                    if target {
-                        codex_state.clone()
-                    } else {
-                        LimitState::NotRead(
-                            "Select a conversation that uses this account, then refresh, to read its limits."
-                                .into(),
-                        )
-                    }
-                } else if provider == "claude" && account.is_default() {
-                    dashboard
-                        .claude
-                        .state
-                        .clone()
-                        .unwrap_or(LimitState::NotChecked)
-                } else if provider == "claude" {
-                    LimitState::NotRead(
-                        "This version reads plan limits for the default Claude Code account only."
-                            .into(),
-                    )
-                } else {
-                    LimitState::NotRead(format!(
-                        "This version of Coincide doesn’t read {} plan limits yet.",
-                        provider_name(provider)
-                    ))
-                };
-                cards.push(Card {
-                    account: account.clone(),
-                    shows_name,
-                    state,
-                });
-            }
+        let cards = cards_for(
+            &self.settings,
+            &self.usage_history.dashboard,
+            codex.account(),
+            crate::usage_dashboard::codex_state(codex.phase()),
+        );
+        #[cfg(target_os = "macos")]
+        {
+            let mut cards = cards;
+            crate::usage_menubar::reuse_cached(cx, &mut cards);
+            cards
         }
-        cards
+        #[cfg(not(target_os = "macos"))]
+        {
+            cards
+        }
     }
 
     fn usage_muted(&self, cx: &App) -> Hsla {
@@ -201,8 +256,8 @@ impl Coincide {
                     .flex()
                     .flex_col()
                     .gap_3()
-                    .p_3()
-                    .rounded(px(8.))
+                    .p(px(16.))
+                    .rounded(px(10.))
                     .border_1()
                     .border_color(self.color(0x29303d))
                     .bg(self.color(0x111722))
@@ -406,6 +461,7 @@ impl Coincide {
             .flex()
             .flex_col()
             .gap(px(3.))
+            .overflow_hidden()
             .child(div().text_xs().text_color(muted).child(title.to_owned()))
             .child(
                 div()
@@ -429,6 +485,7 @@ impl Coincide {
                         .flex()
                         .items_center()
                         .gap_1()
+                        .min_w_0()
                         .text_xs()
                         .text_color(muted)
                         .child(
@@ -439,7 +496,14 @@ impl Coincide {
                             })
                             .xsmall(),
                         )
-                        .child(format!("{} vs {compared}", format::percent(trend.abs()))),
+                        .child(div().truncate().child(compact_trend(trend))),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(muted)
+                        .truncate()
+                        .child(format!("vs {compared}")),
                 )
             })
             .into_any_element()
@@ -448,13 +512,16 @@ impl Coincide {
     /// How the period's tokens split into fresh input, cache reads, cache writes and output.
     fn usage_token_mix(&self, totals: &Totals, title: &str, cx: &App) -> AnyElement {
         let muted = self.usage_muted(cx);
-        let ink = self.color(0xe4e9f2);
         let tokens = &totals.tokens;
         let parts = [
-            ("Input", tokens.input, 0.95),
-            ("Cache read", tokens.cache_read, 0.35),
-            ("Cache write", tokens.cache_write, 0.6),
-            ("Output", tokens.output, 0.8),
+            ("Input", tokens.input, self.provider_ink("codex")),
+            ("Cache read", tokens.cache_read, self.provider_ink("cursor")),
+            (
+                "Cache write",
+                tokens.cache_write,
+                self.provider_ink("opencode"),
+            ),
+            ("Output", tokens.output, self.provider_ink("claude")),
         ];
         let total = tokens.total().max(1) as f32;
         let summary = if totals.has_priced_tokens() {
@@ -474,29 +541,23 @@ impl Coincide {
             .flex()
             .gap(px(2.))
             .bg(self.color(0x98a6ba).opacity(0.2));
-        for (_, count, alpha) in parts.iter().filter(|part| part.1 > 0) {
+        for (_, count, color) in parts.iter().filter(|part| part.1 > 0) {
             bar = bar.child(
                 div()
                     .h_full()
                     .min_w(px(2.))
                     .w(relative(*count as f32 / total))
-                    .bg(ink.opacity(*alpha)),
+                    .bg(*color),
             );
         }
         let mut legend = div().flex().flex_wrap().gap_4();
-        for (name, count, alpha) in parts {
+        for (name, count, color) in parts {
             legend = legend.child(
                 div()
                     .flex()
                     .items_center()
                     .gap(px(5.))
-                    .child(
-                        div()
-                            .w(px(7.))
-                            .h(px(7.))
-                            .rounded_full()
-                            .bg(ink.opacity(alpha)),
-                    )
+                    .child(div().w(px(7.)).h(px(7.)).rounded_full().bg(color))
                     .child(
                         div()
                             .flex()
@@ -509,13 +570,26 @@ impl Coincide {
         legend = legend.child(
             div()
                 .flex()
-                .flex_col()
-                .child(div().text_sm().child(format::tokens(tokens.reasoning)))
+                .items_center()
+                .gap(px(5.))
                 .child(
                     div()
-                        .text_xs()
-                        .text_color(muted)
-                        .child("Reasoning (in output)"),
+                        .w(px(7.))
+                        .h(px(7.))
+                        .rounded_full()
+                        .bg(self.provider_ink("antigravity")),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .child(div().text_sm().child(format::tokens(tokens.reasoning)))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(muted)
+                                .child("Reasoning (in output)"),
+                        ),
                 ),
         );
         div()
@@ -558,7 +632,7 @@ impl Coincide {
             .iter()
             .map(|day| rows_for(*day).map(|row| value(&row.totals)).sum::<f64>())
             .fold(0., f64::max);
-        let scale = if highest > 0. { highest } else { 1. };
+        let scale = chart_ceiling(highest);
         let label = |amount: f64| {
             if cost {
                 format::cost(amount)
@@ -729,8 +803,8 @@ impl Coincide {
                             .items_end()
                             .text_xs()
                             .text_color(muted)
-                            .child(label(highest))
-                            .child(label(highest / 2.))
+                            .child(label(scale))
+                            .child(label(scale / 2.))
                             .child(label(0.)),
                     )
                     .child(plot),
@@ -963,14 +1037,24 @@ impl Coincide {
         let muted = self.usage_muted(cx);
         let mode = DisplayMode::saved(&self.settings["usageDisplayMode"]);
         let period_name = format!("Last {} days", dashboard.days);
+        let cards = self.usage_cards(cx);
+        let enabled = PROVIDERS
+            .into_iter()
+            .filter(|provider| cards.iter().any(|card| card.account.provider == *provider))
+            .collect::<Vec<_>>();
         let records = dashboard
             .data
             .as_ref()
             .map(|data| data.records.as_slice())
             .unwrap_or_default();
-        let all_events = report::events(records, &[]);
-        let filter_provider = dashboard.provider;
-        let filter_account = dashboard.account.clone();
+        let all_events = report::events(records, &[])
+            .into_iter()
+            .filter(|event| enabled.contains(&event.provider.as_str()))
+            .collect::<Vec<_>>();
+        let filter_provider = dashboard
+            .provider
+            .filter(|provider| enabled.contains(provider));
+        let filter_account = filter_provider.and(dashboard.account.clone());
         let events = all_events
             .iter()
             .filter(|event| {
@@ -982,7 +1066,6 @@ impl Coincide {
             .cloned()
             .collect::<Vec<_>>();
         let report = Report::make(&events, dashboard.days, now, &Local);
-        let cards = self.usage_cards(cx);
         let shown = cards
             .iter()
             .filter(|card| {
@@ -1076,13 +1159,16 @@ impl Coincide {
 
         // Filters.
         let owner = cx.entity().downgrade();
+        let provider_choices = enabled.clone();
         let providers = Button::new("usage-provider-filter")
             .label(filter_provider.map(provider_name).unwrap_or("All agents"))
             .accessibility_label("Show usage for agent")
             .compact()
             .dropdown_caret(true)
             .accessible_menu_with_anchor(Anchor::TopRight, move |mut menu, _, _| {
-                for provider in std::iter::once(None).chain(PROVIDERS.into_iter().map(Some)) {
+                for provider in
+                    std::iter::once(None).chain(provider_choices.iter().copied().map(Some))
+                {
                     let owner = owner.clone();
                     menu = menu.item(
                         PopupMenuItem::new(provider.map(provider_name).unwrap_or("All agents"))
@@ -1340,6 +1426,23 @@ impl Coincide {
         }
 
         // Plan limits, one section per enabled account.
+        #[cfg(target_os = "macos")]
+        {
+            let toggle = self.setting_toggle(
+                "Show usage in the menu bar",
+                "Click the menu-bar item for account limits and usage.",
+                "showsUsageInMenuBar",
+                true,
+                "usage-menubar-enabled",
+                cx,
+            );
+            content = content.child(self.usage_section(
+                Some("Menu Bar".into_any_element()),
+                vec![toggle],
+                None,
+                cx,
+            ));
+        }
         if shown.is_empty() {
             content = content.child(self.usage_section(
                 Some("Plan Limits".into_any_element()),
@@ -1358,8 +1461,10 @@ impl Coincide {
         }
 
         // Activity in Coincide.
-        let activity = report::activity(
-            records,
+        let activity = report::activity_filtered(
+            records
+                .iter()
+                .filter(|record| enabled.contains(&record.provider.as_str())),
             dashboard.days,
             filter_provider,
             filter_account.as_deref(),
@@ -1435,5 +1540,39 @@ impl Coincide {
         }
         content = content.child(self.usage_section(None, vec![notes.into_any_element()], None, cx));
         content.into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod presentation_tests {
+    use super::{cards_for, chart_ceiling, compact_trend};
+    use crate::usage_dashboard::{Dashboard, LimitState};
+    use serde_json::json;
+
+    #[test]
+    fn large_trends_and_chart_ticks_remain_compact_and_meaningful() {
+        assert_eq!(compact_trend(21312.11), "2.13M%");
+        assert_eq!(compact_trend(0.025), "2.5%");
+        assert_eq!(chart_ceiling(842_000_000.), 1_000_000_000.);
+        assert_eq!(chart_ceiling(0.12), 0.2);
+        assert_eq!(chart_ceiling(0.), 1.);
+    }
+
+    #[test]
+    fn account_cards_follow_enabled_providers_in_swift_order() {
+        let settings = json!({"providers": {"claude":{"isEnabled":false},"codex":{"isEnabled":true},"cursor":{"isEnabled":false},"grok":{"isEnabled":true},"opencode":{"isEnabled":false},"antigravity":{"isEnabled":false}}});
+        let cards = cards_for(
+            &settings,
+            &Dashboard::default(),
+            None,
+            LimitState::NotChecked,
+        );
+        assert_eq!(
+            cards
+                .iter()
+                .map(|card| card.account.provider)
+                .collect::<Vec<_>>(),
+            ["codex", "grok"]
+        );
     }
 }

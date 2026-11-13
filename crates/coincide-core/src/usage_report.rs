@@ -413,6 +413,18 @@ pub fn activity<Tz: TimeZone>(
     now: DateTime<Utc>,
     zone: &Tz,
 ) -> Activity {
+    activity_filtered(records.iter(), period_days, provider, account, now, zone)
+}
+
+/// As `activity`, for the provider subset currently shown in a usage view.
+pub fn activity_filtered<'a, Tz: TimeZone>(
+    records: impl IntoIterator<Item = &'a TurnRecord>,
+    period_days: u32,
+    provider: Option<&str>,
+    account: Option<&str>,
+    now: DateTime<Utc>,
+    zone: &Tz,
+) -> Activity {
     let since = days_back(now.with_timezone(zone).date_naive(), period_days);
     let mut threads = HashSet::new();
     let mut activity = Activity::default();
@@ -605,5 +617,15 @@ mod tests {
         assert_eq!(all.active_seconds, 270.);
         let codex = activity(&records, 30, Some("codex"), Some("work"), now, &Utc);
         assert_eq!((codex.turns, codex.threads), (1, 1));
+        let enabled = activity_filtered(
+            records.iter().filter(|record| record.provider == "claude"),
+            7,
+            None,
+            None,
+            now,
+            &Utc,
+        );
+        assert_eq!((enabled.turns, enabled.threads), (1, 1));
+        assert_eq!(enabled.active_seconds, 90.);
     }
 }
