@@ -838,6 +838,20 @@ mod macos {
             }
         }
     }
+    #[cfg(test)]
+    mod native_permission_tests {
+        use super::*;
+
+        #[test]
+        fn native_permission_response_uses_json_booleans() {
+            // This only checks permission state; it never prompts or reads a
+            // window. Either granted or denied must cross the FFI as a bool.
+            let mut backend = NativeBackend::default();
+            let response = backend.invoke(json!({"op":"permissions"})).unwrap();
+            assert!(response["ax"].is_boolean(), "{response}");
+            assert!(response["screen"].is_boolean(), "{response}");
+        }
+    }
 }
 #[cfg(all(target_os = "macos", feature = "native-computer-use"))]
 use macos::NativeBackend;
