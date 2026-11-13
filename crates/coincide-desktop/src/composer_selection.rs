@@ -883,16 +883,23 @@ pub(super) struct ComposerSelection {
     pending_native_account: Option<native_accounts::PendingChoice>,
     error: String,
     pub(super) catalog: Value,
+    /// Last observed lists are scoped to the provider, account and, for named
+    /// profiles, the conversation. They are display data, never live proof.
+    catalogs: HashMap<(String, String, Option<String>), Value>,
     catalog_request: Option<CatalogRequest>,
     catalog_last_poll: Option<Instant>,
     /// Disk cache is display-only; each app session still needs a live read.
     catalog_attempted: std::collections::HashSet<(String, String)>,
+    catalog_attempted_at: HashMap<(String, String), Instant>,
+    catalog_retry_after: Option<Instant>,
+    named_catalog_retry_after: Option<(String, String, Instant)>,
     capability_pending: bool,
     pending_provider: Option<(
         crate::composer_commands::Command,
         crate::composer_commands::Submission,
     )>,
     pending_provider_picker: Option<PickerRestore>,
+    pending_model: Option<PendingPickerModel>,
     automatic_profile_context: Option<Value>,
     automatic_profile_quiet: Option<(Value, Instant)>,
     pub(super) expanded: bool,
@@ -910,6 +917,14 @@ struct PickerRestore {
     observation_only: bool,
     source: crate::composer_commands::Submission,
     ui_draft: String,
+}
+#[derive(Clone)]
+struct PendingPickerModel {
+    scope: Value,
+    provider: String,
+    account: String,
+    model: String,
+    request: CatalogRequest,
 }
 fn picker_restore_matches(
     pending: &PickerRestore,
@@ -940,6 +955,78 @@ struct CatalogRequest {
     provider: String,
     account_id: String,
     thread_id: Option<String>,
+}
+
+const CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(10 * 60);
+
+fn catalog_refresh_due(attempted: bool, last_attempt: Option<Instant>, now: Instant) -> bool {
+    !attempted
+        || last_attempt
+            .is_some_and(|at| now.saturating_duration_since(at) >= CATALOG_REFRESH_INTERVAL)
+}
+
+fn catalog_scope_matches(catalog: &Value, request: &CatalogRequest) -> bool {
+    catalog["provider"].as_str() == Some(request.provider.as_str())
+        && catalog["accountID"].as_str() == Some(request.account_id.as_str())
+        && match request.thread_id.as_deref() {
+            Some(thread) => catalog["threadId"].as_str() == Some(thread),
+            None => catalog["threadId"].is_null(),
+        }
+}
+
+fn catalog_affects_selection(thread: &Value, request: &CatalogRequest) -> bool {
+    thread["selection"]["provider"] == request.provider
+        && default_account_id(&thread["selection"]["accountID"])
+            == Some(request.account_id.as_str())
+        && request
+            .thread_id
+            .as_deref()
+            .is_none_or(|id| thread["id"] == id)
+}
+
+/// Keep the last scoped list visible while a later read is pending or fails.
+/// A result for another tab never changes the currently displayed catalog.
+fn should_replace_catalog(
+    current: &Value,
+    update: &Value,
+    request: &CatalogRequest,
+    visible: bool,
+) -> bool {
+    visible
+        && !(update["state"] != "ready"
+            && current["state"] == "ready"
+            && catalog_scope_matches(current, request))
+}
+
+fn pending_model_in_catalog(pending: &PendingPickerModel, catalog: &Value) -> bool {
+    catalog["state"] == "ready"
+        && catalog["requestId"] == pending.request.request_id
+        && catalog_scope_matches(catalog, &pending.request)
+        && (pending.request.thread_id.is_none() || catalog["authenticationChecked"] == true)
+        && catalog["models"]
+            .as_array()
+            .is_some_and(|rows| rows.iter().any(|row| row["id"] == pending.model))
+}
+
+fn cached_model_waits_for_refresh(
+    catalog: &Value,
+    request: &CatalogRequest,
+    provider: &str,
+    account: &str,
+    thread: Option<&str>,
+    model: &str,
+    shown_request: &str,
+) -> bool {
+    request.provider == provider
+        && request.account_id == account
+        && request.thread_id.as_deref() == thread
+        && request.request_id != shown_request
+        && catalog["state"] == "ready"
+        && catalog["requestId"].as_str() == Some(shown_request)
+        && catalog_scope_matches(catalog, request)
+        && catalog["models"]
+            .as_array()
+            .is_some_and(|rows| rows.iter().any(|row| row["id"] == model))
 }
 fn default_account_id(raw: &Value) -> Option<&str> {
     match raw {
@@ -1287,6 +1374,38 @@ fn account_problem(provider: &Value, account: &Value, configured: &Value) -> Opt
         _ => Some("Account support is not described by current capabilities.".into()),
     }
 }
+
+fn next_background_catalog(
+    providers: &[Value],
+    draft: &SelectionDraft,
+    accounts: &Value,
+    attempted: &std::collections::HashSet<(String, String)>,
+    last_attempt: &HashMap<(String, String), Instant>,
+    running: bool,
+    now: Instant,
+) -> Option<String> {
+    providers
+        .iter()
+        .filter(|row| row["enabled"] != false && row["modelDiscovery"]["supported"] == true)
+        .filter_map(|row| {
+            let provider = row["provider"].as_str()?;
+            let target = picker_account(draft, provider);
+            let account = default_account_id(&target)?;
+            if account != "default" || account_problem(row, &target, accounts).is_some() {
+                return None;
+            }
+            let key = (provider.to_owned(), account.to_owned());
+            let already = attempted.contains(&key);
+            if !catalog_refresh_due(already, last_attempt.get(&key).copied(), now)
+                || (already && provider == draft.provider && running)
+            {
+                return None;
+            }
+            Some((provider != draft.provider, provider.to_owned()))
+        })
+        .min_by_key(|(other, _)| *other)
+        .map(|(_, provider)| provider)
+}
 /// Whether a capability read may prefetch the saved provider's catalog so the
 /// composer's chip can show display names. This must never run while the picker
 /// is open: replacing the catalog there swaps the agent tab being browsed back
@@ -1295,15 +1414,12 @@ fn account_problem(provider: &Value, account: &Value, configured: &Value) -> Opt
 fn prefetches_saved_catalog(
     picker_open: bool,
     request_pending: bool,
-    catalog_provider: Option<&str>,
-    saved_provider: &str,
+    _catalog_provider: Option<&str>,
+    _saved_provider: &str,
     discovery_supported: bool,
     attempted_in_session: bool,
 ) -> bool {
-    !picker_open
-        && !request_pending
-        && (!attempted_in_session || catalog_provider != Some(saved_provider))
-        && discovery_supported
+    !picker_open && !request_pending && !attempted_in_session && discovery_supported
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1374,6 +1490,7 @@ impl Coincide {
     pub(super) fn selection_change_pending(&self) -> bool {
         self.selection_ui.pending_native_account.is_some()
             || self.selection_ui.pending_provider.is_some()
+            || self.selection_ui.pending_model.is_some()
             || self
                 .selection_ui
                 .pending_provider_picker
@@ -1431,23 +1548,42 @@ impl Coincide {
             &self.selection_ui.capabilities,
             provider.and_then(|provider| provider["modelDiscovery"]["supported"].as_bool()),
         );
+        let codex_request_pending =
+            self.selection_ui
+                .catalog_request
+                .as_ref()
+                .is_some_and(|request| {
+                    request.provider == "codex"
+                        && request.account_id == "default"
+                        && request.thread_id.is_none()
+                });
         match send_catalog_action(
             selection,
             false,
             self.selection_ui.catalog_attempted.contains(&key),
-            self.selection_ui.catalog_request.is_some(),
+            codex_request_pending,
             discovery,
         ) {
             SendCatalogAction::Proceed => return false,
             SendCatalogAction::Wait => return true,
             SendCatalogAction::Unavailable => {
-                self.selection_ui.catalog_attempted.insert(key);
+                self.selection_ui.catalog_attempted.insert(key.clone());
+                self.selection_ui
+                    .catalog_attempted_at
+                    .insert(key, Instant::now());
                 return false;
             }
             SendCatalogAction::Refresh => {}
         }
         self.refresh_model_catalog(Some("codex".into()), cx);
-        self.selection_ui.catalog_request.is_some()
+        self.selection_ui
+            .catalog_request
+            .as_ref()
+            .is_some_and(|request| {
+                request.provider == "codex"
+                    && request.account_id == "default"
+                    && request.thread_id.is_none()
+            })
             || !self.selection_ui.catalog_attempted.contains(&key)
     }
     fn switch_provider_from_history(
@@ -1886,12 +2022,16 @@ impl Coincide {
         if native_revision != self.selection_ui.native_revision {
             self.selection_ui.native_revision = native_revision;
             self.selection_ui.capability_cache.invalidate();
+            self.selection_ui.catalog_attempted.clear();
+            self.selection_ui.catalog_attempted_at.clear();
+            self.selection_ui.named_catalog_retry_after = None;
         }
         if self
             .selection_ui
             .capability_cache
             .is_current(&(id.clone(), selection, running))
         {
+            self.resume_picker_model(window, cx);
             return;
         }
         let draft = self
@@ -1907,8 +2047,12 @@ impl Coincide {
         }
         self.refresh_selection_capabilities(cx);
         self.observe_saved_profile_once(cx);
+        self.resume_picker_model(window, cx);
     }
     pub(super) fn refresh_provider_preferences(&mut self, cx: &mut Context<Self>) {
+        self.selection_ui.catalog_attempted.clear();
+        self.selection_ui.catalog_attempted_at.clear();
+        self.selection_ui.named_catalog_retry_after = None;
         self.selection_ui.capability_cache.invalidate();
         self.refresh_selection_capabilities(cx);
     }
@@ -1920,6 +2064,9 @@ impl Coincide {
         if native_revision != self.selection_ui.native_revision {
             self.selection_ui.native_revision = native_revision;
             self.selection_ui.capability_cache.invalidate();
+            self.selection_ui.catalog_attempted.clear();
+            self.selection_ui.catalog_attempted_at.clear();
+            self.selection_ui.named_catalog_retry_after = None;
         }
         let Some(thread) = self.selected.as_ref() else {
             return;
@@ -2033,6 +2180,7 @@ impl Coincide {
         self.selection_ui.automatic_profile_quiet = None;
         self.selection_ui.pending_provider = None;
         self.selection_ui.pending_provider_picker = None;
+        self.selection_ui.pending_model = None;
         self.selection_ui.expanded = false;
     }
     pub(super) fn retry_selected_account_readiness(&mut self) {
@@ -2465,33 +2613,101 @@ impl Coincide {
     /// Show the last catalog at once and only read again when there is none.
     /// Opening the picker never turns a ready list back into "Loading models…".
     fn ensure_picker_catalog(&mut self, cx: &mut Context<Self>) {
-        let Some(thread) = self.selected.as_ref() else {
+        let Some((provider, account_id, scoped_thread)) = self.catalog_view_scope() else {
             return;
         };
-        let Some(draft) = self.selection_ui.drafts.get(&text(thread, "id")) else {
-            return;
+        let account = if account_id == "default" {
+            Value::Null
+        } else {
+            json!(account_id)
         };
-        let provider = self
-            .selection_ui
-            .tab_provider
-            .clone()
-            .unwrap_or_else(|| draft.provider.clone());
+        let scope = CatalogRequest {
+            request_id: String::new(),
+            provider: provider.clone(),
+            account_id: account_id.clone(),
+            thread_id: scoped_thread.clone(),
+        };
+        if !(self.selection_ui.catalog["state"] == "ready"
+            && catalog_scope_matches(&self.selection_ui.catalog, &scope))
+            && let Some(cached) = self.cached_catalog(&provider, &account, scoped_thread.as_deref())
+        {
+            self.selection_ui.catalog = cached;
+        }
+        if self.selection_ui.catalog_request.is_some() {
+            if !(self.selection_ui.catalog["state"] == "ready"
+                && catalog_scope_matches(&self.selection_ui.catalog, &scope))
+            {
+                self.selection_ui.catalog = json!({"provider":provider,"accountID":account_id,"threadId":scoped_thread,"state":"loading","models":[]});
+            }
+            // Let the current read finish; its completion will refresh the tab
+            // now being viewed if it still needs a live catalog.
+            return;
+        }
         let catalog = &self.selection_ui.catalog;
-        let account = picker_account(draft, &provider);
-        let account = default_account_id(&account).unwrap_or("default");
+        let key = (provider.clone(), account_id.clone());
+        let due = catalog_refresh_due(
+            self.selection_ui.catalog_attempted.contains(&key),
+            self.selection_ui.catalog_attempted_at.get(&key).copied(),
+            Instant::now(),
+        );
+        if catalog_scope_matches(catalog, &scope)
+            && matches!(catalog["state"].as_str(), Some("failed" | "unsupported"))
+            && scoped_thread.is_none()
+            && !due
+        {
+            return;
+        }
+        if catalog["state"] == "ready" && catalog_scope_matches(catalog, &scope) {
+            if scoped_thread.is_some()
+                && self.selection_ui.capabilities["namedModels"]["accountCatalogReady"] == true
+            {
+                return;
+            }
+            if scoped_thread.is_none() && !due {
+                return;
+            }
+        }
         if self
             .selection_ui
-            .catalog_attempted
-            .contains(&(provider.clone(), account.to_owned()))
-            && catalog["provider"] == provider.as_str()
-            && catalog["state"] == "ready"
-            && catalog["accountID"].as_str() == default_account_id(&draft.account)
+            .catalog_retry_after
+            .is_some_and(|at| Instant::now() < at)
         {
+            return;
+        }
+        if let Some(thread) = scoped_thread.as_deref()
+            && self
+                .selection_ui
+                .named_catalog_retry_after
+                .as_ref()
+                .is_some_and(|(retry_thread, retry_account, at)| {
+                    retry_thread == thread && retry_account == &account_id && Instant::now() < *at
+                })
+        {
+            return;
+        }
+        if scoped_thread.is_some() {
+            if let Some(thread) = self.selected.as_ref()
+                && named_models::named_thread(thread)
+                && self.selection_ui.capabilities["namedModels"]["refreshAllowed"] == true
+            {
+                let id = text(thread, "id");
+                let selection = thread["selection"].clone();
+                self.refresh_named_profile_models(&id, &selection, cx);
+            } else {
+                self.observe_saved_profile_once(cx);
+            }
             return;
         }
         self.refresh_model_catalog(None, cx);
     }
     fn refresh_model_catalog(&mut self, provider_override: Option<String>, cx: &mut Context<Self>) {
+        if self
+            .selection_ui
+            .catalog_retry_after
+            .is_some_and(|at| Instant::now() < at)
+        {
+            return;
+        }
         let Some(thread) = self.selected.as_ref() else {
             return;
         };
@@ -2505,8 +2721,15 @@ impl Coincide {
         let tab_provider = provider_override
             .or_else(|| self.selection_ui.tab_provider.clone())
             .unwrap_or_else(|| draft.provider.clone());
+        let target_account = picker_account(draft, &tab_provider);
+        let account_id = default_account_id(&target_account)
+            .unwrap_or("default")
+            .to_owned();
         if let Some(pending) = self.selection_ui.catalog_request.as_ref() {
-            if pending.provider == tab_provider {
+            if pending.provider == tab_provider
+                && pending.account_id == account_id
+                && pending.thread_id.is_none()
+            {
                 return;
             }
             // The reader moved to another agent while this provider's first
@@ -2523,28 +2746,27 @@ impl Coincide {
         else {
             return;
         };
-        let target_account = picker_account(draft, &tab_provider);
         if provider["modelDiscovery"]["supported"] != true
             || account_problem(provider, &target_account, &self.selection_ui.accounts).is_some()
         {
             return;
         }
         let provider = tab_provider;
-        let account_id = default_account_id(&target_account)
-            .unwrap_or("default")
-            .to_owned();
-        if self.selection_ui.catalog["state"] != "ready"
-            || self.selection_ui.catalog["provider"] != provider.as_str()
+        let scope = CatalogRequest {
+            request_id: String::new(),
+            provider: provider.clone(),
+            account_id: account_id.clone(),
+            thread_id: None,
+        };
+        if self.catalog_request_visible(&scope)
+            && !(self.selection_ui.catalog["state"] == "ready"
+                && catalog_scope_matches(&self.selection_ui.catalog, &scope))
+            && let Some(cached) = self.cached_catalog(&provider, &target_account, None)
         {
-            if let Some(cached) = self.cached_catalog(&provider, &target_account) {
-                self.selection_ui.catalog = cached;
-            }
+            self.selection_ui.catalog = cached;
         }
         let response = (|| -> Result<Value> {
             let mut engine = try_state(&self.engine)?;
-            let id = text(thread, "id");
-            let current = engine.store.thread(&id)?;
-            draft.params(&current)?;
             selection_response(
                 &mut engine,
                 "agent.models.refresh",
@@ -2556,6 +2778,9 @@ impl Coincide {
                 self.selection_ui
                     .catalog_attempted
                     .insert((provider.clone(), account_id.clone()));
+                self.selection_ui
+                    .catalog_attempted_at
+                    .insert((provider.clone(), account_id.clone()), Instant::now());
                 let request = CatalogRequest {
                     request_id: text(&value, "requestId"),
                     provider,
@@ -2563,22 +2788,29 @@ impl Coincide {
                     thread_id: None,
                 };
                 if request.request_id.is_empty() || !catalog_response_matches(&value, &request) {
-                    self.selection_ui.catalog = json!({"provider":request.provider,"accountID":request.account_id,"state":"failed","error":"Invalid catalog refresh response"});
+                    let failed = json!({"provider":request.provider,"accountID":request.account_id,"state":"failed","error":"Invalid catalog refresh response"});
+                    if should_replace_catalog(
+                        &self.selection_ui.catalog,
+                        &failed,
+                        &request,
+                        self.catalog_request_visible(&request),
+                    ) {
+                        self.selection_ui.catalog = failed;
+                    }
                 } else {
-                    let keeps_ready_list = self.selection_ui.catalog["state"] == "ready"
-                        && self.selection_ui.catalog["provider"] == request.provider.as_str();
-                    let background_opencode = keeps_ready_list && request.provider == "opencode";
-                    if !keeps_ready_list {
+                    let visible = self.catalog_request_visible(&request);
+                    let revokes_codex = request.provider == "codex"
+                        && self.catalog_request_affects_selection(&request);
+                    if should_replace_catalog(&self.selection_ui.catalog, &value, &request, visible)
+                    {
                         self.selection_ui.catalog = value;
                     }
                     self.selection_ui.catalog_request = Some(request);
                     self.selection_ui.catalog_last_poll = None;
                     // Starting a new job revokes the prior private proof. Do not
-                    // keep displaying its effective default as currently proved.
-                    // OpenCode variants need no proof, so its cached list stays
-                    // usable while the background read finishes.
-                    if !background_opencode {
-                        self.selection_ui.capabilities = Value::Null;
+                    // use stale Codex capability proof for the current selection.
+                    if revokes_codex {
+                        self.selection_ui.capability_cache.invalidate();
                         self.selection_ui.context = None;
                     }
                 }
@@ -2586,19 +2818,106 @@ impl Coincide {
             Err(error) if engine_busy(&error) => {
                 self.selection_ui.capability_cache.invalidate();
                 self.selection_ui.context = None;
+                self.selection_ui.catalog_retry_after =
+                    Some(Instant::now() + Duration::from_millis(500));
+                return;
+            }
+            Err(error)
+                if error.to_string().contains("Too many model catalog reads")
+                    || error
+                        .to_string()
+                        .contains("Too many pending model catalog reads") =>
+            {
+                self.selection_ui.catalog_retry_after =
+                    Some(Instant::now() + Duration::from_millis(500));
                 return;
             }
             Err(error) => {
                 self.selection_ui
                     .catalog_attempted
                     .insert((provider.clone(), account_id.clone()));
-                self.selection_ui.catalog = json!({"provider":provider,"accountID":account_id,"state":"failed","error":format!("Catalog refresh failed: {error}")})
+                self.selection_ui
+                    .catalog_attempted_at
+                    .insert((provider.clone(), account_id.clone()), Instant::now());
+                let failed = json!({"provider":provider,"accountID":account_id,"state":"failed","error":format!("Catalog refresh failed: {error}")});
+                if should_replace_catalog(
+                    &self.selection_ui.catalog,
+                    &failed,
+                    &scope,
+                    self.catalog_request_visible(&scope),
+                ) {
+                    self.selection_ui.catalog = failed;
+                }
             }
         }
         cx.notify();
     }
+
+    /// Read enabled providers one at a time while the picker is closed. The
+    /// provider-specific result is cached without changing the current tab.
+    fn prefetch_background_catalog(&mut self, cx: &mut Context<Self>) {
+        if self
+            .selection_ui
+            .catalog_retry_after
+            .is_some_and(|at| Instant::now() < at)
+        {
+            return;
+        }
+        if self.selection_ui.expanded {
+            if self.selection_ui.facet == PickerFacet::Model {
+                self.ensure_picker_catalog(cx);
+            }
+            return;
+        }
+        if self.selection_change_pending() || self.selection_ui.capability_pending {
+            return;
+        }
+        let Some(thread) = self.selected.as_ref() else {
+            return;
+        };
+        let id = text(thread, "id");
+        let Some(draft) = self.selection_ui.drafts.get(&id) else {
+            return;
+        };
+        let saved_provider = draft.provider.clone();
+        let saved_account = picker_account(draft, &saved_provider);
+        let account_id = default_account_id(&saved_account).unwrap_or("default");
+        let scoped_thread =
+            (saved_provider == "codex" && account_id != "default").then_some(id.clone());
+        let scope = CatalogRequest {
+            request_id: String::new(),
+            provider: saved_provider.clone(),
+            account_id: account_id.to_owned(),
+            thread_id: scoped_thread.clone(),
+        };
+        if !(self.selection_ui.catalog["state"] == "ready"
+            && catalog_scope_matches(&self.selection_ui.catalog, &scope))
+            && let Some(cached) =
+                self.cached_catalog(&saved_provider, &saved_account, scoped_thread.as_deref())
+        {
+            self.selection_ui.catalog = cached;
+            cx.notify();
+        }
+        let Some(providers) = self.selection_ui.capabilities["providers"].as_array() else {
+            return;
+        };
+        let candidate = next_background_catalog(
+            providers,
+            draft,
+            &self.selection_ui.accounts,
+            &self.selection_ui.catalog_attempted,
+            &self.selection_ui.catalog_attempted_at,
+            self.running.contains(&id),
+            Instant::now(),
+        );
+        if let Some(provider) = candidate {
+            self.refresh_model_catalog(Some(provider), cx);
+        }
+    }
+
     pub(super) fn poll_selection_catalog(&mut self, cx: &mut Context<Self>) {
         let Some(request) = self.selection_ui.catalog_request.clone() else {
+            self.prefetch_background_catalog(cx);
             return;
         };
         if self
@@ -2620,62 +2939,232 @@ impl Coincide {
                 json!({"requestId":request.request_id}),
             )
         };
+        let mut changed = false;
         match call(&self.engine, method, params) {
             Ok(value) if catalog_response_matches(&value, &request) => {
                 let done = value["state"] != "loading";
-                self.selection_ui.catalog = value;
+                let visible = self.catalog_request_visible(&request);
+                if value["state"] == "ready" {
+                    self.remember_catalog(&request, &value);
+                }
+                if should_replace_catalog(&self.selection_ui.catalog, &value, &request, visible)
+                    && self.selection_ui.catalog != value
+                {
+                    self.selection_ui.catalog = value.clone();
+                    changed = true;
+                }
                 if done {
+                    changed = true;
                     self.selection_ui.catalog_request = None;
-                    // Capability rows contain live proof, not the disk cache.
-                    // Re-read them when any provider's discovery completes.
-                    self.selection_ui.capability_cache.invalidate();
-                    self.selection_ui.context = None;
-                    if self.selection_ui.catalog["state"] == "ready"
-                        && let Ok(directory) = coincide_core::control::data_directory()
+                    if let Some(thread) = &request.thread_id
+                        && value["state"] != "ready"
                     {
-                        let _ = std::fs::create_dir_all(&directory);
-                        let _ = std::fs::write(
-                            directory.join("model-catalog-cache.json"),
-                            self.selection_ui.catalog.to_string(),
-                        );
-                        if let Some(provider) = self.selection_ui.catalog["provider"].as_str() {
-                            let _ = std::fs::write(
-                                directory.join(format!("model-catalog-cache-{provider}.json")),
-                                self.selection_ui.catalog.to_string(),
-                            );
-                        }
+                        self.selection_ui.named_catalog_retry_after = Some((
+                            thread.clone(),
+                            request.account_id.clone(),
+                            Instant::now() + Duration::from_secs(60),
+                        ));
                     }
-                    if request.thread_id.is_some() {
+                    // Only the selected provider can change this conversation's
+                    // capability proof. Background reads for other tabs must
+                    // not reload its entire transcript.
+                    if self.catalog_request_affects_selection(&request) {
+                        self.selection_ui.capability_cache.invalidate();
                         self.selection_ui.context = None;
                     }
                     // Reasoning choices for OpenCode are part of the catalog.
-                    if self.selection_ui.catalog["provider"] == "opencode" {
+                    if request.provider == "opencode"
+                        && self.catalog_request_affects_selection(&request)
+                    {
                         self.selection_ui.capability_cache.invalidate();
                         self.refresh_selection_capabilities(cx);
                     }
                     // A tab opened while another agent's read was in flight
                     // waits here instead of staying on an empty list.
-                    let browsed = self.selection_ui.tab_provider.clone();
                     if self.selection_ui.expanded
                         && self.selection_ui.catalog_request.is_none()
-                        && browsed.as_deref() != self.selection_ui.catalog["provider"].as_str()
+                        && !visible
                     {
-                        self.refresh_model_catalog(browsed, cx);
+                        self.ensure_picker_catalog(cx);
                     }
                 }
             }
             Ok(_) => {
-                self.selection_ui.catalog = json!({"provider":request.provider,"accountID":request.account_id,"state":"failed","error":"Catalog scope or response changed; refresh explicitly to retry"});
+                changed = true;
+                if let Some(thread) = &request.thread_id {
+                    self.selection_ui.named_catalog_retry_after = Some((
+                        thread.clone(),
+                        request.account_id.clone(),
+                        Instant::now() + Duration::from_secs(60),
+                    ));
+                }
+                let failed = json!({"provider":request.provider,"accountID":request.account_id,"threadId":request.thread_id,"state":"failed","error":"Catalog scope or response changed"});
+                if should_replace_catalog(
+                    &self.selection_ui.catalog,
+                    &failed,
+                    &request,
+                    self.catalog_request_visible(&request),
+                ) {
+                    self.selection_ui.catalog = failed;
+                }
                 self.selection_ui.catalog_request = None;
             }
             Err(error) if engine_busy(&error) => return,
             Err(error) => {
-                self.selection_ui.catalog = json!({"provider":request.provider,"accountID":request.account_id,"state":"failed","error":format!("Catalog status unavailable: {error}")});
+                changed = true;
+                if let Some(thread) = &request.thread_id {
+                    self.selection_ui.named_catalog_retry_after = Some((
+                        thread.clone(),
+                        request.account_id.clone(),
+                        Instant::now() + Duration::from_secs(60),
+                    ));
+                }
+                let failed = json!({"provider":request.provider,"accountID":request.account_id,"threadId":request.thread_id,"state":"failed","error":format!("Catalog status unavailable: {error}")});
+                if should_replace_catalog(
+                    &self.selection_ui.catalog,
+                    &failed,
+                    &request,
+                    self.catalog_request_visible(&request),
+                ) {
+                    self.selection_ui.catalog = failed;
+                }
                 self.selection_ui.catalog_request = None;
             }
         }
-        cx.notify();
+        if changed {
+            cx.notify();
+        }
     }
+
+    /// If a cached row is clicked during its refresh, remember the choice and
+    /// validate it against that refresh before changing the conversation.
+    fn defer_picker_model(
+        &mut self,
+        thread_id: &str,
+        provider: &str,
+        model: &str,
+        shown_request: &str,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(thread) = self
+            .selected
+            .as_ref()
+            .filter(|thread| thread["id"] == thread_id)
+        else {
+            return false;
+        };
+        let Some(draft) = self.selection_ui.drafts.get(thread_id) else {
+            return false;
+        };
+        let account = picker_account(draft, provider);
+        let Some(account_id) = default_account_id(&account) else {
+            return false;
+        };
+        let Some(request) = self.selection_ui.catalog_request.as_ref() else {
+            return false;
+        };
+        let expected_thread = (provider == "codex" && account_id != "default").then_some(thread_id);
+        let catalog = &self.selection_ui.catalog;
+        if !cached_model_waits_for_refresh(
+            catalog,
+            request,
+            provider,
+            account_id,
+            expected_thread,
+            model,
+            shown_request,
+        ) {
+            return false;
+        }
+        self.selection_ui.pending_model = Some(PendingPickerModel {
+            scope: picker_view_scope(thread),
+            provider: provider.to_owned(),
+            account: account_id.to_owned(),
+            model: model.to_owned(),
+            request: request.clone(),
+        });
+        self.selection_ui.expanded = false;
+        self.selection_ui.tab_provider = None;
+        cx.notify();
+        true
+    }
+
+    fn resume_picker_model(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(pending) = self.selection_ui.pending_model.clone() else {
+            return;
+        };
+        let id = text(&pending.scope, "id");
+        if !self
+            .selected
+            .as_ref()
+            .is_some_and(|thread| picker_view_scope(thread) == pending.scope)
+        {
+            self.selection_ui.pending_model = None;
+            self.finish_pending_selection(&id, false);
+            return;
+        }
+        if self
+            .selection_ui
+            .catalog_request
+            .as_ref()
+            .is_some_and(|request| request.request_id == pending.request.request_id)
+            || self.selection_ui.capability_pending
+        {
+            return;
+        }
+        let key = (
+            pending.provider.clone(),
+            pending.account.clone(),
+            pending.request.thread_id.clone(),
+        );
+        let catalog = self.selection_ui.catalogs.get(&key).cloned();
+        self.selection_ui.pending_model = None;
+        let Some(catalog) = catalog.filter(|catalog| pending_model_in_catalog(&pending, catalog))
+        else {
+            self.status = "That model is unavailable. Your current selection was kept.".into();
+            self.finish_pending_selection(&id, false);
+            cx.notify();
+            return;
+        };
+        self.selection_ui.catalog = catalog;
+        if pending.request.thread_id.is_some() {
+            let selection = pending.scope["selection"].clone();
+            self.select_named_profile_model(
+                &id,
+                &selection,
+                &pending.model,
+                Some(&pending.request.request_id),
+                None,
+                cx,
+            );
+        } else {
+            self.choose_picker_model(
+                &id,
+                &pending.provider,
+                &pending.model,
+                &pending.request.request_id,
+                window,
+                cx,
+            );
+        }
+        let applied = self.selected.as_ref().is_some_and(|thread| {
+            thread["id"] == id
+                && thread["selection"]["provider"] == pending.provider
+                && thread["selection"]["modelID"] == pending.model
+        });
+        let staged = self.running.contains(&id)
+            && self.selection_ui.drafts.get(&id).is_some_and(|draft| {
+                draft.provider == pending.provider
+                    && draft.custom == pending.model
+                    && draft.has_edits()
+            });
+        if !applied && !staged && self.status.is_empty() {
+            self.status =
+                "Model change could not be applied. Your previous selection was kept.".into();
+        }
+        self.finish_pending_selection(&id, applied || staged);
+    }
+
     /// Chooses a discovered model the way Swift's picker does: one click saves
     /// the provider and model, closes the popover, and leaves effort at the
     /// provider's default until the reasoning chips choose one.
@@ -2688,6 +3177,9 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.defer_picker_model(thread_id, provider, model, request_id, cx) {
+            return;
+        }
         let Some(thread) = self
             .selected
             .as_ref()
@@ -3495,9 +3987,62 @@ impl Coincide {
         }
         chips.into_any_element()
     }
-    /// The last ready catalog for one provider, used to show its models
-    /// immediately when switching tabs instead of waiting for a cold read.
-    fn cached_catalog(&self, provider: &str, account: &Value) -> Option<Value> {
+    fn catalog_view_scope(&self) -> Option<(String, String, Option<String>)> {
+        let thread = self.selected.as_ref()?;
+        let id = text(thread, "id");
+        let draft = self.selection_ui.drafts.get(&id)?;
+        let provider = if self.selection_ui.expanded {
+            self.selection_ui
+                .tab_provider
+                .as_ref()
+                .unwrap_or(&draft.provider)
+        } else {
+            &draft.provider
+        };
+        let account = picker_account(draft, provider);
+        let account = default_account_id(&account)?.to_owned();
+        let scoped_thread = (provider == "codex" && account != "default").then_some(id);
+        Some((provider.clone(), account, scoped_thread))
+    }
+
+    fn catalog_request_visible(&self, request: &CatalogRequest) -> bool {
+        self.catalog_view_scope().is_some_and(|scope| {
+            scope
+                == (
+                    request.provider.clone(),
+                    request.account_id.clone(),
+                    request.thread_id.clone(),
+                )
+        })
+    }
+
+    fn catalog_request_affects_selection(&self, request: &CatalogRequest) -> bool {
+        self.selected
+            .as_ref()
+            .is_some_and(|thread| catalog_affects_selection(thread, request))
+    }
+
+    /// The last ready catalog for this exact scope, used before any refresh.
+    fn cached_catalog(
+        &self,
+        provider: &str,
+        account: &Value,
+        thread: Option<&str>,
+    ) -> Option<Value> {
+        let account = default_account_id(account)?;
+        let key = (
+            provider.to_owned(),
+            account.to_owned(),
+            thread.map(str::to_owned),
+        );
+        if let Some(cached) = self.selection_ui.catalogs.get(&key) {
+            return Some(cached.clone());
+        }
+        // Named-profile lists remain in memory and are scoped to a thread;
+        // the shared on-disk provider file is for the default account only.
+        if thread.is_some() || account != "default" {
+            return None;
+        }
         let directory = coincide_core::control::data_directory().ok()?;
         let text =
             std::fs::read_to_string(directory.join(format!("model-catalog-cache-{provider}.json")))
@@ -3505,8 +4050,47 @@ impl Coincide {
         let cached = serde_json::from_str::<Value>(&text).ok()?;
         (cached["state"] == "ready"
             && cached["provider"] == provider
-            && cached["accountID"].as_str()? == default_account_id(account)?)
+            && cached["accountID"].as_str() == Some(account)
+            && cached["threadId"].is_null())
         .then_some(cached)
+    }
+
+    fn remember_catalog(&mut self, request: &CatalogRequest, catalog: &Value) {
+        if catalog["state"] != "ready" || !catalog_scope_matches(catalog, request) {
+            return;
+        }
+        let key = (
+            request.provider.clone(),
+            request.account_id.clone(),
+            request.thread_id.clone(),
+        );
+        if self.selection_ui.catalogs.len() >= 32
+            && !self.selection_ui.catalogs.contains_key(&key)
+            && let Some(old) = self.selection_ui.catalogs.keys().next().cloned()
+        {
+            self.selection_ui.catalogs.remove(&old);
+        }
+        self.selection_ui.catalogs.insert(key, catalog.clone());
+        if request.thread_id.is_none()
+            && request.account_id == "default"
+            && matches!(
+                request.provider.as_str(),
+                "codex" | "claude" | "opencode" | "cursor" | "grok" | "antigravity"
+            )
+            && let Ok(directory) = coincide_core::control::data_directory()
+        {
+            let _ = std::fs::create_dir_all(&directory);
+            let _ = std::fs::write(
+                directory.join(format!("model-catalog-cache-{}.json", request.provider)),
+                catalog.to_string(),
+            );
+            if self.catalog_request_visible(request) {
+                let _ = std::fs::write(
+                    directory.join("model-catalog-cache.json"),
+                    catalog.to_string(),
+                );
+            }
+        }
     }
     /// Swift's picker opens as a popover above the control that was clicked,
     /// never as a panel inside the composer. The whole window behind it closes
@@ -4106,6 +4690,202 @@ impl Coincide {
 #[cfg(test)]
 mod tests {
     #[::core::prelude::v1::test]
+    fn background_catalog_updates_preserve_scoped_lists_for_every_provider() {
+        use super::*;
+        for provider in [
+            "codex",
+            "claude",
+            "opencode",
+            "cursor",
+            "grok",
+            "antigravity",
+        ] {
+            let request = CatalogRequest {
+                request_id: "new".into(),
+                provider: provider.into(),
+                account_id: "default".into(),
+                thread_id: None,
+            };
+            let old = json!({"requestId":"old","provider":provider,"accountID":"default","state":"ready","models":[{"id":"one"}]});
+            let loading = json!({"requestId":"new","provider":provider,"accountID":"default","state":"loading","models":[]});
+            let failed = json!({"requestId":"new","provider":provider,"accountID":"default","state":"failed"});
+            let ready = json!({"requestId":"new","provider":provider,"accountID":"default","state":"ready","models":[{"id":"two"}]});
+            assert!(!should_replace_catalog(&old, &loading, &request, true));
+            assert!(!should_replace_catalog(&old, &failed, &request, true));
+            assert!(should_replace_catalog(&old, &ready, &request, true));
+            assert!(!should_replace_catalog(&old, &ready, &request, false));
+            let mut wrong_account = old.clone();
+            wrong_account["accountID"] = json!("other");
+            assert!(should_replace_catalog(
+                &wrong_account,
+                &loading,
+                &request,
+                true
+            ));
+            let mut wrong_thread = old.clone();
+            wrong_thread["threadId"] = json!("other-thread");
+            assert!(!catalog_scope_matches(&wrong_thread, &request));
+        }
+    }
+
+    #[::core::prelude::v1::test]
+    fn cached_choice_waits_for_the_matching_fresh_list_and_preserves_scope() {
+        use super::*;
+        let request = CatalogRequest {
+            request_id: "new".into(),
+            provider: "codex".into(),
+            account_id: "profile".into(),
+            thread_id: Some("thread-a".into()),
+        };
+        let old = json!({"requestId":"old","provider":"codex","accountID":"profile","threadId":"thread-a","state":"ready","models":[{"id":"chosen"}]});
+        assert!(cached_model_waits_for_refresh(
+            &old,
+            &request,
+            "codex",
+            "profile",
+            Some("thread-a"),
+            "chosen",
+            "old"
+        ));
+        assert!(!cached_model_waits_for_refresh(
+            &old,
+            &request,
+            "codex",
+            "other",
+            Some("thread-a"),
+            "chosen",
+            "old"
+        ));
+        assert!(!cached_model_waits_for_refresh(
+            &old,
+            &request,
+            "codex",
+            "profile",
+            Some("thread-b"),
+            "chosen",
+            "old"
+        ));
+        assert!(!cached_model_waits_for_refresh(
+            &old,
+            &request,
+            "codex",
+            "profile",
+            Some("thread-a"),
+            "missing",
+            "old"
+        ));
+        let pending = PendingPickerModel {
+            scope: json!({"id":"thread-a"}),
+            provider: "codex".into(),
+            account: "profile".into(),
+            model: "chosen".into(),
+            request,
+        };
+        let thread =
+            json!({"id":"thread-a","selection":{"provider":"codex","accountID":"profile"}});
+        assert!(catalog_affects_selection(&thread, &pending.request));
+        let mut different = thread.clone();
+        different["selection"]["accountID"] = json!("other");
+        assert!(!catalog_affects_selection(&different, &pending.request));
+        different = thread.clone();
+        different["id"] = json!("thread-b");
+        assert!(!catalog_affects_selection(&different, &pending.request));
+        different = thread.clone();
+        different["selection"]["provider"] = json!("claude");
+        assert!(!catalog_affects_selection(&different, &pending.request));
+        let mut fresh = old.clone();
+        fresh["requestId"] = json!("new");
+        fresh["authenticationChecked"] = json!(true);
+        assert!(pending_model_in_catalog(&pending, &fresh));
+        fresh["threadId"] = json!("thread-b");
+        assert!(!pending_model_in_catalog(&pending, &fresh));
+        fresh["threadId"] = json!("thread-a");
+        fresh["models"] = json!([]);
+        assert!(!pending_model_in_catalog(&pending, &fresh));
+    }
+
+    #[::core::prelude::v1::test]
+    fn automatic_model_refresh_is_bounded_and_retries_after_the_interval() {
+        use super::*;
+        let now = Instant::now();
+        assert!(catalog_refresh_due(false, None, now));
+        assert!(!catalog_refresh_due(true, Some(now), now));
+        assert!(catalog_refresh_due(
+            true,
+            Some(now - CATALOG_REFRESH_INTERVAL),
+            now
+        ));
+        assert!(!catalog_refresh_due(
+            true,
+            Some(now + Duration::from_secs(1)),
+            now
+        ));
+    }
+
+    #[::core::prelude::v1::test]
+    fn background_prefetch_prioritizes_current_provider_then_all_enabled_providers() {
+        use super::*;
+        let names = [
+            "claude",
+            "codex",
+            "opencode",
+            "cursor",
+            "grok",
+            "antigravity",
+        ];
+        let providers = names.iter().map(|provider| json!({"provider":provider,"enabled":true,"accountPolicy":"default_only","modelDiscovery":{"supported":true}})).collect::<Vec<_>>();
+        let thread = json!({"id":"thread","selection":{"provider":"codex","accountID":null,"modelID":"one"},"accessMode":"approval","interactionMode":"build"});
+        let draft = SelectionDraft::from_thread(&thread);
+        let mut attempted = std::collections::HashSet::new();
+        let mut times = HashMap::new();
+        let now = Instant::now();
+        let next = |attempted: &_, times: &_, running, now| {
+            next_background_catalog(
+                &providers,
+                &draft,
+                &Value::Null,
+                attempted,
+                times,
+                running,
+                now,
+            )
+        };
+        for name in [
+            "codex",
+            "claude",
+            "opencode",
+            "cursor",
+            "grok",
+            "antigravity",
+        ] {
+            assert_eq!(next(&attempted, &times, false, now).as_deref(), Some(name));
+            let key = (name.to_owned(), "default".to_owned());
+            attempted.insert(key.clone());
+            times.insert(key, now);
+        }
+        assert_eq!(next(&attempted, &times, false, now), None);
+        assert_eq!(
+            next(&attempted, &times, true, now + CATALOG_REFRESH_INTERVAL).as_deref(),
+            Some("claude")
+        );
+        let mut named = draft.clone();
+        named.account = json!("named-account");
+        assert_eq!(
+            next_background_catalog(
+                &providers,
+                &named,
+                &Value::Null,
+                &Default::default(),
+                &Default::default(),
+                false,
+                now
+            )
+            .as_deref(),
+            Some("claude")
+        );
+    }
+
+    #[::core::prelude::v1::test]
     fn buffered_send_allows_picker_restore_only_for_the_original_selection_and_store() {
         use super::*;
         let original = json!({"id":"thread", "draft":"old draft", "selection":{"provider":"codex","modelID":"old"},
@@ -4265,14 +5045,10 @@ mod tests {
             true,
             true
         ));
-        assert!(prefetches_saved_catalog(
-            false,
-            false,
-            Some("opencode"),
-            "codex",
-            true,
-            true
-        ));
+        assert!(
+            !prefetches_saved_catalog(false, false, Some("opencode"), "codex", true, true),
+            "switching back uses the scoped cache instead of reading the same provider again"
+        );
         assert!(!prefetches_saved_catalog(
             false,
             false,

@@ -127,6 +127,27 @@ impl Drop for ModelCatalog {
     }
 }
 impl ModelCatalog {
+    /// Background refreshes should discard already-revoked results first,
+    /// without evicting a still-current Codex proof for an unrelated provider.
+    fn eviction_index(&self) -> Option<usize> {
+        self.order
+            .iter()
+            .position(|id| {
+                self.jobs[id].response["state"] != "loading"
+                    && self.jobs[id].cancelled.load(Ordering::Acquire)
+            })
+            .or_else(|| {
+                self.order.iter().position(|id| {
+                    self.jobs[id].response["state"] != "loading"
+                        && self.jobs[id].response["provider"] != "codex"
+                })
+            })
+            .or_else(|| {
+                self.order
+                    .iter()
+                    .position(|id| self.jobs[id].response["state"] != "loading")
+            })
+    }
     pub(crate) fn restore_admission_available(&mut self) -> bool {
         self.workers.len()
             + self.limits.shutdown_status().running
@@ -311,9 +332,7 @@ impl ModelCatalog {
         );
         while self.order.len() >= MAX_JOBS {
             let index = self
-                .order
-                .iter()
-                .position(|id| self.jobs[id].response["state"] != "loading")
+                .eviction_index()
                 .context("Too many pending model catalog reads")?;
             let id = self.order.remove(index).unwrap();
             if let Some(job) = self.jobs.remove(&id) {
@@ -1274,6 +1293,39 @@ impl Rpc for ProcessRpc<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn background_refresh_evicts_revoked_results_before_live_codex_proof() {
+        let mut catalog = ModelCatalog::default();
+        for (id, provider, state, revoked) in [
+            ("live-codex", "codex", "ready", false),
+            ("other", "grok", "ready", false),
+            ("revoked", "claude", "ready", true),
+            ("pending", "opencode", "loading", true),
+        ] {
+            catalog.order.push_back(id.into());
+            catalog.jobs.insert(
+                id.into(),
+                Job {
+                    named: None,
+                    binding: None,
+                    response: json!({"provider":provider,"state":state}),
+                    cancelled: Arc::new(AtomicBool::new(revoked)),
+                },
+            );
+        }
+        assert_eq!(catalog.eviction_index(), Some(2));
+        catalog.jobs["revoked"]
+            .cancelled
+            .store(false, Ordering::Release);
+        assert_eq!(catalog.eviction_index(), Some(1));
+        catalog.jobs["other"]
+            .cancelled
+            .store(true, Ordering::Release);
+        catalog.jobs.get_mut("other").unwrap().response["state"] = json!("loading");
+        catalog.jobs.get_mut("revoked").unwrap().response["state"] = json!("loading");
+        assert_eq!(catalog.eviction_index(), Some(0));
+    }
 
     struct ScriptedRpc {
         responses: VecDeque<Value>,
