@@ -2605,6 +2605,32 @@ impl Coincide {
         complete
     }
     fn select(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.collect_draft_results();
+        let previous = self.selected.as_ref().map(|thread| text(thread, "id"));
+        if previous.as_deref() == Some(id) && self.pending_select.as_deref() != Some(id) {
+            // Selecting the current thread cancels a queued navigation.
+            self.pending_select = None;
+        }
+        if let Some(previous) = previous.filter(|previous| previous != id)
+            && let Some(draft) = self.pending_drafts.get(&previous)
+        {
+            let expedite = self.pending_select.as_deref() != Some(id)
+                && draft.retry
+                && !self.pending_successor_waiting(&previous);
+            let value = draft.text.clone();
+            self.pending_select = Some(id.to_owned());
+            if expedite && self.draft_saver.available() {
+                self.draft_saver.record_now(&previous, &value);
+            }
+            if !self.draft_saver.available() {
+                self.flush_pending_drafts();
+            }
+            if self.pending_drafts.contains_key(&previous) {
+                // A late write for the old thread must not land after the new
+                // thread starts sending. Retry navigation when the save has a receipt.
+                return;
+            }
+        }
         self.startup_selection_pending = false;
         self.composer_files.invalidate();
         self.thread_bulk.close_selection();

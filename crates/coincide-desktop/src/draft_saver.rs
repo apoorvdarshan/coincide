@@ -14,6 +14,7 @@ struct Request {
     generation: u64,
     thread: String,
     text: String,
+    immediate: bool,
 }
 
 #[derive(Debug)]
@@ -49,7 +50,15 @@ impl Saver {
         let worker_latest = latest.clone();
         let worker = std::thread::Builder::new()
             .name("coincide-draft-saver".into())
-            .spawn(move || run(engine, receiver, worker_latest, completed))
+            .spawn(move || {
+                run(
+                    engine,
+                    receiver,
+                    worker_latest,
+                    completed,
+                    Duration::from_millis(1200),
+                )
+            })
             .ok();
         Self {
             sender: Some(sender),
@@ -65,6 +74,16 @@ impl Saver {
     /// Records the latest draft text. If the bounded queue is full, retain the
     /// latest request and retry it on the UI's next poll.
     pub(super) fn record(&mut self, thread: &str, text: &str) {
+        self.record_inner(thread, text, false);
+    }
+
+    /// A navigation boundary waits for this save, without doing disk I/O on
+    /// the UI thread or waiting for the ordinary typing debounce.
+    pub(super) fn record_now(&mut self, thread: &str, text: &str) {
+        self.record_inner(thread, text, true);
+    }
+
+    fn record_inner(&mut self, thread: &str, text: &str, immediate: bool) {
         self.generation = self.generation.wrapping_add(1);
         let generation = self.generation;
         self.latest.store(generation, Ordering::Release);
@@ -73,6 +92,7 @@ impl Saver {
             generation,
             thread: thread.to_owned(),
             text: text.to_owned(),
+            immediate,
         });
         self.pump();
     }
@@ -155,14 +175,15 @@ fn run(
     receiver: Receiver<Request>,
     latest: Arc<AtomicU64>,
     completed: mpsc::Sender<Completion>,
+    debounce: Duration,
 ) {
     loop {
         let Ok(mut request) = receiver.recv() else {
             return;
         };
         // Wait for a quiet period, keeping only the newest text.
-        loop {
-            match receiver.recv_timeout(Duration::from_millis(1200)) {
+        while !request.immediate {
+            match receiver.recv_timeout(debounce) {
                 Ok(next) => request = next,
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break,
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
@@ -297,6 +318,45 @@ mod tests {
     }
 
     #[::core::prelude::v1::test]
+    fn navigation_save_does_not_wait_for_typing_debounce() {
+        let root = tempfile::tempdir().unwrap();
+        let engine: SharedEngine = Arc::new(Mutex::new(Engine::new(
+            Store::open(&root.path().join("state.sqlite")).unwrap(),
+        )));
+        let thread = call(&engine, "threads.create", json!({"cwd":root.path()})).unwrap();
+        let id = text(&thread, "id");
+        let (sender, receiver) = sync_channel(2);
+        let (completed, results) = mpsc::channel();
+        let latest = Arc::new(AtomicU64::new(1));
+        let worker_engine = engine.clone();
+        let worker = std::thread::spawn(move || {
+            run(
+                worker_engine,
+                receiver,
+                latest,
+                completed,
+                Duration::from_secs(30),
+            );
+        });
+        sender
+            .send(Request {
+                generation: 1,
+                thread: id.clone(),
+                text: "before switching".into(),
+                immediate: true,
+            })
+            .unwrap();
+        let result = results.recv_timeout(Duration::from_secs(8));
+        drop(sender);
+        worker.join().unwrap();
+        assert!(matches!(result.unwrap().outcome, Outcome::Saved));
+        assert_eq!(
+            call(&engine, "threads.read", json!({"threadId":id})).unwrap()["draft"],
+            "before switching"
+        );
+    }
+
+    #[::core::prelude::v1::test]
     fn old_acknowledgement_cannot_clear_retyped_identical_text() {
         let (completed, completions) = mpsc::channel();
         let latest = Arc::new(AtomicU64::new(2));
@@ -339,6 +399,7 @@ mod tests {
                 generation: 0,
                 thread: "old".into(),
                 text: "old".into(),
+                immediate: false,
             })
             .unwrap();
         let (_, completions) = mpsc::channel();
