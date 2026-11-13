@@ -771,7 +771,7 @@ impl Coincide {
             .border_1()
             .border_color(border)
             .rounded_md()
-            .bg(self.color(0x10141c))
+            .bg(self.color(0x111722))
             .child(
                 div()
                     .flex()

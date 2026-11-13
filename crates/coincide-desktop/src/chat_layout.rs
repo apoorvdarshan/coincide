@@ -1,8 +1,8 @@
 //! Shared chat structure and geometry, following the Swift desktop reference.
 use super::*;
 
-// Existing provider-owned branding, already used by the Coincide website.
-// Keep bytes local and embedded; rendering never downloads an image.
+// Provider marks stay local and embedded. Claude and Antigravity use the
+// original colored marks from Coincide's existing asset catalog.
 pub(super) const PROVIDER_LOGOS: [(&str, &[u8]); 6] = [
     (
         "codex",
@@ -46,25 +46,50 @@ pub(super) fn provider_logo(provider: &str) -> Option<Arc<Image>> {
         .cloned()
 }
 
+/// Give monochrome marks a consistent provider-colored tile while preserving
+/// the original colored Claude and Antigravity artwork.
+pub(super) fn provider_badge(provider: &str, size: f32) -> Option<Div> {
+    let logo = provider_logo(provider)?;
+    let background = provider_badge_color(provider)?;
+    let mark = if matches!(provider, "claude" | "antigravity") {
+        0.82
+    } else {
+        0.72
+    };
+    Some(
+        div()
+            .size(px(size))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(size * 0.23))
+            .bg(rgb(background))
+            .child(img(logo).size(px(size * mark))),
+    )
+}
+
+fn provider_badge_color(provider: &str) -> Option<u32> {
+    Some(match provider {
+        "codex" => 0x0e8067,
+        "claude" => 0x482b27,
+        "cursor" => 0x5959a9,
+        "grok" => 0x695581,
+        "opencode" => 0x9a641c,
+        "antigravity" => 0x202b43,
+        _ => return None,
+    })
+}
+
 pub(super) fn provider_label(provider: &str, label: String) -> AnyElement {
-    let image = provider_logo(provider);
+    let image = provider_badge(provider, 15.);
     div()
         .flex()
         .items_center()
         .gap(px(5.))
         .min_w_0()
-        .when_some(image.clone(), |view, image| {
-            // White template branding on a dark tile stays legible in either
-            // app appearance.
-            view.child(
-                img(image.clone())
-                    .w(px(13.))
-                    .h(px(13.))
-                    .rounded(px(3.))
-                    .bg(rgb(0x2b2b2b)),
-            )
-        })
-        .when(image.is_none(), |view| {
+        .when_some(image, |view, image| view.child(image))
+        .when(provider_logo(provider).is_none(), |view| {
             view.child(Icon::new(gpui_kit::assets::IconName::Cpu).xsmall())
         })
         .child(div().truncate().child(label))
@@ -213,6 +238,7 @@ impl Coincide {
 mod tests {
     use super::{
         ComposerSizing, PROVIDER_LOGOS, composer_height, is_synthetic_turn_end, notice_label,
+        provider_badge_color,
     };
 
     #[test]
@@ -221,6 +247,7 @@ mod tests {
         for (provider, bytes) in PROVIDER_LOGOS {
             assert!(names.insert(provider));
             assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"), "{provider}");
+            assert!(provider_badge_color(provider).is_some(), "{provider}");
         }
         assert_eq!(names.len(), 6);
     }

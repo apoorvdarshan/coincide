@@ -43,6 +43,25 @@ static NSColor *UsageProviderColor(NSString *provider) {
         return [NSColor colorWithSRGBRed:((hex>>16)&255)/255. green:((hex>>8)&255)/255. blue:(hex&255)/255. alpha:1];
     }];
 }
+static NSColor *UsageBadgeColor(NSString *provider) {
+    NSDictionary *colors = @{@"codex":@0x0E8067,@"claude":@0x482B27,@"cursor":@0x5959A9,@"grok":@0x695581,@"opencode":@0x9A641C,@"antigravity":@0x202B43};
+    NSNumber *number = colors[provider];
+    if (!number) return nil;
+    uint32_t hex = number.unsignedIntValue;
+    return [NSColor colorWithSRGBRed:((hex>>16)&255)/255. green:((hex>>8)&255)/255. blue:(hex&255)/255. alpha:1];
+}
+static NSImage *UsageBadge(NSString *provider, NSImage *logo, CGFloat size) {
+    NSColor *color = UsageBadgeColor(provider);
+    if (!logo || !color) return logo;
+    BOOL originalColor = [provider isEqual:@"claude"] || [provider isEqual:@"antigravity"];
+    return [NSImage imageWithSize:NSMakeSize(size,size) flipped:NO drawingHandler:^BOOL(NSRect rect) {
+        [color setFill];
+        [[NSBezierPath bezierPathWithRoundedRect:rect xRadius:size*0.23 yRadius:size*0.23] fill];
+        CGFloat inset = size * (originalColor ? 0.09 : 0.14);
+        [logo drawInRect:NSInsetRect(rect,inset,inset) fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1];
+        return YES;
+    }];
+}
 @implementation CoincideUsagePanel
 - (BOOL)canBecomeKeyWindow { return YES; }
 - (BOOL)canBecomeMainWindow { return NO; }
@@ -123,17 +142,18 @@ static NSStackView *UsageStack(NSUserInterfaceLayoutOrientation orientation, CGF
     NSArray *readings = UsageArray(self.snapshot[@"readings"]);
     if (readings.count == 0) readings = @[@{}];
     NSFont *font = [NSFont monospacedDigitSystemFontOfSize:NSFont.systemFontSize - 1 weight:NSFontWeightMedium];
-    NSDictionary *attributes = @{NSFontAttributeName:font, NSForegroundColorAttributeName:NSColor.blackColor};
+    NSDictionary *attributes = @{NSFontAttributeName:font, NSForegroundColorAttributeName:NSColor.labelColor};
     CGFloat icon = 15, height = 18, gap = 3, spacing = 7, width = 0;
     NSMutableArray *segments = [NSMutableArray new];
     for (id raw in readings) {
         NSDictionary *reading = UsageDict(raw);
         NSString *provider = UsageString(reading[@"provider"]);
-        NSImage *image = self.logos[provider] ?: [self gauge];
+        NSImage *logo = self.logos[provider];
+        NSImage *image = logo ? UsageBadge(provider, logo, icon) : [self gauge];
         NSString *text = UsageString(reading[@"text"]);
         NSAttributedString *label = [[NSAttributedString alloc] initWithString:text attributes:attributes];
         CGFloat segmentWidth = icon + (text.length ? gap + ceil(label.size.width) : 0);
-        [segments addObject:@{ @"image": image ?: NSNull.null, @"text": label, @"width": @(segmentWidth) }];
+        [segments addObject:@{ @"image": image ?: NSNull.null, @"text": label, @"width": @(segmentWidth), @"fallback": @(!logo) }];
         width += segmentWidth;
     }
     width += spacing * MAX(0, (NSInteger)segments.count - 1);
@@ -144,15 +164,17 @@ static NSStackView *UsageStack(NSUserInterfaceLayoutOrientation orientation, CGF
             NSRect iconRect = NSMakeRect(x, (height - icon) / 2, icon, icon);
             NSImage *image = segment[@"image"] == NSNull.null ? nil : segment[@"image"];
             [image drawInRect:iconRect fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1];
-            [NSColor.blackColor setFill];
-            NSRectFillUsingOperation(iconRect, NSCompositingOperationSourceAtop);
+            if ([segment[@"fallback"] boolValue]) {
+                [NSColor.labelColor setFill];
+                NSRectFillUsingOperation(iconRect, NSCompositingOperationSourceAtop);
+            }
             NSAttributedString *label = segment[@"text"];
             if (label.length) [label drawAtPoint:NSMakePoint(NSMaxX(iconRect) + gap, (height - label.size.height) / 2)];
             x += [segment[@"width"] doubleValue] + spacing;
         }
         return YES;
     }];
-    result.template = YES;
+    result.template = NO;
     return result;
 }
 - (void)updateButton {
@@ -319,7 +341,8 @@ static NSStackView *UsageStack(NSUserInterfaceLayoutOrientation orientation, CGF
     for (id raw in UsageArray(self.snapshot[@"accounts"])) {
         NSDictionary *account = UsageDict(raw); NSStackView *card = UsageStack(NSUserInterfaceLayoutOrientationVertical, 4);
         NSStackView *name = UsageStack(NSUserInterfaceLayoutOrientationHorizontal, 6);
-        NSImage *logo = self.logos[UsageString(account[@"provider"])];
+        NSString *provider = UsageString(account[@"provider"]);
+        NSImage *logo = UsageBadge(provider, self.logos[provider], 15);
         if (logo) { NSImageView *image = [[NSImageView alloc] initWithFrame:NSMakeRect(0,0,15,15)]; image.image = logo; [image.widthAnchor constraintEqualToConstant:15].active=YES; [image.heightAnchor constraintEqualToConstant:15].active=YES; [name addArrangedSubview:image]; }
         [name addArrangedSubview:UsageLabel(UsageString(account[@"title"]), 12, NSFontWeightSemibold, NSColor.labelColor)];
         NSString *plan = UsageString(account[@"plan"]);

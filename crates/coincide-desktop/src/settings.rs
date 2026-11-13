@@ -451,6 +451,26 @@ impl Coincide {
             theme.colors.border = rgb(p.border).into();
             theme.colors.primary = rgb(p.accent).into();
             theme.colors.ring = rgb(p.accent).into();
+            theme.colors.input = rgb(p.border).into();
+            theme.colors.button = rgb(p.raised).into();
+            theme.colors.button_hover = rgb(p.border).into();
+            theme.colors.button_active = rgb(p.border).into();
+            theme.colors.button_foreground = rgb(p.ink).into();
+            theme.colors.secondary = rgb(p.raised).into();
+            theme.colors.secondary_hover = rgb(p.border).into();
+            theme.colors.secondary_active = rgb(p.border).into();
+            theme.colors.secondary_foreground = rgb(p.ink).into();
+            theme.colors.popover = rgb(p.surface).into();
+            theme.colors.popover_foreground = rgb(p.ink).into();
+            theme.colors.list = rgb(p.surface).into();
+            theme.colors.list_even = rgb(p.surface).into();
+            theme.colors.list_head = rgb(p.raised).into();
+            theme.colors.list_hover = rgb(p.raised).into();
+            theme.colors.table = rgb(p.surface).into();
+            theme.colors.table_even = rgb(p.surface).into();
+            theme.colors.table_head = rgb(p.raised).into();
+            theme.colors.table_hover = rgb(p.raised).into();
+            theme.colors.table_row_border = rgb(p.border).into();
         });
         self.transcript_list
             .splice(0..self.transcript_count, self.transcript_count);

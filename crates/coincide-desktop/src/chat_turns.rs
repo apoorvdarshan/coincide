@@ -667,17 +667,19 @@ impl super::Coincide {
                         .text_color(secondary)
                         .child(child)
                         .when(header_logo && height == 40., |row| {
-                            row.when_some(chat_layout::provider_logo(&provider), |row, logo| {
-                                row.child(
-                                    div()
-                                        .absolute()
-                                        .left(px(8.))
-                                        .top(px(12.))
-                                        .size(px(16.))
-                                        .bg(self.color(0x10141c))
-                                        .child(img(logo).size_full()),
-                                )
-                            })
+                            row.when_some(
+                                chat_layout::provider_badge(&provider, 16.),
+                                |row, logo| {
+                                    row.child(
+                                        div()
+                                            .absolute()
+                                            .left(px(8.))
+                                            .top(px(12.))
+                                            .size(px(16.))
+                                            .child(logo),
+                                    )
+                                },
+                            )
                         }),
                 )
         };
