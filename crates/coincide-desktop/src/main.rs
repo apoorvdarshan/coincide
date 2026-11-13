@@ -5085,6 +5085,7 @@ impl Coincide {
         let mut item = item.clone();
         presentation::normalize_opencode_tool(&mut item);
         presentation::normalize_legacy_reasoning(&mut item);
+        presentation::normalize_inactive_work(&mut item, self.is_running_turn_item(index));
         if presentation::is_question_tool(&item) || presentation::is_duplicate_reasoning_tool(&item)
         {
             return None;
@@ -5219,12 +5220,14 @@ impl Coincide {
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
+            let active_turn = self.is_running_turn_item(index);
             let normalized = items
                 .iter()
                 .map(|item| {
                     let mut item = item.clone();
                     presentation::normalize_opencode_tool(&mut item);
                     presentation::normalize_legacy_reasoning(&mut item);
+                    presentation::normalize_inactive_work(&mut item, active_turn);
                     item
                 })
                 .collect::<Vec<_>>();

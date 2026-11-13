@@ -113,6 +113,11 @@ impl Turns<'_> {
             .flatten()
     }
 
+    /// A persisted running status is only live while its own turn is active.
+    pub(super) fn is_running_item(&self, index: usize) -> bool {
+        index < self.items.len() && self.running_opener().is_some_and(|opener| index >= opener)
+    }
+
     /// The turn holding `index`: its opening message, and its items through
     /// the last one before the next turn. Items before the first turn have none.
     pub(super) fn turn(&self, index: usize) -> (Option<usize>, std::ops::Range<usize>) {
@@ -466,6 +471,11 @@ impl super::Coincide {
         Some(f(&turns, id))
     }
 
+    pub(super) fn is_running_turn_item(&self, index: usize) -> bool {
+        self.selected_turns(|turns, _| turns.is_running_item(index))
+            .unwrap_or(false)
+    }
+
     pub(super) fn turn_plan(&self, index: usize) -> RowPlan {
         if let Some(plan) = self.chat_turns.plans.borrow().get(&index) {
             return plan.clone();
@@ -812,6 +822,34 @@ impl super::Coincide {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[::core::prelude::v1::test]
+    fn only_the_current_turn_can_show_running_work() {
+        let mut steer = item("steer", "user", 4.);
+        steer["steered"] = json!(true);
+        let items = [
+            item("old-user", "user", 0.),
+            item("old-tool", "tool", 1.),
+            item("new-user", "user", 2.),
+            item("active-tool", "tool", 3.),
+            steer,
+            item("parallel-tool", "tool", 5.),
+        ];
+        let expanded = |_: &str| false;
+        let mut turns = Turns {
+            items: &items,
+            running: true,
+            show_reasoning: true,
+            expanded: &expanded,
+        };
+        assert!(!turns.is_running_item(1));
+        assert!(turns.is_running_item(3));
+        assert!(turns.is_running_item(5));
+        assert!(!turns.is_running_item(6));
+        turns.running = false;
+        assert!(!turns.is_running_item(3));
+        assert!(!turns.is_running_item(5));
+    }
 
     fn item(id: &str, kind: &str, created: f64) -> Value {
         json!({"id":id,"kind":kind,"text":format!("{kind} {id}"),"createdAt":created})

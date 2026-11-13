@@ -647,6 +647,24 @@ impl OwnedChild {
             use std::os::unix::process::CommandExt;
             // A dedicated group lets cancellation terminate tools and shells too.
             command.process_group(0);
+            // The UI's worker thread may have SIGCHLD blocked. Providers and
+            // their async runtimes need that signal to observe their own child
+            // processes; an inherited block leaves finished commands running
+            // forever. Change only the child, preserving all other signals.
+            // SAFETY: sigemptyset, sigaddset, and sigprocmask are async-signal-
+            // safe and this closure does not access shared state after fork.
+            unsafe {
+                command.pre_exec(|| {
+                    let mut signals: libc::sigset_t = std::mem::zeroed();
+                    if libc::sigemptyset(&mut signals) != 0
+                        || libc::sigaddset(&mut signals, libc::SIGCHLD) != 0
+                        || libc::sigprocmask(libc::SIG_UNBLOCK, &signals, std::ptr::null_mut()) != 0
+                    {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
         }
         #[cfg(windows)]
         {
@@ -1671,6 +1689,55 @@ pub(crate) fn set_provider_session_for_account(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn provider_child_unblocks_sigchld_without_changing_other_signals_or_parent() {
+        std::thread::spawn(|| {
+            struct RestoreMask(libc::sigset_t);
+            impl Drop for RestoreMask {
+                fn drop(&mut self) {
+                    // SAFETY: restores the previous mask on this same thread.
+                    unsafe {
+                        libc::pthread_sigmask(libc::SIG_SETMASK, &self.0, std::ptr::null_mut());
+                    }
+                }
+            }
+            let mut signals: libc::sigset_t = unsafe { std::mem::zeroed() };
+            let mut previous: libc::sigset_t = unsafe { std::mem::zeroed() };
+            // SAFETY: all pointers are valid and the mask only affects this thread.
+            unsafe {
+                assert_eq!(libc::sigemptyset(&mut signals), 0);
+                assert_eq!(libc::sigaddset(&mut signals, libc::SIGCHLD), 0);
+                assert_eq!(libc::sigaddset(&mut signals, libc::SIGUSR1), 0);
+                assert_eq!(libc::pthread_sigmask(libc::SIG_BLOCK, &signals, &mut previous), 0);
+            }
+            let restore = RestoreMask(previous);
+            let mut command = std::process::Command::new("/usr/bin/python3");
+            command.arg("-c").arg(
+                "import signal, sys; m = signal.pthread_sigmask(signal.SIG_BLOCK, set()); sys.exit(int(signal.SIGCHLD in m or signal.SIGUSR1 not in m))",
+            );
+            let child = OwnedChild::spawn(&mut command).unwrap();
+            let mut current: libc::sigset_t = unsafe { std::mem::zeroed() };
+            // SAFETY: querying a mask with a null input does not change it.
+            unsafe {
+                assert_eq!(libc::pthread_sigmask(libc::SIG_SETMASK, std::ptr::null(), &mut current), 0);
+                assert_eq!(libc::sigismember(&current, libc::SIGCHLD), 1);
+                assert_eq!(libc::sigismember(&current, libc::SIGUSR1), 1);
+            }
+            drop(restore);
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let code = loop {
+                if let Some(code) = child.exit_code().unwrap() {
+                    break code;
+                }
+                assert!(Instant::now() < deadline, "provider child did not exit");
+                std::thread::sleep(Duration::from_millis(10));
+            };
+            assert_eq!(code, 0, "provider inherited the wrong signal mask");
+        })
+        .join()
+        .unwrap();
+    }
     #[test]
     fn account_selection_never_resumes_or_overwrites_another_accounts_session() {
         for sessions in [

@@ -5,7 +5,32 @@ pub(super) fn apply(row: &mut Value, captured_provider: &str, item: &Value) {
     match captured_provider {
         "codex" => apply_codex(row, item),
         "opencode" => apply_opencode(row, item),
+        "claude" | "cursor" | "grok" | "antigravity" => apply_tool_status(row, item),
         _ => {}
+    }
+}
+
+/// Claude and ACP adapters retain each provider's reported tool status in the
+/// normalized toolCall. Do not infer completion from a later chat message.
+fn apply_tool_status(row: &mut Value, item: &Value) {
+    if item["type"] != "toolCall" {
+        return;
+    }
+    let Some(fields) = row.as_object_mut() else {
+        return;
+    };
+    let status = match item["status"].as_str() {
+        Some("inProgress" | "in_progress" | "running") => Some("running"),
+        Some("pending") => Some("waiting"),
+        Some("completed") => Some("completed"),
+        Some("failed") => Some("failed"),
+        Some("cancelled" | "canceled" | "declined") => Some("declined"),
+        _ => None,
+    };
+    if let Some(status) = status {
+        fields.insert("status".into(), json!(status));
+    } else {
+        fields.remove("status");
     }
 }
 
@@ -169,6 +194,32 @@ fn apply_codex(row: &mut Value, item: &Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn claude_and_acp_provider_tool_statuses_follow_actual_updates() {
+        for (provider, running) in [
+            ("claude", "inProgress"),
+            ("cursor", "in_progress"),
+            ("grok", "in_progress"),
+            ("antigravity", "in_progress"),
+        ] {
+            let mut row = json!({"kind":"tool","text":"unchanged","future":42});
+            let mut item = json!({"type":"toolCall","id":"call","status":running});
+            apply(&mut row, provider, &item);
+            assert_eq!(row["status"], "running", "{provider}");
+            item["status"] = json!("completed");
+            apply(&mut row, provider, &item);
+            assert_eq!(row["status"], "completed", "{provider}");
+            item["status"] = json!("failed");
+            apply(&mut row, provider, &item);
+            assert_eq!(row["status"], "failed", "{provider}");
+            item["status"] = json!("future-status");
+            apply(&mut row, provider, &item);
+            assert!(row.get("status").is_none(), "{provider}");
+            assert_eq!(row["text"], "unchanged");
+            assert_eq!(row["future"], 42);
+        }
+    }
 
     #[test]
     fn explicit_command_metadata_preserves_body_identity_and_opaque_fields() {
