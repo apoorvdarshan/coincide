@@ -376,9 +376,8 @@ static NSDictionary *CUObserve(CUContext *ctx, NSDictionary *request) {
       @"role" : record.observedRole,
       @"title" : record.observedTitle,
       @"value" : secure ? [NSNull null] : record.observedValue,
-      // BOOL can be a signed byte on Intel Macs; keep these JSON booleans too.
-      @"secure" : secure ? @YES : @NO,
-      @"focused" : focused ? @YES : @NO
+      @"secure" : @(secure),
+      @"focused" : @(focused)
     }];
     if (depth >= 4 || secure)
       continue;
