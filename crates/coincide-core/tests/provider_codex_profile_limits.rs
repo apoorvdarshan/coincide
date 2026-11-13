@@ -66,7 +66,10 @@ if mode=='revoke':
   gate.connect(str(root/'revoke.sock'))
   gate.send(b'waiting')
   assert gate.recv(1)==b'R'
- (home/'auth.json').write_text('synthetic file identity change, not authentication');(home/'auth.json').chmod(0o600)
+ temporary=home/'auth.synthetic.tmp'
+ fd=os.open(temporary,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+ with os.fdopen(fd,'w') as out:out.write('synthetic file identity change, not authentication')
+ os.replace(temporary,home/'auth.json')
  (home/'auth-written').touch()
 result={'rateLimits':None} if mode=='missing' else {'rateLimits':{'primary':{'usedPercent':float((home/'fixture-percent').read_text()) if named else 99},'credits':{'hasCredits':True,'balance':'3.00'}}}
 write({'id':r['id'],'result':result})
