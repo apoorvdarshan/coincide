@@ -190,7 +190,17 @@ impl Mount {
         }
     }
     pub fn refresh(&mut self, cx: &mut App) {
-        let _ = self.try_refresh(cx);
+        if !self.try_refresh(cx) {
+            // Explicit refreshes still report a failed start. The menu bar
+            // uses try_refresh directly and retries its background request.
+            self.driver.current = None;
+            self.panel.update(cx, |panel, cx| {
+                panel.set(
+                    Phase::Failed("Codex limits refresh could not start. Refresh to try again."),
+                    cx,
+                )
+            });
+        }
     }
     /// A busy engine proves the request never started. Keep the previous
     /// observation so the caller can retry without losing a valid reading.
