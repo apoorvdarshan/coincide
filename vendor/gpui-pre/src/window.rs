@@ -5789,14 +5789,35 @@ impl Window {
         subscription
     }
 
+    fn resolved_cursor_style(&self, cx: &App) -> CursorStyle {
+        let style = self
+            .rendered_frame
+            .cursor_style(self)
+            .unwrap_or(CursorStyle::Arrow);
+        // Some controls request a hand explicitly. Honor the app's opt-out
+        // for those too, but leave a drag's own cursor untouched.
+        if matches!(style, CursorStyle::PointingHand)
+            && cx.active_drag.is_none()
+            && cx
+                .try_global::<crate::ClickableCursorPolicy>()
+                .is_some_and(|policy| !policy.enabled)
+        {
+            CursorStyle::Arrow
+        } else {
+            style
+        }
+    }
+
+    /// The cursor selected by the current frame and mouse hit test.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn cursor_style_for_test(&self, cx: &App) -> CursorStyle {
+        self.resolved_cursor_style(cx)
+    }
+
     fn reset_cursor_style(&self, cx: &mut App) {
         // Set the cursor only if we're the active window.
         if self.is_window_hovered() {
-            let style = self
-                .rendered_frame
-                .cursor_style(self)
-                .unwrap_or(CursorStyle::Arrow);
-            cx.platform.set_cursor_style(style);
+            cx.platform.set_cursor_style(self.resolved_cursor_style(cx));
         }
     }
 

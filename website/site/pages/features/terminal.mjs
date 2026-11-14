@@ -2,6 +2,7 @@ import { kbd, table } from "../../layout.mjs";
 
 export default {
   path: "/features/terminal",
+  updated: "2026-11-15",
   title: "An integrated terminal in every thread · Coincide",
   description: "Each Coincide thread has its own terminal in the thread’s folder, with tabs, split panes, shell integration and one key to send output to the agent.",
   name: "Integrated terminal",
@@ -42,7 +43,7 @@ ${table(["Keys", "Action"], [
 <p>Commands a project runs often, such as its dev server or tests, can be saved as project scripts. Running one opens it in a terminal of the thread, and the one you ran last becomes the toolbar’s one-click script. A script marked “Run when a thread gets a new worktree” runs on its own in each new worktree, for setup such as installing dependencies.</p>
 
 <h2>Appearance</h2>
-<p>The terminal follows Coincide’s light or dark theme. Settings › General has GPU rendering (Metal; turn it off to draw with the CPU) and Translucent terminal, which lets the desktop show through, blurred. The terminal is built on <a href="https://github.com/migueldeicaza/SwiftTerm">SwiftTerm</a>.</p>
+<p>The terminal follows Coincide’s light or dark theme and uses the app’s built-in graphics renderer. Settings › General has Translucent terminal, which lets the desktop show through, blurred.</p>
 
 <h2>Things to know</h2>
 <ul>
