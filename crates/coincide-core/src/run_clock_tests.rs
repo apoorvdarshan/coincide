@@ -21,6 +21,82 @@ fn running(session: Session) -> Running {
 }
 
 #[test]
+fn remote_reports_real_start_and_steering_readiness_for_every_provider() {
+    for provider in [
+        "codex",
+        "claude",
+        "grok",
+        "opencode",
+        "cursor",
+        "antigravity",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&dir.path().join("state.sqlite")).unwrap();
+        let mut thread = store
+            .new_thread("00000000-0000-0000-0000-000000000000")
+            .unwrap();
+        thread["selection"] = json!({"provider":provider,"modelID":"default"});
+        store.save(&thread).unwrap();
+        let id = text(&thread, "id");
+        let mut engine = Engine::fixture(store);
+        let mut session = Session::fixture_worker(|commands, _events| {
+            let _ = commands.recv();
+        });
+        let mut steering = (provider == "codex").then(|| session.fixture_steering());
+        if let Some(server) = &mut steering {
+            server.activate("native-thread", "native-turn");
+        }
+        let mut run = running(session);
+        run.provider = provider.into();
+        run.usage_context = Some(agent::usage_capture::TurnContext::new(&thread));
+        engine.insert_running(id.clone(), run);
+        let expected = matches!(provider, "codex" | "opencode");
+        assert_eq!(
+            engine.remote_can_steer(&id, &thread),
+            expected,
+            "{provider}"
+        );
+        let mut changed = thread.clone();
+        changed["interactionMode"] = json!("plan");
+        assert!(!engine.remote_can_steer(&id, &changed), "{provider}");
+        changed = thread.clone();
+        changed["isArchived"] = json!(true);
+        assert!(!engine.remote_can_steer(&id, &changed), "{provider}");
+        engine
+            .store
+            .save_document(
+                "settings.json",
+                &json!({"providers":{(provider):{"isEnabled":false}}}),
+            )
+            .unwrap();
+        assert!(!engine.remote_can_steer(&id, &thread), "{provider}");
+        engine
+            .store
+            .save_document("settings.json", &json!({}))
+            .unwrap();
+        engine.runs.get_mut(&id).unwrap().cancelled = true;
+        assert!(!engine.remote_can_steer(&id, &thread), "{provider}");
+        engine.runs.get_mut(&id).unwrap().cancelled = false;
+        let engine = Arc::new(Mutex::new(engine));
+        let adapter = crate::remote::adapter::Adapter::new(engine, "fixture");
+        let runs = adapter.runs().unwrap();
+        let key = id.to_uppercase();
+        assert!(runs.running.contains(&key), "{provider}");
+        assert!(runs.starting.contains(&key), "{provider}");
+        assert!(runs.started_at[&key] > 0., "{provider}");
+        let turn = adapter.turn_state(&id, &thread, &runs).unwrap();
+        assert!(turn.is_running && turn.is_starting, "{provider}");
+        assert_eq!(turn.can_steer, expected, "{provider}");
+        assert_eq!(turn.provider.as_deref(), Some(provider));
+        assert_eq!(
+            turn.started_at,
+            runs.started_at.get(&key).copied(),
+            "{provider}"
+        );
+    }
+}
+
+#[test]
 fn a_run_connects_on_its_first_provider_event_and_its_clock_ends_with_it() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = Store::open(&dir.path().join("data/state.sqlite")).unwrap();

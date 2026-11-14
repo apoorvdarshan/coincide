@@ -197,6 +197,8 @@ pub struct ProviderWorkersStatus {
 /// claim; callers cannot select it with JSON or impersonate a scheduled turn.
 enum SendOrigin {
     Ordinary,
+    /// Authenticated Remote text belongs to the phone, not the Mac's draft.
+    Remote,
     Scheduled,
     Queued(Box<queue_dispatch::QueueClaim>),
     /// Resume an exact goal paused by Coincide after the user pauses/removes
@@ -1187,6 +1189,28 @@ impl Engine {
     fn send_turn(&mut self, p: &Value, origin: SendOrigin) -> Result<Value> {
         self.send_turn_if_unchanged(p, &origin, None, false)
     }
+    /// Remote owns its own submitted text. Validate its captured execution
+    /// context under the engine lock without consuming the desktop composer.
+    pub(crate) fn send_remote_text(&mut self, expected: &Value, prompt: &str) -> Result<Value> {
+        let id = required(expected, "id")?;
+        let current = self.store.thread(id)?;
+        for key in [
+            "selection",
+            "projectID",
+            "projectPath",
+            "worktreePath",
+            "botID",
+            "rustBotContext",
+            "accessMode",
+            "interactionMode",
+        ] {
+            ensure!(
+                current[key] == expected[key],
+                "Conversation context changed; send again after refreshing"
+            );
+        }
+        self.send_turn(&json!({"threadId":id,"text":prompt}), SendOrigin::Remote)
+    }
     fn send_turn_if_unchanged(
         &mut self,
         p: &Value,
@@ -1247,10 +1271,10 @@ impl Engine {
             p.get("context").is_none() && p.get("draftContext").is_none(),
             "Attach references through composer.context.edit before sending"
         );
-        // Scheduled/queued turns never consume the user's unrelated composer.
+        // Remote, scheduled and queued turns never consume the unrelated composer.
         let context = match origin {
             SendOrigin::Queued(claim) => claim.context().clone(),
-            SendOrigin::Scheduled | SendOrigin::GoalResume(_) => Value::Null,
+            SendOrigin::Remote | SendOrigin::Scheduled | SendOrigin::GoalResume(_) => Value::Null,
             SendOrigin::Ordinary => v["draftContext"].clone(),
         };
         crate::composer_context::validate(&context)?;
@@ -1682,6 +1706,46 @@ impl Engine {
                 })
                 .collect(),
         )
+    }
+    pub(crate) fn remote_running_provider(&self, id: &str) -> Option<&str> {
+        self.runs.get(id).map(|run| run.provider.as_str())
+    }
+    /// Whether Remote can use its text-steering route for this exact run.
+    /// The provider and configuration that started the run remain authoritative
+    /// even if the user has since changed the conversation's selection.
+    pub(crate) fn remote_can_steer(&self, id: &str, thread: &Value) -> bool {
+        let Some(run) = self.runs.get(id) else {
+            return false;
+        };
+        if run.cancelled
+            || run.persistence_error.is_some()
+            || self.unsaved_threads.contains_key(id)
+            || thread["isArchived"] == true
+            || self.store.is_imported(id).unwrap_or(true)
+            || self.require_provider_enabled(&run.provider).is_err()
+            || thread["selection"]["provider"] != run.provider
+            || thread["interactionMode"]
+                .as_str()
+                .is_some_and(|mode| mode != "build")
+            || !run
+                .usage_context
+                .as_ref()
+                .is_some_and(|context| context.matches(thread))
+        {
+            return false;
+        }
+        match run.provider.as_str() {
+            "codex" => {
+                run.session.can_steer()
+                    && ["draftContext", "rustDraftImages"].iter().all(|key| {
+                        thread[*key].is_null() || thread[*key].as_array().is_some_and(Vec::is_empty)
+                    })
+            }
+            "opencode" => true,
+            // Claude has a native composer follow-up, but Remote's current
+            // text-steering route cannot submit it yet.
+            _ => false,
+        }
     }
     /// Nonblocking observer for trusted native owners. Background observers join
     /// provider threads; completed observations fold into sticky counters here.

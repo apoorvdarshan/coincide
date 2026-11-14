@@ -72,6 +72,85 @@ fn pending_is_not_accepted_and_ack_text_is_persisted_once_without_touching_draft
         "accepted"
     );
 }
+
+#[test]
+fn remote_waits_for_steering_ack_and_never_requeues_unknown_delivery() {
+    use crate::remote::{
+        adapter::Adapter,
+        protocol::{Delivery, SendRequest},
+    };
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+    for outcome in ["accepted", "rejected", "unknown"] {
+        let (_dir, mut engine, id, mut server) = fixture();
+        let mut thread = engine.store.thread(&id).unwrap();
+        thread["draft"] = json!("keep this separate draft");
+        engine.store.save(&thread).unwrap();
+        let shared = Arc::new(Mutex::new(engine));
+        let adapter = Adapter::new(shared.clone(), "fixture");
+        let runs = adapter.runs().unwrap();
+        assert!(adapter.turn_state(&id, &thread, &runs).unwrap().can_steer);
+        let request = SendRequest {
+            thread_id: Uuid::parse_str(&id).unwrap(),
+            text: "remote follow-up".into(),
+            images: vec![],
+            delivery: Delivery::Automatic,
+        };
+        let (send, receive) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let result = adapter.send(&request, &runs);
+            send.send(result).unwrap();
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let dispatched = loop {
+            if let Some(request) = server.next_request() {
+                break request;
+            }
+            assert!(Instant::now() < deadline, "{outcome}: no steering request");
+            std::thread::yield_now();
+        };
+        assert!(
+            receive.try_recv().is_err(),
+            "{outcome}: returned before provider acknowledgement"
+        );
+        let response = match outcome {
+            "accepted" => json!({"id":dispatched["id"],"result":{"turnId":"native-turn"}}),
+            "rejected" => json!({"id":dispatched["id"],"error":{"message":"synthetic rejection"}}),
+            _ => json!({"id":dispatched["id"],"result":{"turnId":"unexpected-turn"}}),
+        };
+        assert!(server.response(&response));
+        let result = receive.recv_timeout(Duration::from_secs(5)).unwrap();
+        worker.join().unwrap();
+        match outcome {
+            "accepted" => assert_eq!(result.unwrap(), "steered"),
+            "rejected" => assert_eq!(result.unwrap(), "queued"),
+            _ => assert!(result.is_err()),
+        }
+        let engine = shared.lock().unwrap();
+        let stored = engine.store.thread(&id).unwrap();
+        assert_eq!(stored["draft"], "keep this separate draft");
+        let sent = stored["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| item["steered"] == true && item["text"] == "remote follow-up")
+            .count();
+        let queued = crate::message_queue::read(&stored)
+            .unwrap()
+            .iter()
+            .filter(|item| item.text == "remote follow-up")
+            .count();
+        assert_eq!(
+            (sent, queued),
+            match outcome {
+                "accepted" => (1, 0),
+                "rejected" => (0, 1),
+                _ => (0, 0),
+            },
+            "{outcome}"
+        );
+    }
+}
 #[test]
 fn strict_identity_options_context_provider_and_frozen_guards_preserve_thread() {
     let (_dir, mut engine, id, _server) = fixture();
