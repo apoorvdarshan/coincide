@@ -7051,8 +7051,17 @@ fn adopt_login_shell_path() {
 #[cfg(not(unix))]
 fn adopt_login_shell_path() {}
 fn main() -> Result<()> {
-    adopt_login_shell_path();
     let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
+    #[cfg(target_os = "macos")]
+    if arguments
+        .first()
+        .is_some_and(|argument| argument == "--awake-service-diagnostics")
+    {
+        anyhow::ensure!(arguments.len() == 1, "Awake diagnostics take no arguments");
+        println!("{}", crate::persistent_awake::service_diagnostics()?);
+        return Ok(());
+    }
+    adopt_login_shell_path();
     if arguments
         .first()
         .is_some_and(|argument| argument == "--native-provider-setup")

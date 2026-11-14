@@ -128,6 +128,9 @@ trait Backend {
     fn service_status(&mut self, _: Service) -> Result<ServiceStatus> {
         Ok(ServiceStatus::Enabled)
     }
+    fn service_present(&mut self, service: Service) -> Result<bool> {
+        Ok(self.service_status(service)? != ServiceStatus::Missing)
+    }
     fn register_service(&mut self, _: Service) -> Result<ServiceStatus> {
         Ok(ServiceStatus::Enabled)
     }
@@ -310,9 +313,16 @@ fn orchestrate(
     match action {
         Action::Enable => {
             ensure!(
-                backend.service_status(Service::Lid)? != ServiceStatus::Missing,
+                backend.service_present(Service::Lid)?,
                 "This app build does not include the lid helper"
             );
+            let options = preferences(previous.as_ref())?;
+            if options.sleep_on_battery || options.battery_approval_pending {
+                ensure!(
+                    backend.service_present(Service::Battery)?,
+                    "This app build does not include the battery helper"
+                );
+            }
             if transition(journal, backend, Action::Enable)? == Admin::Cancelled {
                 return Ok(Outcome::Cancelled);
             }
@@ -403,6 +413,10 @@ fn orchestrate(
         }
         Action::SetSleepOnBattery(true) => {
             ensure!(current == "enabled", "Turn on 24/7 Keep Awake first");
+            ensure!(
+                backend.service_present(Service::Battery)?,
+                "This app build does not include the battery helper"
+            );
             let mut document = previous.context("Keep Awake settings disappeared")?;
             // Durable intent precedes registering a privileged process. If the
             // app exits or macOS asks for approval, the UI can finish or cancel.
@@ -526,6 +540,7 @@ mod mac_service {
 
     unsafe extern "C" {
         fn coincide_awake_service_status(kind: c_int) -> c_int;
+        fn coincide_awake_service_present(kind: c_int) -> c_int;
         fn coincide_awake_service_register(
             kind: c_int,
             error: *mut c_char,
@@ -562,6 +577,13 @@ mod mac_service {
     }
     pub(super) fn read(service: Service) -> Result<ServiceStatus> {
         status(unsafe { coincide_awake_service_status(kind(service)) })
+    }
+    pub(super) fn present(service: Service) -> Result<bool> {
+        match unsafe { coincide_awake_service_present(kind(service)) } {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => bail!("macOS Service Management is unavailable"),
+        }
     }
     pub(super) fn register(service: Service) -> Result<ServiceStatus> {
         let mut buffer = [0 as c_char; 1024];
@@ -630,6 +652,9 @@ impl Backend for MacBackend {
     }
     fn service_status(&mut self, service: Service) -> Result<ServiceStatus> {
         mac_service::read(service)
+    }
+    fn service_present(&mut self, service: Service) -> Result<bool> {
+        mac_service::present(service)
     }
     fn register_service(&mut self, service: Service) -> Result<ServiceStatus> {
         mac_service::register(service)
@@ -757,6 +782,20 @@ pub(super) fn status(engine: &SharedEngine) -> Result<(String, Preferences, bool
 #[cfg(target_os = "macos")]
 pub(super) fn open_login_items() {
     mac_service::open_login_items();
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn service_diagnostics() -> Result<Value> {
+    fn value(service: Service) -> Result<Value> {
+        let state = match mac_service::read(service)? {
+            ServiceStatus::NotRegistered => "not_registered",
+            ServiceStatus::Enabled => "enabled",
+            ServiceStatus::NeedsApproval => "needs_approval",
+            ServiceStatus::Missing => "not_found",
+        };
+        Ok(json!({"present": mac_service::present(service)?, "status": state}))
+    }
+    Ok(json!({"lid": value(Service::Lid)?, "battery": value(Service::Battery)?}))
 }
 
 #[cfg(test)]
@@ -982,6 +1021,8 @@ mod tests {
         on_battery: Option<bool>,
         lid: ServiceStatus,
         battery: ServiceStatus,
+        lid_present: bool,
+        battery_present: bool,
         battery_registration: ServiceStatus,
         fail_stop_battery: bool,
         cancel_admin: bool,
@@ -1000,6 +1041,8 @@ mod tests {
                 on_battery: Some(false),
                 lid: ServiceStatus::NotRegistered,
                 battery: ServiceStatus::NotRegistered,
+                lid_present: true,
+                battery_present: true,
                 battery_registration: ServiceStatus::Enabled,
                 fail_stop_battery: false,
                 cancel_admin: false,
@@ -1041,6 +1084,12 @@ mod tests {
                 Service::Battery => self.battery,
             })
         }
+        fn service_present(&mut self, service: Service) -> Result<bool> {
+            Ok(match service {
+                Service::Lid => self.lid_present,
+                Service::Battery => self.battery_present,
+            })
+        }
         fn register_service(&mut self, service: Service) -> Result<ServiceStatus> {
             Ok(match service {
                 Service::Lid => {
@@ -1073,6 +1122,48 @@ mod tests {
             self.calls.push("restore audio");
             Ok(self.audio_restored)
         }
+    }
+
+    #[test]
+    fn first_registration_is_attempted_when_macos_reports_not_found() {
+        let (mut journal, mut backend) = (FakeJournal::default(), Services::new());
+        backend.lid = ServiceStatus::Missing;
+        backend.battery = ServiceStatus::Missing;
+        assert_eq!(
+            orchestrate(&mut journal, &mut backend, Action::Enable).unwrap(),
+            Outcome::Done
+        );
+        assert_eq!(backend.calls, ["authorize", "register lid"]);
+        assert_eq!(
+            orchestrate(&mut journal, &mut backend, Action::SetSleepOnBattery(true)).unwrap(),
+            Outcome::Done
+        );
+        assert_eq!(backend.calls.last(), Some(&"register battery"));
+        assert!(
+            preferences(journal.value.as_ref())
+                .unwrap()
+                .sleep_on_battery
+        );
+    }
+
+    #[test]
+    fn missing_helper_files_do_not_change_power_or_create_pending_intent() {
+        let (mut journal, mut backend) = (FakeJournal::default(), Services::new());
+        backend.lid_present = false;
+        assert!(orchestrate(&mut journal, &mut backend, Action::Enable).is_err());
+        assert!(backend.calls.is_empty());
+        assert!(journal.value.is_none());
+        backend.lid_present = true;
+        orchestrate(&mut journal, &mut backend, Action::Enable).unwrap();
+        backend.battery_present = false;
+        backend.calls.clear();
+        assert!(orchestrate(&mut journal, &mut backend, Action::SetSleepOnBattery(true)).is_err());
+        assert!(backend.calls.is_empty());
+        assert!(
+            !preferences(journal.value.as_ref())
+                .unwrap()
+                .battery_approval_pending
+        );
     }
 
     #[test]
