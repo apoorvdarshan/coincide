@@ -94,7 +94,7 @@ pub enum AlertKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct EventKey {
     pub thread: Uuid,
-    /// Stable persisted transcript item/request UUID, not a new ID on replay.
+    /// Stable persisted item/request or reply-less completion UUID, never a new ID on replay.
     pub item: Uuid,
     pub kind: AlertKind,
 }

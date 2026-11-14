@@ -2480,24 +2480,12 @@ impl Engine {
                                     // A tool or reasoning event can follow the reply.
                                     // Anchor the alert to this turn's reply rather
                                     // than dropping it when the final item is a tool.
-                                    items
-                                        .iter()
-                                        .skip(transcript_start)
-                                        .rev()
-                                        .find(|item| {
-                                            matches!(
-                                                item["kind"].as_str(),
-                                                Some("assistant" | "notice")
-                                            )
-                                        })
-                                        .or_else(|| {
-                                            items.last().filter(|item| {
-                                                matches!(
-                                                    item["kind"].as_str(),
-                                                    Some("assistant" | "notice")
-                                                )
-                                            })
-                                        })
+                                    items.iter().skip(transcript_start).rev().find(|item| {
+                                        matches!(
+                                            item["kind"].as_str(),
+                                            Some("assistant" | "notice")
+                                        )
+                                    })
                                 })
                                 .cloned()
                                 .map(|item| {
@@ -2506,6 +2494,20 @@ impl Engine {
                                         item,
                                     )
                                 });
+                            if completion_alert.is_none()
+                                && self.notification_events.enabled()
+                                && !self.runs[&id].cancelled
+                                && self.runs[&id].persistence_error.is_none()
+                            {
+                                // Preserve the transcript as-is while giving a
+                                // reply-less turn a unique persisted event identity.
+                                let completion_id = Uuid::new_v4().to_string().to_uppercase();
+                                v["rustNotificationCompletionID"] = json!(completion_id);
+                                completion_alert = Some((
+                                    crate::platform_host::notifications::AlertKind::Completed,
+                                    json!({"id":completion_id}),
+                                ));
+                            }
                         }
                     }
                     Event::Failed(error) => {

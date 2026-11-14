@@ -29,10 +29,12 @@ fn run_for(engine: &mut Engine, id: &str, provider: &str) -> mpsc::Sender<Event>
     });
     let (sender, receiver) = mpsc::channel();
     session.events = receiver;
-    let transcript_start = engine.store.thread(id).unwrap()["items"]
-        .as_array()
-        .unwrap()
-        .len();
+    let thread = engine.store.thread(id).unwrap();
+    let items = thread["items"].as_array().unwrap();
+    // Some fixtures persist this turn's reply before creating the fake run.
+    let transcript_start = items.len().saturating_sub(usize::from(
+        items.last().is_some_and(|item| item["kind"] == "assistant"),
+    ));
     engine.runs.insert(
         id.into(),
         Running {
@@ -51,6 +53,68 @@ fn run_for(engine: &mut Engine, id: &str, provider: &str) -> mpsc::Sender<Event>
         },
     );
     sender
+}
+
+#[test]
+fn replyless_turns_get_distinct_persisted_notifications_for_every_provider() {
+    for provider in [
+        "claude",
+        "codex",
+        "cursor",
+        "grok",
+        "opencode",
+        "antigravity",
+    ] {
+        let (_directory, mut engine, id) = fixture();
+        engine.configure_native_notifications(true).unwrap();
+        let mut keys = Vec::new();
+        for _ in 0..2 {
+            let sender = run_for(&mut engine, &id, provider);
+            sender.send(Event::Finished).unwrap();
+            engine.poll();
+            let claim = engine.claim_notification_events(1).pop().unwrap();
+            assert_eq!(claim.alert.key.kind, AlertKind::Completed, "{provider}");
+            assert_eq!(claim.alert.body, None, "{provider}");
+            let thread = engine.store.thread(&id).unwrap();
+            assert_eq!(thread["items"].as_array().unwrap().len(), 0, "{provider}");
+            assert_eq!(
+                Uuid::parse_str(text(&thread, "rustNotificationCompletionID").as_str()).unwrap(),
+                claim.alert.key.item
+            );
+            keys.push(claim.alert.key.item);
+            engine
+                .ack_notification_event(
+                    claim.claim_id,
+                    claim.alert.key,
+                    NotificationAck::Suppressed,
+                )
+                .unwrap();
+        }
+        assert_ne!(keys[0], keys[1], "{provider}");
+    }
+}
+
+#[test]
+fn replyless_continuation_does_not_reuse_an_older_reply() {
+    let (_directory, mut engine, id) = fixture();
+    engine.configure_native_notifications(true).unwrap();
+    seed_reply(&mut engine, &id);
+    let start = engine.store.thread(&id).unwrap()["items"]
+        .as_array()
+        .unwrap()
+        .len();
+    let sender = run(&mut engine, &id);
+    engine.runs.get_mut(&id).unwrap().transcript_start = start;
+    sender.send(Event::Finished).unwrap();
+    engine.poll();
+    let claim = engine.claim_notification_events(1).pop().unwrap();
+    assert_eq!(claim.alert.body, None);
+    let thread = engine.store.thread(&id).unwrap();
+    assert_eq!(thread["items"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        Uuid::parse_str(text(&thread, "rustNotificationCompletionID").as_str()).unwrap(),
+        claim.alert.key.item
+    );
 }
 
 #[test]

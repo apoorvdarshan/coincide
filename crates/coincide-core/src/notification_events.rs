@@ -1,5 +1,5 @@
 //! Session-only native alert outbox. Live Engine events become deliverable only
-//! after their exact transcript UUID is persisted. Startup/import never scans
+//! after their exact item or reply-less completion UUID is persisted. Startup/import never scans
 //! old transcripts. No OS permission prompts, delivery, or remote transport here.
 use super::*;
 use crate::platform_host::notifications::{Alert, AlertKind, Delivery, EventKey};
@@ -42,6 +42,9 @@ pub(super) struct Outbox {
     error: Option<String>,
 }
 impl Outbox {
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
     pub fn new(store: &Store) -> Self {
         let setting = (|| -> Result<bool> {
             let Some(document) = store.local_document(DOCUMENT)? else {
@@ -126,23 +129,26 @@ impl Outbox {
             if thread["isArchived"] == true {
                 return false;
             }
-            let present = thread["items"].as_array().is_some_and(|items| {
-                items.iter().any(|item| {
-                    Uuid::parse_str(text(item, "id").as_str()).ok() == Some(key.item)
-                        && match key.kind {
-                            AlertKind::Approval => item["kind"] == "approval",
-                            AlertKind::Question => item["kind"] == "question",
-                            // Swift stores no synthetic "turn ended" notice: a
-                            // completed alert anchors to the reply it produced.
-                            // Older threads keep their stored notice anchor.
-                            AlertKind::Completed => {
-                                matches!(item["kind"].as_str(), Some("assistant" | "notice"))
+            let completion_without_reply = key.kind == AlertKind::Completed
+                && Uuid::parse_str(text(thread, "rustNotificationCompletionID").as_str()).ok()
+                    == Some(key.item);
+            let present = completion_without_reply
+                || thread["items"].as_array().is_some_and(|items| {
+                    items.iter().any(|item| {
+                        Uuid::parse_str(text(item, "id").as_str()).ok() == Some(key.item)
+                            && match key.kind {
+                                AlertKind::Approval => item["kind"] == "approval",
+                                AlertKind::Question => item["kind"] == "question",
+                                // A reply anchors the alert when the turn has one.
+                                // Reply-less turns use the persisted completion ID above.
+                                AlertKind::Completed => {
+                                    matches!(item["kind"].as_str(), Some("assistant" | "notice"))
+                                }
+                                AlertKind::Failed => item["kind"] == "error",
+                                AlertKind::SlowStart => false,
                             }
-                            AlertKind::Failed => item["kind"] == "error",
-                            AlertKind::SlowStart => false,
-                        }
-                })
-            });
+                    })
+                });
             if present {
                 entry.state = State::Ready;
             }
