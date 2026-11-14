@@ -374,7 +374,7 @@ pub fn snapshot(
         let placeholder = match &card.state {
             LimitState::Reading => "Checking limits…",
             LimitState::NotChecked => "Limits not checked",
-            LimitState::Unavailable(_) | LimitState::NotRead(_) => "Limits not available",
+            LimitState::Unavailable(reason) | LimitState::NotRead(reason) => reason.as_str(),
             LimitState::Ready(_) if rows.is_empty() => "No limits reported",
             _ => "",
         };
@@ -588,7 +588,7 @@ mod tests {
                 .unwrap()
                 .iter()
                 .all(|row| row["rows"].as_array().unwrap().is_empty()
-                    && row["placeholder"] == "Limits not available")
+                    && row["placeholder"] == "unavailable")
         );
         assert_eq!(view["periods"][0]["tokens"], "72");
         assert!(

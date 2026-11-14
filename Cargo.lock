@@ -1225,10 +1225,12 @@ dependencies = [
 name = "coincide-core"
 version = "0.1.0"
 dependencies = [
+ "aes 0.8.4",
  "alacritty_terminal",
  "anyhow",
  "apple-native-keyring-store",
  "base64 0.23.1",
+ "cbc 0.1.2",
  "chrono",
  "chrono-tz",
  "iana-time-zone",

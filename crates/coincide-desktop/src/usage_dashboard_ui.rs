@@ -154,6 +154,14 @@ pub(super) fn cards_for(
                     "This version reads plan limits for the default Claude Code account only."
                         .into(),
                 )
+            } else if account.is_default()
+                && matches!(provider, "grok" | "opencode" | "cursor" | "antigravity")
+            {
+                dashboard
+                    .external
+                    .get(provider)
+                    .cloned()
+                    .unwrap_or(LimitState::NotChecked)
             } else {
                 LimitState::NotRead(format!(
                     "This version of Coincide doesn’t read {} plan limits yet.",
@@ -193,6 +201,7 @@ impl Coincide {
         if self.usage_provider_enabled("claude") {
             self.usage_history.dashboard.claude.refresh(&self.engine);
         }
+        self.usage_history.refresh_external(&self.settings);
         cx.notify();
     }
 
@@ -1100,6 +1109,10 @@ impl Coincide {
         };
         let loading = dashboard.loading
             || matches!(dashboard.claude.state, Some(LimitState::Reading))
+            || dashboard
+                .external
+                .values()
+                .any(|state| matches!(state, LimitState::Reading))
             || matches!(
                 self.codex_limits.panel.read(cx).phase(),
                 crate::codex_limits_view::Phase::Loading
@@ -1344,6 +1357,25 @@ impl Coincide {
             .child(self.usage_section(None, filters, None, cx))
             .child(self.usage_section(Some(scope_title.into_any_element()), overview, None, cx))
             .child(self.usage_section(None, vec![chart_header, chart], None, cx));
+
+        if cfg!(target_os = "macos") && enabled.contains(&"opencode") {
+            content = content.child(self.settings_group(
+                "Browser details",
+                div().flex().flex_col().gap_2()
+                    .child(self.setting_toggle(
+                        "Show OpenCode Zen balance",
+                        "Use the matching sign-in in Coincide or your default Chrome browser. Chrome may need Full Disk Access and Keychain permission.",
+                        "usageBrowserFallbackEnabled",
+                        coincide_core::provider_usage::browser_fallback_enabled(&self.settings),
+                        "usage-browser-fallback",
+                        cx,
+                    ))
+                    .child(Button::new("usage-open-opencode-console")
+                        .label("Open OpenCode in default browser")
+                        .small()
+                        .on_click(|_, _, cx| cx.open_url("https://opencode.ai/console"))),
+            ));
+        }
 
         if !report.models.is_empty() {
             let rows = report

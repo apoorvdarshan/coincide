@@ -2,15 +2,18 @@
 //! turns and account rows it reads in the background, the filters, and each
 //! account's limits. Limits are read only when the user refreshes; opening the
 //! page reads saved local history alone.
-use crate::codex_limits_view::{Bucket, Phase as CodexPhase};
+use crate::codex_limits_view::{Bucket, Phase as CodexPhase, ResetCredits};
 use chrono::{DateTime, NaiveDate, Utc};
 use coincide_core::{
     api::SharedEngine,
-    usage_limits::{Credits, Limits, Window, WindowKind},
+    usage_limits::{Credits, Figure, Limits, Unit, Window, WindowKind},
     usage_report::{DEFAULT_ACCOUNT, PROVIDERS, TurnRecord, turn_records},
 };
 use serde_json::{Value, json};
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 pub(crate) const USAGE_BUSY: &str = "The app is busy. Refresh to try again.";
 
@@ -308,7 +311,11 @@ fn codex_windows(bucket: &Bucket) -> Vec<Window> {
 
 /// A Codex observation as one account's limits, after Swift's
 /// `CodexUsageLimits.limits(fromRead:at:)`.
-pub fn codex_limits(buckets: &[Bucket], observed_ms: Option<u64>) -> Limits {
+pub fn codex_limits(
+    buckets: &[Bucket],
+    observed_ms: Option<u64>,
+    reset_credits: Option<&ResetCredits>,
+) -> Limits {
     let checked_at = observed_ms
         .and_then(|ms| DateTime::from_timestamp_millis(ms as i64))
         .unwrap_or_else(Utc::now);
@@ -324,6 +331,19 @@ pub fn codex_limits(buckets: &[Bucket], observed_ms: Option<u64>) -> Limits {
             })
         });
         limits.notes = main.notes.clone();
+        if let Some(amounts) = &main.individual_amounts {
+            let mut figure = Figure::new("individual", "Credit limit", Unit::Credits);
+            figure.used = amounts.used;
+            figure.limit = amounts.limit;
+            figure.resets_at = epoch(amounts.resets);
+            limits.figures.push(figure);
+        }
+    }
+    if let Some(resets) = reset_credits {
+        let mut figure = Figure::new("reset_credits", "Limit resets available", Unit::Count);
+        figure.remaining = Some(resets.available as f64);
+        figure.expires_at = epoch(resets.expires);
+        limits.figures.push(figure);
     }
     for bucket in buckets.iter().filter(|bucket| bucket.id != "codex") {
         let name = bucket.name.clone().unwrap_or_else(|| bucket.id.clone());
@@ -349,7 +369,8 @@ pub fn codex_state(phase: &CodexPhase) -> LimitState {
         CodexPhase::Ready {
             observed_ms,
             buckets,
-        } => LimitState::Ready(codex_limits(buckets, *observed_ms)),
+            reset_credits,
+        } => LimitState::Ready(codex_limits(buckets, *observed_ms, reset_credits.as_ref())),
         CodexPhase::Failed(text) => LimitState::Unavailable((*text).into()),
         CodexPhase::Closing => LimitState::Unavailable("Usage is closing.".into()),
     }
@@ -373,6 +394,8 @@ pub struct Dashboard {
     /// Whether Settings › Usage showed at the last poll, to read when it appears.
     pub visible: bool,
     pub claude: ClaudeLimits,
+    /// Default-account reads for providers with native usage endpoints.
+    pub external: HashMap<&'static str, LimitState>,
 }
 impl Default for Dashboard {
     fn default() -> Self {
@@ -388,6 +411,7 @@ impl Default for Dashboard {
             attempted_at: None,
             visible: false,
             claude: ClaudeLimits::default(),
+            external: HashMap::new(),
         }
     }
 }
@@ -472,6 +496,7 @@ mod tests {
                 unlimited: None,
                 balance: Some("12.30".into()),
             }),
+            individual_amounts: None,
             notes: vec!["The workspace is out of credits.".into()],
         };
         let spark = Bucket {
@@ -483,9 +508,10 @@ mod tests {
                 report("secondary", None, None),
             ],
             credits: None,
+            individual_amounts: None,
             notes: vec![],
         };
-        let limits = codex_limits(&[main, spark], Some(1_793_934_061_000));
+        let limits = codex_limits(&[main, spark], Some(1_793_934_061_000), None);
         let windows = limits
             .windows
             .iter()
@@ -514,6 +540,38 @@ mod tests {
         assert_eq!(limits.model_windows[0].label, "Spark · Monthly");
         assert!(!limits.model_windows[0].continues_on_credits);
         assert_eq!(limits.checked_at.timestamp(), 1_793_934_061);
+    }
+
+    #[::core::prelude::v1::test]
+    fn codex_reset_credits_survive_provider_decode_and_become_a_visible_row() {
+        let value = json!({
+            "requestId":"read", "generation":1, "provider":"codex",
+            "accountScope":"default_runtime_account_identity_unknown", "accountIdentityVerified":false,
+            "state":"ready", "observedAtEpochMs":1_793_934_061_000u64, "error":null,
+            "snapshot":{
+                "provenance":"codex_app_server_account_rate_limits",
+                "accountScope":"default_runtime_account_identity_unknown", "accountIdentityVerified":false,
+                "main":{"id":"codex","displayName":null,"plan":"pro","windows":[],
+                        "credits":null,"individualAmounts":null,"notes":[]},
+                "modelBuckets":[],
+                "resetCredits":{"availableCount":1,"expiresAtEpochSeconds":2_000_000_000}
+            }
+        });
+        let observation = crate::codex_limits_view::decode(&value).unwrap();
+        let LimitState::Ready(limits) = codex_state(&observation.phase) else {
+            panic!("missing limits")
+        };
+        let row = coincide_core::usage_presentation::rows(
+            &limits,
+            coincide_core::usage_limits::DisplayMode::Used,
+            chrono::DateTime::from_timestamp(1_793_934_061, 0).unwrap(),
+            &chrono::Utc,
+        )
+        .into_iter()
+        .find(|row| row.title == "Limit resets available")
+        .unwrap();
+        assert_eq!(row.value, "1");
+        assert!(row.details.iter().any(|detail| detail.contains("expires")));
     }
 
     #[::core::prelude::v1::test]

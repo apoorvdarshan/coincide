@@ -3,6 +3,9 @@ use super::{transport::*, *};
 use std::collections::HashMap;
 #[path = "provider_cursor_profile.rs"]
 mod profile;
+pub(crate) use profile::usage_keychain_access_token;
+#[cfg(target_os = "macos")]
+pub(crate) use profile::usage_keychain_capture;
 #[path = "provider_cursor_questions.rs"]
 mod questions;
 

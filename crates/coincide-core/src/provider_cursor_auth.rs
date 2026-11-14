@@ -147,12 +147,12 @@ fn validate_token(mut bytes: Vec<u8>) -> Result<OsString> {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn native_access_token() -> Result<Option<Vec<u8>>> {
+pub(crate) fn native_access_token() -> Result<Option<Vec<u8>>> {
     bail!("Cursor existing login is unavailable on this platform")
 }
 
 #[cfg(target_os = "macos")]
-fn native_access_token() -> Result<Option<Vec<u8>>> {
+pub(crate) fn native_access_token() -> Result<Option<Vec<u8>>> {
     use std::process::{Command, Stdio};
     let mut command = Command::new("/usr/bin/security");
     command
@@ -173,7 +173,10 @@ fn native_access_token() -> Result<Option<Vec<u8>>> {
 }
 
 #[cfg(target_os = "macos")]
-fn capture(mut command: std::process::Command, limit: std::time::Duration) -> Result<Vec<u8>> {
+pub(crate) fn capture(
+    mut command: std::process::Command,
+    limit: std::time::Duration,
+) -> Result<Vec<u8>> {
     use std::{
         io::Read, os::unix::process::CommandExt, process::Child, sync::mpsc, thread, time::Instant,
     };

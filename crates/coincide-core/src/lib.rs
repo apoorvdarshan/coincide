@@ -24,6 +24,8 @@ pub mod palette_search;
 pub mod schedule_presentation;
 pub mod thread_history;
 
+#[cfg(target_os = "macos")]
+mod browser_usage_chrome;
 pub mod cli_session_discovery;
 pub mod cli_session_import;
 pub mod credentials;
@@ -34,6 +36,7 @@ pub mod local_usage;
 pub mod organization;
 pub mod passkeys;
 pub mod platform_host;
+pub mod provider_usage;
 pub mod remote;
 pub mod turn_checkpoints;
 pub mod usage_history;

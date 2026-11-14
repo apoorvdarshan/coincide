@@ -80,6 +80,12 @@ static NSImage *UsageLogo(NSString *provider, NSImage *logo, CGFloat size) {
 @end
 
 static NSString *UsageString(id value) { return [value isKindOfClass:NSString.class] ? value : @""; }
+int coincide_usage_default_browser_is_chrome(void) {
+    NSURL *site = [NSURL URLWithString:@"https://opencode.ai/"];
+    NSURL *application = [[NSWorkspace sharedWorkspace] URLForApplicationToOpenURL:site];
+    NSString *identifier = application ? [[NSBundle bundleWithURL:application] bundleIdentifier] : nil;
+    return [identifier isEqualToString:@"com.google.Chrome"] ? 1 : 0;
+}
 static NSArray *UsageArray(id value) { return [value isKindOfClass:NSArray.class] ? value : @[]; }
 static NSDictionary *UsageDict(id value) { return [value isKindOfClass:NSDictionary.class] ? value : @{}; }
 static NSTextField *UsageLabel(NSString *text, CGFloat size, NSFontWeight weight, NSColor *color) {
@@ -373,7 +379,14 @@ static NSStackView *UsageStack(NSUserInterfaceLayoutOrientation orientation, CGF
             if (detail.length) [card addArrangedSubview:UsageLabel(detail,10,NSFontWeightRegular,NSColor.secondaryLabelColor)];
         }
         NSString *placeholder = UsageString(account[@"placeholder"]);
-        if (rows.count == 0 && placeholder.length) [card addArrangedSubview:UsageLabel(placeholder,10,NSFontWeightRegular,NSColor.secondaryLabelColor)];
+        if (rows.count == 0 && placeholder.length) {
+            NSTextField *message = UsageLabel(placeholder, 10, NSFontWeightRegular, NSColor.secondaryLabelColor);
+            message.maximumNumberOfLines = 2;
+            message.lineBreakMode = NSLineBreakByWordWrapping;
+            message.preferredMaxLayoutWidth = 300;
+            [message.widthAnchor constraintEqualToConstant:300].active = YES;
+            [card addArrangedSubview:message];
+        }
         NSString *tracked = UsageString(account[@"tracked"]);
         if (tracked.length) [card addArrangedSubview:UsageLabel(tracked,10,NSFontWeightRegular,NSColor.secondaryLabelColor)];
         NSClickGestureRecognizer *openCard = [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(openUsage:)];

@@ -822,6 +822,19 @@ impl Coincide {
                     .child(accounts),
             );
         }
+        if enabled && provider == ProviderId::Cursor && cfg!(target_os = "macos") {
+            pane = pane.child(self.settings_group(
+                "Account usage",
+                self.setting_toggle(
+                    "Show Cursor plan limits",
+                    "Read the Cursor CLI sign-in from Keychain to show its usage. macOS may ask to allow access.",
+                    "cursorKeychainUsageEnabled",
+                    false,
+                    "cursor-keychain-usage",
+                    cx,
+                ),
+            ));
+        }
         match provider {
             ProviderId::Codex => {
                 pane = pane.child(

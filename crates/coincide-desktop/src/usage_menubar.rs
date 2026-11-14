@@ -112,7 +112,13 @@ impl Bar {
     fn receive_settings(&mut self, settings: Value, now: Instant) {
         if self.settings != settings {
             let was_visible = self.visible();
-            if self.settings["providers"] != settings["providers"] {
+            if self.settings["providers"] != settings["providers"]
+                || self.settings["usageBrowserFallbackEnabled"]
+                    != settings["usageBrowserFallbackEnabled"]
+                || self.settings["usageBrowserSignIn"] != settings["usageBrowserSignIn"]
+                || self.settings["cursorKeychainUsageEnabled"]
+                    != settings["cursorKeychainUsageEnabled"]
+            {
                 self.cached.clear();
                 self.last_refresh = None;
             }
@@ -130,6 +136,7 @@ impl Bar {
         }
         self.last_refresh = Some(now);
         self.history.load_dashboard();
+        self.history.refresh_external(&self.settings);
         if usage_dashboard_ui::provider_id("codex")
             .is_some_and(|id| crate::settings_navigation::provider_enabled(&self.settings, id))
             && !matches!(self.codex.panel.read(cx).phase(), Phase::Loading)
@@ -244,8 +251,15 @@ impl Bar {
             let key = (card.account.provider.to_owned(), card.account.id.clone());
             if let LimitState::Ready(limits) = &card.state {
                 self.cached.insert(key, limits.clone());
-            } else if let Some(previous) = self.cached.get(&key) {
+            } else if matches!(card.state, LimitState::Reading | LimitState::NotChecked)
+                && let Some(previous) = self.cached.get(&key)
+            {
                 card.state = LimitState::Ready(previous.clone());
+            } else if matches!(
+                card.state,
+                LimitState::Unavailable(_) | LimitState::NotRead(_)
+            ) {
+                self.cached.remove(&key);
             }
         }
         if changed
@@ -537,11 +551,17 @@ pub fn reuse_cached(cx: &App, cards: &mut [usage_dashboard_ui::Card]) {
         return;
     };
     for card in cards {
+        if card.account.is_default()
+            && let Some(state) = bar.history.dashboard.external.get(card.account.provider)
+            && !matches!(state, LimitState::NotChecked | LimitState::Reading)
+        {
+            card.state = state.clone();
+        }
         let key = (card.account.provider.to_owned(), card.account.id.clone());
         if let Some(limits) = bar.cached.get(&key) {
             let use_cached = match &card.state {
                 LimitState::Ready(current) => limits.checked_at > current.checked_at,
-                LimitState::Reading => false,
+                LimitState::Reading | LimitState::Unavailable(_) | LimitState::NotRead(_) => false,
                 _ => true,
             };
             if use_cached {

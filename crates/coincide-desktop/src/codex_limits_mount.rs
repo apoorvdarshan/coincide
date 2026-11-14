@@ -290,6 +290,7 @@ mod tests {
                 phase: Phase::Ready {
                     observed_ms: Some(1),
                     buckets: vec![],
+                    reset_credits: None,
                 },
             }),
             closed: false,
@@ -337,6 +338,7 @@ mod tests {
             generation: 7,
             phase: Phase::Ready {
                 observed_ms: Some(1234),
+                reset_credits: None,
                 buckets: vec![Bucket {
                     id: "codex".into(),
                     name: None,
@@ -347,6 +349,7 @@ mod tests {
                         unlimited: Some(false),
                         balance: Some("3".into()),
                     }),
+                    individual_amounts: None,
                     notes: vec![],
                 }],
             },

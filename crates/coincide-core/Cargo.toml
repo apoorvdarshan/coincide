@@ -44,6 +44,8 @@ qrcodegen = "1.8"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 apple-native-keyring-store = { version = "=1.0.2", default-features = false, features = ["keychain"] }
+aes = { version = "=0.8.4", features = ["zeroize"] }
+cbc = { version = "=0.1.2", features = ["block-padding"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus-secret-service-keyring-store = { version = "=1.0.1", default-features = false, features = ["crypto-rust"] }

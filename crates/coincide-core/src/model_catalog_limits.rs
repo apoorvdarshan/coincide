@@ -44,6 +44,20 @@ pub struct Credits {
     /// Reported display amount, not currency/cost or inferred token capacity.
     pub balance: Option<String>,
 }
+/// Additional account figures supplied by Codex, not inferred from a window.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IndividualAmounts {
+    pub used: Option<f64>,
+    pub limit: Option<f64>,
+    pub resets_at_epoch_seconds: Option<f64>,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResetCredits {
+    pub available_count: u64,
+    pub expires_at_epoch_seconds: Option<f64>,
+}
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Note {
@@ -62,6 +76,7 @@ pub struct Bucket {
     pub plan: Option<String>,
     pub windows: Vec<Window>,
     pub credits: Option<Credits>,
+    pub individual_amounts: Option<IndividualAmounts>,
     pub notes: Vec<Note>,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -72,6 +87,7 @@ pub struct Snapshot {
     pub account_identity_verified: bool,
     pub main: Option<Bucket>,
     pub model_buckets: Vec<Bucket>,
+    pub reset_credits: Option<ResetCredits>,
 }
 
 fn bounded(
@@ -133,6 +149,32 @@ fn amount(value: Option<&Value>) -> Option<String> {
         _ => None,
     }
 }
+fn numeric_amount(value: Option<&Value>) -> Option<f64> {
+    let value = value?;
+    let number = value.as_f64().or_else(|| value.as_str()?.parse().ok())?;
+    (number.is_finite() && number >= 0.).then_some(number)
+}
+
+fn reset_credits(value: Option<&Value>) -> Option<ResetCredits> {
+    let summary = value?.as_object()?;
+    let available_count = summary.get("availableCount")?.as_u64().filter(|n| *n > 0)?;
+    let expires_at_epoch_seconds = summary
+        .get("credits")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|credit| {
+            credit
+                .get("status")
+                .is_none_or(|status| status == "available")
+        })
+        .filter_map(|credit| epoch(credit.get("expiresAt")))
+        .min_by(f64::total_cmp);
+    Some(ResetCredits {
+        available_count,
+        expires_at_epoch_seconds,
+    })
+}
 fn bucket(id: &str, value: &Value, individual: bool) -> Result<Bucket, Failure> {
     let object = value.as_object().ok_or(Failure::InvalidResponse)?;
     let mut windows = Vec::new();
@@ -172,6 +214,18 @@ fn bucket(id: &str, value: &Value, individual: bool) -> Result<Bucket, Failure> 
             })
         }
     };
+    let individual_amounts = individual
+        .then(|| object.get("individualLimit").and_then(Value::as_object))
+        .flatten()
+        .and_then(|value| {
+            let used = numeric_amount(value.get("used"));
+            let limit = numeric_amount(value.get("limit"));
+            (used.is_some() || limit.is_some()).then(|| IndividualAmounts {
+                used,
+                limit,
+                resets_at_epoch_seconds: epoch(value.get("resetsAt")),
+            })
+        });
     let note = match object.get("rateLimitReachedType").and_then(Value::as_str) {
         Some("workspace_owner_credits_depleted" | "workspace_member_credits_depleted") => {
             Some(Note::CreditsDepleted)
@@ -190,6 +244,7 @@ fn bucket(id: &str, value: &Value, individual: bool) -> Result<Bucket, Failure> 
         plan: text(object.get("planType")).filter(|s| s != "unknown"),
         windows,
         credits,
+        individual_amounts,
         notes: note.into_iter().collect(),
     })
 }
@@ -243,6 +298,7 @@ pub fn parse(value: &Value) -> Result<Snapshot, Failure> {
         account_identity_verified: false,
         main,
         model_buckets,
+        reset_credits: reset_credits(object.get("rateLimitResetCredits")),
     })
 }
 
@@ -583,6 +639,36 @@ mod tests {
         );
         assert_eq!(main.windows[0].remaining_percent, Some(12.0));
         assert_eq!(main.windows[0].used_percent, None);
+    }
+    #[test]
+    fn preserves_reported_reset_credits_and_individual_amounts() {
+        let parsed = parse(&json!({
+            "rateLimits": {"individualLimit": {"used":"2.5", "limit":10, "resetsAt":2_000_000_000}},
+            "rateLimitResetCredits": {"availableCount":2,"credits":[
+                {"status":"redeemed","expiresAt":1_800_000_000},
+                {"status":"available","expiresAt":2_000_000_100},
+                {"status":"available","expiresAt":2_000_000_050}
+            ]}
+        }))
+        .unwrap();
+        assert_eq!(
+            parsed.reset_credits.unwrap(),
+            ResetCredits {
+                available_count: 2,
+                expires_at_epoch_seconds: Some(2_000_000_050.),
+            }
+        );
+        assert_eq!(
+            parsed.main.unwrap().individual_amounts.unwrap(),
+            IndividualAmounts {
+                used: Some(2.5),
+                limit: Some(10.),
+                resets_at_epoch_seconds: Some(2_000_000_000.),
+            }
+        );
+        let empty =
+            parse(&json!({"rateLimits":{},"rateLimitResetCredits":{"availableCount":0}})).unwrap();
+        assert!(empty.reset_credits.is_none());
     }
     #[test]
     fn rejects_missing_malformed_and_oversized_responses() {
