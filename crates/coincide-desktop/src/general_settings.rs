@@ -6,6 +6,7 @@
 use super::*;
 use crate::notifications::Permission;
 use gpui_kit::component::slider::{Slider, SliderEvent, SliderState};
+use gpui_kit::component::switch::Switch;
 use settings::{PALETTES, Palette};
 
 /// Swift's FontSizeRow slider range. Keyboard commands keep their own steps.
@@ -653,19 +654,15 @@ impl Coincide {
         let status = self.notification_panel.read(cx).status().clone();
         let enabled = status.enabled;
         let unavailable = !status.native_compiled;
-        let controls = div()
-            .flex()
-            .gap_2()
-            .children([(true, "On"), (false, "Off")].map(|(value, label)| {
-                Button::new(SharedString::from(format!("notify-background-{label}")))
-                    .label(label)
-                    .when(value == enabled, |button| button.primary())
-                    .disabled(status.busy || status.stopped || (value && unavailable))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.notification_panel.update(cx, |panel, cx| {
-                            panel.set_background_notifications(value, cx)
-                        });
-                    }))
+        let controls = Switch::new("notify-background")
+            .accessibility_label("Notify when Coincide is in the background")
+            .color(self.color(0x98b1d4))
+            .checked(enabled)
+            .disabled(status.busy || status.stopped || (!enabled && unavailable))
+            .on_click(cx.listener(|this, value: &bool, _, cx| {
+                this.notification_panel.update(cx, |panel, cx| {
+                    panel.set_background_notifications(*value, cx)
+                });
             }));
         let caption = if unavailable {
             "Desktop notifications are unavailable in this build."

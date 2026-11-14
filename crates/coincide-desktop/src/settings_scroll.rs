@@ -30,7 +30,7 @@ impl State {
             .min_w_0()
             .overflow_hidden()
             .child(viewport.track_scroll(&handle).pr_4())
-            .child(Scrollbar::vertical(&handle).mode(ScrollbarMode::Always))
+            .child(Scrollbar::vertical(&handle).mode(ScrollbarMode::Hover))
             .into_any_element()
     }
 }

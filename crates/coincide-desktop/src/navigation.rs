@@ -17,6 +17,29 @@ fn sidebar_button_label(label: String) -> Div {
     div().w_full().min_w_0().truncate().text_left().child(label)
 }
 
+// Index once per sidebar render instead of scanning every schedule for each
+// conversation. Preserve the source order used in the schedule tooltip.
+fn scheduled_threads(tasks: &[Value]) -> std::collections::HashMap<&str, Vec<String>> {
+    let mut result = std::collections::HashMap::<&str, Vec<String>>::new();
+    for task in tasks {
+        if task["isPaused"] != true
+            && task["approvalState"] == "approved"
+            && let Some(id) = task["threadID"].as_str()
+        {
+            result.entry(id).or_default().push(text(task, "name"));
+        }
+    }
+    result
+}
+
+fn pinned_positions(ids: &[String]) -> std::collections::HashMap<String, usize> {
+    let mut result = std::collections::HashMap::new();
+    for (index, id) in ids.iter().enumerate() {
+        result.entry(id.to_ascii_lowercase()).or_insert(index + 1);
+    }
+    result
+}
+
 // The whole project header is a drop target as well as a click target. Keep
 // the expandable button and its adjacent New Thread control inside that row.
 fn project_row<F>(id: &str, enabled: bool, on_click: F) -> Stateful<Div>
@@ -306,6 +329,13 @@ impl Coincide {
         searching: bool,
         query: &str,
     ) -> Vec<sections::Section<'_>> {
+        let bots: std::collections::HashSet<_> = self
+            .sidebar_bots
+            .iter()
+            .filter_map(|bot| bot["id"].as_str())
+            .map(str::to_ascii_lowercase)
+            .collect();
+        let pinned = pinned_positions(&self.sidebar_preferences.strings("pinnedThreads"));
         let mut projects: Vec<_> = self
             .projects
             .iter()
@@ -357,15 +387,14 @@ impl Coincide {
                 "threadSort"
             };
             if section.project_id.is_none() {
-                let saved = self.sidebar_preferences.strings("pinnedThreads");
-                section.threads.sort_by_key(|thread| {
-                    saved
-                        .iter()
-                        .position(|id| id.eq_ignore_ascii_case(&thread.id))
-                        .map(|index| index + 1)
+                section.threads.sort_by_cached_key(|thread| {
+                    pinned
+                        .get(&thread.id.to_ascii_lowercase())
+                        .copied()
                         .unwrap_or(0)
                 });
             } else {
+                let sort = self.sidebar_preferences.sort(key);
                 section.threads.sort_by(|left, right| {
                     let date = |thread: &ThreadSummary, created: bool| {
                         thread
@@ -380,7 +409,7 @@ impl Coincide {
                             })
                             .unwrap_or(0.)
                     };
-                    let order = match self.sidebar_preferences.sort(key) {
+                    let order = match sort {
                         "name" => sidebar_preferences::name_order(&left.title, &right.title),
                         "created" => date(right, true).total_cmp(&date(left, true)),
                         _ => std::cmp::Ordering::Equal,
@@ -395,13 +424,7 @@ impl Coincide {
                     .navigation
                     .as_ref()
                     .and_then(|meta| meta.bot_id.as_deref());
-                let represented = bot.is_some_and(|id| {
-                    self.sidebar_bots.iter().any(|bot| {
-                        bot["id"]
-                            .as_str()
-                            .is_some_and(|known| known.eq_ignore_ascii_case(id))
-                    })
-                });
+                let represented = bot.is_some_and(|id| bots.contains(&id.to_ascii_lowercase()));
                 let settled = self.sidebar_preferences.document["settledThreads"][&thread.id]
                     .as_f64()
                     .is_some_and(|date| {
@@ -437,19 +460,10 @@ impl Coincide {
         label: String,
         place: Option<String>,
         now: f64,
+        schedules: &[String],
         cx: &App,
     ) -> Div {
-        let schedules = self
-            .sidebar_schedules
-            .iter()
-            // Only schedules that can run: allowed and not paused.
-            .filter(|task| {
-                task["threadID"] == thread.id
-                    && task["isPaused"] != true
-                    && task["approvalState"] == "approved"
-            })
-            .map(|task| text(task, "name"))
-            .collect::<Vec<_>>();
+        let schedules = schedules.to_vec();
         let status = self.sidebar_thread_status(thread);
         let ink = self.color(0xe4e9f2);
         let theme = cx.theme();
@@ -914,6 +928,7 @@ impl Coincide {
         let searching = !query.trim().is_empty();
         let now = coincide_core::store::swift_timestamp();
         let sections = self.sidebar_sections(now, searching, &query);
+        let schedules = scheduled_threads(&self.sidebar_schedules);
         let menu_context = self.sidebar_menu_context(cx);
         let mut section_index = 0usize;
         let mut conversations = div()
@@ -1423,24 +1438,30 @@ impl Coincide {
                                             .map(|label| format!(", {label}"))
                                             .unwrap_or_default()
                                     )))
-                                    .child(self.sidebar_thread_content(
-                                        thread,
-                                        if self.thread_bulk.mode {
-                                            format!(
-                                                "{} {label}",
-                                                if self.thread_bulk.picked.contains(&id) {
-                                                    "☑"
-                                                } else {
-                                                    "☐"
-                                                }
-                                            )
-                                        } else {
-                                            label
-                                        },
-                                        place,
-                                        now,
-                                        cx,
-                                    ))
+                                    .child(
+                                        self.sidebar_thread_content(
+                                            thread,
+                                            if self.thread_bulk.mode {
+                                                format!(
+                                                    "{} {label}",
+                                                    if self.thread_bulk.picked.contains(&id) {
+                                                        "☑"
+                                                    } else {
+                                                        "☐"
+                                                    }
+                                                )
+                                            } else {
+                                                label
+                                            },
+                                            place,
+                                            now,
+                                            schedules
+                                                .get(id.as_str())
+                                                .map(Vec::as_slice)
+                                                .unwrap_or_default(),
+                                            cx,
+                                        ),
+                                    )
                                     .tooltip(self.sidebar_search_tooltip(
                                         self.sidebar_thread_tooltip(thread, now),
                                         &thread.id,
@@ -2174,6 +2195,24 @@ impl Coincide {
 #[cfg(test)]
 mod keyboard_navigation_tests {
     use super::*;
+    #[::core::prelude::v1::test]
+    fn sidebar_indexes_keep_original_schedule_and_pin_order() {
+        let tasks = vec![
+            json!({"threadID":"A","name":"First","approvalState":"approved"}),
+            json!({"threadID":"A","name":"Paused","approvalState":"approved","isPaused":true}),
+            json!({"threadID":"B","name":"Other","approvalState":"approved"}),
+            json!({"threadID":"A","name":"Second","approvalState":"approved"}),
+            json!({"threadID":"A","name":"Waiting","approvalState":"pending"}),
+            json!({"name":"No conversation","approvalState":"approved"}),
+        ];
+        let schedules = scheduled_threads(&tasks);
+        assert_eq!(schedules.get("A").unwrap(), &["First", "Second"]);
+        assert_eq!(schedules.get("B").unwrap(), &["Other"]);
+        assert_eq!(schedules.len(), 2);
+        let positions = pinned_positions(&["A".into(), "b".into(), "a".into()]);
+        assert_eq!(positions.get("a"), Some(&1));
+        assert_eq!(positions.get("b"), Some(&2));
+    }
     #[::core::prelude::v1::test]
     fn arrow_navigation_uses_only_visible_rows_and_preserves_boundaries() {
         let visible = ["first", "selected", "last"];

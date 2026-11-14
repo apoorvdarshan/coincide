@@ -182,7 +182,7 @@ impl Coincide {
                     Some("Capture the frontmost window and attach it to a chat.".into()),
                     Switch::new("appshots-enabled")
                         .accessibility_label("Turn on Appshots")
-                        .color(self.color(0xe4e9f2))
+                        .color(self.color(0x98b1d4))
                         .checked(settings.enabled)
                         .on_click(cx.listener(move |this, checked: &bool, window, cx| {
                             this.change_appshot_setting("enabled", json!(*checked), window, cx)
@@ -228,8 +228,8 @@ impl Coincide {
                 );
         }
         capture = capture
-            .child(self.labeled_row("Include the window’s text", Some("Adds accessible window text beside the picture; password fields are excluded.".into()), Switch::new("appshots-text").accessibility_label("Include the window’s text").color(self.color(0xe4e9f2)).checked(settings.includes_text).on_click(cx.listener(move|this,checked:&bool,window,cx|this.change_appshot_setting("includesWindowText",json!(*checked),window,cx)))))
-            .child(self.labeled_row("Play a sound", None, Switch::new("appshots-sound").accessibility_label("Play a sound").color(self.color(0xe4e9f2)).checked(settings.sound).on_click(cx.listener(move|this,checked:&bool,window,cx|this.change_appshot_setting("playsSound",json!(*checked),window,cx)))));
+            .child(self.labeled_row("Include the window’s text", Some("Adds accessible window text beside the picture; password fields are excluded.".into()), Switch::new("appshots-text").accessibility_label("Include the window’s text").color(self.color(0x98b1d4)).checked(settings.includes_text).on_click(cx.listener(move|this,checked:&bool,window,cx|this.change_appshot_setting("includesWindowText",json!(*checked),window,cx)))))
+            .child(self.labeled_row("Play a sound", None, Switch::new("appshots-sound").accessibility_label("Play a sound").color(self.color(0x98b1d4)).checked(settings.sound).on_click(cx.listener(move|this,checked:&bool,window,cx|this.change_appshot_setting("playsSound",json!(*checked),window,cx)))));
         let mut permissions = div()
             .p_4()
             .flex()

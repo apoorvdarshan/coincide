@@ -363,6 +363,17 @@ fn accent_ink(color: u32) -> u32 {
     }
 }
 
+/// A switch thumb must be visible on both the accent and its neutral track.
+fn switch_thumb_and_track_opacity(palette: &Palette) -> (u32, f32) {
+    let thumb = accent_ink(palette.accent);
+    let track_opacity = if !palette.dark && thumb == 0xffffff {
+        0.60
+    } else {
+        0.42
+    };
+    (thumb, track_opacity)
+}
+
 fn relative_luminance(color: u32) -> f64 {
     let channel = |shift: u32| {
         let value = f64::from((color >> shift) & 0xff_u32) / 255.;
@@ -499,6 +510,9 @@ impl Coincide {
             theme.colors.secondary_hover = rgb(p.border).into();
             theme.colors.secondary_active = rgb(p.border).into();
             theme.colors.secondary_foreground = rgb(p.ink).into();
+            let (switch_thumb, switch_track_opacity) = switch_thumb_and_track_opacity(p);
+            theme.colors.switch = rgb(p.ink).opacity(switch_track_opacity).into();
+            theme.colors.switch_thumb = rgb(switch_thumb).into();
             theme.colors.button_secondary = rgb(p.raised).into();
             theme.colors.button_secondary_hover = rgb(p.border).into();
             theme.colors.button_secondary_active = rgb(p.border).into();
@@ -626,7 +640,7 @@ impl Coincide {
             Some(caption.into()),
             Switch::new(id)
                 .accessibility_label(label)
-                .color(self.color(0xe4e9f2))
+                .color(self.color(0x98b1d4))
                 .checked(checked)
                 .on_click(cx.listener(move |this, value: &bool, window, cx| {
                     this.change_setting(key, json!(*value), window, cx)
@@ -897,7 +911,7 @@ impl Coincide {
                     ),
                     Switch::new("idle-sleep-toggle")
                         .accessibility_label("Keep awake")
-                        .color(self.color(0xe4e9f2))
+                        .color(self.color(0x98b1d4))
                         .checked(enabled)
                         .disabled(!supported && !enabled)
                         .on_click(cx.listener(move |this, value: &bool, _, cx| {
@@ -911,7 +925,7 @@ impl Coincide {
                     Some("When Keep Awake is on, prevent idle sleep even when no work is running.".into()),
                     Switch::new("awake-while-open")
                         .accessibility_label("Keep awake while Coincide is open")
-                        .color(self.color(0xe4e9f2))
+                        .color(self.color(0x98b1d4))
                         .checked(while_open)
                         .disabled(!supported)
                         .on_click(cx.listener(move |this, value: &bool, _, cx| {
@@ -925,7 +939,7 @@ impl Coincide {
                     Some("Pause work-based Keep Awake while running on battery.".into()),
                     Switch::new("awake-sleep-on-battery")
                         .accessibility_label("Allow sleep on battery")
-                        .color(self.color(0xe4e9f2))
+                        .color(self.color(0x98b1d4))
                         .checked(sleep_on_battery)
                         .disabled(!supported)
                         .on_click(cx.listener(move |this, value: &bool, _, cx| {
@@ -948,7 +962,7 @@ impl Coincide {
                 Some("Keeps this Mac awake after Coincide quits. Agent turns stop when Coincide quits. macOS may ask for administrator and background-item permission; turning this off restores the previous sleep settings.".into()),
                 Switch::new("persistent-awake-toggle")
                     .accessibility_label("Keep awake with the lid closed (24/7)")
-                    .color(self.color(0xe4e9f2))
+                    .color(self.color(0x98b1d4))
                     .checked(enabled)
                     .disabled(busy || !known)
                     .on_click(cx.listener(move |this, value: &bool, _, cx| this.configure_persistent_awake(if *value { crate::persistent_awake::Action::Enable } else { crate::persistent_awake::Action::Disable }, cx))),
@@ -960,7 +974,7 @@ impl Coincide {
                         Some("Put displays to sleep when the lid closes while 24/7 mode is on.".into()),
                         Switch::new("persistent-awake-display-off")
                             .accessibility_label("Turn displays off when the lid closes")
-                            .color(self.color(0xe4e9f2)).checked(preferences.display_off_on_close).disabled(busy)
+                            .color(self.color(0x98b1d4)).checked(preferences.display_off_on_close).disabled(busy)
                             .on_click(cx.listener(|this, value: &bool, _, cx| this.configure_persistent_awake(Action::SetDisplayOff(*value), cx))),
                     ))
                     .child(self.labeled_row(
@@ -968,7 +982,7 @@ impl Coincide {
                         Some("Put a display back to sleep if input wakes it while the lid is closed.".into()),
                         Switch::new("persistent-awake-keep-displays-off")
                             .accessibility_label("Keep displays off while the lid is closed")
-                            .color(self.color(0xe4e9f2)).checked(preferences.keep_displays_off).disabled(busy)
+                            .color(self.color(0x98b1d4)).checked(preferences.keep_displays_off).disabled(busy)
                             .on_click(cx.listener(|this, value: &bool, _, cx| this.configure_persistent_awake(Action::SetKeepDisplaysOff(*value), cx))),
                     ))
                     .child(self.labeled_row(
@@ -976,7 +990,7 @@ impl Coincide {
                         Some("Restore each changed output's previous mute state when the lid opens.".into()),
                         Switch::new("persistent-awake-mute")
                             .accessibility_label("Mute sound while the lid is closed")
-                            .color(self.color(0xe4e9f2)).checked(preferences.mute_while_closed).disabled(busy)
+                            .color(self.color(0x98b1d4)).checked(preferences.mute_while_closed).disabled(busy)
                             .on_click(cx.listener(|this, value: &bool, _, cx| this.configure_persistent_awake(Action::SetMute(*value), cx))),
                     ))
                     .child(self.labeled_row(
@@ -984,7 +998,7 @@ impl Coincide {
                         Some("Sleep normally on battery and stay awake on external power. macOS requires approval for the battery helper.".into()),
                         Switch::new("persistent-awake-battery")
                             .accessibility_label("Allow sleep on battery in 24/7 mode")
-                            .color(self.color(0xe4e9f2))
+                            .color(self.color(0x98b1d4))
                             .checked(preferences.sleep_on_battery || preferences.battery_approval_pending)
                             .disabled(busy)
                             .on_click(cx.listener(|this, value: &bool, _, cx| this.configure_persistent_awake(Action::SetSleepOnBattery(*value), cx))),
@@ -1233,7 +1247,7 @@ impl Coincide {
                                     .child(self.settings_group("Passwords", self.credential_panel.clone()))
                                     .child(self.settings_card(self.passkey_settings(cx)))))
                             .child(gpui_kit::component::scroll::Scrollbar::vertical(&scroll)
-                                .mode(gpui_kit::component::scroll::ScrollbarMode::Always)),
+                                .mode(gpui_kit::component::scroll::ScrollbarMode::Hover)),
                     )
                     .into_any_element()
         } else if self.credentials_open {
@@ -2000,6 +2014,40 @@ mod navigation_tests {
                     "{} selected sidebar row",
                     palette.name
                 );
+            }
+        }
+    }
+    #[::core::prelude::v1::test]
+    fn switch_thumb_remains_visible_on_accents_and_neutral_tracks() {
+        let contrast = |a, b| {
+            let a = relative_luminance(a);
+            let b = relative_luminance(b);
+            (a.max(b) + 0.05) / (a.min(b) + 0.05)
+        };
+        let composite = |foreground: u32, background: u32, opacity: f32| {
+            [16, 8, 0].into_iter().fold(0, |color, shift| {
+                let foreground = ((foreground >> shift) & 0xff) as f32;
+                let background = ((background >> shift) & 0xff) as f32;
+                color
+                    | (((foreground * opacity + background * (1. - opacity)).round() as u32)
+                        << shift)
+            })
+        };
+        for palette in PALETTES {
+            let (thumb, opacity) = switch_thumb_and_track_opacity(palette);
+            assert!(
+                contrast(thumb, palette.accent) >= 4.5,
+                "{} enabled",
+                palette.name
+            );
+            for surface in [
+                palette.sidebar,
+                palette.content,
+                palette.surface,
+                palette.raised,
+            ] {
+                let track = composite(palette.ink, surface, opacity);
+                assert!(contrast(thumb, track) >= 3., "{} disabled", palette.name);
             }
         }
     }

@@ -196,7 +196,7 @@ impl Render for ComputerUseSettingsPanel {
             .child(div().flex().items_center().gap_3()
                 .child(div().flex_1().child(format!("Allow agents to use this {COMPUTER}"))
                     .child(div().text_xs().text_color(cx.theme().muted_foreground).child("Agents can see and interact with apps through a private connection for each conversation.")))
-                .child(Switch::new("computer-use-enable").color(cx.theme().foreground).accessibility_label(format!("Allow agents to use this {COMPUTER}"))
+                .child(Switch::new("computer-use-enable").accessibility_label(format!("Allow agents to use this {COMPUTER}"))
                     .checked(enabled).disabled(self.status.stopped || (!enabled && !self.status.native_compiled))
                     .on_click(cx.listener(|this, checked, _, cx| this.set_enabled(*checked, cx)))))
             .child(div().flex().items_center().justify_between().child(self.state())

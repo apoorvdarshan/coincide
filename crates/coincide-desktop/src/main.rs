@@ -6755,7 +6755,7 @@ impl Render for Coincide {
                                                     gpui_kit::component::scroll::Scrollbar::vertical(
                                                         &self.composer_accessory_scroll,
                                                     )
-                                                    .mode(gpui_kit::component::scroll::ScrollbarMode::Always),
+                                                    .mode(gpui_kit::component::scroll::ScrollbarMode::Hover),
                                                 ),
                                         )
                                         .child({

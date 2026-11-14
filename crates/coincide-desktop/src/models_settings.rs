@@ -757,8 +757,14 @@ impl Coincide {
                     .on_click(cx.listener(|this, _, window, cx| this.reload_models(window, cx))),
             );
         let count = rows.len();
-        let column =
-            |text: SharedString, width: f32| div().w(px(width)).flex_none().truncate().child(text);
+        let column = |text: SharedString, width: f32| {
+            div()
+                .w(px(width))
+                .min_w_0()
+                .flex_shrink(1.)
+                .truncate()
+                .child(text)
+        };
         let mut list = div()
             .id("models-settings-list")
             .track_focus(&state.focus)
@@ -771,19 +777,19 @@ impl Coincide {
             .border_1()
             .border_color(border)
             .rounded_md()
-            .bg(self.color(0x111722))
+            .bg(self.color(0x202a3b))
             .child(
                 div()
                     .flex()
                     .gap_2()
-                    .px_2()
-                    .py_1()
+                    .px_3()
+                    .py_2()
                     .border_b_1()
                     .border_color(border)
                     .bg(self.color(0x202a3b))
                     .text_sm()
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child(div().flex_1().min_w_0().child("Model"))
+                    .child(div().flex_1().min_w(px(110.)).truncate().child("Model"))
                     .child(column("Provider".into(), 130.))
                     .child(column("Reasoning".into(), 140.))
                     .child(column("Speed".into(), 90.)),
@@ -794,7 +800,7 @@ impl Coincide {
             let selected = state.selected.contains(&key);
             let mut name = div()
                 .flex_1()
-                .min_w_0()
+                .min_w(px(110.))
                 .flex()
                 .items_center()
                 .gap_1p5()
@@ -832,11 +838,15 @@ impl Coincide {
             let provider = provider_display_name(&row.provider);
             let provider_cell = div()
                 .w(px(130.))
-                .flex_none()
+                .min_w_0()
+                .flex_shrink(1.)
                 .flex()
                 .items_center()
-                .gap_1()
-                .child(div().truncate().child(provider.clone()))
+                .gap_1p5()
+                .when_some(chat_layout::provider_mark(&row.provider, 14.), |cell, mark| {
+                    cell.child(mark)
+                })
+                .child(div().flex_1().min_w_0().truncate().child(provider.clone()))
                 .when(row.provider == "antigravity", |cell| {
                     cell.child(
                         div()
@@ -864,10 +874,10 @@ impl Coincide {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .px_2()
-                    .py(px(7.))
+                    .px_3()
+                    .py(px(8.))
                     .border_b_1()
-                    .border_color(border)
+                    .border_color(border.opacity(0.65))
                     .when(selected, |line| line.bg(accent.opacity(0.22)))
                     .when(!selected, |line| {
                         line.hover(|line| line.bg(accent.opacity(0.08)))
