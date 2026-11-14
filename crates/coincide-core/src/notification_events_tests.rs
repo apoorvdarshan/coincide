@@ -14,6 +14,9 @@ fn fixture() -> (tempfile::TempDir, Engine, String) {
     (directory, engine, id)
 }
 fn run(engine: &mut Engine, id: &str) -> mpsc::Sender<Event> {
+    run_for(engine, id, "codex")
+}
+fn run_for(engine: &mut Engine, id: &str, provider: &str) -> mpsc::Sender<Event> {
     // Replace only the public event receiver; no actual provider executable exists.
     let mut session = Session::start(Launch {
         executable: PathBuf::from("/nonexistent-coincide-notification-fixture"),
@@ -26,10 +29,12 @@ fn run(engine: &mut Engine, id: &str) -> mpsc::Sender<Event> {
     });
     let (sender, receiver) = mpsc::channel();
     session.events = receiver;
-    let transcript_start = engine.store.thread(id).unwrap()["items"]
-        .as_array()
-        .unwrap()
-        .len();
+    let thread = engine.store.thread(id).unwrap();
+    let items = thread["items"].as_array().unwrap();
+    // Some fixtures persist this turn's reply before creating the fake run.
+    let transcript_start = items.len().saturating_sub(usize::from(
+        items.last().is_some_and(|item| item["kind"] == "assistant"),
+    ));
     engine.runs.insert(
         id.into(),
         Running {
@@ -37,7 +42,7 @@ fn run(engine: &mut Engine, id: &str) -> mpsc::Sender<Event> {
             resume_safe: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             usage_context: None,
             session,
-            provider: "codex".into(),
+            provider: provider.into(),
             transcript_start,
             pending: HashMap::new(),
             schedule_claim: None,
@@ -48,6 +53,130 @@ fn run(engine: &mut Engine, id: &str) -> mpsc::Sender<Event> {
         },
     );
     sender
+}
+
+#[test]
+fn replyless_turns_get_distinct_persisted_notifications_for_every_provider() {
+    for provider in [
+        "claude",
+        "codex",
+        "cursor",
+        "grok",
+        "opencode",
+        "antigravity",
+    ] {
+        let (_directory, mut engine, id) = fixture();
+        engine.configure_native_notifications(true).unwrap();
+        let mut keys = Vec::new();
+        for _ in 0..2 {
+            let sender = run_for(&mut engine, &id, provider);
+            sender.send(Event::Finished).unwrap();
+            engine.poll();
+            let claim = engine.claim_notification_events(1).pop().unwrap();
+            assert_eq!(claim.alert.key.kind, AlertKind::Completed, "{provider}");
+            assert_eq!(claim.alert.body, None, "{provider}");
+            let thread = engine.store.thread(&id).unwrap();
+            assert_eq!(thread["items"].as_array().unwrap().len(), 0, "{provider}");
+            assert_eq!(
+                Uuid::parse_str(text(&thread, "rustNotificationCompletionID").as_str()).unwrap(),
+                claim.alert.key.item
+            );
+            keys.push(claim.alert.key.item);
+            engine
+                .ack_notification_event(
+                    claim.claim_id,
+                    claim.alert.key,
+                    NotificationAck::Suppressed,
+                )
+                .unwrap();
+        }
+        assert_ne!(keys[0], keys[1], "{provider}");
+    }
+}
+
+#[test]
+fn replyless_continuation_does_not_reuse_an_older_reply() {
+    let (_directory, mut engine, id) = fixture();
+    engine.configure_native_notifications(true).unwrap();
+    seed_reply(&mut engine, &id);
+    let start = engine.store.thread(&id).unwrap()["items"]
+        .as_array()
+        .unwrap()
+        .len();
+    let sender = run(&mut engine, &id);
+    engine.runs.get_mut(&id).unwrap().transcript_start = start;
+    sender.send(Event::Finished).unwrap();
+    engine.poll();
+    let claim = engine.claim_notification_events(1).pop().unwrap();
+    assert_eq!(claim.alert.body, None);
+    let thread = engine.store.thread(&id).unwrap();
+    assert_eq!(thread["items"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        Uuid::parse_str(text(&thread, "rustNotificationCompletionID").as_str()).unwrap(),
+        claim.alert.key.item
+    );
+}
+
+#[test]
+fn normalized_approval_question_completion_and_failure_work_for_every_provider() {
+    for provider in [
+        "claude",
+        "codex",
+        "cursor",
+        "grok",
+        "opencode",
+        "antigravity",
+    ] {
+        let (_directory, mut engine, id) = fixture();
+        engine.configure_native_notifications(true).unwrap();
+        let sender = run_for(&mut engine, &id, provider);
+        sender.send(approval(42)).unwrap();
+        engine.poll();
+        let approval = engine.claim_notification_events(1).pop().unwrap();
+        assert_eq!(approval.alert.key.kind, AlertKind::Approval, "{provider}");
+        engine
+            .ack_notification_event(
+                approval.claim_id,
+                approval.alert.key,
+                NotificationAck::Suppressed,
+            )
+            .unwrap();
+
+        sender.send(Event::Frame(json!({"id":"question","method":"item/tool/requestUserInput","params":{"questions":[]}}))).unwrap();
+        engine.poll();
+        let question = engine.claim_notification_events(1).pop().unwrap();
+        assert_eq!(question.alert.key.kind, AlertKind::Question, "{provider}");
+        engine
+            .ack_notification_event(
+                question.claim_id,
+                question.alert.key,
+                NotificationAck::Suppressed,
+            )
+            .unwrap();
+
+        sender.send(Event::Frame(json!({"method":"item/agentMessage/delta","params":{"itemId":"reply","delta":"Done"}}))).unwrap();
+        sender.send(Event::Frame(json!({"method":"item/completed","params":{"item":{"type":"commandExecution","id":"tool-after-reply","command":"true"}}}))).unwrap();
+        sender.send(Event::Finished).unwrap();
+        engine.poll();
+        let finished = engine.claim_notification_events(1).pop().unwrap();
+        assert_eq!(finished.alert.key.kind, AlertKind::Completed, "{provider}");
+        assert_eq!(finished.alert.body.as_deref(), Some("Done"), "{provider}");
+        engine
+            .ack_notification_event(
+                finished.claim_id,
+                finished.alert.key,
+                NotificationAck::Suppressed,
+            )
+            .unwrap();
+
+        let sender = run_for(&mut engine, &id, provider);
+        sender
+            .send(Event::Failed("Synthetic failure".into()))
+            .unwrap();
+        engine.poll();
+        let failed = engine.claim_notification_events(1).pop().unwrap();
+        assert_eq!(failed.alert.key.kind, AlertKind::Failed, "{provider}");
+    }
 }
 /// Swift stores no synthetic "turn ended" item, so a finished turn's alert is
 /// anchored to the reply it produced. Give these fixtures that reply first.

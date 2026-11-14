@@ -3,6 +3,7 @@
 pub mod inhibitor;
 pub mod notifications;
 pub mod power;
+mod power_source;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Registration {

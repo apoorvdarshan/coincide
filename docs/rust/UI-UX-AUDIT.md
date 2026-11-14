@@ -434,7 +434,11 @@ simpler in Rust; everything not listed matched in code.
 
 - General lost default model/effort, resume-after-limit, agent thread titles,
   schedule approval, idle timeout, background agents, checkpoints and branch
-  prefix; Keep Awake is a stub, not the 24/7/lid/battery/display controls.
+  prefix. Keep Awake supports temporary idle-sleep inhibition during work or
+  while the app is open, with an option to allow sleep on battery. On macOS,
+  a separate 24/7 mode can disable sleep with a reversible administrator
+  change. The Swift app's lid/display helper and battery-specific policy for
+  24/7 mode remain unimplemented.
 - Coincide Remote panel exists but is not mounted, so pairing is unreachable.
 - Usage lacks display mode, refresh interval, outside-CoA usage, menu-bar usage
   and browser sign-in controls.
