@@ -1062,7 +1062,7 @@ mod tests {
         assert!(status.start_check(true, start + std::time::Duration::from_secs(1)));
         assert!(status.finish_check(true, command_line_tool(Some(&exe), Some(&path))));
         assert_eq!(status.tool, CommandLineTool::OnPath(link.clone()));
-        std::fs::remove_file(link).unwrap();
+        std::fs::remove_file(&link).unwrap();
         assert!(status.start_check(true, start + std::time::Duration::from_secs(2)));
         assert!(status.finish_check(true, command_line_tool(Some(&exe), Some(&path))));
         assert_eq!(status.tool, CommandLineTool::Installed(bundled.clone()));
