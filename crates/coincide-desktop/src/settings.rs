@@ -689,18 +689,101 @@ impl Coincide {
             self.awake_status = status;
             cx.notify();
         }
+        #[cfg(target_os = "macos")]
+        match crate::persistent_awake::status(&self.engine) {
+            Ok(status) if status != self.persistent_awake_status => {
+                self.persistent_awake_status = status;
+                self.persistent_awake_health.clear();
+                self.persistent_awake_checked_at = None;
+                cx.notify();
+            }
+            Err(error) if !engine_busy(&error) && self.persistent_awake_status != "unavailable" => {
+                self.persistent_awake_status = "unavailable".into();
+                self.settings_status = format!("Could not read 24/7 Keep Awake settings: {error}");
+                cx.notify();
+            }
+            _ => {}
+        }
+        #[cfg(target_os = "macos")]
+        if self.persistent_awake_status == "enabled"
+            && (self.settings_open || self.settings_window.is_some())
+            && !self.persistent_awake_busy
+            && !self.persistent_awake_check_pending
+            && self
+                .persistent_awake_checked_at
+                .is_none_or(|at| at.elapsed() >= Duration::from_secs(30))
+        {
+            self.persistent_awake_check_pending = true;
+            let checked_at = Instant::now();
+            self.persistent_awake_checked_at = Some(checked_at);
+            let task = cx
+                .background_executor()
+                .spawn(async move { crate::persistent_awake::verify() });
+            cx.spawn(async move |this, cx| {
+                let result = task.await;
+                let _ = this.update(cx, |this, cx| {
+                    this.persistent_awake_check_pending = false;
+                    if this.persistent_awake_status == "enabled"
+                        && !this.persistent_awake_busy
+                        && this.persistent_awake_checked_at == Some(checked_at)
+                    {
+                        this.persistent_awake_health = match result {
+                            Ok(true) => "active",
+                            Ok(false) => "out_of_step",
+                            Err(_) => "unavailable",
+                        }
+                        .into();
+                        cx.notify();
+                    }
+                });
+            })
+            .detach();
+        }
     }
-    fn configure_awake(&mut self, enabled: bool, cx: &mut Context<Self>) {
-        match call(
-            &self.engine,
-            "host.awake.configure",
-            json!({"enabled":enabled}),
-        ) {
+    #[cfg(target_os = "macos")]
+    fn configure_persistent_awake(
+        &mut self,
+        action: crate::persistent_awake::Action,
+        cx: &mut Context<Self>,
+    ) {
+        if self.persistent_awake_busy {
+            return;
+        }
+        self.persistent_awake_busy = true;
+        self.persistent_awake_checked_at = None;
+        self.settings_status = "Waiting for macOS…".into();
+        cx.notify();
+        let engine = self.engine.clone();
+        let task = cx
+            .background_executor()
+            .spawn(async move { crate::persistent_awake::run(engine, action) });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                this.persistent_awake_busy = false;
+                this.settings_status = match result {
+                    Ok(true) if matches!(action, crate::persistent_awake::Action::Disable) => {
+                        "The previous sleep settings were restored.".into()
+                    }
+                    Ok(true) => "24/7 Keep Awake is on.".into(),
+                    Ok(false) => "The macOS authorization was cancelled.".into(),
+                    Err(error) => format!("Keep Awake could not be changed: {error}"),
+                };
+                this.persistent_awake_checked_at = None;
+                this.persistent_awake_health.clear();
+                this.refresh_awake_status(cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+    fn configure_awake(&mut self, key: &'static str, value: bool, cx: &mut Context<Self>) {
+        let mut params = json!({});
+        params[key] = json!(value);
+        match call(&self.engine, "host.awake.configure", params) {
             Ok(status) => {
                 self.awake_status = status;
-                self.settings_status =
-                    "Idle-sleep preference saved. The status below shows backend acknowledgement."
-                        .into();
+                self.settings_status = "Saved".into();
             }
             Err(error) => {
                 self.settings_status = format!("Idle-sleep preference was not saved: {error}")
@@ -710,32 +793,122 @@ impl Coincide {
     }
     fn awake_settings(&self, cx: &mut Context<Self>) -> AnyElement {
         let enabled = self.awake_status["enabled"] == true;
+        let while_open = self.awake_status["whileAppOpen"] == true;
+        let sleep_on_battery = self.awake_status["sleepOnBattery"] == true;
         let supported = self.awake_status["supported"] == true;
         let pending = self.awake_status["workerStarted"] == true
             && self.awake_status["requestedRevision"] != self.awake_status["acknowledgedRevision"];
         let state = if let Some(error) = self.awake_status["error"].as_str() {
-            format!("Could not confirm idle-sleep state: {error}")
+            format!("Could not confirm Keep Awake: {error}")
         } else if !supported {
-            "Idle-sleep inhibition is unavailable on this platform.".into()
+            "Keep Awake is unavailable on this platform.".into()
         } else if pending {
-            "Waiting for the idle-sleep backend to acknowledge the change…".into()
+            "Updating Keep Awake…".into()
         } else if self.awake_status["lease"] == "held" {
-            "Temporary idle-sleep lease acknowledged by the backend.".into()
+            "Preventing idle sleep.".into()
+        } else if enabled && self.awake_status["acknowledgedPolicy"]["onBattery"] == true {
+            "On battery; sleep is allowed.".into()
         } else if enabled {
-            "Enabled. No idle-sleep lease is currently held.".into()
+            "Enabled. Sleep is allowed while no work is running.".into()
         } else {
-            "Off. No idle-sleep lease is currently held.".into()
+            "Off.".into()
         };
-        div().p_3().flex().flex_col().gap_2().border_b_1().border_color(self.color(0x29303d))
-            .child(div().flex().items_center().gap_3()
-                .child(div().flex_1().child("Keep awake during work"))
-                .child(Button::new("idle-sleep-toggle").label(if enabled {"Turn off"} else {"Turn on"})
-                    .disabled(!supported && !enabled)
-                    .on_click(cx.listener(move |this, _, _, cx| this.configure_awake(!enabled, cx)))))
-            .child(div().text_sm().child(state))
-            .child(div().text_sm().child("Prevents idle sleep while a turn or tracked workspace/image job is running, including on battery. Ends when work finishes or Coincide quits."))
-            .child(div().text_sm().child("24/7 operation, closed-lid behavior, battery-specific policy, and persistent power settings are not connected in this Rust preview."))
-            .into_any_element()
+        let panel = div()
+            .flex()
+            .flex_col()
+            .child(
+                self.labeled_row(
+                    "Keep awake",
+                    Some(
+                        "Prevent idle sleep during agent work and tracked background jobs.".into(),
+                    ),
+                    Switch::new("idle-sleep-toggle")
+                        .accessibility_label("Keep awake")
+                        .color(self.color(0xe4e9f2))
+                        .checked(enabled)
+                        .disabled(!supported && !enabled)
+                        .on_click(cx.listener(move |this, value: &bool, _, cx| {
+                            this.configure_awake("enabled", *value, cx)
+                        })),
+                ),
+            )
+            .child(
+                self.labeled_row(
+                    "Keep awake while Coincide is open",
+                    Some("When Keep Awake is on, prevent idle sleep even when no work is running.".into()),
+                    Switch::new("awake-while-open")
+                        .accessibility_label("Keep awake while Coincide is open")
+                        .color(self.color(0xe4e9f2))
+                        .checked(while_open)
+                        .disabled(!supported)
+                        .on_click(cx.listener(move |this, value: &bool, _, cx| {
+                            this.configure_awake("whileAppOpen", *value, cx)
+                        })),
+                ),
+            )
+            .child(
+                self.labeled_row(
+                    "Allow sleep on battery",
+                    Some("Pause work-based Keep Awake while running on battery.".into()),
+                    Switch::new("awake-sleep-on-battery")
+                        .accessibility_label("Allow sleep on battery")
+                        .color(self.color(0xe4e9f2))
+                        .checked(sleep_on_battery)
+                        .disabled(!supported)
+                        .on_click(cx.listener(move |this, value: &bool, _, cx| {
+                            this.configure_awake("sleepOnBattery", *value, cx)
+                        })),
+                ),
+            )
+            .child(div().p_3().text_sm().child(state))
+            .child(div().px_3().pb_3().text_sm().child("Work-based Keep Awake ends when Coincide quits and does not prevent sleep when the lid closes."));
+        #[cfg(target_os = "macos")]
+        let panel = {
+            let stage = self.persistent_awake_status.as_str();
+            let enabled = stage == "enabled";
+            let known = matches!(stage, "off" | "enabled");
+            let busy = self.persistent_awake_busy;
+            let panel = panel.child(self.labeled_row(
+                "Keep awake with the lid closed (24/7)",
+                Some("Keeps this Mac awake after Coincide quits, including on battery. macOS asks for administrator permission; turning it off restores the previous sleep settings. This does not turn displays off when the lid closes.".into()),
+                Switch::new("persistent-awake-toggle")
+                    .accessibility_label("Keep awake with the lid closed (24/7)")
+                    .color(self.color(0xe4e9f2))
+                    .checked(enabled)
+                    .disabled(busy || !known)
+                    .on_click(cx.listener(move |this, value: &bool, _, cx| this.configure_persistent_awake(if *value { crate::persistent_awake::Action::Enable } else { crate::persistent_awake::Action::Disable }, cx))),
+            ));
+            if stage == "prepared" {
+                panel.child(self.labeled_row(
+                    "Restore sleep settings",
+                    Some("A previous change was interrupted. Restore the saved settings before turning on 24/7 mode again.".into()),
+                    Button::new("restore-persistent-awake")
+                        .label("Restore")
+                        .disabled(busy)
+                        .on_click(cx.listener(|this, _, _, cx| this.configure_persistent_awake(crate::persistent_awake::Action::Disable, cx))),
+                ))
+            } else if enabled && self.persistent_awake_health == "out_of_step" {
+                panel.child(self.labeled_row(
+                    "Sleep settings changed",
+                    Some("macOS no longer matches the 24/7 setting. Apply it again or turn it off to restore the saved values.".into()),
+                    Button::new("reapply-persistent-awake")
+                        .label("Apply again")
+                        .disabled(busy)
+                        .on_click(cx.listener(|this, _, _, cx| this.configure_persistent_awake(crate::persistent_awake::Action::Reapply, cx))),
+                ))
+            } else if enabled && self.persistent_awake_health == "unavailable" {
+                panel.child(
+                    div()
+                        .px_3()
+                        .pb_3()
+                        .text_sm()
+                        .child("Could not verify this Mac's current sleep settings."),
+                )
+            } else {
+                panel
+            }
+        };
+        panel.into_any_element()
     }
 
     /// Keep the page title and close action outside every detail scroller.

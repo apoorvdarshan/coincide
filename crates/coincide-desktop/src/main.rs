@@ -110,6 +110,8 @@ mod native_quit;
 mod navigation;
 mod navigation_rail;
 mod navigation_resize;
+#[cfg(any(target_os = "macos", test))]
+mod notification_activation;
 mod notification_activity;
 mod notification_runtime;
 #[cfg(any(test, all(target_os = "linux", feature = "native-notifications")))]
@@ -119,6 +121,8 @@ mod notifications;
 mod open_targets;
 mod palette_catalog;
 mod palette_search_owner;
+#[cfg(any(target_os = "macos", test))]
+mod persistent_awake;
 mod pointing_cursor;
 mod presentation;
 mod project_defaults_ui;
@@ -527,6 +531,16 @@ struct Coincide {
     provider_settings: provider_settings::ProviderSettings,
     settings: Value,
     awake_status: Value,
+    #[cfg(target_os = "macos")]
+    persistent_awake_status: String,
+    #[cfg(target_os = "macos")]
+    persistent_awake_busy: bool,
+    #[cfg(target_os = "macos")]
+    persistent_awake_health: String,
+    #[cfg(target_os = "macos")]
+    persistent_awake_check_pending: bool,
+    #[cfg(target_os = "macos")]
+    persistent_awake_checked_at: Option<Instant>,
     settings_status: String,
     settings_refresh_pending: bool,
     appearance_dark: bool,
@@ -1748,6 +1762,16 @@ impl Coincide {
             provider_settings,
             settings,
             awake_status: json!({}),
+            #[cfg(target_os = "macos")]
+            persistent_awake_status: String::new(),
+            #[cfg(target_os = "macos")]
+            persistent_awake_busy: false,
+            #[cfg(target_os = "macos")]
+            persistent_awake_health: String::new(),
+            #[cfg(target_os = "macos")]
+            persistent_awake_check_pending: false,
+            #[cfg(target_os = "macos")]
+            persistent_awake_checked_at: None,
             settings_status: String::new(),
             settings_refresh_pending: false,
             appearance_dark: true,
@@ -7076,7 +7100,7 @@ fn main() -> Result<()> {
         #[cfg(target_os = "macos")]
         usage_menubar::install(engine.clone(), cx);
         cx.set_global(Launch {
-            engine,
+            engine: engine.clone(),
             native_editors,
             quit_requested,
             control_owner,
@@ -7084,6 +7108,8 @@ fn main() -> Result<()> {
             media_config,
             saved_frame,
         });
+        #[cfg(target_os = "macos")]
+        notification_activation::install(engine, cx);
         open_main_window(cx).expect("Unable to open Coincide window");
         cx.activate(true);
     });

@@ -91,7 +91,11 @@ fn opt_in_requires_valid_boolean_and_does_not_reuse_imported_settings() {
     }
     assert_eq!(probe.starts.load(Ordering::SeqCst), 0);
     assert!(engine.store.local_document(DOCUMENT).unwrap().is_none());
-    if cfg!(any(target_os = "macos", target_os = "linux")) {
+    if cfg!(any(
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "windows"
+    )) {
         let result = engine
             .execute("host.awake.configure", &json!({"enabled":true}))
             .unwrap();
@@ -147,6 +151,48 @@ fn activity_lifetime_drives_acknowledged_policy_and_release_without_result_polli
     // Explicit shutdown releases even if active work still exists.
     engine.idle_sleep.update(1, true);
     assert_eq!(processed(&engine.idle_sleep).lease, LeaseState::Released);
+}
+
+#[test]
+fn keep_awake_while_open_is_opt_in_persisted_and_released_at_shutdown() {
+    let (directory, mut engine) = engine();
+    let probe = injected(&mut engine);
+    if !cfg!(any(
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "windows"
+    )) {
+        return;
+    }
+    engine
+        .execute("host.awake.configure", &json!({"whileAppOpen":true}))
+        .unwrap();
+    assert_eq!(probe.starts.load(Ordering::SeqCst), 0);
+    engine
+        .execute("host.awake.configure", &json!({"enabled":true}))
+        .unwrap();
+    assert_eq!(processed(&engine.idle_sleep).lease, LeaseState::Held);
+    engine.idle_sleep.update(0, true);
+    assert_eq!(processed(&engine.idle_sleep).lease, LeaseState::Released);
+    drop(engine);
+    let reopened = Engine::new(Store::open(&directory.path().join("store.sqlite")).unwrap());
+    assert_eq!(reopened.idle_sleep.status()["whileAppOpen"], true);
+    assert_eq!(reopened.idle_sleep.status()["enabled"], true);
+    assert_eq!(reopened.idle_sleep.status()["workerStarted"], false);
+}
+
+#[test]
+fn battery_preference_is_persisted_without_starting_a_worker_when_disabled() {
+    let (directory, mut engine) = engine();
+    let probe = injected(&mut engine);
+    engine
+        .execute("host.awake.configure", &json!({"sleepOnBattery":true}))
+        .unwrap();
+    assert_eq!(probe.starts.load(Ordering::SeqCst), 0);
+    drop(engine);
+    let reopened = Engine::new(Store::open(&directory.path().join("store.sqlite")).unwrap());
+    assert_eq!(reopened.idle_sleep.status()["sleepOnBattery"], true);
+    assert_eq!(reopened.idle_sleep.status()["workerStarted"], false);
 }
 
 #[test]

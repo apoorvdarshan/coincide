@@ -219,7 +219,7 @@ pub mod macos {
     use objc2_foundation::{NSArray, NSBundle, NSError, NSString};
     use objc2_user_notifications::{
         UNAuthorizationOptions, UNAuthorizationStatus, UNMutableNotificationContent,
-        UNNotificationRequest, UNUserNotificationCenter,
+        UNNotificationRequest, UNNotificationSound, UNUserNotificationCenter,
     };
     use std::sync::mpsc::sync_channel;
     use std::time::Duration;
@@ -267,7 +267,7 @@ pub mod macos {
                 let _ = tx.send(error.is_null());
             });
             center.requestAuthorizationWithOptions_completionHandler(
-                UNAuthorizationOptions::Alert,
+                UNAuthorizationOptions::Alert | UNAuthorizationOptions::Sound,
                 &callback,
             );
             if !rx
@@ -287,6 +287,7 @@ pub mod macos {
             if let Some(body) = &payload.body {
                 content.setBody(&NSString::from_str(body));
             }
+            content.setSound(Some(&UNNotificationSound::defaultSound()));
             content.setThreadIdentifier(&NSString::from_str(&payload.thread.to_string()));
             let request = UNNotificationRequest::requestWithIdentifier_content_trigger(
                 &NSString::from_str(&payload.id),

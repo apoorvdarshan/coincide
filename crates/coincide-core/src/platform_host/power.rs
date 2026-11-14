@@ -5,6 +5,9 @@ use anyhow::Result;
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct AwakePolicy {
     pub enabled: bool,
+    /// Hold an idle-sleep assertion while the application is open even when
+    /// there are no active turns. This does not change lid or power settings.
+    pub while_app_open: bool,
     pub sleep_on_battery: bool,
     pub on_battery: bool,
     pub active_turns: usize,
@@ -15,7 +18,7 @@ impl AwakePolicy {
     pub fn needs_lease(self) -> bool {
         self.enabled
             && !(self.sleep_on_battery && self.on_battery)
-            && (self.active_turns > 0 || self.background_jobs > 0)
+            && (self.while_app_open || self.active_turns > 0 || self.background_jobs > 0)
     }
 }
 

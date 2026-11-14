@@ -161,11 +161,22 @@ impl HostRuntime {
     /// Only creates the worker. Its initial policy is disabled. This does not
     /// register a login item, persist settings or enable native inhibition.
     pub fn spawn_native(settings: Settings) -> Result<Self> {
-        Self::spawn(NativeSleepInhibitor::native(), settings)
+        Self::spawn_with_source(
+            NativeSleepInhibitor::native(),
+            settings,
+            super::power_source::on_battery,
+        )
     }
     pub fn spawn<B: SleepInhibitor + Send + 'static>(
         backend: B,
         settings: Settings,
+    ) -> Result<Self> {
+        Self::spawn_with_source(backend, settings, || None)
+    }
+    fn spawn_with_source<B: SleepInhibitor + Send + 'static>(
+        backend: B,
+        settings: Settings,
+        source: impl Fn() -> Option<bool> + Send + 'static,
     ) -> Result<Self> {
         if !(Duration::from_millis(10)..=Duration::from_secs(60)).contains(&settings.tick_interval)
         {
@@ -192,7 +203,7 @@ impl HostRuntime {
             .name("coincide-idle-host".into())
             .spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    run(backend, settings, &thread_shared)
+                    run(backend, settings, &thread_shared, source)
                 }));
                 if result.is_err() {
                     let mut state = thread_shared.lock();
@@ -266,7 +277,12 @@ impl Drop for HostRuntime {
 fn diagnostic(error: anyhow::Error) -> String {
     format!("{error:#}").chars().take(1024).collect()
 }
-fn run<B: SleepInhibitor>(backend: B, settings: Settings, shared: &Shared) {
+fn run<B: SleepInhibitor>(
+    backend: B,
+    settings: Settings,
+    shared: &Shared,
+    source: impl Fn() -> Option<bool>,
+) {
     let mut controller = AwakeController::new(backend);
     let mut current = (0, AwakePolicy::default());
     loop {
@@ -286,7 +302,27 @@ fn run<B: SleepInhibitor>(backend: B, settings: Settings, shared: &Shared) {
         effective.enabled &= settings.allow_inhibition;
         // Always attempt cleanup for a disabled policy, including after a prior
         // health-check failure cleared the controller's held flag.
-        let result = if effective.needs_lease() {
+        let mut source_unknown = false;
+        let mut source_unknown_released = false;
+        if effective.enabled
+            && effective.sleep_on_battery
+            && (effective.while_app_open
+                || effective.active_turns > 0
+                || effective.background_jobs > 0)
+        {
+            if let Some(on_battery) = source() {
+                effective.on_battery = on_battery;
+            } else {
+                source_unknown = true;
+            }
+        }
+        let result = if source_unknown {
+            // Release rather than guessing that an unknown source is AC.
+            controller.shutdown().and_then(|()| {
+                source_unknown_released = true;
+                bail!("Cannot determine the power source; sleep is allowed until it is available")
+            })
+        } else if effective.needs_lease() {
             controller.reconcile(effective)
         } else {
             controller.shutdown()
@@ -306,7 +342,13 @@ fn run<B: SleepInhibitor>(backend: B, settings: Settings, shared: &Shared) {
                     state.status.error = None;
                 }
                 Err(error) => {
-                    state.status.lease = LeaseState::Unknown;
+                    state.status.lease = if source_unknown_released {
+                        LeaseState::Released
+                    } else {
+                        LeaseState::Unknown
+                    };
+                    state.status.acknowledged_revision = None;
+                    state.status.acknowledged_policy = None;
                     state.status.error = Some(diagnostic(error));
                 }
             }
@@ -418,6 +460,65 @@ mod tests {
             allow_inhibition: true,
             tick_interval: Duration::from_millis(10),
         }
+    }
+    #[test]
+    fn power_source_changes_release_and_reacquire_without_a_new_request() {
+        // 0 is AC, 1 is battery, 2 is unavailable. All hardware is fake.
+        let power = Arc::new(AtomicUsize::new(0));
+        let read_power = power.clone();
+        let backend = fake();
+        let fail_release = backend.fail_release.clone();
+        let mut runtime = HostRuntime::spawn_with_source(backend, settings(), move || {
+            match read_power.load(Ordering::SeqCst) {
+                0 => Some(false),
+                1 => Some(true),
+                _ => None,
+            }
+        })
+        .unwrap();
+        let handle = runtime.handle();
+        let revision = handle
+            .submit(AwakePolicy {
+                enabled: true,
+                while_app_open: true,
+                sleep_on_battery: true,
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(
+            handle
+                .wait_processed(revision, Duration::from_secs(2))
+                .lease,
+            LeaseState::Held
+        );
+        let wait = |predicate: &dyn Fn(&Status) -> bool| {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                let status = handle.status();
+                if predicate(&status) {
+                    return;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "power transition was not applied: {status:?}"
+                );
+                thread::sleep(Duration::from_millis(5));
+            }
+        };
+        fail_release.store(true, Ordering::SeqCst);
+        power.store(2, Ordering::SeqCst);
+        wait(&|s| s.lease == LeaseState::Unknown && s.error.is_some());
+        fail_release.store(false, Ordering::SeqCst);
+        wait(&|s| s.lease == LeaseState::Released && s.error.is_some());
+        power.store(1, Ordering::SeqCst);
+        wait(&|s| {
+            s.lease == LeaseState::Released && s.acknowledged_policy.is_some_and(|p| p.on_battery)
+        });
+        power.store(2, Ordering::SeqCst);
+        wait(&|s| s.lease == LeaseState::Released && s.error.is_some());
+        power.store(0, Ordering::SeqCst);
+        wait(&|s| s.lease == LeaseState::Held && s.error.is_none());
+        assert_eq!(runtime.shutdown().unwrap().lease, LeaseState::Released);
     }
     #[test]
     fn pending_shutdown_requires_actual_join_after_worker_tls_exit() {

@@ -14,6 +14,9 @@ fn fixture() -> (tempfile::TempDir, Engine, String) {
     (directory, engine, id)
 }
 fn run(engine: &mut Engine, id: &str) -> mpsc::Sender<Event> {
+    run_for(engine, id, "codex")
+}
+fn run_for(engine: &mut Engine, id: &str, provider: &str) -> mpsc::Sender<Event> {
     // Replace only the public event receiver; no actual provider executable exists.
     let mut session = Session::start(Launch {
         executable: PathBuf::from("/nonexistent-coincide-notification-fixture"),
@@ -37,7 +40,7 @@ fn run(engine: &mut Engine, id: &str) -> mpsc::Sender<Event> {
             resume_safe: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             usage_context: None,
             session,
-            provider: "codex".into(),
+            provider: provider.into(),
             transcript_start,
             pending: HashMap::new(),
             schedule_claim: None,
@@ -48,6 +51,68 @@ fn run(engine: &mut Engine, id: &str) -> mpsc::Sender<Event> {
         },
     );
     sender
+}
+
+#[test]
+fn normalized_approval_question_completion_and_failure_work_for_every_provider() {
+    for provider in [
+        "claude",
+        "codex",
+        "cursor",
+        "grok",
+        "opencode",
+        "antigravity",
+    ] {
+        let (_directory, mut engine, id) = fixture();
+        engine.configure_native_notifications(true).unwrap();
+        let sender = run_for(&mut engine, &id, provider);
+        sender.send(approval(42)).unwrap();
+        engine.poll();
+        let approval = engine.claim_notification_events(1).pop().unwrap();
+        assert_eq!(approval.alert.key.kind, AlertKind::Approval, "{provider}");
+        engine
+            .ack_notification_event(
+                approval.claim_id,
+                approval.alert.key,
+                NotificationAck::Suppressed,
+            )
+            .unwrap();
+
+        sender.send(Event::Frame(json!({"id":"question","method":"item/tool/requestUserInput","params":{"questions":[]}}))).unwrap();
+        engine.poll();
+        let question = engine.claim_notification_events(1).pop().unwrap();
+        assert_eq!(question.alert.key.kind, AlertKind::Question, "{provider}");
+        engine
+            .ack_notification_event(
+                question.claim_id,
+                question.alert.key,
+                NotificationAck::Suppressed,
+            )
+            .unwrap();
+
+        sender.send(Event::Frame(json!({"method":"item/agentMessage/delta","params":{"itemId":"reply","delta":"Done"}}))).unwrap();
+        sender.send(Event::Frame(json!({"method":"item/completed","params":{"item":{"type":"commandExecution","id":"tool-after-reply","command":"true"}}}))).unwrap();
+        sender.send(Event::Finished).unwrap();
+        engine.poll();
+        let finished = engine.claim_notification_events(1).pop().unwrap();
+        assert_eq!(finished.alert.key.kind, AlertKind::Completed, "{provider}");
+        assert_eq!(finished.alert.body.as_deref(), Some("Done"), "{provider}");
+        engine
+            .ack_notification_event(
+                finished.claim_id,
+                finished.alert.key,
+                NotificationAck::Suppressed,
+            )
+            .unwrap();
+
+        let sender = run_for(&mut engine, &id, provider);
+        sender
+            .send(Event::Failed("Synthetic failure".into()))
+            .unwrap();
+        engine.poll();
+        let failed = engine.claim_notification_events(1).pop().unwrap();
+        assert_eq!(failed.alert.key.kind, AlertKind::Failed, "{provider}");
+    }
 }
 /// Swift stores no synthetic "turn ended" item, so a finished turn's alert is
 /// anchored to the reply it produced. Give these fixtures that reply first.

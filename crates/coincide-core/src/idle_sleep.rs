@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 const DOCUMENT: &str = "rust-idle-sleep.json";
 fn policy_json(policy: AwakePolicy) -> Value {
-    json!({"enabled":policy.enabled,"activeTurns":policy.active_turns,"backgroundJobs":policy.background_jobs})
+    json!({"enabled":policy.enabled,"whileAppOpen":policy.while_app_open,"sleepOnBattery":policy.sleep_on_battery,"onBattery":policy.on_battery,"activeTurns":policy.active_turns,"backgroundJobs":policy.background_jobs})
 }
 pub(super) struct BackgroundJob(Arc<AtomicUsize>);
 impl Drop for BackgroundJob {
@@ -19,6 +19,8 @@ impl Drop for BackgroundJob {
 }
 pub(super) struct IdleSleep {
     enabled: bool,
+    while_app_open: bool,
+    sleep_on_battery: bool,
     jobs: Arc<AtomicUsize>,
     runtime: Option<HostRuntime>,
     shutdown_requested: bool,
@@ -51,24 +53,31 @@ impl IdleShutdownStatus {
 }
 impl IdleSleep {
     pub fn new(store: &Store) -> Self {
-        let loaded = (|| -> Result<bool> {
+        let loaded = (|| -> Result<(bool, bool, bool)> {
             let Some(document) = store.local_document(DOCUMENT)? else {
-                return Ok(false);
+                return Ok((false, false, false));
             };
             ensure!(
                 document["version"] == 1,
                 "Unsupported idle-sleep configuration"
             );
-            document["enabled"]
+            let enabled = document["enabled"]
                 .as_bool()
-                .context("Invalid idle-sleep opt-in")
+                .context("Invalid idle-sleep opt-in")?;
+            let option = |key| match document.get(key) {
+                None => Ok(false),
+                Some(value) => value.as_bool().context("Invalid idle-sleep option"),
+            };
+            Ok((enabled, option("whileAppOpen")?, option("sleepOnBattery")?))
         })();
-        let (enabled, error) = match loaded {
-            Ok(enabled) => (enabled, None),
-            Err(error) => (false, Some(error.to_string())),
+        let ((enabled, while_app_open, sleep_on_battery), error) = match loaded {
+            Ok(settings) => (settings, None),
+            Err(error) => ((false, false, false), Some(error.to_string())),
         };
         Self {
             enabled,
+            while_app_open,
+            sleep_on_battery,
             jobs: Arc::new(AtomicUsize::new(0)),
             runtime: None,
             shutdown_requested: false,
@@ -125,6 +134,8 @@ impl IdleSleep {
         }
         self.requested = AwakePolicy {
             enabled: self.enabled && !shutdown,
+            while_app_open: self.while_app_open,
+            sleep_on_battery: self.sleep_on_battery,
             active_turns,
             background_jobs: self.jobs.load(Ordering::SeqCst),
             ..AwakePolicy::default()
@@ -163,12 +174,12 @@ impl IdleSleep {
         }
     }
     pub fn status(&self) -> Value {
-        let mut status = json!({"enabled":self.enabled,"supported":cfg!(any(target_os="macos",target_os="linux",target_os="windows")),
+        let mut status = json!({"enabled":self.enabled,"whileAppOpen":self.while_app_open,"sleepOnBattery":self.sleep_on_battery,"supported":cfg!(any(target_os="macos",target_os="linux",target_os="windows")),
             "scope":"idle_sleep_during_work","configurationSource":"rust_owned","workerStarted":self.runtime.is_some() || self.pending_shutdown.is_some(),
             "requestedPolicy":policy_json(self.requested),"phase":"idle","lease":"released",
             "requestedRevision":0,"processedRevision":null,"acknowledgedRevision":null,"acknowledgedPolicy":null,
-            "error":self.error,"batteryMonitoring":false,"persistentPowerSettings":false,
-            "remaining":["lid_closed_operation","battery_policy","external_jobs_after_provider_completion"]});
+            "error":self.error,"batteryMonitoring":cfg!(any(target_os="macos",target_os="linux",target_os="windows")),"persistentPowerSettings":false,
+            "remaining":["lid_closed_operation","external_jobs_after_provider_completion"]});
         let current = self
             .runtime
             .as_ref()
@@ -214,22 +225,41 @@ impl Engine {
                     .as_object()
                     .context("Idle-sleep params must be an object")?;
                 ensure!(
-                    params.len() == 1 && params.contains_key("enabled"),
-                    "Specify only the enabled opt-in"
+                    !params.is_empty()
+                        && params.keys().all(|key| matches!(
+                            key.as_str(),
+                            "enabled" | "whileAppOpen" | "sleepOnBattery"
+                        )),
+                    "Unknown idle-sleep option"
                 );
-                let enabled = params["enabled"]
-                    .as_bool()
-                    .context("enabled must be a boolean")?;
+                let option = |key: &str, current| match params.get(key) {
+                    None => Ok(current),
+                    Some(value) => value
+                        .as_bool()
+                        .with_context(|| format!("{key} must be a boolean")),
+                };
+                let enabled = option("enabled", self.idle_sleep.enabled)?;
+                let while_app_open = option("whileAppOpen", self.idle_sleep.while_app_open)?;
+                let sleep_on_battery = option("sleepOnBattery", self.idle_sleep.sleep_on_battery)?;
                 ensure!(
-                    !enabled || cfg!(any(target_os = "macos", target_os = "linux")),
+                    !enabled
+                        || cfg!(any(
+                            target_os = "macos",
+                            target_os = "linux",
+                            target_os = "windows"
+                        )),
                     "Idle-sleep inhibition is unavailable on this platform"
                 );
                 let mut document = self.store.local_document(DOCUMENT)?.unwrap_or(json!({}));
                 ensure!(document.is_object(), "Invalid idle-sleep configuration");
                 document["version"] = json!(1);
                 document["enabled"] = json!(enabled);
+                document["whileAppOpen"] = json!(while_app_open);
+                document["sleepOnBattery"] = json!(sleep_on_battery);
                 self.store.save_document(DOCUMENT, &document)?;
                 self.idle_sleep.enabled = enabled;
+                self.idle_sleep.while_app_open = while_app_open;
+                self.idle_sleep.sleep_on_battery = sleep_on_battery;
                 self.idle_sleep.error = None;
                 self.idle_sleep.retry_after = None;
                 self.revision += 1;

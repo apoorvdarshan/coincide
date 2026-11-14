@@ -2476,7 +2476,29 @@ impl Engine {
                         if completion_alert.is_none() {
                             completion_alert = v["items"]
                                 .as_array()
-                                .and_then(|items| items.last())
+                                .and_then(|items| {
+                                    // A tool or reasoning event can follow the reply.
+                                    // Anchor the alert to this turn's reply rather
+                                    // than dropping it when the final item is a tool.
+                                    items
+                                        .iter()
+                                        .skip(transcript_start)
+                                        .rev()
+                                        .find(|item| {
+                                            matches!(
+                                                item["kind"].as_str(),
+                                                Some("assistant" | "notice")
+                                            )
+                                        })
+                                        .or_else(|| {
+                                            items.last().filter(|item| {
+                                                matches!(
+                                                    item["kind"].as_str(),
+                                                    Some("assistant" | "notice")
+                                                )
+                                            })
+                                        })
+                                })
                                 .cloned()
                                 .map(|item| {
                                     (

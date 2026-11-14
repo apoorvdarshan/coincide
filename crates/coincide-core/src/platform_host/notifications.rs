@@ -34,15 +34,18 @@ pub struct Environment<'a> {
 }
 impl Environment<'_> {
     pub fn route(&self, thread: Uuid) -> Route {
-        let desktop = if self.desktop.app_active && self.desktop.visible_thread == Some(thread) {
-            Route::Suppressed
-        } else {
-            Route::Desktop
-        };
+        let engaged =
+            self.desktop.idle_seconds < 120 && !self.desktop.locked && !self.desktop.display_asleep;
+        let desktop =
+            if engaged && self.desktop.app_active && self.desktop.visible_thread == Some(thread) {
+                Route::Suppressed
+            } else {
+                Route::Desktop
+            };
         if !self.enabled {
             return Route::Suppressed;
         }
-        if self.desktop.idle_seconds < 120 && !self.desktop.locked && !self.desktop.display_asleep {
+        if engaged {
             return desktop;
         }
         if let Some(phone) = self
@@ -158,7 +161,12 @@ impl Dispatcher {
             return Dispatch::LedgerFull;
         }
         let mut route = if alert.key.kind == AlertKind::SlowStart {
-            if env.desktop.app_active && env.desktop.visible_thread == Some(alert.key.thread) {
+            if env.desktop.app_active
+                && env.desktop.visible_thread == Some(alert.key.thread)
+                && env.desktop.idle_seconds < 120
+                && !env.desktop.locked
+                && !env.desktop.display_asleep
+            {
                 Route::Suppressed
             } else {
                 Route::Desktop
@@ -328,9 +336,27 @@ mod tests {
         assert_eq!(sink.calls, vec![Route::Desktop]);
         env.desktop.app_active = true;
         env.desktop.visible_thread = Some(a.key.thread);
+        env.desktop.locked = false;
         assert_eq!(
             Dispatcher::new(10).dispatch(&a, &env, &mut sink),
             Dispatch::Suppressed
         );
+    }
+
+    #[test]
+    fn same_thread_notifies_when_the_user_cannot_see_it() {
+        let thread = Uuid::new_v4();
+        let mut env = environment();
+        env.desktop.app_active = true;
+        env.desktop.visible_thread = Some(thread);
+        assert_eq!(env.route(thread), Route::Suppressed);
+        env.desktop.locked = true;
+        assert_eq!(env.route(thread), Route::Desktop);
+        env.desktop.locked = false;
+        env.desktop.display_asleep = true;
+        assert_eq!(env.route(thread), Route::Desktop);
+        env.desktop.display_asleep = false;
+        env.desktop.idle_seconds = 120;
+        assert_eq!(env.route(thread), Route::Desktop);
     }
 }
