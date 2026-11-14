@@ -206,7 +206,11 @@ impl Coincide {
             }
             let mut patch = json!({});
             patch[key] = json!(entries);
-            engine.store.patch_document("ui-state.json", &patch)
+            let document = engine.store.patch_document("ui-state.json", &patch)?;
+            if key == "unseen" {
+                engine.revision += 1;
+            }
+            Ok(document)
         })();
         match result {
             Ok(document) => {

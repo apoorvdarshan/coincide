@@ -17,12 +17,13 @@ workers. Address discovery uses bounded child process capture.
 
 Implemented protocol paths include workspace, transcripts/pagination, live
 item/turn updates, text send/queue/steer, approval/question responses, new
-threads, rename/pin/archive/snooze, stop, and device presence. Requests use the
-existing Engine gates. Presence is received but does not route lock-screen
-notifications.
+threads, rename/pin/archive/snooze, stop, device presence, and marking a thread
+seen. Marking a thread seen clears its Mac alerts and informs connected phones;
+an active phone's visible thread also counts as seen. Requests use the existing
+Engine gates. Disconnected phones do not receive lock-screen clears.
 
 Remaining behavior gaps are explicit: remote image upload, usage-limit sharing,
-mark-seen/unread and settle/move/delete actions, steer-queued, dismiss-question,
+mark-unread and settle/move/delete actions, steer-queued, dismiss-question,
 and show-thread. Unsupported commands return errors; usage currently returns
 an empty list. Bonjour advertisement is implemented for macOS and Linux; Windows
 uses pairing-code addresses. CloudKit phone alerts are not implemented.

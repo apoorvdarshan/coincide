@@ -12,7 +12,7 @@ use coincide_core::api::{
 use coincide_core::platform_host::notifications::{Delivery, DesktopActivity, EventKey};
 use gpui_kit::{base::Disableable, component::button::Button, prelude::FluentBuilder, *};
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, HashMap, VecDeque},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicU8, Ordering},
@@ -71,6 +71,8 @@ pub enum Action {
     RefreshStatus,
     /// An explicit selection also counts when it is already the visible thread.
     MarkSeen(Uuid),
+    /// A phone saw this thread, even if the Mac window is in the background.
+    ClearRemoteSeen(Uuid),
 }
 #[derive(Clone)]
 pub struct BridgeHandle {
@@ -375,7 +377,7 @@ enum Flight {
     Configure(bool),
     Control,
     Permission,
-    Clear(Uuid),
+    Clear(Uuid, Option<u64>),
     Event(Identity),
 }
 #[derive(Clone, Copy)]
@@ -397,6 +399,8 @@ struct Pump {
     permission_checked_at: Option<Instant>,
     clear_retry: Option<(Uuid, Instant)>,
     repeat_seen: Option<Uuid>,
+    remote_seen: HashMap<Uuid, (u64, Instant)>,
+    remote_generation: u64,
     closed: bool,
 }
 impl Pump {
@@ -419,6 +423,8 @@ impl Pump {
             permission_checked_at: None,
             clear_retry: None,
             repeat_seen: None,
+            remote_seen: HashMap::new(),
+            remote_generation: 0,
             closed: false,
         }
     }
@@ -505,7 +511,7 @@ impl Pump {
                     || self
                         .flights
                         .values()
-                        .any(|f| matches!(f, Flight::Clear(id) if *id == thread));
+                        .any(|f| matches!(f, Flight::Clear(id, _) if *id == thread));
                 if clearing {
                     self.repeat_seen = Some(thread);
                 } else if self.last_seen == Some(thread) {
@@ -514,6 +520,13 @@ impl Pump {
                 if self.clear_retry.is_some_and(|(id, _)| id == thread) {
                     self.clear_retry = None;
                 }
+            }
+            Action::ClearRemoteSeen(thread) => {
+                self.remote_generation = self.remote_generation.saturating_add(1);
+                self.remote_seen
+                    .insert(thread, (self.remote_generation, Instant::now()));
+                self.cancel_pending(engine, Some(thread));
+                self.refresh_permission();
             }
             Action::Configure(enabled) => {
                 if enabled && !self.status.native_compiled {
@@ -586,12 +599,21 @@ impl Pump {
             (Flight::Event(id), _) => {
                 self.ack(engine, id, NotificationAck::Delivered(Delivery::Uncertain))
             }
-            (Flight::Clear(expected), Outcome::Cleared { thread, error }) => {
+            (Flight::Clear(expected, generation), Outcome::Cleared { thread, error }) => {
                 if expected != thread {
                     self.clear_failed(expected, "Unexpected notification clear receipt".into());
+                    self.remote_clear_failed(expected, generation);
                 } else if let Some(error) = error {
                     self.clear_failed(thread, error);
+                    self.remote_clear_failed(thread, generation);
                 } else {
+                    if generation.is_some_and(|generation| {
+                        self.remote_seen
+                            .get(&thread)
+                            .is_some_and(|(current, _)| *current == generation)
+                    }) {
+                        self.remote_seen.remove(&thread);
+                    }
                     if self.clear_retry.is_some_and(|(id, _)| id == thread) {
                         self.clear_retry = None;
                     }
@@ -603,13 +625,21 @@ impl Pump {
                     }
                 }
             }
-            (Flight::Clear(thread), Outcome::Rejected(error)) => {
+            (Flight::Clear(thread, generation), Outcome::Rejected(error)) => {
                 self.clear_failed(thread, error);
+                self.remote_clear_failed(thread, generation);
                 self.refresh_permission();
             }
             (_, Outcome::Rejected(error)) => self.status.error = Some(error),
             (_, Outcome::Permission(permission)) => self.status.permission = permission,
             _ => {}
+        }
+    }
+    fn remote_clear_failed(&mut self, thread: Uuid, generation: Option<u64>) {
+        if let Some((current, retry)) = self.remote_seen.get_mut(&thread)
+            && Some(*current) == generation
+        {
+            *retry = Instant::now() + Duration::from_secs(10);
         }
     }
     fn tick(&mut self, engine: &mut impl Outbox, activity: Option<DesktopActivity>) {
@@ -661,7 +691,7 @@ impl Pump {
                 self.refresh_permission();
             }
         }
-        if visible.is_some()
+        if (visible.is_some() || !self.remote_seen.is_empty())
             && self.status.bridge_ready
             && self.status.permission == Permission::Unknown
             && self
@@ -706,12 +736,35 @@ impl Pump {
                         && !self
                             .flights
                             .values()
-                            .any(|f| matches!(f, Flight::Clear(id) if *id == thread))
+                            .any(|f| matches!(f, Flight::Clear(id, _) if *id == thread))
                     {
                         self.pending.push_back(Command::ClearThread(thread));
                     }
                 }
                 self.last_seen = seen;
+            }
+        }
+        if may_clear {
+            let ready = self
+                .remote_seen
+                .iter()
+                .filter_map(|(thread, (_, retry))| (Instant::now() >= *retry).then_some(*thread))
+                .collect::<Vec<_>>();
+            for thread in ready {
+                if self.pending.len() >= CONTROLS {
+                    break;
+                }
+                if !self
+                    .pending
+                    .iter()
+                    .any(|c| matches!(c, Command::ClearThread(id) if *id == thread))
+                    && !self
+                        .flights
+                        .values()
+                        .any(|f| matches!(f, Flight::Clear(id, _) if *id == thread))
+                {
+                    self.pending.push_back(Command::ClearThread(thread));
+                }
             }
         }
         // Configure barriers have priority over all not-yet-submitted commands.
@@ -745,7 +798,12 @@ impl Pump {
                 }),
                 Command::Configure(settings) => Flight::Configure(settings.enabled),
                 Command::RefreshPermission => Flight::Permission,
-                Command::ClearThread(thread) => Flight::Clear(*thread),
+                Command::ClearThread(thread) => Flight::Clear(
+                    *thread,
+                    self.remote_seen
+                        .get(thread)
+                        .map(|(generation, _)| *generation),
+                ),
                 _ => Flight::Control,
             };
             match self.handle.try_send(command).map_err(|error| *error) {
@@ -911,6 +969,11 @@ impl NotificationSettingsPanel {
         self.bridge
             .as_ref()
             .is_some_and(|bridge| bridge.handle.try_action(Action::MarkSeen(thread)))
+    }
+    pub fn clear_remote_seen(&self, thread: Uuid) -> bool {
+        self.bridge
+            .as_ref()
+            .is_some_and(|bridge| bridge.handle.try_action(Action::ClearRemoteSeen(thread)))
     }
     /// Settings › General's "Notify when Coincide is in the background".
     pub fn set_background_notifications(&mut self, enabled: bool, cx: &mut Context<Self>) {
@@ -1529,6 +1592,91 @@ mod tests {
                 .iter()
                 .any(|call| matches!(*call, "request" | "post"))
         );
+        pump.finish(&mut engine);
+    }
+    #[::core::prelude::v1::test]
+    fn remote_seen_clears_while_backgrounded_even_if_posting_is_disabled() {
+        struct TargetBackend(Arc<Mutex<Vec<Uuid>>>);
+        impl Backend for TargetBackend {
+            fn permission(&mut self) -> Result<Permission> {
+                Ok(Permission::Authorized)
+            }
+            fn request_permission(&mut self) -> Result<Permission> {
+                panic!("must not prompt")
+            }
+            fn post(&mut self, _: &Payload) -> Delivery {
+                panic!("must not post")
+            }
+            fn clear_thread(&mut self, thread: Uuid) -> Result<()> {
+                self.0.lock().unwrap().push(thread);
+                Ok(())
+            }
+        }
+        let cleared = Arc::new(Mutex::new(Vec::new()));
+        let runtime = NotificationRuntime::spawn(TargetBackend(cleared.clone()), WINDOW).unwrap();
+        let mut pump = Pump::new(runtime, true, false);
+        let mut engine = FakeEngine(Arc::default());
+        let first = Uuid::new_v4();
+        let second = Uuid::new_v4();
+        pump.action(&mut engine, Action::ClearRemoteSeen(first));
+        pump.action(&mut engine, Action::ClearRemoteSeen(second));
+        until(&mut pump, &mut engine, |pump| pump.remote_seen.is_empty());
+        let actual = cleared.lock().unwrap();
+        assert_eq!(actual.len(), 2);
+        assert!(actual.contains(&first) && actual.contains(&second));
+        drop(actual);
+        pump.finish(&mut engine);
+    }
+
+    #[::core::prelude::v1::test]
+    fn older_remote_clear_receipt_does_not_drop_a_newer_seen_event() {
+        let (mut pump, mut engine, _) = setup(Delivery::Accepted, true);
+        let thread = Uuid::new_v4();
+        pump.action(&mut engine, Action::ClearRemoteSeen(thread));
+        let old = pump.remote_seen[&thread].0;
+        let command_id = Uuid::new_v4();
+        pump.flights
+            .insert(command_id, Flight::Clear(thread, Some(old)));
+        pump.action(&mut engine, Action::ClearRemoteSeen(thread));
+        pump.receipt(
+            &mut engine,
+            Receipt {
+                command_id,
+                outcome: Outcome::Cleared {
+                    thread,
+                    error: None,
+                },
+                native_callbacks_unconfirmed: false,
+            },
+        );
+        assert!(pump.remote_seen[&thread].0 > old);
+        until(&mut pump, &mut engine, |pump| pump.remote_seen.is_empty());
+        pump.finish(&mut engine);
+    }
+
+    #[::core::prelude::v1::test]
+    fn failed_remote_clear_is_retained_for_retry_in_background() {
+        let (mut pump, mut engine, _) = setup(Delivery::Accepted, true);
+        let thread = Uuid::new_v4();
+        pump.action(&mut engine, Action::ClearRemoteSeen(thread));
+        let generation = pump.remote_seen[&thread].0;
+        let command_id = Uuid::new_v4();
+        pump.flights
+            .insert(command_id, Flight::Clear(thread, Some(generation)));
+        pump.receipt(
+            &mut engine,
+            Receipt {
+                command_id,
+                outcome: Outcome::Cleared {
+                    thread,
+                    error: Some("temporary failure".into()),
+                },
+                native_callbacks_unconfirmed: false,
+            },
+        );
+        assert!(pump.remote_seen[&thread].1 > Instant::now());
+        pump.remote_seen.get_mut(&thread).unwrap().1 = Instant::now();
+        until(&mut pump, &mut engine, |pump| pump.remote_seen.is_empty());
         pump.finish(&mut engine);
     }
     #[::core::prelude::v1::test]

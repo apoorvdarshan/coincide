@@ -363,6 +363,7 @@ impl Adapter {
     /// them, most recently active first.
     pub fn workspace(&self, include_archived: bool, runs: &Runs) -> Result<Workspace, RemoteError> {
         let stored = self.call("projects.list", json!({}))?;
+        let unseen = self.unseen()?;
         let chats_id = stored
             .as_array()
             .into_iter()
@@ -440,7 +441,9 @@ impl Adapter {
             };
             if let Some(fields) = self.cached_fields(summary, runs) {
                 seen.insert(upper(summary["id"].as_str().unwrap_or_default()));
-                threads.push(Self::summary(summary, &fields, &project, runs));
+                let mut thread = Self::summary(summary, &fields, &project, runs);
+                thread.unseen = unseen.get(&thread.id).cloned();
+                threads.push(thread);
             }
         }
         if let Ok(mut cache) = self.cache.try_lock() {
@@ -504,8 +507,88 @@ impl Adapter {
         self.document(thread).map(|_| ())
     }
 
+    /// Mark the actual stored conversation, without changing other sidebar
+    /// preferences or claiming success when the store cannot be saved.
+    pub fn mark_seen(&self, thread: Uuid) -> Result<(), RemoteError> {
+        let mut engine = self
+            .engine
+            .try_lock()
+            .map_err(|_| RemoteError::failed("The computer is busy. Try again."))?;
+        if engine.admissions_frozen() {
+            return Err(RemoteError::failed("The computer is closing."));
+        }
+        engine
+            .store
+            .resolve_thread_id(thread)
+            .map_err(|e| RemoteError::failed(e.to_string()))?
+            .ok_or_else(RemoteError::thread_not_found)?;
+        let current = engine
+            .store
+            .document("ui-state.json")
+            .map_err(|e| RemoteError::failed(e.to_string()))?
+            .unwrap_or(json!({}));
+        if !current.is_object()
+            || current
+                .get("unseen")
+                .is_some_and(|v| !v.is_null() && !v.is_object())
+        {
+            return Err(RemoteError::failed(
+                "Saved conversation markers are invalid.",
+            ));
+        }
+        let mut unseen = current["unseen"].as_object().cloned().unwrap_or_default();
+        let before = unseen.len();
+        unseen.retain(|id, _| Uuid::parse_str(id).ok() != Some(thread));
+        if unseen.len() != before {
+            engine
+                .store
+                .patch_document("ui-state.json", &json!({"unseen": unseen}))
+                .map_err(|e| RemoteError::failed(e.to_string()))?;
+            engine.revision += 1;
+        }
+        engine.mark_native_notifications_seen(thread);
+        Ok(())
+    }
+
+    fn unseen(&self) -> Result<HashMap<String, String>, RemoteError> {
+        let engine = self
+            .engine
+            .try_lock()
+            .map_err(|_| RemoteError::failed("The computer is busy. Try again."))?;
+        let state = engine
+            .store
+            .document("ui-state.json")
+            .map_err(|e| RemoteError::failed(e.to_string()))?
+            .unwrap_or(json!({}));
+        if !state.is_object()
+            || state
+                .get("unseen")
+                .is_some_and(|v| !v.is_null() && !v.is_object())
+        {
+            return Err(RemoteError::failed(
+                "Saved conversation markers are invalid.",
+            ));
+        }
+        Ok(state["unseen"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter_map(|(id, value)| {
+                value
+                    .as_str()
+                    .filter(|value| matches!(*value, "completed" | "failed"))
+                    .map(|value| (upper(id), value.to_owned()))
+            })
+            .collect())
+    }
+
     /// The thread's summary as the sidebar would list it.
-    fn thread_summary(&self, id: &str, document: &Value, runs: &Runs) -> ThreadSummary {
+    fn thread_summary(
+        &self,
+        id: &str,
+        document: &Value,
+        runs: &Runs,
+    ) -> Result<ThreadSummary, RemoteError> {
         let summary = json!({
             "id": id,
             "title": document["title"],
@@ -515,7 +598,9 @@ impl Adapter {
             "snoozed_until": document["snoozedUntil"].as_f64().map(|s| s + SWIFT_EPOCH),
         });
         let project = document["projectID"].as_str().unwrap_or(NO_PROJECT);
-        Self::summary(&summary, &Self::fields(document), project, runs)
+        let mut summary = Self::summary(&summary, &Self::fields(document), project, runs);
+        summary.unseen = self.unseen()?.get(&summary.id).cloned();
+        Ok(summary)
     }
 
     fn can_steer(&self, id: &str, document: &Value) -> Result<bool, RemoteError> {
@@ -571,7 +656,7 @@ impl Adapter {
             .collect();
         Ok((
             Transcript {
-                thread: self.thread_summary(&id, &document, runs),
+                thread: self.thread_summary(&id, &document, runs)?,
                 items: remote,
                 has_earlier: start > 0,
                 turn: self.turn_state(&id, &document, runs)?,
@@ -610,7 +695,7 @@ impl Adapter {
         runs: &Runs,
     ) -> Result<(String, Value, ThreadSummary), RemoteError> {
         let (id, document) = self.document(thread)?;
-        let summary = self.thread_summary(&id, &document, runs);
+        let summary = self.thread_summary(&id, &document, runs)?;
         Ok((id, document, summary))
     }
 

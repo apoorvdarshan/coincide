@@ -16,7 +16,7 @@ use super::{
     pairing::Pairing,
     protocol::{DEFAULT_PORT, Device, HostCandidate, MAX_MESSAGE_BYTES, PairingPayload, VERSION},
     secrets::{SecretBackend, SecretDeviceStorage},
-    session::{Context, ITEM_INTERVAL, Session, WORKSPACE_INTERVAL},
+    session::{Context, ITEM_INTERVAL, SeenBus, Session, WORKSPACE_INTERVAL},
 };
 use crate::api::SharedEngine;
 use anyhow::{Context as _, Result};
@@ -152,6 +152,7 @@ struct Shared {
     stop: AtomicBool,
     pairing: Mutex<Pairing>,
     adapter: Adapter,
+    seen: Arc<SeenBus>,
     sessions: Mutex<HashMap<u64, Arc<Mutex<Session>>>>,
     /// Authenticated devices by session, kept apart so Settings never waits
     /// on a session that's busy answering its phone.
@@ -178,6 +179,7 @@ impl Shared {
             adapter: &self.adapter,
             pairing: &self.pairing,
             server_info: &info,
+            seen: &self.seen,
         })
     }
 
@@ -227,6 +229,7 @@ pub struct RemoteServer {
     fingerprint: Option<String>,
     storage_error: Option<String>,
     running: Option<(Arc<Shared>, Option<Advertisement>)>,
+    seen: Arc<SeenBus>,
 }
 
 impl RemoteServer {
@@ -255,7 +258,22 @@ impl RemoteServer {
             fingerprint: None,
             storage_error: None,
             running: None,
+            seen: Arc::new(SeenBus::default()),
         }
+    }
+
+    /// A Mac selection clears the matching phone notifications too.
+    pub fn desktop_seen(&self, thread: uuid::Uuid) {
+        if self.running.is_some() {
+            self.seen.record(thread, false);
+        }
+    }
+
+    pub fn pending_seen(&self) -> Vec<(uuid::Uuid, u64)> {
+        self.seen.pending_desktop()
+    }
+    pub fn acknowledge_seen(&self, thread: uuid::Uuid, generation: u64) {
+        self.seen.acknowledge_desktop(thread, generation);
     }
 
     pub fn is_enabled(&self) -> bool {
@@ -321,6 +339,7 @@ impl RemoteServer {
             stop: AtomicBool::new(false),
             pairing: Mutex::new(pairing),
             adapter: Adapter::new(self.engine.clone(), self.app_version.clone()),
+            seen: self.seen.clone(),
             sessions: Mutex::new(HashMap::new()),
             connected: Mutex::new(HashMap::new()),
             workers: Mutex::new(Vec::new()),
@@ -670,6 +689,7 @@ fn serve(stream: TcpStream, peer: IpAddr, id: u64, shared: &Arc<Shared>) {
             Some(Ok(_)) => {}
         }
         state.check_timeout(Instant::now());
+        shared.with_context(|context| state.synchronize_seen(context));
         if let Some(device) = state.paired.take() {
             if let Ok(mut payload) = shared.pairing_payload.lock() {
                 *payload = None;
