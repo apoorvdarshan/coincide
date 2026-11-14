@@ -127,6 +127,8 @@ fn display_path(path: &std::path::Path) -> String {
 pub(super) struct State {
     font: Entity<SliderState>,
     command_line_tool: CommandLineTool,
+    command_line_checked_at: Option<Instant>,
+    command_line_check_pending: bool,
     /// Theme grids opened by their row: dark, light.
     expanded: [bool; 2],
     restore_prompt: Option<Task<()>>,
@@ -145,6 +147,8 @@ impl State {
             }),
             expanded: [false; 2],
             command_line_tool: CommandLineTool::Missing,
+            command_line_checked_at: None,
+            command_line_check_pending: false,
             restore_prompt: None,
             t3_license_open: false,
         };
@@ -224,6 +228,44 @@ fn appearance_option(
 }
 
 impl Coincide {
+    /// Keep the displayed status in sync if the command is installed or removed
+    /// while Settings is open. Filesystem checks run away from the UI thread.
+    pub(super) fn poll_command_line_tool(&mut self, cx: &mut Context<Self>) {
+        if !self.settings_open || self.settings_section != settings::SettingsSection::General {
+            self.general_settings.command_line_checked_at = None;
+            return;
+        }
+        if self.general_settings.command_line_check_pending
+            || self
+                .general_settings
+                .command_line_checked_at
+                .is_some_and(|last| last.elapsed() < Duration::from_secs(1))
+        {
+            return;
+        }
+        self.general_settings.command_line_check_pending = true;
+        self.general_settings.command_line_checked_at = Some(Instant::now());
+        let app = std::env::current_exe().ok();
+        let path = std::env::var_os("PATH");
+        let check = cx
+            .background_executor()
+            .spawn(async move { command_line_tool(app.as_deref(), path.as_deref()) });
+        cx.spawn(async move |this, cx| {
+            let tool = check.await;
+            let _ = this.update(cx, |this, cx| {
+                this.general_settings.command_line_check_pending = false;
+                if this.settings_open
+                    && this.settings_section == settings::SettingsSection::General
+                    && this.general_settings.command_line_tool != tool
+                {
+                    this.general_settings.command_line_tool = tool;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
     pub(super) fn sync_general_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let size = slider_size(self.conversation_font_size());
         self.general_settings.font.update(cx, |slider, cx| {
@@ -959,6 +1001,35 @@ mod tests {
             CommandLineTool::OnPath(bin.join(TOOL))
         );
         assert_eq!(command_line_tool(None, None), CommandLineTool::Missing);
+    }
+
+    #[cfg(unix)]
+    #[::core::prelude::v1::test]
+    fn command_line_tool_follows_a_new_or_removed_path_link() {
+        let root = tempfile::tempdir().unwrap();
+        let app = root.path().join("app");
+        let bin = root.path().join("bin");
+        std::fs::create_dir_all(&app).unwrap();
+        std::fs::create_dir_all(&bin).unwrap();
+        let exe = app.join("coincide-rust");
+        let bundled = app.join(TOOL);
+        let link = bin.join(TOOL);
+        let path = std::env::join_paths([bin]).unwrap();
+        std::fs::write(&bundled, b"fixture").unwrap();
+        assert_eq!(
+            command_line_tool(Some(&exe), Some(&path)),
+            CommandLineTool::Installed(bundled.clone())
+        );
+        std::os::unix::fs::symlink(&bundled, &link).unwrap();
+        assert_eq!(
+            command_line_tool(Some(&exe), Some(&path)),
+            CommandLineTool::OnPath(link.clone())
+        );
+        std::fs::remove_file(link).unwrap();
+        assert_eq!(
+            command_line_tool(Some(&exe), Some(&path)),
+            CommandLineTool::Installed(bundled)
+        );
     }
 
     #[::core::prelude::v1::test]

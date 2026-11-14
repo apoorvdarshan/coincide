@@ -4033,6 +4033,7 @@ impl Coincide {
         if self.settings_refresh_pending {
             self.refresh_settings(window, cx);
         }
+        self.poll_command_line_tool(cx);
         // Opening Settings › Usage reads saved local history, as Swift's `appeared()`;
         // plan limits wait for Refresh.
         let usage_visible =
