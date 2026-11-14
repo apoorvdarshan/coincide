@@ -1873,7 +1873,7 @@ impl Coincide {
                     if command.changes_selection() {
                         self.accept_saved_provider_selection(thread);
                     } else {
-                        self.selected = Some(thread);
+                        self.replace_selected_thread(Some(thread));
                     }
                     if !submission.keep_draft && !buffered_send {
                         self.composer
@@ -1936,7 +1936,7 @@ impl Coincide {
         self.selection_ui
             .drafts
             .insert(text(&thread, "id"), SelectionDraft::from_thread(&thread));
-        self.selected = Some(thread);
+        self.replace_selected_thread(Some(thread));
         self.selection_ui.context = None;
         self.selection_ui.bound = None;
     }
@@ -2245,7 +2245,7 @@ impl Coincide {
                     input.set_value(draft.custom.clone(), window, cx)
                 });
                 self.selection_ui.drafts.insert(text(&thread, "id"), draft);
-                self.selected = Some(thread);
+                self.replace_selected_thread(Some(thread));
                 self.selection_ui.context = None;
                 self.refresh_selection_capabilities(cx);
             }
@@ -2430,7 +2430,7 @@ impl Coincide {
                     saved.custom = previous.custom.clone();
                 }
                 self.selection_ui.drafts.insert(id, saved);
-                self.selected = Some(thread);
+                self.replace_selected_thread(Some(thread));
                 self.selection_ui.context = None;
                 self.status="Saved effort explicitly cleared. Other selection fields, message draft and references were retained. No message was sent.".into();
                 if self
@@ -2496,7 +2496,7 @@ impl Coincide {
                     saved.custom = previous.custom.clone();
                 }
                 self.selection_ui.drafts.insert(id, saved);
-                self.selected = Some(thread);
+                self.replace_selected_thread(Some(thread));
                 self.selection_ui.context = None;
                 self.status=match repair {SpeedRepair::Speed=>"Saved speed explicitly cleared to Standard. Other selection fields, message draft and references were retained. No message was sent.",SpeedRepair::Both=>"Saved effort and speed explicitly cleared. Other selection fields, message draft and references were retained. No message was sent."}.into();
                 if matches!(repair, SpeedRepair::Both)
@@ -2572,7 +2572,7 @@ impl Coincide {
                     saved.custom = previous.custom.clone();
                 }
                 self.selection_ui.drafts.insert(id, saved);
-                self.selected = Some(thread);
+                self.replace_selected_thread(Some(thread));
                 self.selection_ui.context = None;
                 self.status = "Selection saved. Custom model availability is checked by the provider when used.".into();
             }

@@ -133,6 +133,7 @@ mod quit_shortcut;
 mod remote_settings;
 mod reply_selection_mount;
 mod scheduling;
+mod selected_thread_refresh;
 mod session_import;
 mod settings;
 mod settings_navigation;
@@ -575,6 +576,8 @@ struct Coincide {
     project_picker_open: bool,
     project_path: Entity<InputState>,
     selected: Option<Value>,
+    selected_generation: u64,
+    selected_thread_reader: selected_thread_refresh::Reader,
     pending_native_selection: Option<Option<String>>,
     startup_selection_pending: bool,
     pending_drafts: std::collections::HashMap<String, PendingDraft>,
@@ -1118,6 +1121,10 @@ impl Coincide {
         } else {
             self.submitted_drafts.project(thread);
         }
+    }
+    pub(crate) fn replace_selected_thread(&mut self, thread: Option<Value>) {
+        self.selected_generation = self.selected_generation.wrapping_add(1);
+        self.selected = thread;
     }
     fn new(
         engine: SharedEngine,
@@ -1788,6 +1795,8 @@ impl Coincide {
             project_picker_open: false,
             project_path,
             selected: None,
+            selected_generation: 0,
+            selected_thread_reader: Default::default(),
             pending_native_selection: None,
             startup_selection_pending: true,
             pending_drafts: Default::default(),
@@ -2547,11 +2556,16 @@ impl Coincide {
         )
     }
     fn refresh(&mut self, cx: &mut Context<Self>) -> bool {
+        self.refresh_inner(cx, true)
+    }
+    fn refresh_inner(&mut self, cx: &mut Context<Self>, read_queue: bool) -> bool {
         if let Ok(engine) = self.engine.try_lock() {
             self.browser_control = engine.browser_agent_control_settings();
         }
         let mut complete = true;
-        self.refresh_queue(cx);
+        if read_queue {
+            self.refresh_queue(cx);
+        }
         if self.schedules_open {
             self.refresh_schedules(cx);
         }
@@ -2724,7 +2738,7 @@ impl Coincide {
                 {
                     self.suspend_inspector_presentation(cx);
                 }
-                self.selected = Some(v);
+                self.replace_selected_thread(Some(v));
                 self.refresh_turn_changes();
                 if self.sidebar_preferences.document["unseen"][id].is_string() {
                     self.sidebar_thread_marker("unseen", id, None, cx);
@@ -3413,7 +3427,7 @@ impl Coincide {
                 "threads.patch",
                 json!({"threadId":v["id"],"patch":patch}),
             ) {
-                Ok(v) => self.selected = Some(v),
+                Ok(v) => self.replace_selected_thread(Some(v)),
                 Err(e) => self.status = e.to_string(),
             }
             self.refresh(cx);
@@ -3822,6 +3836,7 @@ impl Coincide {
             true
         };
         if self.media.close_requested {
+            self.selected_thread_reader.close();
             self.appshots.close();
             self.shutdown_computer_use(cx);
             self.sync_media_context(cx);
@@ -3831,6 +3846,7 @@ impl Coincide {
                 && self.appshots.drained()
                 && self.computer_use_shutdown_ready()
                 && self.thread_bulk.closed_and_drained()
+                && self.selected_thread_reader.closed_and_drained()
                 && self.composer_files.closed_and_drained()
                 && self.composer_suggestions.closed_and_drained()
             {
@@ -3858,6 +3874,9 @@ impl Coincide {
                 cx.notify();
             } else if !self.thread_bulk.closed_and_drained() {
                 self.status = "Closing waits for the owned sidebar operation to finish and join. Committed changes retain their receipt.".into();
+                cx.notify();
+            } else if !self.selected_thread_reader.closed_and_drained() {
+                self.status = "Closing waits for the conversation read to finish.".into();
                 cx.notify();
             } else {
                 self.settings_open = true;
@@ -4039,37 +4058,21 @@ impl Coincide {
             self.observe_thread_activity(&status, window, cx);
             app_shell::set_badge(app_shell::pending_approvals(&status), cx);
             let revision = status["revision"].as_u64().unwrap_or(0);
+            if self.apply_selected_thread_refresh(cx) {
+                self.sync_diff_thread(true, cx);
+            }
             if revision != self.revision {
                 self.refresh_settings(window, cx);
-                if let Some(id) = self.selected.as_ref().map(|v| text(v, "id")) {
-                    if let Ok(mut v) = call(&self.engine, "threads.read", json!({"threadId":id})) {
-                        self.preserve_pending_draft(&mut v);
-                        let count = v["items"].as_array().map_or(0, Vec::len);
-                        let start = self.transcript_count.saturating_sub(1).min(count);
-                        self.splice_transcript(start..self.transcript_count, count - start);
-                        self.transcript_count = count;
-                        self.selected = Some(v);
-                        self.reconcile_pending_send();
-                        self.reconcile_buffered_sends();
-                        let count = self
-                            .selected
-                            .as_ref()
-                            .and_then(|thread| thread["items"].as_array().map(Vec::len))
-                            .unwrap_or(self.transcript_count);
-                        if count != self.transcript_count {
-                            let start = self.transcript_count.min(count);
-                            self.splice_transcript(start..self.transcript_count, count - start);
-                            self.transcript_count = count;
-                        }
-                        self.refresh_turn_changes();
-                    } else {
-                        return; // Retry this revision after the worker releases the engine.
-                    }
-                }
-                if self.refresh(cx) {
+                if let Some(selected) = self.selected.as_ref() {
+                    self.selected_thread_reader.start(
+                        &self.engine,
+                        selected,
+                        self.selected_generation,
+                    );
+                } else if self.refresh(cx) {
                     self.revision = revision;
+                    self.sync_diff_thread(true, cx);
                 }
-                self.sync_diff_thread(true, cx);
             } else {
                 self.sync_diff_thread(false, cx);
             }
@@ -4512,7 +4515,7 @@ impl Coincide {
                 if let Ok(thread) =
                     call(&self.engine, "threads.read", json!({"threadId":thread_id}))
                 {
-                    self.selected = Some(thread);
+                    self.replace_selected_thread(Some(thread));
                 }
                 self.status = "Image removed from this draft.".into();
             }
@@ -4525,12 +4528,56 @@ impl Coincide {
     /// live row rewriting itself would otherwise pull someone who scrolled away
     /// back down. Someone still at the bottom keeps following the tail.
     pub(crate) fn splice_transcript(&mut self, range: std::ops::Range<usize>, count: usize) {
+        self.selected_generation = self.selected_generation.wrapping_add(1);
         let top = self.transcript_list.logical_scroll_top();
         let away = transcript_scrolled_away(top, self.transcript_count);
         self.transcript_list.splice(range, count);
         if away {
             self.transcript_list.scroll_to(top);
         }
+    }
+
+    /// Apply a background read only if the same local view is still current.
+    /// A newer engine revision is picked up on the next poll, so streaming can
+    /// keep advancing without overwriting local drafts or a switched thread.
+    fn apply_selected_thread_refresh(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(Ok(completed)) = self.selected_thread_reader.poll() else {
+            return false;
+        };
+        let Some((revision, mut thread, queue, turn_changes)) = self
+            .selected
+            .as_ref()
+            .and_then(|selected| completed.apply_if_current(selected, self.selected_generation))
+        else {
+            return false;
+        };
+        self.preserve_pending_draft(&mut thread);
+        let id = text(&thread, "id");
+        let count = thread["items"].as_array().map_or(0, Vec::len);
+        let start = self.transcript_count.saturating_sub(1).min(count);
+        self.splice_transcript(start..self.transcript_count, count - start);
+        self.transcript_count = count;
+        self.replace_selected_thread(Some(thread));
+        self.reconcile_pending_send();
+        self.reconcile_buffered_sends();
+        let count = self
+            .selected
+            .as_ref()
+            .and_then(|thread| thread["items"].as_array().map(Vec::len))
+            .unwrap_or(self.transcript_count);
+        if count != self.transcript_count {
+            let start = self.transcript_count.min(count);
+            self.splice_transcript(start..self.transcript_count, count - start);
+            self.transcript_count = count;
+        }
+        if let Some((reply, imported)) = turn_changes {
+            self.accept_turn_changes(&id, reply, imported);
+        }
+        self.accept_queue_read(&id, queue, cx);
+        if self.refresh_inner(cx, false) {
+            self.revision = revision;
+        }
+        true
     }
 
     fn image_preview(
@@ -5191,8 +5238,8 @@ impl Coincide {
     fn work_row(
         &mut self,
         source: &str,
-        index: usize,
         item: &Value,
+        active_turn: bool,
         expanded: bool,
         nested: bool,
         window: &mut Window,
@@ -5201,7 +5248,7 @@ impl Coincide {
         let mut item = item.clone();
         presentation::normalize_opencode_tool(&mut item);
         presentation::normalize_legacy_reasoning(&mut item);
-        presentation::normalize_inactive_work(&mut item, self.is_running_turn_item(index));
+        presentation::normalize_inactive_work(&mut item, active_turn);
         if presentation::is_question_tool(&item) || presentation::is_duplicate_reasoning_tool(&item)
         {
             return None;
@@ -5256,7 +5303,13 @@ impl Coincide {
         self.splice_transcript(index..index + 1, 1);
         cx.notify();
     }
-    fn message(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn message(
+        &mut self,
+        index: usize,
+        running_start: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let Some(item) = self
             .selected
             .as_ref()
@@ -5273,15 +5326,6 @@ impl Coincide {
             .map(|v| text(v, "id"))
             .unwrap_or_default();
         let source_running = self.running.contains(&source_id);
-        let running_start = self
-            .selected
-            .as_ref()
-            .and_then(|v| v["items"].as_array())
-            .and_then(|items| {
-                items
-                    .iter()
-                    .rposition(|item| item["kind"] == "user" && item["steered"] != true)
-            });
         let settled = !source_running || running_start.is_some_and(|start| index < start);
         let find_revealed =
             self.find_revealed
@@ -5336,7 +5380,7 @@ impl Coincide {
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
-            let active_turn = self.is_running_turn_item(index);
+            let active_turn = source_running && running_start.is_some_and(|start| index >= start);
             let normalized = items
                 .iter()
                 .map(|item| {
@@ -5361,8 +5405,8 @@ impl Coincide {
                 for (child_index, child) in group.items.iter().zip(items.iter()) {
                     if let Some(row) = self.work_row(
                         &source_id,
-                        *child_index,
                         child,
+                        source_running && running_start.is_some_and(|start| *child_index >= start),
                         self.expanded.contains(child_index),
                         true,
                         window,
@@ -5378,8 +5422,8 @@ impl Coincide {
             let item = item.clone();
             if let Some(row) = self.work_row(
                 &source_id,
-                index,
                 &item,
+                source_running && running_start.is_some_and(|start| index >= start),
                 self.expanded.contains(&index),
                 false,
                 window,
@@ -6433,6 +6477,13 @@ impl Render for Coincide {
             .map(|v| text(v, "title"))
             .unwrap_or_else(|| "Welcome to Coincide".into());
         let entity = cx.entity();
+        // A long active turn may contain thousands of tool events. Resolve its
+        // opener once instead of rescanning the tail for every visible row.
+        let running_start = self.selected.as_ref().and_then(|thread| {
+            let id = thread["id"].as_str()?;
+            let items = thread["items"].as_array()?;
+            chat_turns::running_opener(items, self.running.iter().any(|running| running == id))
+        });
         // Ask where the list is, not whether it is following: the follow flag
         // only re-engages in a fully measured layout, so rows that are still
         // measuring left the pill up even at the bottom of the transcript.
@@ -6457,7 +6508,9 @@ impl Render for Coincide {
             )
             .child(
                 list(self.transcript_list.clone(), move |index, window, cx| {
-                    entity.update(cx, |this, cx| this.message(index, window, cx))
+                    entity.update(cx, |this, cx| {
+                        this.message(index, running_start, window, cx)
+                    })
                 })
                 .size_full(),
             )

@@ -230,7 +230,7 @@ impl Coincide {
         match result {
             Ok(thread) => {
                 let draft = text(&thread, "draft");
-                self.selected = Some(thread);
+                self.replace_selected_thread(Some(thread));
                 self.composer_files.invalidate();
                 self.composer
                     .update(cx, |input, cx| input.set_value(draft, window, cx));
@@ -304,23 +304,53 @@ impl Coincide {
             self.queue_error.clear();
             return;
         };
-        match call(&self.engine, "agent.queue.list", json!({"threadId":id})) {
+        let result = match try_state(&self.engine) {
+            Ok(engine) => engine
+                .native_queue_read(&id)
+                .map_err(|error| error.to_string()),
+            Err(_) => return,
+        };
+        self.accept_queue_read(&id, result, cx);
+    }
+    pub(super) fn accept_queue_read(
+        &mut self,
+        id: &str,
+        result: Result<Value, String>,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .selected
+            .as_ref()
+            .is_none_or(|thread| thread["id"] != id)
+        {
+            return;
+        }
+        match result {
             Ok(value) => {
-                self.queued_messages = value["messages"].as_array().cloned().unwrap_or_default();
-                self.queue_enabled = value["enabled"] == true;
-                self.queue_error = value["error"].as_str().unwrap_or_default().to_owned();
+                let messages = value["messages"].as_array().cloned().unwrap_or_default();
+                let enabled = value["enabled"] == true;
+                let error = value["error"].as_str().unwrap_or_default().to_owned();
+                if self.queued_messages != messages
+                    || self.queue_enabled != enabled
+                    || self.queue_error != error
+                {
+                    self.selected_generation = self.selected_generation.wrapping_add(1);
+                }
+                self.queued_messages = messages;
+                self.queue_enabled = enabled;
+                self.queue_error = error;
                 // Keep the raw queue source (including future row metadata) for
                 // exact native Send now admission; list returns typed previews.
-                if let Ok(current) = call(&self.engine, "threads.read", json!({"threadId":id}))
+                if let Some(raw_queue) = value.get("rawQueue")
                     && let Some(selected) = self.selected.as_mut()
                     && selected["id"] == id
                 {
-                    selected["rustMessageQueue"] = current["rustMessageQueue"].clone();
+                    selected["rustMessageQueue"] = raw_queue.clone();
                 }
             }
-            Err(error) if engine_busy(&error) => return,
             Err(error) => {
                 // Never retain another thread's pending messages after selection.
+                self.selected_generation = self.selected_generation.wrapping_add(1);
                 self.queued_messages.clear();
                 self.queue_enabled = false;
                 self.queue_error = format!("Unable to load queued messages: {error}");

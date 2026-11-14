@@ -244,7 +244,7 @@ impl Coincide {
                     .and_then(|t| t["id"].as_str())
                     .is_some_and(|id| deleted.iter().any(|other| other.eq_ignore_ascii_case(id)))
                 {
-                    self.selected = None;
+                    self.replace_selected_thread(None);
                     self.transcript_count = 0;
                     self.transcript_list.reset(0);
                     self.expanded.clear();

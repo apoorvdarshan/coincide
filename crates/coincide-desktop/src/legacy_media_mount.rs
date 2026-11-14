@@ -699,7 +699,7 @@ impl Coincide {
                             let count = stored["items"].as_array().map_or(0, Vec::len);
                             self.splice_transcript(0..self.transcript_count, count);
                             self.transcript_count = count;
-                            self.selected = Some(stored);
+                            self.replace_selected_thread(Some(stored));
                             self.sync_media_context(cx);
                         }
                         self.media.status="Conversation snapshot changed; stale historical images were discarded.".into();

@@ -300,10 +300,52 @@ pub struct Engine {
     turn_checkpoints: checkpoint_api::State,
     composer_commands: crate::composer_suggestions::ReportedCommands,
 }
+
+/// A revision-bound thread captured while the engine is locked. Decoding the
+/// stored document can happen after releasing that lock.
+pub enum ThreadReadSnapshot {
+    Stored(String),
+    Unsaved(Value),
+}
+impl ThreadReadSnapshot {
+    pub fn decode(self) -> Result<Value> {
+        match self {
+            Self::Stored(document) => Ok(serde_json::from_str(&document)?),
+            Self::Unsaved(thread) => Ok(thread),
+        }
+    }
+}
 /// Where the last launch's discovered model lists live. Display metadata only.
 const SAVED_MODEL_CATALOG: &str = "model-catalog.json";
 
 impl Engine {
+    pub fn capture_thread_read(&self, id: &str) -> Result<(u64, ThreadReadSnapshot, Option<bool>)> {
+        let thread = match self.unsaved_threads.get(id) {
+            Some(thread) => ThreadReadSnapshot::Unsaved(thread.clone()),
+            None => ThreadReadSnapshot::Stored(self.store.thread_document(id)?),
+        };
+        let queue =
+            (!self.unsaved_threads.contains_key(id)).then(|| self.enabled_queues.contains(id));
+        Ok((self.revision, thread, queue))
+    }
+
+    /// The desktop also needs the original queue fields for exact-match
+    /// actions; this internal view does not expand the public queue response.
+    pub fn native_queue_read(&self, id: &str) -> Result<Value> {
+        self.require_admissions()?;
+        ensure!(
+            !self.unsaved_threads.contains_key(id),
+            "Transcript persistence is recovering; retry after recovery"
+        );
+        let thread = self.store.thread_queue_snapshot(id)?;
+        Ok(json!({
+            "messages": crate::message_queue::read(&thread)?,
+            "rawQueue": thread["rustMessageQueue"],
+            "error": thread["rustQueueError"],
+            "enabled": self.enabled_queues.contains(id)
+        }))
+    }
+
     /// Keep the latest discovered lists for the next launch. A failure here is
     /// not a user-facing error: the catalog still works for this run.
     fn save_model_catalog(&mut self) {
@@ -1023,8 +1065,9 @@ impl Engine {
                 Ok(v)
             }
             "agent.pending" => {
-                self.store.thread(required(p,"threadId")?)?;
-                Ok(json!(self.runs.get(required(p,"threadId")?).map(|run|run.pending.iter().map(|(id,frame)|json!({"requestId":id,"method":frame["method"],"params":frame["params"],"provider":run.provider})).collect::<Vec<_>>()).unwrap_or_default()))
+                let id=required(p,"threadId")?;
+                ensure!(self.store.contains_thread(id)?, "Thread not found");
+                Ok(json!(self.runs.get(id).map(|run|run.pending.iter().map(|(id,frame)|json!({"requestId":id,"method":frame["method"],"params":frame["params"],"provider":run.provider})).collect::<Vec<_>>()).unwrap_or_default()))
             }
             "agent.answer" => {
                 let thread = required(p,"threadId")?;
@@ -1723,12 +1766,14 @@ impl Engine {
             !self.unsaved_threads.contains_key(id),
             "Transcript persistence is recovering; retry after recovery"
         );
-        let mut thread = self.store.thread(id)?;
         if method == "agent.queue.list" {
-            return Ok(
-                json!({"messages":queue::read(&thread)?, "error":thread["rustQueueError"],"enabled":self.enabled_queues.contains(id)}),
-            );
+            let mut result = self.native_queue_read(id)?;
+            if let Some(object) = result.as_object_mut() {
+                object.remove("rawQueue");
+            }
+            return Ok(result);
         }
+        let mut thread = self.store.thread(id)?;
         ensure!(
             !self.store.is_imported(id)?,
             "Fork an imported thread before queueing messages"
@@ -3076,6 +3121,68 @@ mod tests {
             json!({"method":"threads.patch","params":{"threadId":id,"patch":{"sessions":{}}}}),
         );
         assert!(reply.get("error").is_some());
+    }
+    #[test]
+    fn thread_read_snapshot_keeps_its_revision_and_unsaved_recovery_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = Engine::new(Store::open(&dir.path().join("snapshot.sqlite")).unwrap());
+        let created = engine.execute("threads.create", &json!({})).unwrap();
+        let id = text(&created, "id");
+        let (revision, snapshot, _) = engine.capture_thread_read(&id).unwrap();
+        engine
+            .execute(
+                "threads.patch",
+                &json!({"threadId":id,"patch":{"draft":"newer"}}),
+            )
+            .unwrap();
+        assert!(engine.revision > revision);
+        assert_ne!(snapshot.decode().unwrap()["draft"], "newer");
+        let mut unsaved = engine.store.thread(&id).unwrap();
+        unsaved["items"] = json!([{"id":"recovery","kind":"assistant","text":"not yet saved"}]);
+        engine.unsaved_threads.insert(id.clone(), unsaved.clone());
+        let (_, snapshot, queue) = engine.capture_thread_read(&id).unwrap();
+        assert_eq!(snapshot.decode().unwrap(), unsaved);
+        assert_eq!(queue, None);
+        assert!(engine.capture_thread_read("missing").is_err());
+    }
+    #[test]
+    fn queue_and_pending_reads_keep_validation_and_raw_queue_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = Engine::new(Store::open(&dir.path().join("reads.sqlite")).unwrap());
+        let mut thread = engine.execute("threads.create", &json!({})).unwrap();
+        let id = text(&thread, "id");
+        crate::message_queue::add(&mut thread, "queued").unwrap();
+        thread["rustMessageQueue"][0]["futureField"] = json!({"preserve":true});
+        thread["rustQueueError"] = json!("paused");
+        engine.store.save(&thread).unwrap();
+        let result = engine
+            .execute("agent.queue.list", &json!({"threadId":id}))
+            .unwrap();
+        assert_eq!(result["messages"][0]["text"], "queued");
+        assert!(result.get("rawQueue").is_none());
+        assert_eq!(
+            engine.native_queue_read(&id).unwrap()["rawQueue"],
+            thread["rustMessageQueue"]
+        );
+        assert_eq!(result["error"], "paused");
+        assert_eq!(
+            engine
+                .execute("agent.pending", &json!({"threadId":id}))
+                .unwrap(),
+            json!([])
+        );
+        assert!(
+            engine
+                .execute("agent.pending", &json!({"threadId":"missing"}))
+                .is_err()
+        );
+        thread["rustMessageQueue"] = json!(true);
+        engine.store.save(&thread).unwrap();
+        assert!(
+            engine
+                .execute("agent.queue.list", &json!({"threadId":id}))
+                .is_err()
+        );
     }
     #[test]
     fn provider_selection_matches_runtime_support_and_rejects_invalid_models() {
