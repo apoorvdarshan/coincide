@@ -28,7 +28,10 @@ class ArchiveTests(unittest.TestCase):
         assets = self.root / 'assets'
         assets.mkdir(exist_ok=True)
         (assets / 'Unicode-日本語.txt').write_text('fixture')
-        return archive.staging.stage(self.root, platform, *paths, '0.1.0', 'a' * 40, assets, icon, '11.0')
+        awake_helper = self.root / 'awake-helper'
+        awake_helper.write_bytes(b'\xcf\xfa\xed\xfe')
+        return archive.staging.stage(self.root, platform, *paths, '0.1.0', 'a' * 40, assets, icon, '11.0',
+                                     awake_helper=awake_helper if platform == 'macos' else None)
 
     def test_portable_roundtrips_all_platforms(self):
         for platform in archive.packaging.PLATFORMS:

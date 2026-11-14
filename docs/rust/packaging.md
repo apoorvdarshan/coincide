@@ -128,7 +128,7 @@ python3 -B scripts/rust-packaging-ci.py --store-bin /absolute/path/coincide-stor
 ## Stage an actual unsigned desktop artifact
 
 `scripts/rust-stage-desktop.py` accepts explicit **already built** desktop/CLI/store
-binaries. It never invokes Cargo. It creates a unique `coincide-desktop-stage-*`
+binaries and, on macOS, the Keep Awake helper. It never invokes Cargo. It creates a unique `coincide-desktop-stage-*`
 directory under the supplied existing scratch root (which must resolve inside the
 system temporary directory, or `/tmp` on Unix). It has no overwrite/output-path mode.
 Inputs must be quiescent regular files; asset trees must contain only directories
@@ -151,7 +151,7 @@ Coordinator-only build allocation, from the exact checkout to stage:
 
 ```sh
 # Mac build: allocate the existing shared target cache exclusively first.
-CARGO_TARGET_DIR=/tmp/coincide-rust-rewrite-target cargo build --locked -p coincide-desktop -p coincide-core --bins
+CARGO_TARGET_DIR=/tmp/coincide-rust-rewrite-target cargo build --locked -p coincide-desktop -p coincide-core -p coincide-awake-helper --bins
 # Linux/Windows CI or allocated native host: keep a separate target directory.
 # Requires each host's GPUI/GTK/WebKit/WebView build prerequisites.
 cargo build --locked -p coincide-desktop -p coincide-core --bins
@@ -172,6 +172,7 @@ python3 -B scripts/rust-stage-desktop.py --scratch-root /tmp \
   --desktop-bin /tmp/coincide-rust-rewrite-target/debug/coincide-rust \
   --cli-bin /tmp/coincide-rust-rewrite-target/debug/coincide-rs \
   --store-bin /tmp/coincide-rust-rewrite-target/debug/coincide-store \
+  --awake-helper-bin /tmp/coincide-rust-rewrite-target/debug/coincide-awake-helper \
   --minimum-macos-version 13.0 --icon "$stage_inputs/CoincideRust.icns"
 ```
 

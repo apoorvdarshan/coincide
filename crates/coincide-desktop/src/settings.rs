@@ -743,8 +743,14 @@ impl Coincide {
         }
         #[cfg(target_os = "macos")]
         match crate::persistent_awake::status(&self.engine) {
-            Ok(status) if status != self.persistent_awake_status => {
+            Ok((status, preferences, audio_pending))
+                if status != self.persistent_awake_status
+                    || preferences != self.persistent_awake_preferences
+                    || audio_pending != self.persistent_awake_audio_pending =>
+            {
                 self.persistent_awake_status = status;
+                self.persistent_awake_preferences = preferences;
+                self.persistent_awake_audio_pending = audio_pending;
                 self.persistent_awake_health.clear();
                 self.persistent_awake_checked_at = None;
                 cx.notify();
@@ -768,9 +774,10 @@ impl Coincide {
             self.persistent_awake_check_pending = true;
             let checked_at = Instant::now();
             self.persistent_awake_checked_at = Some(checked_at);
+            let engine = self.engine.clone();
             let task = cx
                 .background_executor()
-                .spawn(async move { crate::persistent_awake::verify() });
+                .spawn(async move { crate::persistent_awake::verify(engine) });
             cx.spawn(async move |this, cx| {
                 let result = task.await;
                 let _ = this.update(cx, |this, cx| {
@@ -780,11 +787,19 @@ impl Coincide {
                         && this.persistent_awake_checked_at == Some(checked_at)
                     {
                         this.persistent_awake_health = match result {
-                            Ok(true) => "active",
-                            Ok(false) => "out_of_step",
+                            Ok(health) => {
+                                this.persistent_awake_lid_service = Some(health.lid);
+                                this.persistent_awake_battery_service = Some(health.battery);
+                                if health.power_matches {
+                                    "active"
+                                } else {
+                                    "out_of_step"
+                                }
+                            }
                             Err(_) => "unavailable",
                         }
                         .into();
+                        this.refresh_awake_status(cx);
                         cx.notify();
                     }
                 });
@@ -813,12 +828,18 @@ impl Coincide {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
                 this.persistent_awake_busy = false;
+                use crate::persistent_awake::Outcome;
                 this.settings_status = match result {
-                    Ok(true) if matches!(action, crate::persistent_awake::Action::Disable) => {
+                    Ok(Outcome::Done) if matches!(action, crate::persistent_awake::Action::Disable) => {
                         "The previous sleep settings were restored.".into()
                     }
-                    Ok(true) => "24/7 Keep Awake is on.".into(),
-                    Ok(false) => "The macOS authorization was cancelled.".into(),
+                    Ok(Outcome::Done) if matches!(action, crate::persistent_awake::Action::Enable) => "24/7 Keep Awake is on.".into(),
+                    Ok(Outcome::Done) if matches!(action, crate::persistent_awake::Action::RestoreAudio) => "The saved sound settings were restored.".into(),
+                    Ok(Outcome::Done) => "Saved.".into(),
+                    Ok(Outcome::NeedsApproval) => "Allow the Keep Awake background item in Login Items to finish setup.".into(),
+                    Ok(Outcome::AudioPending) if matches!(action, crate::persistent_awake::Action::Disable) => "Sleep settings were restored. Reconnect the audio device and restore its sound setting.".into(),
+                    Ok(Outcome::AudioPending) => "Reconnect the audio device to restore its saved sound setting.".into(),
+                    Ok(Outcome::Cancelled) => "The macOS authorization was cancelled.".into(),
                     Err(error) => format!("Keep Awake could not be changed: {error}"),
                 };
                 this.persistent_awake_checked_at = None;
@@ -916,13 +937,15 @@ impl Coincide {
             .child(div().px_3().pb_3().text_sm().child("Work-based Keep Awake ends when Coincide quits and does not prevent sleep when the lid closes."));
         #[cfg(target_os = "macos")]
         let panel = {
+            use crate::persistent_awake::{Action, ServiceStatus};
             let stage = self.persistent_awake_status.as_str();
             let enabled = stage == "enabled";
             let known = matches!(stage, "off" | "enabled");
             let busy = self.persistent_awake_busy;
-            let panel = panel.child(self.labeled_row(
+            let preferences = self.persistent_awake_preferences;
+            let mut panel = panel.child(self.labeled_row(
                 "Keep awake with the lid closed (24/7)",
-                Some("Keeps this Mac awake after Coincide quits, including on battery. Agent turns stop when Coincide quits. macOS asks for administrator permission; turning this off restores the previous sleep settings. Displays do not automatically turn off when the lid closes.".into()),
+                Some("Keeps this Mac awake after Coincide quits. Agent turns stop when Coincide quits. macOS may ask for administrator and background-item permission; turning this off restores the previous sleep settings.".into()),
                 Switch::new("persistent-awake-toggle")
                     .accessibility_label("Keep awake with the lid closed (24/7)")
                     .color(self.color(0xe4e9f2))
@@ -930,6 +953,123 @@ impl Coincide {
                     .disabled(busy || !known)
                     .on_click(cx.listener(move |this, value: &bool, _, cx| this.configure_persistent_awake(if *value { crate::persistent_awake::Action::Enable } else { crate::persistent_awake::Action::Disable }, cx))),
             ));
+            if enabled {
+                panel = panel
+                    .child(self.labeled_row(
+                        "Turn displays off when the lid closes",
+                        Some("Put displays to sleep when the lid closes while 24/7 mode is on.".into()),
+                        Switch::new("persistent-awake-display-off")
+                            .accessibility_label("Turn displays off when the lid closes")
+                            .color(self.color(0xe4e9f2)).checked(preferences.display_off_on_close).disabled(busy)
+                            .on_click(cx.listener(|this, value: &bool, _, cx| this.configure_persistent_awake(Action::SetDisplayOff(*value), cx))),
+                    ))
+                    .child(self.labeled_row(
+                        "Keep displays off while the lid is closed",
+                        Some("Put a display back to sleep if input wakes it while the lid is closed.".into()),
+                        Switch::new("persistent-awake-keep-displays-off")
+                            .accessibility_label("Keep displays off while the lid is closed")
+                            .color(self.color(0xe4e9f2)).checked(preferences.keep_displays_off).disabled(busy)
+                            .on_click(cx.listener(|this, value: &bool, _, cx| this.configure_persistent_awake(Action::SetKeepDisplaysOff(*value), cx))),
+                    ))
+                    .child(self.labeled_row(
+                        "Mute sound while the lid is closed",
+                        Some("Restore each changed output's previous mute state when the lid opens.".into()),
+                        Switch::new("persistent-awake-mute")
+                            .accessibility_label("Mute sound while the lid is closed")
+                            .color(self.color(0xe4e9f2)).checked(preferences.mute_while_closed).disabled(busy)
+                            .on_click(cx.listener(|this, value: &bool, _, cx| this.configure_persistent_awake(Action::SetMute(*value), cx))),
+                    ))
+                    .child(self.labeled_row(
+                        "Allow sleep on battery in 24/7 mode",
+                        Some("Sleep normally on battery and stay awake on external power. macOS requires approval for the battery helper.".into()),
+                        Switch::new("persistent-awake-battery")
+                            .accessibility_label("Allow sleep on battery in 24/7 mode")
+                            .color(self.color(0xe4e9f2))
+                            .checked(preferences.sleep_on_battery || preferences.battery_approval_pending)
+                            .disabled(busy)
+                            .on_click(cx.listener(|this, value: &bool, _, cx| this.configure_persistent_awake(Action::SetSleepOnBattery(*value), cx))),
+                    ));
+                if self.persistent_awake_lid_service == Some(ServiceStatus::NeedsApproval) {
+                    panel = panel.child(self.labeled_row(
+                        "Allow the lid helper",
+                        Some("Display and mute controls need the Coincide background item enabled in Login Items.".into()),
+                        Button::new("awake-open-lid-approval").label("Open Login Items")
+                            .on_click(cx.listener(|_, _, _, _| crate::persistent_awake::open_login_items())),
+                    ));
+                } else if self.persistent_awake_lid_service == Some(ServiceStatus::NotRegistered) {
+                    panel = panel.child(
+                        self.labeled_row(
+                            "Start the lid helper",
+                            Some(
+                                "Enable display and sound handling for the existing 24/7 setting."
+                                    .into(),
+                            ),
+                            Button::new("awake-register-lid-helper")
+                                .label("Start")
+                                .disabled(busy)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.configure_persistent_awake(Action::RegisterLidHelper, cx)
+                                })),
+                        ),
+                    );
+                } else if self.persistent_awake_lid_service == Some(ServiceStatus::Missing) {
+                    panel =
+                        panel.child(
+                            div().px_3().pb_3().text_sm().child(
+                                "This app build does not include the Keep Awake lid helper.",
+                            ),
+                        );
+                }
+                if preferences.battery_disable_pending {
+                    panel = panel.child(self.labeled_row(
+                        "Finish changing the battery policy",
+                        Some("The previous change was interrupted. Finish turning off battery sleep or restore the saved sleep settings.".into()),
+                        Button::new("awake-finish-battery-disable").label("Finish").disabled(busy)
+                            .on_click(cx.listener(|this, _, _, cx| this.configure_persistent_awake(Action::SetSleepOnBattery(false), cx))),
+                    ));
+                } else if (preferences.battery_approval_pending || preferences.sleep_on_battery)
+                    && self.persistent_awake_battery_service == Some(ServiceStatus::NeedsApproval)
+                {
+                    panel = panel.child(self.labeled_row(
+                        "Finish the battery policy",
+                        Some("Approve the battery helper in Login Items before relying on sleep while on battery.".into()),
+                        Button::new("awake-open-battery-approval").label("Open Login Items")
+                            .on_click(cx.listener(|_, _, _, _| crate::persistent_awake::open_login_items())),
+                    ));
+                } else if (preferences.battery_approval_pending || preferences.sleep_on_battery)
+                    && self.persistent_awake_battery_service == Some(ServiceStatus::NotRegistered)
+                {
+                    panel = panel.child(
+                        self.labeled_row(
+                            "Start the battery helper",
+                            Some(
+                                "Start the helper before relying on sleep while on battery.".into(),
+                            ),
+                            Button::new("awake-retry-battery-helper")
+                                .label("Start")
+                                .disabled(busy)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.configure_persistent_awake(
+                                        Action::SetSleepOnBattery(true),
+                                        cx,
+                                    )
+                                })),
+                        ),
+                    );
+                } else if (preferences.battery_approval_pending || preferences.sleep_on_battery)
+                    && self.persistent_awake_battery_service == Some(ServiceStatus::Missing)
+                {
+                    panel = panel.child(div().px_3().pb_3().text_sm().child("The battery helper is missing. Reinstall Coincide before changing the battery policy."));
+                }
+            }
+            if self.persistent_awake_audio_pending && !enabled {
+                panel = panel.child(self.labeled_row(
+                    "Restore sound",
+                    Some("Reconnect any unavailable audio device, then restore its saved mute setting.".into()),
+                    Button::new("awake-restore-sound").label("Restore").disabled(busy)
+                        .on_click(cx.listener(|this, _, _, cx| this.configure_persistent_awake(Action::RestoreAudio, cx))),
+                ));
+            }
             if stage == "prepared" {
                 panel.child(self.labeled_row(
                     "Restore sleep settings",

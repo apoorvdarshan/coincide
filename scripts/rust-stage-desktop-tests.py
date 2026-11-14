@@ -22,13 +22,15 @@ class StagingTests(unittest.TestCase):
         self.icon = self.root / 'icon.icns'
         self.icon.write_bytes(b'icns\x00\x00\x00\x08')
         self.binaries = [self.root / name for name in ('desktop', 'cli', 'store')]
+        self.awake_helper = self.root / 'awake-helper'
+        self.awake_helper.write_bytes(b'\xcf\xfa\xed\xfehelper')
 
     def run_stage(self, platform='macos'):
         magic = {'macos': b'\xcf\xfa\xed\xfe', 'windows': b'MZ00', 'linux': b'\x7fELF'}[platform]
         for p in self.binaries:
             p.write_bytes(magic + p.name.encode())
         return staging.stage(self.root, platform, *self.binaries, '0.1.0', 'a' * 40,
-                             self.assets, self.icon, '13.0')
+                             self.assets, self.icon, '13.0', awake_helper=self.awake_helper if platform == 'macos' else None)
 
     def test_all_layouts_and_source_preservation(self):
         for host in staging.packaging.PLATFORMS:
@@ -46,6 +48,19 @@ class StagingTests(unittest.TestCase):
                     self.assertEqual(info['CFBundleIdentifier'], 'com.apoorvdarshan.coincide.rust')
                     self.assertEqual(info['CFBundleIconFile'], 'CoincideRust.icns')
                     self.assertEqual(info['LSMinimumSystemVersion'], '13.0')
+                    base = artifact / 'Coincide Rust.app/Contents'
+                    self.assertEqual((base / 'MacOS/coincide-awake-helper').read_bytes(), self.awake_helper.read_bytes())
+                    for directory, name in staging.packaging.AWAKE_PLISTS:
+                        self.assertTrue((base / 'Library' / directory / name).is_file())
+
+    def test_macos_requires_helper_and_other_platforms_refuse_it(self):
+        self.run_stage()
+        with self.assertRaisesRegex(ValueError, 'Keep Awake helper binary required'):
+            staging.stage(self.root, 'macos', *self.binaries, '0.1.0', 'a' * 40,
+                          icon=self.icon, minimum_macos='13.0')
+        with self.assertRaisesRegex(ValueError, 'macOS-only'):
+            staging.stage(self.root, 'linux', *self.binaries, '0.1.0', 'a' * 40,
+                          awake_helper=self.awake_helper)
 
     def test_never_replaces_existing_stage(self):
         first = self.run_stage()
@@ -68,7 +83,7 @@ class StagingTests(unittest.TestCase):
         self.binaries[0].write_bytes(b'bad')
         with self.assertRaises(ValueError):
             staging.stage(self.root, 'macos', *self.binaries, '0.1.0', 'a' * 40,
-                          icon=self.icon, minimum_macos='13.0')
+                          icon=self.icon, minimum_macos='13.0', awake_helper=self.awake_helper)
         self.assertEqual(existing, set(self.root.glob('coincide-desktop-stage-*')))
         self.assertEqual(self.binaries[0].read_bytes(), b'bad')
 
@@ -83,7 +98,7 @@ class StagingTests(unittest.TestCase):
         existing = set(self.root.glob('coincide-desktop-stage-*'))
         with self.assertRaises(ValueError):
             staging.stage(self.root, 'macos', *self.binaries, '0.1.0', 'a' * 40,
-                          minimum_macos='13.0')
+                          minimum_macos='13.0', awake_helper=self.awake_helper)
         self.assertEqual(existing, set(self.root.glob('coincide-desktop-stage-*')))
 
     def test_non_scratch_destination_refused(self):

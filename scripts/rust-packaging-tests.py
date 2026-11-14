@@ -25,10 +25,17 @@ class ArtifactTests(unittest.TestCase):
             (base / 'Info.plist').write_bytes(plistlib.dumps({
                 'CFBundleExecutable': 'coincide-rust', 'CFBundleName': 'Coincide Rust',
                 'CFBundleIdentifier': 'com.apoorvdarshan.coincide.rust'}))
-        for name in packaging.BINARIES:
+        names = packaging.BINARIES + (('coincide-awake-helper',) if platform == 'macos' else ())
+        for name in names:
             path = binaries / (name + ('.exe' if platform == 'windows' else ''))
             path.write_bytes({'linux': b'\x7fELF', 'windows': b'MZ00', 'macos': b'\xcf\xfa\xed\xfe'}[platform])
             path.chmod(0o755)
+        if platform == 'macos':
+            source = Path(__file__).resolve().parent.parent / 'crates/coincide-awake-helper/macos'
+            for directory, name in packaging.AWAKE_PLISTS:
+                target = base / 'Library' / directory / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes((source / name).read_bytes())
         return packaging.manifest(self.root, platform, '0.1.0-preview', 'a' * 40)
 
     def test_all_platform_layouts(self):

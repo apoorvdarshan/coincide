@@ -11,6 +11,10 @@ import sys
 
 PLATFORMS = ('macos', 'windows', 'linux')
 BINARIES = ('coincide-rust', 'coincide-rs', 'coincide-store')
+AWAKE_PLISTS = (
+    ('LaunchAgents', 'com.apoorvdarshan.coincide.rust.always-on.plist'),
+    ('LaunchDaemons', 'com.apoorvdarshan.coincide.rust.battery-helper.plist'),
+)
 KINDS = ('desktop-preview', 'store-tool')
 
 
@@ -54,7 +58,18 @@ def layout(root, platform, kind='desktop-preview'):
         require(info.get('CFBundleExecutable') == 'coincide-rust', 'wrong bundle executable')
         require(info.get('CFBundleIdentifier') == 'com.apoorvdarshan.coincide.rust', 'preview bundle identity required')
         require(info.get('CFBundleName') == 'Coincide Rust', 'preview bundle name required')
-    for name in (BINARIES if kind == 'desktop-preview' else ('coincide-store',)):
+    names = BINARIES if kind == 'desktop-preview' else ('coincide-store',)
+    if bundle:
+        names += ('coincide-awake-helper',)
+        for directory, name in AWAKE_PLISTS:
+            with (base / 'Library' / directory / name).open('rb') as stream:
+                service = plistlib.load(stream)
+            expected_mode = '--lid' if directory == 'LaunchAgents' else '--battery'
+            require(service.get('Label') == name.removesuffix('.plist') and
+                    service.get('BundleProgram') == 'Contents/MacOS/coincide-awake-helper' and
+                    service.get('ProgramArguments') == ['coincide-awake-helper', expected_mode],
+                    'wrong Keep Awake helper configuration')
+    for name in names:
         path = bindir / (name + ('.exe' if platform == 'windows' else ''))
         with path.open('rb') as stream:
             magic = stream.read(4)
