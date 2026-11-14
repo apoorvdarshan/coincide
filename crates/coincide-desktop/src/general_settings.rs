@@ -266,9 +266,10 @@ impl Coincide {
             .flex()
             .items_center()
             .gap_3()
-            .p_3()
+            .px_4()
+            .py_3()
             .border_b_1()
-            .border_color(self.color(0x29303d))
+            .border_color(self.color(0x29303d).opacity(0.7))
             .child(
                 div()
                     .flex_1()

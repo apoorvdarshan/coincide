@@ -235,7 +235,8 @@ impl Coincide {
             None => label.into(),
         })
         .w_full()
-        .h(px(30.))
+        .h(px(34.))
+        .rounded(px(9.))
         .ghost()
         .when(selected, |button| button.bg(self.color(0x202a3b)))
         .child(
@@ -249,6 +250,7 @@ impl Coincide {
                     div()
                         .flex_1()
                         .min_w_0()
+                        .truncate()
                         .text_color(self.color(0xe4e9f2).opacity(if enabled { 1. } else { 0.5 }))
                         .child(label),
                 )
