@@ -2791,6 +2791,12 @@ impl Coincide {
                     self.suspend_inspector_presentation(cx);
                 }
                 self.replace_selected_thread(Some(v));
+                if window.is_window_active()
+                    && window.visibility().is_visible()
+                    && let Ok(thread) = uuid::Uuid::parse_str(id)
+                {
+                    let _ = self.notification_panel.read(cx).mark_seen(thread);
+                }
                 self.refresh_turn_changes();
                 if self.sidebar_preferences.document["unseen"][id].is_string() {
                     self.sidebar_thread_marker("unseen", id, None, cx);

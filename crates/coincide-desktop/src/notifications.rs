@@ -59,6 +59,15 @@ pub fn thread_from_event_id(id: &str) -> Option<Uuid> {
     }
     Some(thread)
 }
+/// Swift groups alerts by the conversation rather than by provider or event.
+/// Older Rust alerts without a group can still be recognized by their exact ID.
+fn notification_matches_thread(id: &str, group: &str, thread: Uuid) -> bool {
+    if group.is_empty() {
+        thread_from_event_id(id) == Some(thread)
+    } else {
+        Uuid::parse_str(group).ok() == Some(thread)
+    }
+}
 fn payload(alert: &Alert, previews: bool) -> Payload {
     let generic = match alert.key.kind {
         AlertKind::Completed => "Agent finished",
@@ -101,7 +110,7 @@ pub trait Backend {
     /// Called solely by the explicit native UI permission button hook below.
     fn request_permission(&mut self) -> Result<Permission>;
     fn post(&mut self, payload: &Payload) -> Delivery;
-    /// Clear only this app namespace/thread, including pending requests.
+    /// Clear only notifications associated with this app's thread, including pending requests.
     fn clear_thread(&mut self, thread: Uuid) -> Result<()>;
 }
 pub struct DesktopNotifications<B> {
@@ -227,7 +236,7 @@ pub mod macos {
     /// Stateless adapter. Call only in the packaged app; no permission or delivery
     /// is performed during construction. Foreground/click delegates remain parent hooks.
     pub struct NativeBackend;
-    fn center() -> Result<objc2::rc::Retained<UNUserNotificationCenter>> {
+    pub(super) fn center() -> Result<objc2::rc::Retained<UNUserNotificationCenter>> {
         let bundle = NSBundle::mainBundle();
         if bundle.bundleIdentifier().is_none_or(|id| id.is_empty()) {
             bail!("notifications require a packaged app with a bundle identifier");
@@ -307,9 +316,7 @@ pub mod macos {
         }
         fn clear_thread(&mut self, thread: Uuid) -> Result<()> {
             let center = center()?;
-            let prefix = thread_prefix(thread);
             let (tx, rx) = sync_channel(1);
-            let delivered_prefix = prefix.clone();
             let delivered = RcBlock::new(
                 move |items: std::ptr::NonNull<
                     NSArray<objc2_user_notifications::UNNotification>,
@@ -317,14 +324,12 @@ pub mod macos {
                     // SAFETY: collection is borrowed only for callback duration.
                     let items = unsafe { items.as_ref() };
                     let ids: Vec<String> = (0..items.count())
-                        .map(|index| {
-                            items
-                                .objectAtIndex(index)
-                                .request()
-                                .identifier()
-                                .to_string()
+                        .filter_map(|index| {
+                            let request = items.objectAtIndex(index).request();
+                            let id = request.identifier().to_string();
+                            let group = request.content().threadIdentifier().to_string();
+                            notification_matches_thread(&id, &group, thread).then_some(id)
                         })
-                        .filter(|id| id.starts_with(&delivered_prefix))
                         .collect();
                     let _ = tx.send(ids);
                 },
@@ -343,8 +348,12 @@ pub mod macos {
                     // SAFETY: collection is borrowed only for callback duration.
                     let items = unsafe { items.as_ref() };
                     let ids: Vec<String> = (0..items.count())
-                        .map(|index| items.objectAtIndex(index).identifier().to_string())
-                        .filter(|id| id.starts_with(&prefix))
+                        .filter_map(|index| {
+                            let request = items.objectAtIndex(index);
+                            let id = request.identifier().to_string();
+                            let group = request.content().threadIdentifier().to_string();
+                            notification_matches_thread(&id, &group, thread).then_some(id)
+                        })
                         .collect();
                     let _ = tx.send(ids);
                 },
@@ -456,6 +465,188 @@ mod tests {
         adapter.deliver(&Route::Desktop, &a);
         assert_eq!(adapter.backend.posts[0].id, adapter.backend.posts[1].id);
         assert_eq!(adapter.backend.queries, 2);
+    }
+    #[test]
+    fn thread_matching_clears_only_the_seen_conversation() {
+        let a = alert();
+        let other = Uuid::new_v4();
+        let id = event_id(a.key);
+        assert!(notification_matches_thread(
+            &id,
+            &a.key.thread.to_string().to_uppercase(),
+            a.key.thread
+        ));
+        assert!(notification_matches_thread(
+            "legacy-agent-notification",
+            &a.key.thread.to_string(),
+            a.key.thread
+        ));
+        assert!(notification_matches_thread(&id, "", a.key.thread));
+        assert!(!notification_matches_thread(
+            &id,
+            &other.to_string(),
+            a.key.thread
+        ));
+        assert!(!notification_matches_thread(&id, "invalid", a.key.thread));
+        assert!(!notification_matches_thread("unrelated", "", a.key.thread));
+    }
+
+    #[cfg(all(target_os = "macos", feature = "native-notifications"))]
+    #[test]
+    #[ignore = "Explicit, silent, owned-notification fixture in a signed app bundle only"]
+    fn native_seen_clears_only_matching_delivered_and_pending_notifications() {
+        use block2::RcBlock;
+        use objc2_foundation::{NSArray, NSBundle, NSError, NSString};
+        use objc2_user_notifications::{
+            UNMutableNotificationContent, UNNotification, UNNotificationInterruptionLevel,
+            UNNotificationRequest, UNTimeIntervalNotificationTrigger, UNUserNotificationCenter,
+        };
+        use std::{
+            collections::HashSet,
+            sync::mpsc::sync_channel,
+            time::{Duration, Instant},
+        };
+
+        assert_eq!(
+            std::env::var("COINCIDE_OWNED_NOTIFICATION_FIXTURE").as_deref(),
+            Ok("1")
+        );
+        assert_eq!(
+            NSBundle::mainBundle()
+                .bundleIdentifier()
+                .unwrap()
+                .to_string(),
+            "com.apoorvdarshan.coincide.rust"
+        );
+        let center = macos::center().unwrap();
+        let mut backend = macos::NativeBackend;
+        assert_eq!(backend.permission().unwrap(), Permission::Authorized);
+        let first = Uuid::new_v4();
+        let other = Uuid::new_v4();
+        let make_id = |thread| {
+            event_id(EventKey {
+                thread,
+                item: Uuid::new_v4(),
+                kind: AlertKind::Completed,
+            })
+        };
+        let a = make_id(first);
+        let legacy = format!("coincide-fixture-{}", Uuid::new_v4());
+        let a_pending = make_id(first);
+        let b = make_id(other);
+        let b_pending = make_id(other);
+        let conflicting = make_id(first);
+        let ids = vec![
+            a.clone(),
+            legacy.clone(),
+            a_pending.clone(),
+            b.clone(),
+            b_pending.clone(),
+            conflicting.clone(),
+        ];
+
+        struct Cleanup {
+            center: objc2::rc::Retained<UNUserNotificationCenter>,
+            ids: Vec<String>,
+        }
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let strings: Vec<_> = self.ids.iter().map(|id| NSString::from_str(id)).collect();
+                let ids = NSArray::from_retained_slice(&strings);
+                self.center
+                    .removeDeliveredNotificationsWithIdentifiers(&ids);
+                self.center
+                    .removePendingNotificationRequestsWithIdentifiers(&ids);
+            }
+        }
+        let _cleanup = Cleanup {
+            center: center.clone(),
+            ids,
+        };
+        let add = |id: &str, group: Uuid, pending: bool| {
+            let content = UNMutableNotificationContent::new();
+            content.setTitle(&NSString::from_str("Coincide notification test"));
+            content.setThreadIdentifier(&NSString::from_str(&group.to_string().to_uppercase()));
+            content.setInterruptionLevel(UNNotificationInterruptionLevel::Passive);
+            let trigger = pending.then(|| {
+                UNTimeIntervalNotificationTrigger::triggerWithTimeInterval_repeats(600.0, false)
+            });
+            let request = UNNotificationRequest::requestWithIdentifier_content_trigger(
+                &NSString::from_str(id),
+                &content,
+                trigger.as_deref().map(|t| &**t),
+            );
+            let (tx, rx) = sync_channel(1);
+            let callback = RcBlock::new(move |error: *mut NSError| {
+                let _ = tx.send(error.is_null());
+            });
+            center.addNotificationRequest_withCompletionHandler(&request, Some(&callback));
+            assert!(rx.recv_timeout(Duration::from_secs(3)).unwrap());
+        };
+        add(&a, first, false);
+        add(&legacy, first, false);
+        add(&a_pending, first, true);
+        add(&b, other, false);
+        add(&b_pending, other, true);
+        add(&conflicting, other, false);
+        let list = || {
+            let (tx, rx) = sync_channel(1);
+            let callback =
+                RcBlock::new(move |items: std::ptr::NonNull<NSArray<UNNotification>>| {
+                    let items = unsafe { items.as_ref() };
+                    let ids: HashSet<String> = (0..items.count())
+                        .map(|i| items.objectAtIndex(i).request().identifier().to_string())
+                        .collect();
+                    let _ = tx.send(ids);
+                });
+            center.getDeliveredNotificationsWithCompletionHandler(&callback);
+            let delivered = rx.recv_timeout(Duration::from_secs(3)).unwrap();
+            let (tx, rx) = sync_channel(1);
+            let callback = RcBlock::new(
+                move |items: std::ptr::NonNull<NSArray<UNNotificationRequest>>| {
+                    let items = unsafe { items.as_ref() };
+                    let ids: HashSet<String> = (0..items.count())
+                        .map(|i| items.objectAtIndex(i).identifier().to_string())
+                        .collect();
+                    let _ = tx.send(ids);
+                },
+            );
+            center.getPendingNotificationRequestsWithCompletionHandler(&callback);
+            (delivered, rx.recv_timeout(Duration::from_secs(3)).unwrap())
+        };
+        let until = |predicate: &dyn Fn(&(HashSet<String>, HashSet<String>)) -> bool| {
+            let deadline = Instant::now() + Duration::from_secs(6);
+            loop {
+                let state = list();
+                if predicate(&state) {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "Owned notification fixture did not settle"
+                );
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        };
+        until(&|s| {
+            s.0.contains(&a)
+                && s.0.contains(&legacy)
+                && s.0.contains(&b)
+                && s.0.contains(&conflicting)
+                && s.1.contains(&a_pending)
+                && s.1.contains(&b_pending)
+        });
+        backend.clear_thread(first).unwrap();
+        until(&|s| {
+            !s.0.contains(&a)
+                && !s.0.contains(&legacy)
+                && !s.1.contains(&a_pending)
+                && s.0.contains(&b)
+                && s.0.contains(&conflicting)
+                && s.1.contains(&b_pending)
+        });
+        backend.clear_thread(other).unwrap();
+        until(&|s| !s.0.contains(&b) && !s.0.contains(&conflicting) && !s.1.contains(&b_pending));
     }
     #[test]
     fn permission_revocation_is_checked_and_remote_routes_refused() {

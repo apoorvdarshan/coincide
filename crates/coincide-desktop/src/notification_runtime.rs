@@ -413,12 +413,12 @@ fn process<B: Backend>(
             Err(e) => Outcome::Rejected(e.to_string().chars().take(512).collect()),
         },
         Command::ClearThread(_)
-            if !status.enabled || adapter.permission_status() != Permission::Authorized =>
+            if !matches!(
+                adapter.permission_status(),
+                Permission::Authorized | Permission::Denied
+            ) =>
         {
-            Outcome::Rejected(
-                "Notification clearing requires enabled notifications and observed authorization"
-                    .into(),
-            )
+            Outcome::Rejected("Notification clearing requires a known system permission".into())
         }
         Command::ClearThread(thread) => {
             dispatcher.thread_seen(thread, adapter);
@@ -957,7 +957,7 @@ mod tests {
         ));
     }
     #[test]
-    fn clear_requires_enabled_and_observed_authorization_without_implicit_queries() {
+    fn clear_requires_observed_authorization_but_works_after_disabling() {
         let (mut runtime, state) = setup(Delivery::Accepted, 8);
         let h = runtime.handle();
         let thread = Uuid::new_v4();
@@ -986,8 +986,14 @@ mod tests {
         send(&h, Command::Configure(Settings::default()));
         receipt(&runtime);
         send(&h, Command::ClearThread(thread));
-        assert!(matches!(receipt(&runtime).outcome, Outcome::Rejected(_)));
-        assert_eq!(state.lock().unwrap().calls, vec!["status", "clear"]);
+        assert!(matches!(
+            receipt(&runtime).outcome,
+            Outcome::Cleared { error: None, .. }
+        ));
+        assert_eq!(
+            state.lock().unwrap().calls,
+            vec!["status", "clear", "clear"]
+        );
         runtime.shutdown().unwrap();
     }
     #[test]
@@ -1015,7 +1021,10 @@ mod tests {
         send(&h, Command::ClearThread(original.thread));
         send(&h, job(key()));
         assert!(matches!(receipt(&runtime).outcome, Outcome::Configured));
-        assert!(matches!(receipt(&runtime).outcome, Outcome::Rejected(_)));
+        assert!(matches!(
+            receipt(&runtime).outcome,
+            Outcome::Cleared { error: None, .. }
+        ));
         assert!(matches!(
             receipt(&runtime).outcome,
             Outcome::Notification {
@@ -1024,7 +1033,7 @@ mod tests {
                 ..
             }
         ));
-        assert_eq!(state.lock().unwrap().calls, vec!["status", "post"]);
+        assert_eq!(state.lock().unwrap().calls, vec!["status", "post", "clear"]);
         runtime.shutdown().unwrap();
     }
     #[test]
