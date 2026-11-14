@@ -130,9 +130,9 @@ pub(super) const PALETTES: &[Palette] = &[
         sidebar: 0x0B0B0B,
         content: 0x000000,
         surface: 0x161616,
-        raised: 0x141414,
+        raised: 0x202020,
         border: 0x2A2A2A,
-        ink: 0xe4e9f2,
+        ink: 0xeaeaec,
         accent: 0xFF8A3D,
     },
     Palette {
@@ -142,9 +142,9 @@ pub(super) const PALETTES: &[Palette] = &[
         sidebar: 0x181818,
         content: 0x212121,
         surface: 0x2B2B2B,
-        raised: 0x282828,
+        raised: 0x303030,
         border: 0x333333,
-        ink: 0xe4e9f2,
+        ink: 0xeaeaec,
         accent: 0x9DB4FF,
     },
     Palette {
@@ -154,7 +154,7 @@ pub(super) const PALETTES: &[Palette] = &[
         sidebar: 0x0E1320,
         content: 0x141A28,
         surface: 0x1C2333,
-        raised: 0x1A2130,
+        raised: 0x242d3d,
         border: 0x2A3347,
         ink: 0xDCE3F0,
         accent: 0x6FA8FF,
@@ -166,7 +166,7 @@ pub(super) const PALETTES: &[Palette] = &[
         sidebar: 0x23262B,
         content: 0x2A2E34,
         surface: 0x333840,
-        raised: 0x31353C,
+        raised: 0x3b414a,
         border: 0x40464F,
         ink: 0xD8DCE2,
         accent: 0x7FB8C9,
@@ -178,7 +178,7 @@ pub(super) const PALETTES: &[Palette] = &[
         sidebar: 0x0D1410,
         content: 0x111A15,
         surface: 0x18241D,
-        raised: 0x16211A,
+        raised: 0x202e25,
         border: 0x26362C,
         ink: 0xD4E2D8,
         accent: 0x6FD08C,
@@ -190,7 +190,7 @@ pub(super) const PALETTES: &[Palette] = &[
         sidebar: 0x140F18,
         content: 0x1A1420,
         surface: 0x241B2C,
-        raised: 0x211928,
+        raised: 0x2e2539,
         border: 0x352841,
         ink: 0xE6DDF0,
         accent: 0xC58BF2,
@@ -202,7 +202,7 @@ pub(super) const PALETTES: &[Palette] = &[
         sidebar: 0x08161B,
         content: 0x0C1D23,
         surface: 0x12292F,
-        raised: 0x10252B,
+        raised: 0x193239,
         border: 0x1E3B43,
         ink: 0xD3EBEF,
         accent: 0x3FC5D6,
@@ -214,7 +214,7 @@ pub(super) const PALETTES: &[Palette] = &[
         sidebar: 0x15100D,
         content: 0x1B1512,
         surface: 0x261D18,
-        raised: 0x231B16,
+        raised: 0x31251e,
         border: 0x3A2C24,
         ink: 0xEDE2D6,
         accent: 0xFF7A45,
@@ -226,7 +226,7 @@ pub(super) const PALETTES: &[Palette] = &[
         sidebar: 0x12111F,
         content: 0x171627,
         surface: 0x201F35,
-        raised: 0x1D1C31,
+        raised: 0x292740,
         border: 0x2F2D4A,
         ink: 0xDEDCF5,
         accent: 0xA08CFF,
@@ -238,7 +238,7 @@ pub(super) const PALETTES: &[Palette] = &[
         sidebar: 0x040805,
         content: 0x060B07,
         surface: 0x0D150F,
-        raised: 0x0B130D,
+        raised: 0x172219,
         border: 0x1C2B1F,
         ink: 0xB7F5C2,
         accent: 0x5CF07A,
@@ -250,7 +250,7 @@ pub(super) const PALETTES: &[Palette] = &[
         sidebar: 0x000000,
         content: 0x000000,
         surface: 0x000000,
-        raised: 0x000000,
+        raised: 0x242424,
         border: 0xFFFFFF,
         ink: 0xFFFFFF,
         accent: 0xFFD400,
@@ -262,7 +262,7 @@ pub(super) const PALETTES: &[Palette] = &[
         sidebar: 0xF5F5F5,
         content: 0xFFFFFF,
         surface: 0xFFFFFF,
-        raised: 0xF5F5F5,
+        raised: 0xE8E8E8,
         border: 0xE1E1E1,
         ink: 0x111111,
         accent: 0xE8660F,
@@ -274,7 +274,7 @@ pub(super) const PALETTES: &[Palette] = &[
         sidebar: 0xF2F0EC,
         content: 0xFBFAF8,
         surface: 0xFFFFFF,
-        raised: 0xF2F0EC,
+        raised: 0xE6E3DE,
         border: 0xE4E0D8,
         ink: 0x111111,
         accent: 0xC26A2E,
@@ -286,7 +286,7 @@ pub(super) const PALETTES: &[Palette] = &[
         sidebar: 0xEDF2F6,
         content: 0xF7FAFC,
         surface: 0xFFFFFF,
-        raised: 0xEDF2F6,
+        raised: 0xE1E9EF,
         border: 0xD9E2EA,
         ink: 0x1E2A36,
         accent: 0x2F7FD6,
@@ -298,7 +298,7 @@ pub(super) const PALETTES: &[Palette] = &[
         sidebar: 0xEEE5D3,
         content: 0xF6EFE1,
         surface: 0xFBF6EC,
-        raised: 0xEEE5D3,
+        raised: 0xE2D7C3,
         border: 0xDDD0B8,
         ink: 0x3B2F22,
         accent: 0xA0602A,
@@ -310,7 +310,7 @@ pub(super) const PALETTES: &[Palette] = &[
         sidebar: 0xF5EBED,
         content: 0xFCF6F7,
         surface: 0xFFFFFF,
-        raised: 0xF5EBED,
+        raised: 0xEADDE0,
         border: 0xEBD8DC,
         ink: 0x2E1D24,
         accent: 0xD14D72,
@@ -322,7 +322,7 @@ pub(super) const PALETTES: &[Palette] = &[
         sidebar: 0xEFEBF8,
         content: 0xF8F6FC,
         surface: 0xFFFFFF,
-        raised: 0xEFEBF8,
+        raised: 0xE3DDF0,
         border: 0xDDD6EE,
         ink: 0x241F33,
         accent: 0x7A5AE0,
@@ -334,7 +334,7 @@ pub(super) const PALETTES: &[Palette] = &[
         sidebar: 0xEDE9E1,
         content: 0xF7F5F0,
         surface: 0xFFFFFF,
-        raised: 0xEDE9E1,
+        raised: 0xE2DDD4,
         border: 0xDDD7CB,
         ink: 0x2B2A24,
         accent: 0xB8862E,
@@ -346,12 +346,34 @@ pub(super) const PALETTES: &[Palette] = &[
         sidebar: 0xEAF4EE,
         content: 0xF5FAF7,
         surface: 0xFFFFFF,
-        raised: 0xEAF4EE,
+        raised: 0xDCEBE2,
         border: 0xD3E6DA,
         ink: 0x1C2A22,
         accent: 0x1F9D6A,
     },
 ];
+
+/// Choose readable text on a theme accent, including light palettes whose
+/// accent is too bright for white text.
+fn accent_ink(color: u32) -> u32 {
+    if relative_luminance(color) > 0.179 {
+        0x000000
+    } else {
+        0xffffff
+    }
+}
+
+fn relative_luminance(color: u32) -> f64 {
+    let channel = |shift: u32| {
+        let value = f64::from((color >> shift) & 0xff_u32) / 255.;
+        if value <= 0.04045 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0)
+}
 
 /// Swift's caption under "Open links in your default browser", naming this
 /// platform's modifier for the other destination.
@@ -446,12 +468,25 @@ impl Coincide {
             cx,
         );
         Theme::update(cx, |theme| {
+            // gpui-component keeps separate tokens for primary buttons, tabs,
+            // selected rows and inputs. Updating only `primary` leaves those
+            // controls in the library's default palette after a theme change.
+            let primary_ink = if p.dark { p.content } else { p.surface };
             theme.colors.background = rgb(p.content).into();
             theme.colors.foreground = rgb(p.ink).into();
             theme.colors.border = rgb(p.border).into();
             theme.colors.primary = rgb(p.accent).into();
+            theme.colors.primary_foreground = rgb(accent_ink(p.accent)).into();
+            theme.colors.primary_hover = rgb(p.accent).into();
+            theme.colors.primary_active = rgb(p.accent).into();
+            theme.colors.button_primary = rgb(p.ink).into();
+            theme.colors.button_primary_hover = rgb(p.ink).opacity(0.88).into();
+            theme.colors.button_primary_active = rgb(p.ink).opacity(0.76).into();
+            theme.colors.button_primary_foreground = rgb(primary_ink).into();
             theme.colors.ring = rgb(p.accent).into();
             theme.colors.input = rgb(p.border).into();
+            theme.colors.caret = rgb(p.ink).into();
+            theme.colors.selection = rgb(p.accent).opacity(0.25).into();
             theme.colors.button = rgb(p.raised).into();
             theme.colors.button_hover = rgb(p.border).into();
             theme.colors.button_active = rgb(p.border).into();
@@ -471,14 +506,31 @@ impl Coincide {
             theme.colors.popover = rgb(p.surface).into();
             theme.colors.popover_foreground = rgb(p.ink).into();
             theme.colors.list = rgb(p.surface).into();
+            theme.colors.list_active = rgb(p.raised).into();
+            theme.colors.list_active_border = rgb(p.border).into();
             theme.colors.list_even = rgb(p.surface).into();
             theme.colors.list_head = rgb(p.raised).into();
             theme.colors.list_hover = rgb(p.raised).into();
             theme.colors.table = rgb(p.surface).into();
+            theme.colors.table_active = rgb(p.raised).into();
+            theme.colors.table_active_border = rgb(p.border).into();
             theme.colors.table_even = rgb(p.surface).into();
             theme.colors.table_head = rgb(p.raised).into();
             theme.colors.table_hover = rgb(p.raised).into();
             theme.colors.table_row_border = rgb(p.border).into();
+            theme.colors.tab = rgb(p.surface).into();
+            theme.colors.tab_active = rgb(p.raised).into();
+            theme.colors.tab_bar = rgb(p.surface).into();
+            theme.colors.tab_bar_segmented = rgb(p.raised).into();
+            theme.colors.tab_foreground = rgb(p.ink).opacity(0.7).into();
+            theme.colors.tab_active_foreground = rgb(p.ink).into();
+            theme.colors.sidebar = rgb(p.sidebar).into();
+            theme.colors.sidebar_border = rgb(p.border).into();
+            theme.colors.sidebar_foreground = rgb(p.ink).into();
+            theme.colors.sidebar_accent = rgb(p.raised).into();
+            theme.colors.sidebar_accent_foreground = rgb(p.ink).into();
+            theme.colors.scrollbar_thumb = rgb(p.ink).opacity(0.26).into();
+            theme.colors.scrollbar_thumb_hover = rgb(p.ink).opacity(0.42).into();
         });
         self.transcript_list
             .splice(0..self.transcript_count, self.transcript_count);
@@ -1778,6 +1830,44 @@ impl Coincide {
 #[cfg(test)]
 mod navigation_tests {
     use super::*;
+    #[::core::prelude::v1::test]
+    fn palette_controls_remain_legible_in_every_theme() {
+        let contrast = |a, b| {
+            let a = relative_luminance(a);
+            let b = relative_luminance(b);
+            (a.max(b) + 0.05) / (a.min(b) + 0.05)
+        };
+        for palette in PALETTES {
+            assert!(
+                contrast(palette.ink, palette.raised) >= 4.5,
+                "{} selected controls",
+                palette.name
+            );
+            assert!(
+                contrast(palette.ink, palette.surface) >= 4.5,
+                "{} surfaces",
+                palette.name
+            );
+            assert!(
+                contrast(accent_ink(palette.accent), palette.accent) >= 4.5,
+                "{} accent text",
+                palette.name
+            );
+            if palette.dark {
+                assert!(
+                    relative_luminance(palette.raised) > relative_luminance(palette.surface),
+                    "{} selected surface",
+                    palette.name
+                );
+            } else {
+                assert!(
+                    relative_luminance(palette.raised) < relative_luminance(palette.sidebar),
+                    "{} selected sidebar row",
+                    palette.name
+                );
+            }
+        }
+    }
     #[::core::prelude::v1::test]
     fn search_matches_all_tokens_and_respects_stable_section_filter() {
         use SettingsSection as S;

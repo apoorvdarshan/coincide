@@ -16,6 +16,11 @@ pub const PLACEHOLDER: &str = "Search or enter address";
 /// Swift `PreviewError.invalidAddress`.
 pub const INVALID_ADDRESS: &str = "Enter an HTTP or HTTPS address without a username or password.";
 
+/// The secondary location is useful only while the field has a different draft.
+pub(super) fn show_current_location(url: &str, address: &str) -> bool {
+    !url.is_empty() && url != "about:blank" && address != url
+}
+
 /// What Enter in the address field opens. Only the user's own typing may open
 /// local files; the agent API stays HTTP(S)-only.
 pub fn destination(typed: &str, engine: SearchEngine) -> Option<Destination> {
@@ -151,6 +156,14 @@ impl Completion {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn current_location_is_shown_only_when_the_address_has_a_different_draft() {
+        let url = "https://example.com/page";
+        assert!(!show_current_location(url, url));
+        assert!(show_current_location(url, "new search"));
+        assert!(!show_current_location("about:blank", "new search"));
+        assert!(!show_current_location("", "new search"));
+    }
 
     #[test]
     fn enter_opens_addresses_and_searches_with_the_chosen_engine() {

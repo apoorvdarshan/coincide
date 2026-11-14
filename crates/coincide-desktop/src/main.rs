@@ -2350,6 +2350,12 @@ impl Coincide {
             .as_ref()
             .map(|tab| text(tab, "url"))
             .unwrap_or_default();
+        // The address bar already shows the page URL. Keep the secondary
+        // location only while the field contains a different draft.
+        let show_current_location = browser_address_bar::show_current_location(
+            &url,
+            self.browser_address.read(cx).value().as_ref(),
+        );
         let loading = active.as_ref().is_some_and(|tab| tab["loading"] == true);
         let tab_buttons = tabs["tabs"]
             .as_array()
@@ -2380,6 +2386,9 @@ impl Coincide {
                     .gap_1()
                     .rounded(px(7.))
                     .bg(self.color(if selected { 0x202a3b } else { 0x111722 }))
+                    .when(!selected, |tab| {
+                        tab.hover(|style| style.bg(self.color(0x202a3b)))
+                    })
                     .text_color(
                         self.color(0xe4e9f2)
                             .opacity(if selected { 1. } else { 0.68 }),
@@ -2553,7 +2562,7 @@ impl Coincide {
                                 })),
                         ),
                 )
-                .when(!url.is_empty() && url != "about:blank", |view| {
+                .when(show_current_location, |view| {
                     view.child(
                         div()
                             .px_2()

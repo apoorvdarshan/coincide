@@ -482,7 +482,7 @@ impl Render for WorkspacePanel {
         let disabled = self.busy || binding.is_none();
         let muted = cx.theme().foreground.opacity(0.65);
         let border = cx.theme().border;
-        let surface = cx.theme().foreground.opacity(0.04);
+        let surface = cx.theme().popover;
         let heading = |title: &'static str| {
             div()
                 .pt_3()
