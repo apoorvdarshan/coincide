@@ -19,7 +19,7 @@ use std::{
         mpsc::{self, SyncSender},
     },
     thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use uuid::Uuid;
 const WINDOW: usize = 8;
@@ -69,6 +69,8 @@ pub enum Action {
     Configure(bool),
     AllowNotifications,
     RefreshStatus,
+    /// An explicit selection also counts when it is already the visible thread.
+    MarkSeen(Uuid),
 }
 #[derive(Clone)]
 pub struct BridgeHandle {
@@ -372,6 +374,8 @@ struct Identity {
 enum Flight {
     Configure(bool),
     Control,
+    Permission,
+    Clear(Uuid),
     Event(Identity),
 }
 #[derive(Clone, Copy)]
@@ -389,6 +393,10 @@ struct Pump {
     failed_acks: Vec<PendingAck>,
     retained_acks: Arc<Mutex<Vec<PendingAck>>>,
     last_seen: Option<Uuid>,
+    last_visible: Option<Uuid>,
+    permission_checked_at: Option<Instant>,
+    clear_retry: Option<(Uuid, Instant)>,
+    repeat_seen: Option<Uuid>,
     closed: bool,
 }
 impl Pump {
@@ -407,8 +415,40 @@ impl Pump {
             failed_acks: vec![],
             retained_acks: Arc::new(Mutex::new(Vec::new())),
             last_seen: None,
+            last_visible: None,
+            permission_checked_at: None,
+            clear_retry: None,
+            repeat_seen: None,
             closed: false,
         }
+    }
+    fn refresh_permission(&mut self) {
+        if self.status.native_compiled
+            && self.pending.len() < CONTROLS
+            && !self
+                .pending
+                .iter()
+                .any(|c| matches!(c, Command::RefreshPermission))
+            && !self
+                .flights
+                .values()
+                .any(|f| matches!(f, Flight::Permission))
+        {
+            self.pending.push_back(Command::RefreshPermission);
+            self.permission_checked_at = Some(Instant::now());
+        }
+    }
+    fn clear_failed(&mut self, thread: Uuid, error: String) {
+        self.status.error = Some(error);
+        if self.repeat_seen == Some(thread) {
+            self.repeat_seen = None;
+        }
+        if self.last_seen == Some(thread) {
+            self.last_seen = None;
+        }
+        // Enumeration/removal is idempotent; retry in the background if the
+        // same thread is still visible after a transient native failure.
+        self.clear_retry = Some((thread, Instant::now() + Duration::from_secs(10)));
     }
     fn ack(&mut self, engine: &mut impl Outbox, id: Identity, ack: NotificationAck) {
         if let Err(e) = engine.ack(id.claim, id.key, ack) {
@@ -457,6 +497,24 @@ impl Pump {
     }
     fn action(&mut self, engine: &mut impl Outbox, action: Action) {
         match action {
+            Action::MarkSeen(thread) => {
+                let clearing = self
+                    .pending
+                    .iter()
+                    .any(|c| matches!(c, Command::ClearThread(id) if *id == thread))
+                    || self
+                        .flights
+                        .values()
+                        .any(|f| matches!(f, Flight::Clear(id) if *id == thread));
+                if clearing {
+                    self.repeat_seen = Some(thread);
+                } else if self.last_seen == Some(thread) {
+                    self.last_seen = None;
+                }
+                if self.clear_retry.is_some_and(|(id, _)| id == thread) {
+                    self.clear_retry = None;
+                }
+            }
             Action::Configure(enabled) => {
                 if enabled && !self.status.native_compiled {
                     self.status.error =
@@ -477,10 +535,10 @@ impl Pump {
                     Err(e) => self.status.error = Some(short(e)),
                 }
             }
+            Action::RefreshStatus if self.desired.is_none() => self.refresh_permission(),
             action if self.pending.len() < CONTROLS && self.desired.is_none() => {
                 self.pending.push_back(match action {
                     Action::AllowNotifications => Command::RequestPermission,
-                    Action::RefreshStatus => Command::RefreshPermission,
                     _ => unreachable!(),
                 })
             }
@@ -506,6 +564,9 @@ impl Pump {
                 if self.desired.is_none() {
                     self.status.bridge_ready =
                         self.status.native_compiled && enabled == self.status.enabled;
+                    // Read authorization without prompting. In particular, a
+                    // restarted app must be able to clear already-seen alerts.
+                    self.refresh_permission();
                 }
             }
             (
@@ -525,13 +586,28 @@ impl Pump {
             (Flight::Event(id), _) => {
                 self.ack(engine, id, NotificationAck::Delivered(Delivery::Uncertain))
             }
+            (Flight::Clear(expected), Outcome::Cleared { thread, error }) => {
+                if expected != thread {
+                    self.clear_failed(expected, "Unexpected notification clear receipt".into());
+                } else if let Some(error) = error {
+                    self.clear_failed(thread, error);
+                } else {
+                    if self.clear_retry.is_some_and(|(id, _)| id == thread) {
+                        self.clear_retry = None;
+                    }
+                    if self.repeat_seen == Some(thread) {
+                        self.repeat_seen = None;
+                        if self.last_seen == Some(thread) {
+                            self.last_seen = None;
+                        }
+                    }
+                }
+            }
+            (Flight::Clear(thread), Outcome::Rejected(error)) => {
+                self.clear_failed(thread, error);
+                self.refresh_permission();
+            }
             (_, Outcome::Rejected(error)) => self.status.error = Some(error),
-            (
-                _,
-                Outcome::Cleared {
-                    error: Some(error), ..
-                },
-            ) => self.status.error = Some(error),
             (_, Outcome::Permission(permission)) => self.status.permission = permission,
             _ => {}
         }
@@ -568,12 +644,40 @@ impl Pump {
                     && status.enabled == self.status.enabled;
             }
         }
-        // Activity is passive: it must never cause native calls while off or
-        // before authorization has been explicitly observed by a native operation.
-        let may_clear = self.status.enabled
-            && self.status.native_compiled
+        let visible = activity.and_then(|activity| {
+            (activity.app_active && !activity.locked && !activity.display_asleep)
+                .then_some(activity.visible_thread)
+                .flatten()
+        });
+        if activity.is_some() && visible != self.last_visible {
+            self.last_visible = visible;
+            if visible.is_some() && self.status.bridge_ready {
+                if self
+                    .clear_retry
+                    .is_some_and(|(thread, _)| Some(thread) == visible)
+                {
+                    self.clear_retry = None;
+                }
+                self.refresh_permission();
+            }
+        }
+        if visible.is_some()
             && self.status.bridge_ready
-            && self.status.permission == Permission::Authorized;
+            && self.status.permission == Permission::Unknown
+            && self
+                .permission_checked_at
+                .is_none_or(|at| at.elapsed() >= Duration::from_secs(30))
+        {
+            self.refresh_permission();
+        }
+        // Existing notifications may be cleared even after posting is turned off.
+        // The permission read above never requests authorization or posts an alert.
+        let may_clear = self.status.native_compiled
+            && self.status.bridge_ready
+            && matches!(
+                self.status.permission,
+                Permission::Authorized | Permission::Denied
+            );
         if !may_clear {
             self.pending
                 .retain(|c| !matches!(c, Command::ClearThread(_)));
@@ -584,10 +688,28 @@ impl Pump {
             } else {
                 None
             };
-            if seen != self.last_seen && self.pending.len() < CONTROLS {
+            let retry_ready = seen.is_none_or(|thread| {
+                self.clear_retry
+                    .is_none_or(|(id, at)| id != thread || Instant::now() >= at)
+            });
+            if seen.is_none() {
+                // Losing focus must always invalidate the previous seen state,
+                // even while the bounded worker queue is full.
+                self.last_seen = None;
+            } else if seen != self.last_seen && self.pending.len() < CONTROLS && retry_ready {
                 if let Some(thread) = seen {
                     self.cancel_pending(engine, Some(thread));
-                    self.pending.push_back(Command::ClearThread(thread));
+                    if !self
+                        .pending
+                        .iter()
+                        .any(|c| matches!(c, Command::ClearThread(id) if *id == thread))
+                        && !self
+                            .flights
+                            .values()
+                            .any(|f| matches!(f, Flight::Clear(id) if *id == thread))
+                    {
+                        self.pending.push_back(Command::ClearThread(thread));
+                    }
                 }
                 self.last_seen = seen;
             }
@@ -622,6 +744,8 @@ impl Pump {
                     key: alert.key,
                 }),
                 Command::Configure(settings) => Flight::Configure(settings.enabled),
+                Command::RefreshPermission => Flight::Permission,
+                Command::ClearThread(thread) => Flight::Clear(*thread),
                 _ => Flight::Control,
             };
             match self.handle.try_send(command).map_err(|error| *error) {
@@ -782,6 +906,11 @@ impl NotificationSettingsPanel {
     }
     pub fn status(&self) -> &Status {
         &self.status
+    }
+    pub fn mark_seen(&self, thread: Uuid) -> bool {
+        self.bridge
+            .as_ref()
+            .is_some_and(|bridge| bridge.handle.try_action(Action::MarkSeen(thread)))
     }
     /// Settings › General's "Notify when Coincide is in the background".
     pub fn set_background_notifications(&mut self, enabled: bool, cx: &mut Context<Self>) {
@@ -1243,19 +1372,19 @@ mod tests {
     fn startup_reads_only_and_explicit_click_writes_without_permission_prompt() {
         let (mut pump, mut engine, calls) = setup(Delivery::Accepted, true);
         until(&mut pump, &mut engine, |p| !p.status.busy);
-        assert!(calls.lock().unwrap().is_empty());
+        assert_eq!(*calls.lock().unwrap(), vec!["status"]);
         assert!(engine.0.lock().unwrap().writes.is_empty());
         pump.action(&mut engine, Action::Configure(true));
         until(&mut pump, &mut engine, |p| {
             p.status.bridge_ready && !p.status.busy
         });
         assert_eq!(engine.0.lock().unwrap().writes, vec![true]);
-        assert!(calls.lock().unwrap().is_empty());
+        assert_eq!(*calls.lock().unwrap(), vec!["status", "status"]);
         pump.action(&mut engine, Action::AllowNotifications);
         until(&mut pump, &mut engine, |p| {
             p.pending.is_empty() && p.flights.is_empty()
         });
-        assert_eq!(*calls.lock().unwrap(), vec!["request"]);
+        assert_eq!(*calls.lock().unwrap(), vec!["status", "status", "request"]);
         pump.finish(&mut engine);
     }
     #[::core::prelude::v1::test]
@@ -1280,7 +1409,7 @@ mod tests {
         for _ in 0..20 {
             pump.tick(&mut engine, Some(activity()));
         }
-        assert_eq!(*calls.lock().unwrap(), vec!["status", "post"]);
+        assert_eq!(*calls.lock().unwrap(), vec!["status", "status", "post"]);
         pump.finish(&mut engine);
     }
     #[::core::prelude::v1::test]
@@ -1343,7 +1472,13 @@ mod tests {
         }
         assert_eq!(h.activity.lock().unwrap().unwrap().idle_seconds, 999);
         assert!(state.lock().unwrap().writes.is_empty());
-        assert!(calls.lock().unwrap().is_empty());
+        assert!(
+            !calls
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|call| matches!(*call, "request" | "post"))
+        );
         drop(bridge); // signals only; shutdown/join remains on bridge thread
         while !h.try_status().is_some_and(|s| s.stopped) {
             assert!(std::time::Instant::now() < deadline);
@@ -1365,55 +1500,109 @@ mod tests {
         pump.finish(&mut engine);
     }
     #[::core::prelude::v1::test]
-    fn foreground_default_off_is_inert_until_enabled_and_authorized() {
+    fn restarted_enabled_app_clears_the_visible_thread_without_an_outgoing_alert() {
+        let calls = Arc::new(Mutex::new(vec![]));
+        let runtime = NotificationRuntime::spawn(
+            FakeBackend {
+                calls: calls.clone(),
+                result: Delivery::Accepted,
+            },
+            WINDOW,
+        )
+        .unwrap();
+        let mut pump = Pump::new(runtime, true, true);
+        let mut engine = FakeEngine(Arc::default());
+        let mut seen = activity();
+        seen.app_active = true;
+        seen.visible_thread = Some(Uuid::new_v4());
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !calls.lock().unwrap().contains(&"clear") {
+            pump.tick(&mut engine, Some(seen));
+            assert!(Instant::now() < deadline);
+            thread::yield_now();
+        }
+        assert!(calls.lock().unwrap().contains(&"status"));
+        assert!(
+            !calls
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|call| matches!(*call, "request" | "post"))
+        );
+        pump.finish(&mut engine);
+    }
+    #[::core::prelude::v1::test]
+    fn a_failed_clear_can_retry_and_a_new_selection_clears_its_backoff() {
+        let (mut pump, mut engine, _) = setup(Delivery::Accepted, true);
+        let thread = Uuid::new_v4();
+        pump.last_seen = Some(thread);
+        pump.clear_failed(thread, "synthetic timeout".into());
+        assert_eq!(pump.last_seen, None);
+        assert!(
+            pump.clear_retry
+                .is_some_and(|(id, deadline)| id == thread && deadline > Instant::now())
+        );
+        pump.action(&mut engine, Action::MarkSeen(thread));
+        assert!(pump.clear_retry.is_none());
+        pump.finish(&mut engine);
+    }
+    #[::core::prelude::v1::test]
+    fn foreground_clears_seen_even_when_posting_is_disabled_without_prompting() {
         let (mut pump, mut engine, calls) = setup(Delivery::Accepted, true);
         let mut seen = activity();
         seen.app_active = true;
         seen.visible_thread = Some(Uuid::new_v4());
         let deadline = std::time::Instant::now() + Duration::from_secs(3);
-        while pump.status.busy {
-            pump.tick(&mut engine, Some(seen));
-            assert!(std::time::Instant::now() < deadline);
-            thread::yield_now();
-        }
-        for _ in 0..100 {
-            pump.tick(&mut engine, Some(seen));
-        }
-        assert!(calls.lock().unwrap().is_empty());
-        pump.action(&mut engine, Action::Configure(true));
-        until(&mut pump, &mut engine, |p| !p.status.busy);
-        for _ in 0..100 {
-            pump.tick(&mut engine, Some(seen));
-        }
-        assert!(calls.lock().unwrap().is_empty()); // enabled alone isn't authorization
-        pump.action(&mut engine, Action::RefreshStatus);
         while !calls.lock().unwrap().contains(&"clear") {
             pump.tick(&mut engine, Some(seen));
             assert!(std::time::Instant::now() < deadline);
             thread::yield_now();
         }
-        until(&mut pump, &mut engine, |p| {
-            p.pending.is_empty() && p.flights.is_empty()
-        });
-        assert_eq!(*calls.lock().unwrap(), vec!["status", "clear"]);
-        pump.pending
-            .push_back(Command::ClearThread(seen.visible_thread.unwrap()));
-        pump.action(&mut engine, Action::Configure(false));
+        assert!(!pump.status.enabled);
         assert!(
-            !pump
-                .pending
+            !calls
+                .lock()
+                .unwrap()
                 .iter()
-                .any(|c| matches!(c, Command::ClearThread(_)))
+                .any(|call| matches!(*call, "request" | "post"))
         );
-        until(&mut pump, &mut engine, |p| !p.status.busy);
-        for _ in 0..100 {
+        pump.action(&mut engine, Action::MarkSeen(seen.visible_thread.unwrap()));
+        while calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|call| **call == "clear")
+            .count()
+            < 2
+        {
             pump.tick(&mut engine, Some(seen));
+            assert!(std::time::Instant::now() < deadline);
+            thread::yield_now();
         }
-        assert_eq!(*calls.lock().unwrap(), vec!["status", "clear"]);
+        pump.action(&mut engine, Action::Configure(true));
+        while pump.status.busy || pump.desired.is_some() {
+            pump.tick(&mut engine, Some(seen));
+            assert!(std::time::Instant::now() < deadline);
+            thread::yield_now();
+        }
+        pump.action(&mut engine, Action::Configure(false));
+        while pump.status.busy || pump.desired.is_some() {
+            pump.tick(&mut engine, Some(seen));
+            assert!(std::time::Instant::now() < deadline);
+            thread::yield_now();
+        }
+        assert!(!pump.status.enabled);
+        assert!(
+            !calls
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|call| matches!(*call, "request" | "post"))
+        );
         pump.finish(&mut engine);
     }
     #[::core::prelude::v1::test]
-    fn disable_cancels_retained_unsent_claim_and_never_clears_from_activity() {
+    fn disable_cancels_unsent_claim_and_still_clears_seen_notifications() {
         let (mut pump, mut engine, calls) = setup(Delivery::Accepted, true);
         let event = claim();
         let thread = event.alert.key.thread;
@@ -1432,10 +1621,19 @@ mod tests {
         let mut seen = activity();
         seen.app_active = true;
         seen.visible_thread = Some(thread);
-        for _ in 0..100 {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !calls.lock().unwrap().contains(&"clear") {
             pump.tick(&mut engine, Some(seen));
+            assert!(Instant::now() < deadline);
+            thread::yield_now();
         }
-        assert!(calls.lock().unwrap().is_empty());
+        assert!(
+            !calls
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|call| matches!(*call, "request" | "post"))
+        );
         pump.finish(&mut engine);
     }
 }
