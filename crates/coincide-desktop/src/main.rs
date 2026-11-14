@@ -42,6 +42,7 @@ mod browser_address_bar;
 mod browser_controls;
 mod browser_dialog_ui;
 mod browser_login_mount;
+mod browser_page_fit;
 mod browser_passkey_ui;
 mod browser_settings;
 mod browser_tab_shortcuts;

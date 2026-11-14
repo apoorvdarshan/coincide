@@ -124,6 +124,7 @@ struct Tab {
     file_root: FileRoot,
     /// A fixed CSS viewport an agent asked for; None fills the panel.
     viewport: Option<(u32, u32)>,
+    fit: crate::browser_page_fit::PageFit,
 }
 impl Tab {
     fn ensure_scripts_ready(&self) -> Result<()> {
@@ -166,6 +167,12 @@ impl Drop for PendingUpload {
     }
 }
 enum NativeEvent {
+    PageWidth {
+        thread: String,
+        tab: String,
+        pending: Arc<AtomicBool>,
+        latest: Arc<Mutex<Option<(u64, crate::browser_page_fit::Measurement)>>>,
+    },
     TabShortcut {
         source: crate::browser_tab_shortcuts::Source,
         command: crate::browser_tab_shortcuts::Command,
@@ -711,6 +718,7 @@ impl BrowserController {
                 let size = request.action.viewport_size().context("Invalid viewport")?;
                 let tab = &mut self.tabs.get_mut(thread).context("No such thread")?[index];
                 tab.viewport = size;
+                tab.fit.reset();
                 if let Some((width, height)) = size {
                     // Size the native page immediately; the panel lays out the
                     // same fixed box on its next render. A hidden page keeps
@@ -909,6 +917,13 @@ impl BrowserController {
         let load_console_suppressed = credential_console_suppressed.clone();
         let load_console = console.clone();
         let navigation = Arc::new(AtomicU64::new(0));
+        let fit_navigation = navigation.clone();
+        let fit_sender = self.sender.clone();
+        let fit_thread = thread.to_owned();
+        let fit_id = id.clone();
+        let fit_pending = Arc::new(AtomicBool::new(false));
+        let fit_handler_pending = fit_pending.clone();
+        let fit_latest = Arc::new(Mutex::new(None));
         let scripts_ready = Arc::new(AtomicBool::new(!cfg!(target_os = "linux")));
         #[cfg(not(target_os = "linux"))]
         let navigation_handler = navigation.clone();
@@ -985,10 +1000,33 @@ impl BrowserController {
             .with_autoplay(false)
             .with_clipboard(false)
             .with_initialization_script_for_main_only(CONSOLE_SCRIPT, false)
+            .with_initialization_script_for_main_only(crate::browser_page_fit::WIDTH_SCRIPT, true)
             .with_ipc_handler(move |message| {
                 if console_suppressed.load(Ordering::Acquire)
                     || snapshot_console.load(Ordering::Acquire)
                 {
+                    return;
+                }
+                if let Some(measurement) = crate::browser_page_fit::measurement(message.body()) {
+                    if let Ok(mut latest) = fit_latest.lock() {
+                        *latest = Some((fit_navigation.load(Ordering::Acquire), measurement));
+                    } else {
+                        return;
+                    }
+                    if !fit_handler_pending.swap(true, Ordering::AcqRel) {
+                        let pending = fit_handler_pending.clone();
+                        if fit_sender
+                            .try_send(NativeEvent::PageWidth {
+                                thread: fit_thread.clone(),
+                                tab: fit_id.clone(),
+                                pending,
+                                latest: fit_latest.clone(),
+                            })
+                            .is_err()
+                        {
+                            fit_handler_pending.store(false, Ordering::Release);
+                        }
+                    }
                     return;
                 }
                 console_handler
@@ -1245,6 +1283,7 @@ impl BrowserController {
             scripts_ready,
             file_root,
             viewport: None,
+            fit: Default::default(),
         });
         self.shutdown.ever_native = true;
         self.active.insert(thread.into(), id.clone());
@@ -1282,6 +1321,27 @@ impl BrowserController {
         let mut changed = !events.is_empty();
         for event in events {
             match event {
+                NativeEvent::PageWidth {
+                    thread,
+                    tab,
+                    pending,
+                    latest,
+                } => {
+                    pending.store(false, Ordering::Release);
+                    let sample = latest.lock().ok().and_then(|mut latest| latest.take());
+                    if let Some((epoch, measurement)) = sample
+                        && let Some(entry) = self
+                            .tabs
+                            .get_mut(&thread)
+                            .and_then(|tabs| tabs.iter_mut().find(|entry| entry.id == tab))
+                        && entry.viewport.is_none()
+                        && entry.navigation.load(Ordering::Acquire) == epoch
+                    {
+                        let view = entry.view.read(cx);
+                        let width = f64::from(f32::from(view.bounds().size.width));
+                        changed |= entry.fit.observe(measurement, width, view.zoom());
+                    }
+                }
                 NativeEvent::TabShortcut { source, command } => {
                     if self.tab_shortcuts.len() < 32 && self.shortcut_source_current(&source, cx) {
                         self.tab_shortcuts.push_back((source, command));
@@ -1377,6 +1437,9 @@ impl BrowserController {
                         .get_mut(&thread)
                         .and_then(|tabs| tabs.iter_mut().find(|t| t.id == tab))
                     {
+                        if loading {
+                            entry.fit.reset();
+                        }
                         if !loading {
                             self.passkeys.navigated(&thread, &tab, &url);
                         }
@@ -2147,6 +2210,27 @@ impl BrowserController {
             .iter()
             .find(|tab| &tab.id == id)?
             .viewport
+    }
+    /// The active page's automatic fit at the current pane width.
+    pub fn active_page_fit(&self, thread: &str, width: f64) -> f64 {
+        let Some(id) = self.active.get(thread).or_else(|| {
+            self.active
+                .iter()
+                .find(|(known, _)| known.eq_ignore_ascii_case(thread))
+                .map(|(_, id)| id)
+        }) else {
+            return 1.;
+        };
+        self.tabs
+            .get(thread)
+            .or_else(|| {
+                self.tabs
+                    .iter()
+                    .find(|(known, _)| known.eq_ignore_ascii_case(thread))
+                    .map(|(_, tabs)| tabs)
+            })
+            .and_then(|tabs| tabs.iter().find(|tab| &tab.id == id))
+            .map_or(1., |tab| tab.fit.scale(width))
     }
     /// A local file the user typed the path of, in the active tab. Only the
     /// native address field calls this; agents never open files. The page may

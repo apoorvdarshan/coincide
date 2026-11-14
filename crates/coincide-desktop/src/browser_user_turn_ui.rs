@@ -101,13 +101,18 @@ impl Coincide {
             .and_then(|browser| browser.active_viewport(thread));
         let area = self.browser_page_bounds.clone();
         let measured = area.get();
-        let scale = viewport.map_or(1., |size| viewport_scale(size, measured));
+        let auto_scale = measured.map_or(1., |bounds| {
+            self.browser.as_ref().map_or(1., |browser| {
+                browser.active_page_fit(thread, f64::from(f32::from(bounds.size.width))) as f32
+            })
+        });
+        let scale = viewport.map_or(auto_scale, |size| viewport_scale(size, measured));
         let zoom = f64::from(scale);
         // WebKitGTK does not apply a page zoom, so a fixed viewport is laid out
         // at its exact size and clipped by the panel instead of scaled.
         #[cfg(target_os = "linux")]
         let (zoom, dimensions) = (
-            1.0,
+            if viewport.is_some() { 1.0 } else { zoom },
             viewport.map(|(width, height)| (width as f32, height as f32)),
         );
         #[cfg(not(target_os = "linux"))]
@@ -139,7 +144,6 @@ impl Coincide {
             }
             (zoom, dimensions)
         };
-        #[cfg(not(target_os = "linux"))]
         if let Some(view) = &webview {
             if (view.read(cx).zoom() - zoom).abs()
                 > if cfg!(target_os = "windows") {
@@ -151,7 +155,9 @@ impl Coincide {
                 let _ = view.read(cx).set_zoom(zoom);
             }
         }
-        if let Some(size) = dimensions {
+        if let Some(size) = dimensions.or_else(|| {
+            measured.map(|bounds| (f32::from(bounds.size.width), f32::from(bounds.size.height)))
+        }) {
             *LAST_PAGE_DIMENSIONS
                 .get_or_init(|| std::sync::Mutex::new(None))
                 .lock()
