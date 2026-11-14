@@ -790,9 +790,9 @@ impl Coincide {
                     .text_sm()
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(div().flex_1().min_w(px(110.)).truncate().child("Model"))
-                    .child(column("Provider".into(), 130.))
-                    .child(column("Reasoning".into(), 140.))
-                    .child(column("Speed".into(), 90.)),
+                    .child(column("Provider".into(), 110.))
+                    .child(column("Reasoning".into(), 110.))
+                    .child(column("Speed".into(), 70.)),
             );
         let accent = self.color(0x98b1d4);
         for row in &rows {
@@ -837,7 +837,7 @@ impl Coincide {
             }
             let provider = provider_display_name(&row.provider);
             let provider_cell = div()
-                .w(px(130.))
+                .w(px(110.))
                 .min_w_0()
                 .flex_shrink(1.)
                 .flex()
@@ -884,7 +884,7 @@ impl Coincide {
                     })
                     .child(name)
                     .child(provider_cell)
-                    .child(column(effort_range(&row.efforts).into(), 140.).text_color(muted))
+                    .child(column(effort_range(&row.efforts).into(), 110.).text_color(muted))
                     .child(
                         column(
                             if row.speeds.is_empty() {
@@ -892,7 +892,7 @@ impl Coincide {
                             } else {
                                 row.speeds.join(", ").into()
                             },
-                            90.,
+                            70.,
                         )
                         .text_color(muted),
                     )
