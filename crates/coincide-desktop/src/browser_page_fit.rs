@@ -4,7 +4,7 @@
 use serde_json::Value;
 
 const MAX_CONTENT_WIDTH: f64 = 8192.;
-const MIN_ZOOM: f64 = 0.35;
+const MIN_ZOOM: f64 = 0.1;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Measurement {
@@ -44,7 +44,7 @@ impl PageFit {
     /// Ignore observations from an old layout, including transient native
     /// screenshot resizes. Zoom changes may produce one-pixel rounding.
     pub(crate) fn observe(&mut self, sample: Measurement, view_width: f64, zoom: f64) -> bool {
-        if !view_width.is_finite() || view_width <= 0. || !(0.34..=1.01).contains(&zoom) {
+        if !view_width.is_finite() || view_width <= 0. || !(0.09..=1.01).contains(&zoom) {
             return false;
         }
         let expected = view_width / zoom;
@@ -130,8 +130,9 @@ mod tests {
         assert!(fit.observe(sample(550., 1000.), 550., 1.));
         assert_eq!(fit.scale(550.), 0.55);
         assert_eq!(fit.scale(750.), 0.75);
+        assert!((fit.scale(321.) - 0.321).abs() < 1e-9);
         assert_eq!(fit.scale(1100.), 1.);
-        assert_eq!(fit.scale(200.), MIN_ZOOM);
+        assert_eq!(fit.scale(50.), MIN_ZOOM);
         assert!(fit.observe(sample(1000., 1200.), 550., 0.55));
         assert!((fit.scale(550.) - 550. / 1200.).abs() < 1e-9);
         fit.reset();

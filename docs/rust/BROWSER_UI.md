@@ -8,7 +8,7 @@ do not complete from saved history.
 
 The browser page follows the pane while it is resized. If a document's root is
 wider than the pane, Coincide fits it with native page zoom; responsive pages
-remain at normal zoom. Fitting is bounded to 35% so extremely wide pages can
+remain at normal zoom. Fitting is bounded to 10% so extremely wide pages can
 still need horizontal scrolling. A navigation resets the fit, and a requested
 fixed testing viewport takes precedence over it. The size probe reports only
 document and viewport widths, and its untrusted IPC input is bounded.
