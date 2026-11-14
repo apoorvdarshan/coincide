@@ -185,6 +185,13 @@ impl Outbox {
         });
         // Retain seen identities: restoring content must not replay old alerts.
     }
+    fn discard_seen_thread(&mut self, thread: Uuid) {
+        // Claimed events remain until their exact acknowledgement. The desktop
+        // bridge suppresses queued claims and clears any already delivered OS
+        // notification; dropping an in-flight identity here would lose custody.
+        self.entries
+            .retain(|key, entry| key.thread != thread || matches!(entry.state, State::InFlight(_)));
+    }
 }
 
 /// Swift's notification body: the reply that just arrived, the failure text,
@@ -227,6 +234,11 @@ fn alert_body(thread: &Value, key: &EventKey) -> Option<String> {
     }
 }
 impl Engine {
+    /// A trusted local or paired-device seen action suppresses alerts that
+    /// have not yet been claimed, without suppressing future thread activity.
+    pub fn mark_native_notifications_seen(&mut self, thread: Uuid) {
+        self.notification_events.discard_seen_thread(thread);
+    }
     /// Trusted native-user action only, deliberately absent from agent JSON APIs.
     /// This opt-in does not request OS authorization or send any notifications.
     pub fn configure_native_notifications(&mut self, enabled: bool) -> Result<Value> {

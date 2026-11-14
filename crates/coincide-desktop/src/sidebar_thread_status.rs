@@ -203,9 +203,13 @@ impl Coincide {
         let mut clear = None;
         if self.thread_activity.activate(active)
             && let Some(id) = &shown
-            && self.sidebar_preferences.document["unseen"][id].is_string()
         {
-            clear = Some(id.clone());
+            if let Ok(thread) = uuid::Uuid::parse_str(id) {
+                self.remote_panel.read(cx).desktop_seen(thread);
+            }
+            if self.sidebar_preferences.document["unseen"][id].is_string() {
+                clear = Some(id.clone());
+            }
         }
         if !marks.is_empty() || clear.is_some() {
             match self.save_unseen_marks(&marks, clear.as_deref()) {
@@ -241,9 +245,11 @@ impl Coincide {
             if let Some(id) = clear {
                 entries.remove(id);
             }
-            engine
+            let document = engine
                 .store
-                .patch_document("ui-state.json", &json!({"unseen":entries}))?
+                .patch_document("ui-state.json", &json!({"unseen":entries}))?;
+            engine.revision += 1;
+            document
         };
         self.sidebar_preferences.document = document;
         self.sidebar_preferences.pending = false;

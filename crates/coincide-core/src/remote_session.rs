@@ -37,6 +37,62 @@ pub struct Context<'a> {
     pub adapter: &'a Adapter,
     pub pairing: &'a Mutex<Pairing>,
     pub server_info: &'a dyn Fn() -> ServerInfo,
+    pub seen: &'a SeenBus,
+}
+
+/// Coalesced seen events. Each connected phone has its own cursor, and the
+/// desktop acknowledges its separate queue only after the notification bridge
+/// accepts the clear. Generations prevent an acknowledgement from discarding
+/// a newer event for the same thread.
+#[derive(Default)]
+pub struct SeenBus(Mutex<SeenState>);
+#[derive(Default)]
+struct SeenState {
+    next: u64,
+    events: HashMap<Uuid, u64>,
+    desktop: HashMap<Uuid, u64>,
+}
+impl SeenBus {
+    pub fn record(&self, thread: Uuid, desktop: bool) {
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        state.next = state.next.saturating_add(1);
+        let generation = state.next;
+        state.events.insert(thread, generation);
+        if desktop {
+            state.desktop.insert(thread, generation);
+        }
+    }
+    fn latest(&self) -> u64 {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).next
+    }
+    fn since(&self, generation: u64) -> (u64, Vec<Uuid>) {
+        let state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if generation >= state.next {
+            return (state.next, Vec::new());
+        }
+        let mut events = state
+            .events
+            .iter()
+            .filter_map(|(id, at)| (*at > generation).then_some((*at, *id)))
+            .collect::<Vec<_>>();
+        events.sort_unstable_by_key(|(at, _)| *at);
+        (state.next, events.into_iter().map(|(_, id)| id).collect())
+    }
+    pub fn pending_desktop(&self) -> Vec<(Uuid, u64)> {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .desktop
+            .iter()
+            .map(|(id, generation)| (*id, *generation))
+            .collect()
+    }
+    pub fn acknowledge_desktop(&self, thread: Uuid, generation: u64) {
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if state.desktop.get(&thread) == Some(&generation) {
+            state.desktop.remove(&thread);
+        }
+    }
 }
 
 /// What the phone was last sent of an open thread, to find what changed.
@@ -58,6 +114,9 @@ pub struct Session {
     pub presence: Option<Presence>,
     /// The device that just paired on this connection, for Settings to show.
     pub paired: Option<Device>,
+    seen_generation: u64,
+    pending_presence_seen: Option<Uuid>,
+    presence_retry_at: Option<Instant>,
 }
 
 /// An item's identity and contents, including whether its provider request is
@@ -103,6 +162,9 @@ impl Session {
             last_server: None,
             presence: None,
             paired: None,
+            seen_generation: 0,
+            pending_presence_seen: None,
+            presence_retry_at: None,
         }
     }
 
@@ -199,6 +261,7 @@ impl Session {
                 match result {
                     Ok(device) => {
                         self.state = State::Authenticated(device.id);
+                        self.seen_generation = context.seen.latest();
                         let info = (context.server_info)();
                         self.last_server = serde_json::to_value(&info).ok();
                         self.respond(id, "server", serde_json::to_value(info).ok());
@@ -216,6 +279,7 @@ impl Session {
                 match result {
                     Ok((device, token)) => {
                         self.state = State::Authenticated(device.id.clone());
+                        self.seen_generation = context.seen.latest();
                         let server = (context.server_info)();
                         self.last_server = serde_json::to_value(&server).ok();
                         let result = PairResult {
@@ -292,8 +356,9 @@ impl Session {
                 self.respond(id, "items", serde_json::to_value(page).ok());
             }
             Request::MarkSeen { thread_id } => {
-                adapter.require_thread(thread_id)?;
-                return Err(RemoteError::unsupported("markSeen"));
+                adapter.mark_seen(thread_id)?;
+                context.seen.record(thread_id, true);
+                self.respond(id, "ok", None);
             }
             Request::Send(send) => {
                 let delivery = adapter.send(&send, &runs()?)?;
@@ -341,6 +406,20 @@ impl Session {
                 self.respond(id, "usage", Some(protocol::value_body(Vec::<Value>::new())))
             }
             Request::Presence(presence) => {
+                let was = self.presence.as_ref();
+                let became_visible = presence.state == "active"
+                    && (was.is_none_or(|p| {
+                        p.state != "active" || p.open_thread_id != presence.open_thread_id
+                    }));
+                self.pending_presence_seen = if became_visible {
+                    self.presence_retry_at = None;
+                    presence.open_thread_id
+                } else if presence.state != "active" {
+                    self.presence_retry_at = None;
+                    None
+                } else {
+                    self.pending_presence_seen
+                };
                 self.presence = Some(presence);
                 self.respond(id, "ok", None);
             }
@@ -353,6 +432,37 @@ impl Session {
             Request::Unimplemented(kind) => return Err(RemoteError::unsupported(&kind)),
         }
         Ok(())
+    }
+
+    /// Called by the socket loop even when no engine revision changes.
+    pub fn synchronize_seen(&mut self, context: &Context<'_>) {
+        if self.device_id().is_none() {
+            return;
+        }
+        if let Some(thread) = self.pending_presence_seen
+            && self.presence_retry_at.is_none_or(|at| Instant::now() >= at)
+        {
+            match context.adapter.mark_seen(thread) {
+                Ok(()) => {
+                    context.seen.record(thread, true);
+                    self.pending_presence_seen = None;
+                    self.presence_retry_at = None;
+                }
+                Err(error) if error.code == ErrorCode::NotFound => {
+                    self.pending_presence_seen = None;
+                    self.presence_retry_at = None;
+                }
+                Err(_) => self.presence_retry_at = Some(Instant::now() + WORKSPACE_INTERVAL),
+            }
+        }
+        let (generation, threads) = context.seen.since(self.seen_generation);
+        self.seen_generation = generation;
+        for thread in threads {
+            self.send(protocol::event(
+                "clearNotifications",
+                Some(protocol::value_body(thread.to_string().to_uppercase())),
+            ));
+        }
     }
 
     /// Sends what changed since the phone last heard: open threads' items and

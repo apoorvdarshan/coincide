@@ -2796,6 +2796,7 @@ impl Coincide {
                     && let Ok(thread) = uuid::Uuid::parse_str(id)
                 {
                     let _ = self.notification_panel.read(cx).mark_seen(thread);
+                    self.remote_panel.read(cx).desktop_seen(thread);
                 }
                 self.refresh_turn_changes();
                 if self.sidebar_preferences.document["unseen"][id].is_string() {
@@ -3863,6 +3864,28 @@ impl Coincide {
         self.poll_inspector_follow(cx);
         self.poll_composer_file_picker(window, cx);
         self.remote_panel.update(cx, |panel, cx| panel.poll(cx));
+        let remotely_seen = self.remote_panel.read(cx).pending_seen();
+        if !remotely_seen.is_empty() {
+            // Reload the saved marker rather than overwriting other sidebar
+            // preferences with the snapshot held before the phone's action.
+            let displayed = self.sidebar_preferences.document["unseen"].as_object();
+            if remotely_seen.iter().any(|(thread, _)| {
+                displayed.is_some_and(|entries| {
+                    entries
+                        .keys()
+                        .any(|id| uuid::Uuid::parse_str(id).ok() == Some(*thread))
+                })
+            }) {
+                self.sidebar_preferences.pending = true;
+            }
+            for (thread, generation) in remotely_seen {
+                if self.notification_panel.read(cx).clear_remote_seen(thread) {
+                    self.remote_panel
+                        .read(cx)
+                        .acknowledge_seen(thread, generation);
+                }
+            }
+        }
         self.poll_composer_suggestions(window, cx);
         if self.engine.try_lock().is_ok_and(|engine| engine.shutdown) {
             self.media.shutdown_requested = true;

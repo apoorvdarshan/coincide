@@ -12,6 +12,7 @@ use rustls::{
 };
 use serde_json::{Value, json};
 use std::net::Ipv4Addr;
+use uuid::Uuid;
 
 #[derive(Debug)]
 struct Pinned(String);
@@ -216,6 +217,160 @@ fn pair(fixture: &mut Fixture) -> (Client, String, String) {
         body["deviceID"].as_str().unwrap().to_owned(),
         body["token"].as_str().unwrap().to_owned(),
     )
+}
+
+#[test]
+fn seen_on_phone_clears_only_its_thread_and_reaches_other_devices() {
+    let mut fixture = fixture();
+    let other = Uuid::new_v4().to_string().to_uppercase();
+    let thread = Uuid::parse_str(&fixture.thread).unwrap();
+    {
+        let mut engine = fixture.engine.lock().unwrap();
+        engine
+            .store
+            .save_document(
+                "ui-state.json",
+                &json!({
+                    "unseen": {(fixture.thread.to_lowercase()): "failed", (&other): "completed"},
+                    "futurePreference": {"keep": true}
+                }),
+            )
+            .unwrap();
+    }
+    fixture.server.set_enabled(true);
+    let (mut phone, _, _) = pair(&mut fixture);
+    let (mut tablet, _, _) = pair(&mut fixture);
+    // The watcher deliberately polls Engine in parallel in production. Hold
+    // its fixture gate here so this success case cannot race that short poll;
+    // the separately locked Engine below still verifies the busy response.
+    let shared = fixture.server.running.as_ref().unwrap().0.clone();
+    let _watch_gate = shared.watch_gate.lock().unwrap();
+    request(&mut phone, "workspace", "workspace", None);
+    let before = reply(&mut phone, "workspace");
+    let listed = before["body"]["threads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["id"] == fixture.thread)
+        .unwrap();
+    assert_eq!(listed["unseen"], "failed");
+
+    request(
+        &mut phone,
+        "seen",
+        "markSeen",
+        Some(json!({"threadID":fixture.thread})),
+    );
+    assert_eq!(reply(&mut phone, "seen")["type"], "ok");
+    let event = event_of(&mut tablet, "clearNotifications");
+    assert_eq!(event["body"]["value"], fixture.thread);
+    let saved = fixture
+        .engine
+        .lock()
+        .unwrap()
+        .store
+        .document("ui-state.json")
+        .unwrap()
+        .unwrap();
+    assert!(saved["unseen"].get(fixture.thread.to_lowercase()).is_none());
+    assert_eq!(saved["unseen"][&other], "completed");
+    assert_eq!(saved["futurePreference"]["keep"], true);
+    let pending = fixture.server.pending_seen();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].0, thread);
+
+    // A later clear for the same thread cannot be lost to an older ack.
+    fixture.server.seen.record(thread, true);
+    fixture.server.acknowledge_seen(thread, pending[0].1);
+    assert_eq!(fixture.server.pending_seen().len(), 1);
+    let newer = fixture.server.pending_seen()[0];
+    fixture.server.acknowledge_seen(newer.0, newer.1);
+    assert!(fixture.server.pending_seen().is_empty());
+
+    // A busy engine must return an error instead of claiming the seen action
+    // was applied, and must not enqueue a clear.
+    let guard = fixture.engine.lock().unwrap();
+    request(
+        &mut phone,
+        "busy",
+        "markSeen",
+        Some(json!({"threadID":fixture.thread})),
+    );
+    assert_eq!(reply(&mut phone, "busy")["kind"], "error");
+    assert!(fixture.server.pending_seen().is_empty());
+    drop(guard);
+
+    request(
+        &mut phone,
+        "missing",
+        "markSeen",
+        Some(json!({"threadID":Uuid::new_v4()})),
+    );
+    assert_eq!(reply(&mut phone, "missing")["kind"], "error");
+    assert!(fixture.server.pending_seen().is_empty());
+}
+
+#[test]
+fn active_phone_presence_marks_its_thread_seen() {
+    let mut fixture = fixture();
+    {
+        let mut engine = fixture.engine.lock().unwrap();
+        engine
+            .store
+            .save_document(
+                "ui-state.json",
+                &json!({"unseen": {(&fixture.thread): "completed"}}),
+            )
+            .unwrap();
+    }
+    fixture.server.set_enabled(true);
+    let (mut phone, _, _) = pair(&mut fixture);
+    let (mut tablet, _, _) = pair(&mut fixture);
+    // Presence must be retried when the desktop is briefly saving.
+    let guard = fixture.engine.lock().unwrap();
+    request(
+        &mut phone,
+        "presence",
+        "presence",
+        Some(json!({"state":"active", "openThreadID":fixture.thread})),
+    );
+    assert_eq!(reply(&mut phone, "presence")["type"], "ok");
+    assert!(fixture.server.pending_seen().is_empty());
+    drop(guard);
+    assert_eq!(
+        event_of(&mut tablet, "clearNotifications")["body"]["value"],
+        fixture.thread
+    );
+    let saved = fixture
+        .engine
+        .lock()
+        .unwrap()
+        .store
+        .document("ui-state.json")
+        .unwrap()
+        .unwrap();
+    assert!(saved["unseen"].get(&fixture.thread).is_none());
+    assert_eq!(fixture.server.pending_seen().len(), 1);
+}
+
+#[test]
+fn selecting_on_mac_notifies_all_connected_phones() {
+    let mut fixture = fixture();
+    fixture.server.set_enabled(true);
+    let (mut phone, _, _) = pair(&mut fixture);
+    let (mut tablet, _, _) = pair(&mut fixture);
+    fixture
+        .server
+        .desktop_seen(Uuid::parse_str(&fixture.thread).unwrap());
+    assert_eq!(
+        event_of(&mut phone, "clearNotifications")["body"]["value"],
+        fixture.thread
+    );
+    assert_eq!(
+        event_of(&mut tablet, "clearNotifications")["body"]["value"],
+        fixture.thread
+    );
+    assert!(fixture.server.pending_seen().is_empty());
 }
 
 #[test]

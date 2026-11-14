@@ -95,6 +95,61 @@ fn replyless_turns_get_distinct_persisted_notifications_for_every_provider() {
 }
 
 #[test]
+fn seen_discards_only_unclaimed_alerts_and_future_turns_still_notify() {
+    for provider in [
+        "claude",
+        "codex",
+        "cursor",
+        "grok",
+        "opencode",
+        "antigravity",
+    ] {
+        let (_directory, mut engine, id) = fixture();
+        let other = engine
+            .store
+            .new_thread("00000000-0000-0000-0000-000000000000")
+            .unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        engine.configure_native_notifications(true).unwrap();
+        let complete = |engine: &mut Engine, thread: &str| {
+            let sender = run_for(engine, thread, provider);
+            sender.send(Event::Finished).unwrap();
+            engine.poll();
+        };
+        complete(&mut engine, &id);
+        let in_flight = engine.claim_notification_events(1).pop().unwrap();
+        complete(&mut engine, &id);
+        complete(&mut engine, &other);
+        engine.mark_native_notifications_seen(Uuid::parse_str(&id).unwrap());
+        let remaining = engine.claim_notification_events(16);
+        assert_eq!(remaining.len(), 1, "{provider}");
+        assert_eq!(
+            remaining[0].alert.key.thread,
+            Uuid::parse_str(&other).unwrap(),
+            "{provider}"
+        );
+        engine
+            .ack_notification_event(
+                in_flight.claim_id,
+                in_flight.alert.key,
+                NotificationAck::Suppressed,
+            )
+            .unwrap();
+        engine
+            .ack_notification_event(
+                remaining[0].claim_id,
+                remaining[0].alert.key,
+                NotificationAck::Suppressed,
+            )
+            .unwrap();
+        complete(&mut engine, &id);
+        assert_eq!(engine.claim_notification_events(16).len(), 1, "{provider}");
+    }
+}
+
+#[test]
 fn replyless_continuation_does_not_reuse_an_older_reply() {
     let (_directory, mut engine, id) = fixture();
     engine.configure_native_notifications(true).unwrap();

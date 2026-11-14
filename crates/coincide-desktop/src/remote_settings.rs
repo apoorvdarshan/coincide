@@ -71,6 +71,25 @@ impl RemoteSettingsPanel {
         }
     }
 
+    pub(super) fn pending_seen(&self) -> Vec<(uuid::Uuid, u64)> {
+        self.server
+            .as_ref()
+            .map(RemoteServer::pending_seen)
+            .unwrap_or_default()
+    }
+
+    pub(super) fn acknowledge_seen(&self, thread: uuid::Uuid, generation: u64) {
+        if let Some(server) = &self.server {
+            server.acknowledge_seen(thread, generation);
+        }
+    }
+
+    pub(super) fn desktop_seen(&self, thread: uuid::Uuid) {
+        if let Some(server) = &self.server {
+            server.desktop_seen(thread);
+        }
+    }
+
     /// Stops listening as the app quits.
     pub(super) fn shut_down(&mut self) {
         if let Some(server) = &mut self.server {
