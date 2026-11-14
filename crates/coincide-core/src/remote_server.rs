@@ -153,6 +153,10 @@ struct Shared {
     pairing: Mutex<Pairing>,
     adapter: Adapter,
     seen: Arc<SeenBus>,
+    /// Lets a fixture isolate a request from the background engine poll while
+    /// still exercising real TLS sockets and the separate busy-engine path.
+    #[cfg(test)]
+    watch_gate: Mutex<()>,
     sessions: Mutex<HashMap<u64, Arc<Mutex<Session>>>>,
     /// Authenticated devices by session, kept apart so Settings never waits
     /// on a session that's busy answering its phone.
@@ -340,6 +344,8 @@ impl RemoteServer {
             pairing: Mutex::new(pairing),
             adapter: Adapter::new(self.engine.clone(), self.app_version.clone()),
             seen: self.seen.clone(),
+            #[cfg(test)]
+            watch_gate: Mutex::new(()),
             sessions: Mutex::new(HashMap::new()),
             connected: Mutex::new(HashMap::new()),
             workers: Mutex::new(Vec::new()),
@@ -800,6 +806,8 @@ fn watch_loop(shared: Arc<Shared>) {
         if sessions.is_empty() {
             continue;
         }
+        #[cfg(test)]
+        let _watch_gate = shared.watch_gate.lock().unwrap_or_else(|e| e.into_inner());
         let Some(current) = shared.adapter.revision() else {
             // Keep the last confirmed revision when the engine is busy. An
             // unavailable observation is not a change to an empty state.

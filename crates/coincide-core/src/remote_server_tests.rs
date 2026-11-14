@@ -240,6 +240,11 @@ fn seen_on_phone_clears_only_its_thread_and_reaches_other_devices() {
     fixture.server.set_enabled(true);
     let (mut phone, _, _) = pair(&mut fixture);
     let (mut tablet, _, _) = pair(&mut fixture);
+    // The watcher deliberately polls Engine in parallel in production. Hold
+    // its fixture gate here so this success case cannot race that short poll;
+    // the separately locked Engine below still verifies the busy response.
+    let shared = fixture.server.running.as_ref().unwrap().0.clone();
+    let _watch_gate = shared.watch_gate.lock().unwrap();
     request(&mut phone, "workspace", "workspace", None);
     let before = reply(&mut phone, "workspace");
     let listed = before["body"]["threads"]
