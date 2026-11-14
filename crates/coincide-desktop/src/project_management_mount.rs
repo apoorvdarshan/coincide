@@ -20,7 +20,7 @@ impl Projects {
 impl Coincide {
     fn clear_removed_project_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.dismiss_find(window, cx);
-        self.selected = None;
+        self.replace_selected_thread(None);
         self.thread_actions_open = false;
         self.pending_requests.clear();
         self.queued_messages.clear();

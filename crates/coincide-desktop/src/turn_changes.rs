@@ -77,7 +77,8 @@ pub(super) fn anchor(items: &[Value], index: usize) -> Option<(usize, String)> {
 }
 
 impl Coincide {
-    /// Reloads the selected thread's turn changes; cheap, so every revision.
+    /// Load turn changes when opening a thread; revision updates use the
+    /// background conversation reader.
     pub(super) fn refresh_turn_changes(&mut self) {
         let Some(id) = self.selected.as_ref().map(|thread| text(thread, "id")) else {
             self.turn_changes = TurnChanges::default();
@@ -93,11 +94,20 @@ impl Coincide {
         let imported = try_state(&self.engine)
             .ok()
             .and_then(|engine| engine.store.is_imported(&id).ok());
+        self.accept_turn_changes(&id, reply, imported);
+    }
+
+    pub(super) fn accept_turn_changes(&mut self, id: &str, reply: Value, imported: Option<bool>) {
+        if self
+            .selected
+            .as_ref()
+            .is_none_or(|thread| thread["id"] != id)
+        {
+            return;
+        }
         let imported = match imported {
             Some(imported) => imported,
-            None if self.turn_changes.thread.as_deref() == Some(id.as_str()) => {
-                self.turn_changes.imported
-            }
+            None if self.turn_changes.thread.as_deref() == Some(id) => self.turn_changes.imported,
             // Unknown: keep the conservative separate-branch edit.
             None => true,
         };
@@ -112,7 +122,7 @@ impl Coincide {
             })
             .collect();
         let previous = std::mem::take(&mut self.turn_changes);
-        let same_thread = previous.thread.as_deref() == Some(id.as_str());
+        let same_thread = previous.thread.as_deref() == Some(id);
         // The virtualized list keeps measured row heights, so rows whose card
         // appeared, changed or went away are measured again.
         if same_thread
@@ -142,7 +152,7 @@ impl Coincide {
             }
         }
         self.turn_changes = TurnChanges {
-            thread: Some(id),
+            thread: Some(id.to_owned()),
             files,
             imported,
         };

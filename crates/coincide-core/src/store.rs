@@ -632,13 +632,38 @@ impl Store {
         Ok(verified)
     }
 
-    pub fn thread(&self, id: &str) -> Result<Value> {
+    /// Capture the saved bytes under the store lock so callers can decode a
+    /// long transcript away from the UI and the shared engine lock.
+    pub(crate) fn thread_document(&self, id: &str) -> Result<String> {
         self.connection()?;
-        let document: String = self.connection()?.query_row(
-            "SELECT document FROM threads WHERE id=?1",
+        Ok(self
+            .connection()?
+            .query_row("SELECT document FROM threads WHERE id=?1", [id], |r| {
+                r.get(0)
+            })?)
+    }
+
+    pub(crate) fn contains_thread(&self, id: &str) -> Result<bool> {
+        Ok(self.connection()?.query_row(
+            "SELECT EXISTS(SELECT 1 FROM threads WHERE id=?1)",
             [id],
-            |r| r.get(0),
+            |row| row.get(0),
+        )?)
+    }
+
+    /// Queue polling needs only two fields, not the potentially very large
+    /// conversation history. SQLite retains the original JSON types here.
+    pub(crate) fn thread_queue_snapshot(&self, id: &str) -> Result<Value> {
+        let document: String = self.connection()?.query_row(
+            "SELECT json_object('rustMessageQueue', document -> '$.rustMessageQueue', 'rustQueueError', document -> '$.rustQueueError') FROM threads WHERE id=?1",
+            [id],
+            |row| row.get(0),
         )?;
+        Ok(serde_json::from_str(&document)?)
+    }
+
+    pub fn thread(&self, id: &str) -> Result<Value> {
+        let document = self.thread_document(id)?;
         Ok(serde_json::from_str(&document)?)
     }
 

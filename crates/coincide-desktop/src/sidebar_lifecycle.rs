@@ -219,7 +219,7 @@ impl Coincide {
                     if self.threads.iter().any(|thread| thread.id == id) {
                         self.select(&id, window, cx);
                     } else {
-                        self.selected = None;
+                        self.replace_selected_thread(None);
                         self.pending_native_selection = Some(None);
                         self.transcript_count = 0;
                         self.transcript_list.reset(0);

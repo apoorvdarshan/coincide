@@ -624,7 +624,7 @@ impl Coincide {
         })();
         match result {
             Ok((thread, settings)) => {
-                self.selected = Some(thread);
+                self.replace_selected_thread(Some(thread));
                 self.settings = settings;
                 self.follow_up_picker = false;
             }

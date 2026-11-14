@@ -241,17 +241,25 @@ impl Coincide {
         match self.sidebar_preferences.sort("projectSort") {
             "name" => projects
                 .sort_by(|(_, left), (_, right)| sidebar_preferences::name_order(left, right)),
-            "recentActivity" => projects.sort_by(|left, right| {
-                let stamp = |id: &str| {
-                    self.sidebar_all_threads
-                        .iter()
-                        .filter(|thread| thread.project_id == id)
-                        .filter_map(|thread| thread.navigation.as_ref()?.updated_at)
-                        .max_by(f64::total_cmp)
-                        .unwrap_or(0.)
-                };
-                stamp(&right.0).total_cmp(&stamp(&left.0))
-            }),
+            "recentActivity" => {
+                let mut recent = std::collections::HashMap::<&str, f64>::new();
+                for thread in &self.sidebar_all_threads {
+                    if let Some(stamp) = thread.navigation.as_ref().and_then(|nav| nav.updated_at) {
+                        recent
+                            .entry(&thread.project_id)
+                            .and_modify(|current| {
+                                if stamp.total_cmp(current).is_gt() {
+                                    *current = stamp;
+                                }
+                            })
+                            .or_insert(stamp);
+                    }
+                }
+                projects.sort_by(|left, right| {
+                    let stamp = |id: &str| recent.get(id).copied().unwrap_or(0.);
+                    stamp(&right.0).total_cmp(&stamp(&left.0))
+                });
+            }
             _ => {}
         }
         let mut result = sections::display(
@@ -1920,7 +1928,7 @@ impl Coincide {
         ) {
             Ok(thread) => {
                 if self.selected.as_ref().is_some_and(|v| v["id"] == id) {
-                    self.selected = Some(thread);
+                    self.replace_selected_thread(Some(thread));
                 }
                 self.status = success.into();
                 self.refresh(cx);
@@ -1955,7 +1963,7 @@ impl Coincide {
             self.select(&sibling, window, cx);
             return;
         }
-        self.selected = None;
+        self.replace_selected_thread(None);
         self.transcript_count = 0;
         self.transcript_list.reset(0);
         self.expanded.clear();
