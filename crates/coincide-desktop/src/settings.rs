@@ -870,7 +870,7 @@ impl Coincide {
             let busy = self.persistent_awake_busy;
             let panel = panel.child(self.labeled_row(
                 "Keep awake with the lid closed (24/7)",
-                Some("Keeps this Mac awake after Coincide quits, including on battery. macOS asks for administrator permission; turning it off restores the previous sleep settings. This does not turn displays off when the lid closes.".into()),
+                Some("Keeps this Mac awake after Coincide quits, including on battery. Agent turns stop when Coincide quits. macOS asks for administrator permission; turning this off restores the previous sleep settings. Displays do not automatically turn off when the lid closes.".into()),
                 Switch::new("persistent-awake-toggle")
                     .accessibility_label("Keep awake with the lid closed (24/7)")
                     .color(self.color(0xe4e9f2))
