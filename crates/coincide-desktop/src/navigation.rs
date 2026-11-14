@@ -17,6 +17,79 @@ fn sidebar_button_label(label: String) -> Div {
     div().w_full().min_w_0().truncate().text_left().child(label)
 }
 
+// The whole project header is a drop target as well as a click target. Keep
+// the expandable button and its adjacent New Thread control inside that row.
+fn project_row<F>(id: &str, enabled: bool, on_click: F) -> Stateful<Div>
+where
+    F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+{
+    div()
+        .id(SharedString::from(format!("sidebar-project-drag-{id}")))
+        .w_full()
+        .flex()
+        .items_center()
+        .group("sidebar-project-row")
+        .when(enabled, |row| row.on_click(on_click))
+}
+
+fn without_parent_click<F>(on_click: F) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static
+where
+    F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+{
+    move |event, window, cx| {
+        cx.stop_propagation();
+        on_click(event, window, cx);
+    }
+}
+
+fn project_group_button(
+    id: &str,
+    name: String,
+    collapsed: bool,
+    chats: bool,
+    folder: bool,
+    missing: bool,
+    count: usize,
+    height: f32,
+) -> Button {
+    let id = SharedString::from(format!("project-group-{id}"));
+    Button::new(id.clone())
+        .ghost()
+        .compact()
+        .justify_start()
+        .flex_1()
+        .min_w_0()
+        .h(px(height))
+        .accessibility_id(id)
+        .accessibility_label(SharedString::from(format!(
+            "{} {} {name}, {count} conversations{}",
+            if collapsed { "Expand" } else { "Collapse" },
+            if chats { "section" } else { "project" },
+            if missing { ", folder not found" } else { "" }
+        )))
+        .child(
+            div()
+                .w_full()
+                .min_w_0()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(if collapsed {
+                    IconName::ChevronRight
+                } else {
+                    IconName::ChevronDown
+                })
+                .when(folder, |row| {
+                    row.child(if missing {
+                        IconName::FolderX
+                    } else {
+                        IconName::Folder
+                    })
+                })
+                .child(sidebar_button_label(name)),
+        )
+}
+
 #[derive(Clone)]
 struct ProjectDrag(String);
 impl Render for ProjectDrag {
@@ -951,6 +1024,7 @@ impl Coincide {
                 if let Some(group_id) = section.project_id.clone() {
                     let chats = group_id == NO_PROJECT;
                     let target = group_id.clone();
+                    let row_target = group_id.clone();
                     let menu_target = group_id.clone();
                     let new_project_id = group_id.clone();
                     let drag_project = group_id.clone();
@@ -982,192 +1056,165 @@ impl Coincide {
                     let renaming = self.renaming_project(&group_id);
                     let rename_field = renaming.then(|| self.sidebar_rename_field(cx));
                     group = group.child(
-                        div()
-                            .id(SharedString::from(format!(
-                                "sidebar-project-drag-{group_id}"
-                            )))
-                            .w_full()
-                            .flex()
-                            .items_center()
-                            .group("sidebar-project-row")
-                            .when(!renaming, |row| {
-                                row.on_drag(ProjectDrag(drag_project), |drag, _, _, cx| {
-                                    cx.new(|_| drag.clone())
-                                })
+                        project_row(
+                            &group_id,
+                            !renaming && !searching,
+                            cx.listener(move |this, _, _, cx| {
+                                this.thread_bulk.invalidate();
+                                this.sidebar_expand_project(&row_target, collapsed, cx);
+                            }),
+                        )
+                        .when(!renaming, |row| {
+                            row.on_drag(ProjectDrag(drag_project), |drag, _, _, cx| {
+                                cx.new(|_| drag.clone())
                             })
-                            // Conversations dropped on a project move there; the
-                            // row lights up as the target, as in Swift.
-                            .on_drop(cx.listener(
-                                move |this, drag: &sidebar_drop::ThreadDrag, _, cx| {
-                                    this.sidebar_drop_on_project(drag, &thread_drop_project, cx)
-                                },
-                            ))
-                            .drag_over::<sidebar_drop::ThreadDrag>(move |style, drag, _, _| {
-                                if sidebar_drop::moves_into(drag, &highlight_project) {
-                                    style.bg(highlight)
-                                } else {
-                                    style
+                        })
+                        // Conversations dropped on a project move there; the
+                        // row lights up as the target, as in Swift.
+                        .on_drop(cx.listener(
+                            move |this, drag: &sidebar_drop::ThreadDrag, _, cx| {
+                                this.sidebar_drop_on_project(drag, &thread_drop_project, cx)
+                            },
+                        ))
+                        .drag_over::<sidebar_drop::ThreadDrag>(move |style, drag, _, _| {
+                            if sidebar_drop::moves_into(drag, &highlight_project) {
+                                style.bg(highlight)
+                            } else {
+                                style
+                            }
+                        })
+                        .on_drop(cx.listener(move |this, drag: &ProjectDrag, _, cx| {
+                            if drag.0.eq_ignore_ascii_case(&drop_project)
+                                || searching
+                                || chats
+                                || this.media.shutdown_requested
+                                || this.media.close_requested
+                            {
+                                return;
+                            }
+                            let mut ids: Vec<_> = expected_projects
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .map(|project| text(project, "id"))
+                                .collect();
+                            if !ids.iter().any(|id| id.eq_ignore_ascii_case(&drag.0)) {
+                                return;
+                            }
+                            ids.retain(|id| !id.eq_ignore_ascii_case(&drag.0));
+                            let index = ids
+                                .iter()
+                                .position(|id| id.eq_ignore_ascii_case(&drop_project))
+                                .unwrap_or(ids.len());
+                            ids.insert(index, drag.0.clone());
+                            let result = try_state(&this.engine).and_then(|mut engine| {
+                                anyhow::ensure!(!engine.admissions_frozen(), "App is closing");
+                                engine
+                                    .store
+                                    .reorder_projects_if_unchanged(&expected_projects, &ids)
+                            });
+                            match result {
+                                Ok(projects) => {
+                                    this.projects =
+                                        projects.as_array().cloned().unwrap_or_default();
+                                    this.sidebar_preference("projectSort", json!("manual"), cx);
                                 }
-                            })
-                            .on_drop(cx.listener(move |this, drag: &ProjectDrag, _, cx| {
-                                if drag.0.eq_ignore_ascii_case(&drop_project)
-                                    || searching
-                                    || chats
-                                    || this.media.shutdown_requested
-                                    || this.media.close_requested
-                                {
-                                    return;
+                                Err(error) => {
+                                    this.status =
+                                        format!("Projects could not be reordered: {error}")
                                 }
-                                let mut ids: Vec<_> = expected_projects
-                                    .as_array()
-                                    .into_iter()
-                                    .flatten()
-                                    .map(|project| text(project, "id"))
-                                    .collect();
-                                if !ids.iter().any(|id| id.eq_ignore_ascii_case(&drag.0)) {
-                                    return;
-                                }
-                                ids.retain(|id| !id.eq_ignore_ascii_case(&drag.0));
-                                let index = ids
-                                    .iter()
-                                    .position(|id| id.eq_ignore_ascii_case(&drop_project))
-                                    .unwrap_or(ids.len());
-                                ids.insert(index, drag.0.clone());
-                                let result = try_state(&this.engine).and_then(|mut engine| {
-                                    anyhow::ensure!(!engine.admissions_frozen(), "App is closing");
-                                    engine
-                                        .store
-                                        .reorder_projects_if_unchanged(&expected_projects, &ids)
-                                });
-                                match result {
-                                    Ok(projects) => {
-                                        this.projects =
-                                            projects.as_array().cloned().unwrap_or_default();
-                                        this.sidebar_preference("projectSort", json!("manual"), cx);
-                                    }
-                                    Err(error) => {
-                                        this.status =
-                                            format!("Projects could not be reordered: {error}")
-                                    }
-                                }
-                                cx.notify();
-                            }))
-                            .when_some(rename_field, |row, field| {
-                                row.child(
-                                    div()
-                                        .w_full()
-                                        .min_w_0()
-                                        .flex()
-                                        .items_center()
-                                        .gap_2()
-                                        .pl_2()
-                                        .child(IconName::ChevronDown)
-                                        .child(IconName::Folder)
-                                        .child(field),
-                                )
-                            })
-                            .when(!renaming, |row| {
-                                row.child(
-                                    Button::new(SharedString::from(format!(
-                                        "project-group-{group_id}"
-                                    )))
-                                    .ghost()
-                                    .compact()
-                                    .justify_start()
+                            }
+                            cx.notify();
+                        }))
+                        .when_some(rename_field, |row, field| {
+                            row.child(
+                                div()
                                     .w_full()
-                                    .h(px(if chats {
+                                    .min_w_0()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .pl_2()
+                                    .child(IconName::ChevronDown)
+                                    .child(IconName::Folder)
+                                    .child(field),
+                            )
+                        })
+                        .when(!renaming, |row| {
+                            row.child(
+                                project_group_button(
+                                    &group_id,
+                                    name,
+                                    collapsed,
+                                    chats,
+                                    folder,
+                                    missing,
+                                    threads.len(),
+                                    if chats {
                                         if section_index == 0 { 30. } else { 36. }
                                     } else {
                                         28.
-                                    }))
-                                    .accessibility_id(SharedString::from(format!(
-                                        "project-group-{group_id}"
-                                    )))
-                                    .accessibility_label(SharedString::from(format!(
-                                        "{} {} {name}, {} conversations{}",
-                                        if collapsed { "Expand" } else { "Collapse" },
-                                        if chats { "section" } else { "project" },
-                                        threads.len(),
-                                        if missing { ", folder not found" } else { "" }
-                                    )))
-                                    .child(
-                                        div()
-                                            .w_full()
-                                            .min_w_0()
-                                            .flex()
-                                            .items_center()
-                                            .gap_2()
-                                            .child(if collapsed {
-                                                IconName::ChevronRight
-                                            } else {
-                                                IconName::ChevronDown
-                                            })
-                                            .when(folder, |row| {
-                                                row.child(if missing {
-                                                    IconName::FolderX
-                                                } else {
-                                                    IconName::Folder
-                                                })
-                                            })
-                                            .child(sidebar_button_label(name)),
-                                    )
-                                    .disabled(searching)
-                                    .when(searching, |button| {
-                                        button.tooltip("Clear search to collapse project groups")
-                                    })
-                                    .when_some(
-                                        folder_tooltip.filter(|_| folder && !searching),
-                                        |button, tooltip| button.tooltip(tooltip),
-                                    )
-                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                    },
+                                )
+                                .disabled(searching)
+                                .when(searching, |button| {
+                                    button.tooltip("Clear search to collapse project groups")
+                                })
+                                .when_some(
+                                    folder_tooltip.filter(|_| folder && !searching),
+                                    |button, tooltip| button.tooltip(tooltip),
+                                )
+                                .on_click(without_parent_click(cx.listener(
+                                    move |this, _, _, cx| {
                                         this.thread_bulk.invalidate();
                                         this.sidebar_expand_project(&target, collapsed, cx);
-                                    }))
-                                    .context_menu(
-                                        move |menu, window, cx| {
-                                            sidebar_menus::project_menu(
-                                                menu,
-                                                &menu_target,
-                                                chats,
-                                                menu_path.clone(),
-                                                &menu_context,
-                                                window,
-                                                cx,
-                                            )
-                                        },
-                                    ),
-                                )
-                            })
-                            .when(
-                                !chats && !group_id.eq_ignore_ascii_case(BOTS_PROJECT_ID),
-                                |row| {
-                                    row.child(
-                                        Button::new(SharedString::from(format!(
-                                            "sidebar-project-new-{new_project_id}"
-                                        )))
-                                        .icon(IconName::SquarePen)
-                                        .ghost()
-                                        .compact()
-                                        .w(px(24.))
-                                        .h(px(28.))
-                                        .opacity(0.)
-                                        .group_hover("sidebar-project-row", |button| {
-                                            button.opacity(1.)
-                                        })
-                                        .accessibility_label("New Thread in Project")
-                                        .tooltip("New Thread")
-                                        .on_click(
-                                            cx.listener(move |this, _, window, cx| {
+                                    },
+                                )))
+                                .context_menu(
+                                    move |menu, window, cx| {
+                                        sidebar_menus::project_menu(
+                                            menu,
+                                            &menu_target,
+                                            chats,
+                                            menu_path.clone(),
+                                            &menu_context,
+                                            window,
+                                            cx,
+                                        )
+                                    },
+                                ),
+                            )
+                        })
+                        .when(
+                            !chats && !group_id.eq_ignore_ascii_case(BOTS_PROJECT_ID),
+                            |row| {
+                                row.child(
+                                    Button::new(SharedString::from(format!(
+                                        "sidebar-project-new-{new_project_id}"
+                                    )))
+                                    .icon(IconName::SquarePen)
+                                    .ghost()
+                                    .compact()
+                                    .w(px(24.))
+                                    .h(px(28.))
+                                    .opacity(0.)
+                                    .group_hover("sidebar-project-row", |button| button.opacity(1.))
+                                    .accessibility_label("New Thread in Project")
+                                    .tooltip("New Thread")
+                                    .on_click(
+                                        without_parent_click(cx.listener(
+                                            move |this, _, window, cx| {
                                                 this.new_thread_in_project(
                                                     &new_project_id,
                                                     window,
                                                     cx,
                                                 )
-                                            }),
-                                        ),
-                                    )
-                                },
-                            ),
+                                            },
+                                        )),
+                                    ),
+                                )
+                            },
+                        ),
                     );
                 } else {
                     group = group.child(
@@ -2144,6 +2191,183 @@ mod keyboard_navigation_tests {
         );
         assert_eq!(adjacent_sidebar_row(&visible, None, -1), Some("last"));
         assert_eq!(adjacent_sidebar_row(&[], None, 1), None);
+    }
+}
+
+#[cfg(test)]
+mod project_pointer_tests {
+    use super::{ProjectDrag, project_group_button, project_row, without_parent_click};
+    use gpui_kit::{
+        AppContext, Bounds, Context, IntoElement, Modifiers, MouseButton, ParentElement, Pixels,
+        Render, Styled, Window,
+        assets::IconName,
+        component::button::{Button, ButtonVariants},
+        point,
+        prelude::*,
+        px,
+    };
+    use std::sync::{Arc, Mutex};
+
+    #[gpui_kit::test]
+    #[ignore = "invoked in an isolated HOME by project_header_click_targets"]
+    fn project_header_real_pointer_targets(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_base::ElementExt;
+        use std::{cell::Cell, rc::Rc};
+
+        struct HeaderProbe {
+            toggles: Rc<Cell<usize>>,
+            new_threads: Rc<Cell<usize>>,
+            row_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
+            button_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
+        }
+        impl Render for HeaderProbe {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let row_toggles = self.toggles.clone();
+                let button_toggles = self.toggles.clone();
+                let new_threads = self.new_threads.clone();
+                let row_bounds = self.row_bounds.clone();
+                let button_bounds = self.button_bounds.clone();
+                project_row("fixture", true, move |_, _, _| {
+                    row_toggles.set(row_toggles.get() + 1)
+                })
+                .w(px(300.))
+                .on_drag(ProjectDrag("fixture".into()), |drag, _, _, cx| {
+                    cx.new(|_| drag.clone())
+                })
+                .on_prepaint(move |bounds, _, _| *row_bounds.lock().unwrap() = Some(bounds))
+                .child(
+                    project_group_button(
+                        "fixture",
+                        "coincide".into(),
+                        false,
+                        false,
+                        true,
+                        false,
+                        1,
+                        28.,
+                    )
+                    .on_click(without_parent_click(move |_, _, _| {
+                        button_toggles.set(button_toggles.get() + 1)
+                    }))
+                    .on_prepaint(move |bounds, _, _| *button_bounds.lock().unwrap() = Some(bounds)),
+                )
+                .child(
+                    Button::new("fixture-new-thread")
+                        .icon(IconName::SquarePen)
+                        .ghost()
+                        .compact()
+                        .w(px(24.))
+                        .h(px(28.))
+                        .on_click(without_parent_click(move |_, _, _| {
+                            new_threads.set(new_threads.get() + 1)
+                        })),
+                )
+            }
+        }
+
+        cx.update(gpui_kit::init);
+        let toggles = Rc::new(Cell::new(0));
+        let new_threads = Rc::new(Cell::new(0));
+        let row_bounds = Arc::new(Mutex::new(None));
+        let button_bounds = Arc::new(Mutex::new(None));
+        let (_, cx) = cx.add_window_view({
+            let toggles = toggles.clone();
+            let new_threads = new_threads.clone();
+            let row_bounds = row_bounds.clone();
+            let button_bounds = button_bounds.clone();
+            move |_, _| HeaderProbe {
+                toggles,
+                new_threads,
+                row_bounds,
+                button_bounds,
+            }
+        });
+        cx.update(|window, cx| {
+            window.activate_window();
+            window.draw(cx).clear(cx);
+        });
+        let row = row_bounds.lock().unwrap().expect("project row is painted");
+        let button = button_bounds
+            .lock()
+            .unwrap()
+            .expect("project button is painted");
+        assert!(
+            button.size.width > px(200.),
+            "the project button must fill the row"
+        );
+        assert!(
+            button.size.width < row.size.width,
+            "the new-thread button has its own space"
+        );
+        for x in [px(8.), px(40.), px(90.), button.size.width - px(8.)] {
+            cx.simulate_click(
+                point(
+                    button.origin.x + x,
+                    button.origin.y + button.size.height / 2.,
+                ),
+                Modifiers::default(),
+            );
+        }
+        assert_eq!(
+            toggles.get(),
+            4,
+            "arrow, folder, name and empty space each toggle once"
+        );
+        cx.simulate_click(
+            point(
+                row.origin.x + row.size.width - px(12.),
+                row.origin.y + row.size.height / 2.,
+            ),
+            Modifiers::default(),
+        );
+        assert_eq!(new_threads.get(), 1);
+        assert_eq!(
+            toggles.get(),
+            4,
+            "New Thread must not also collapse the project"
+        );
+        let drag_start = point(button.origin.x + px(90.), button.origin.y + px(14.));
+        let drag_end = point(button.origin.x + px(150.), button.origin.y + px(14.));
+        cx.simulate_mouse_down(drag_start, MouseButton::Left, Modifiers::default());
+        cx.simulate_mouse_move(drag_end, Some(MouseButton::Left), Modifiers::default());
+        cx.simulate_mouse_up(drag_end, MouseButton::Left, Modifiers::default());
+        assert_eq!(toggles.get(), 4, "dragging must not toggle the project");
+    }
+
+    #[::core::prelude::v1::test]
+    fn project_header_click_targets() {
+        let fixture = tempfile::tempdir().unwrap();
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--ignored",
+                "--exact",
+                "navigation::project_pointer_tests::project_header_real_pointer_targets",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env_clear()
+            .env("HOME", fixture.path())
+            .env("USERPROFILE", fixture.path())
+            .env("TMPDIR", fixture.path())
+            .env("TMP", fixture.path())
+            .env("TEMP", fixture.path())
+            .env("PATH", "")
+            .env("LANG", "en_US.UTF-8")
+            .current_dir(fixture.path());
+        #[cfg(windows)]
+        for key in ["SystemRoot", "WINDIR"] {
+            if let Some(value) = std::env::var_os(key) {
+                command.env(key, value);
+            }
+        }
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success() && String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+            "Project header pointer test failed\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }
 
