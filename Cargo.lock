@@ -1222,6 +1222,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "coincide-awake-helper"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cc",
+ "libc",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "coincide-core"
 version = "0.1.0"
 dependencies = [
@@ -1271,6 +1284,7 @@ dependencies = [
  "cc",
  "chrono",
  "chrono-tz",
+ "coincide-awake-helper",
  "coincide-core",
  "cpal",
  "gpui-base",

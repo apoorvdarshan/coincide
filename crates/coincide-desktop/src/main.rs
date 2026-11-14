@@ -534,6 +534,14 @@ struct Coincide {
     #[cfg(target_os = "macos")]
     persistent_awake_status: String,
     #[cfg(target_os = "macos")]
+    persistent_awake_preferences: coincide_awake_helper::Preferences,
+    #[cfg(target_os = "macos")]
+    persistent_awake_audio_pending: bool,
+    #[cfg(target_os = "macos")]
+    persistent_awake_lid_service: Option<persistent_awake::ServiceStatus>,
+    #[cfg(target_os = "macos")]
+    persistent_awake_battery_service: Option<persistent_awake::ServiceStatus>,
+    #[cfg(target_os = "macos")]
     persistent_awake_busy: bool,
     #[cfg(target_os = "macos")]
     persistent_awake_health: String,
@@ -1764,6 +1772,14 @@ impl Coincide {
             awake_status: json!({}),
             #[cfg(target_os = "macos")]
             persistent_awake_status: String::new(),
+            #[cfg(target_os = "macos")]
+            persistent_awake_preferences: Default::default(),
+            #[cfg(target_os = "macos")]
+            persistent_awake_audio_pending: false,
+            #[cfg(target_os = "macos")]
+            persistent_awake_lid_service: None,
+            #[cfg(target_os = "macos")]
+            persistent_awake_battery_service: None,
             #[cfg(target_os = "macos")]
             persistent_awake_busy: false,
             #[cfg(target_os = "macos")]

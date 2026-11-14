@@ -34,7 +34,8 @@ def scratch_parent(path):
 
 
 def stage(scratch_root, platform, desktop, cli, store, version, commit,
-          assets_dir=None, icon=None, minimum_macos=None, build_number='1', helper=None):
+          assets_dir=None, icon=None, minimum_macos=None, build_number='1', helper=None,
+          awake_helper=None):
     parent = scratch_parent(scratch_root)
     packaging.require(platform in packaging.PLATFORMS, 'unsupported platform')
     packaging.require(re.fullmatch(r'\d+\.\d+\.\d+', version) is not None, 'version must be major.minor.patch')
@@ -43,6 +44,11 @@ def stage(scratch_root, platform, desktop, cli, store, version, commit,
     if helper is not None:
         packaging.require(platform == 'macos', 'helper binary is macOS-only')
         helper = regular(helper)
+    if platform == 'macos':
+        packaging.require(awake_helper is not None, 'macOS Keep Awake helper binary required')
+        awake_helper = regular(awake_helper)
+    else:
+        packaging.require(awake_helper is None, 'Keep Awake helper binary is macOS-only')
     if assets_dir is not None:
         # inventory checks every nested entry before copytree can follow a symlink.
         assets_dir = Path(assets_dir).absolute()
@@ -75,6 +81,15 @@ def stage(scratch_root, platform, desktop, cli, store, version, commit,
             target = bindir / 'CoincideRustUpdater'
             shutil.copyfile(helper, target)
             target.chmod(0o755)
+        if awake_helper is not None:
+            target = bindir / 'coincide-awake-helper'
+            shutil.copyfile(awake_helper, target)
+            target.chmod(0o755)
+            source = Path(__file__).resolve().parent.parent / 'crates/coincide-awake-helper/macos'
+            for directory, name in packaging.AWAKE_PLISTS:
+                destination = contents / 'Library' / directory
+                destination.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(regular(source / name), destination / name)
         if assets_dir is not None:
             # Keep caller assets in a namespace that cannot replace generated files.
             shutil.copytree(assets_dir, resources / 'assets')
@@ -93,7 +108,7 @@ def stage(scratch_root, platform, desktop, cli, store, version, commit,
         manifest = packaging.manifest(artifact, platform, version, commit)
         validation = packaging.validate(artifact, manifest)
         (result / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8')
-        inputs = [str(p) for p in binaries] + ([str(helper)] if helper is not None else [])
+        inputs = [str(p) for p in binaries] + ([str(helper)] if helper is not None else []) + ([str(awake_helper)] if awake_helper is not None else [])
         report = {'artifact': str(artifact), 'manifest': str(result / 'manifest.json'),
                   'validation': validation, 'build_number': build_number,
                   'source_inputs': inputs}
@@ -113,6 +128,7 @@ def main():
     parser.add_argument('--cli-bin', type=Path, required=True)
     parser.add_argument('--store-bin', type=Path, required=True)
     parser.add_argument('--helper-bin', type=Path)
+    parser.add_argument('--awake-helper-bin', type=Path)
     parser.add_argument('--version', required=True)
     parser.add_argument('--commit', required=True)
     parser.add_argument('--assets-dir', type=Path)
@@ -123,7 +139,8 @@ def main():
     try:
         print(json.dumps(stage(args.scratch_root, args.platform, args.desktop_bin, args.cli_bin,
                                args.store_bin, args.version, args.commit, args.assets_dir, args.icon,
-                               args.minimum_macos_version, args.build_number, args.helper_bin), indent=2))
+                               args.minimum_macos_version, args.build_number, args.helper_bin,
+                               args.awake_helper_bin), indent=2))
     except (ValueError, OSError, KeyError, TypeError) as error:
         print('staging failed: ' + str(error), file=sys.stderr)
         return 1

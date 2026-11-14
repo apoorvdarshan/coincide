@@ -22,6 +22,7 @@ preview-updater-helper = ["coincide-core/preview-updater-helper"]
 zeroize = "1"
 base64 = "0.23"
 coincide-core = { path = "../coincide-core" }
+coincide-awake-helper = { path = "../coincide-awake-helper" }
 # Schedule rows' next-run times, in each schedule's own zone (as Core's recurrence).
 chrono = "0.4"
 chrono-tz = "0.10"

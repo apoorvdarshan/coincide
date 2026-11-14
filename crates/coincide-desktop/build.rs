@@ -14,6 +14,7 @@ fn main() {
     println!("cargo:rerun-if-changed=src/notification_activity_macos.m");
     println!("cargo:rerun-if-changed=src/app_shell_macos.m");
     println!("cargo:rerun-if-changed=src/usage_menubar_macos.m");
+    println!("cargo:rerun-if-changed=src/awake_service_macos.m");
     #[cfg(target_os = "macos")]
     compile_appshots();
     println!("cargo:rerun-if-changed=src/microphone_macos.m");
@@ -88,6 +89,7 @@ fn compile_appshots() {
         .file("src/notification_activity_macos.m")
         .file("src/app_shell_macos.m")
         .file("src/usage_menubar_macos.m")
+        .file("src/awake_service_macos.m")
         .flag("-fobjc-arc")
         .flag("-fblocks")
         .flag("-std=gnu11")
@@ -101,6 +103,7 @@ fn compile_appshots() {
         "ScreenCaptureKit",
         "AudioToolbox",
         "QuartzCore",
+        "ServiceManagement",
     ] {
         println!("cargo:rustc-link-lib=framework={framework}");
     }

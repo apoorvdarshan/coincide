@@ -2,6 +2,7 @@
 //! app never changes system power. The restore journal is written before the
 //! user-authorized command, so an interrupted operation can still be undone.
 use anyhow::{Context, Result, bail, ensure};
+use coincide_awake_helper::Preferences;
 use coincide_core::api::SharedEngine;
 use serde_json::{Value, json};
 
@@ -76,10 +77,11 @@ impl Power {
             u8::from(self.sleep_disabled)
         )
     }
-    fn apply_script(self) -> String {
+    fn apply_script(self, sleep_disabled: bool) -> String {
         // Only fixed commands and validated integers enter this shell script.
         format!(
-            "{{ /usr/bin/pmset -c sleep 0 && /usr/bin/pmset -a disablesleep 1; }} || {{ {}; exit 1; }}",
+            "{{ /usr/bin/pmset -c sleep 0 && /usr/bin/pmset -a disablesleep {}; }} || {{ {}; exit 1; }}",
+            u8::from(sleep_disabled),
             self.restore_script()
         )
     }
@@ -95,10 +97,46 @@ pub(super) enum Action {
     Enable,
     Disable,
     Reapply,
+    SetDisplayOff(bool),
+    SetKeepDisplaysOff(bool),
+    SetMute(bool),
+    SetSleepOnBattery(bool),
+    RegisterLidHelper,
+    RestoreAudio,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Service {
+    Lid,
+    Battery,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ServiceStatus {
+    NotRegistered,
+    Enabled,
+    NeedsApproval,
+    Missing,
+}
+
 trait Backend {
     fn read_power(&mut self) -> Result<Power>;
     fn authorize(&mut self, script: &str, enabling: bool) -> Result<Admin>;
+    fn on_battery(&mut self) -> Option<bool> {
+        Some(false)
+    }
+    fn service_status(&mut self, _: Service) -> Result<ServiceStatus> {
+        Ok(ServiceStatus::Enabled)
+    }
+    fn register_service(&mut self, _: Service) -> Result<ServiceStatus> {
+        Ok(ServiceStatus::Enabled)
+    }
+    fn unregister_service(&mut self, _: Service) -> Result<()> {
+        Ok(())
+    }
+    fn restore_audio(&mut self) -> Result<bool> {
+        Ok(true)
+    }
 }
 trait Journal {
     fn load(&mut self) -> Result<Option<Value>>;
@@ -116,6 +154,48 @@ fn stage(value: Option<&Value>) -> Result<&str> {
         _ => bail!("Invalid Keep Awake journal"),
     }
 }
+
+fn preferences(value: Option<&Value>) -> Result<Preferences> {
+    Preferences::from_document(value)
+}
+
+fn set_options(document: &mut Value, changes: &[(&str, bool)]) -> Result<()> {
+    ensure!(document.is_object(), "Invalid Keep Awake document");
+    if document.get("options").is_none() {
+        document["options"] = json!({});
+    }
+    ensure!(
+        document["options"].is_object(),
+        "Invalid Keep Awake options"
+    );
+    for (key, value) in changes {
+        document["options"][*key] = json!(value);
+    }
+    Ok(())
+}
+
+fn replace_stage(previous: Option<&Value>, next: &str, original: Option<Power>) -> Result<Value> {
+    let mut document = previous.cloned().unwrap_or_else(|| json!({"version":1}));
+    ensure!(document.is_object(), "Invalid Keep Awake document");
+    document["version"] = json!(1);
+    document["stage"] = json!(next);
+    if let Some(power) = original {
+        document["original"] = power.value();
+    } else if let Some(object) = document.as_object_mut() {
+        object.remove("original");
+    }
+    Ok(document)
+}
+
+fn target_disabled(backend: &mut impl Backend, preferences: Preferences) -> Result<bool> {
+    if preferences.sleep_on_battery || preferences.battery_approval_pending {
+        Ok(!backend
+            .on_battery()
+            .context("The current power source is unavailable")?)
+    } else {
+        Ok(true)
+    }
+}
 fn transition(
     journal: &mut impl Journal,
     backend: &mut impl Backend,
@@ -123,18 +203,24 @@ fn transition(
 ) -> Result<Admin> {
     let previous = journal.load()?;
     let current = stage(previous.as_ref())?;
+    let options = preferences(previous.as_ref())?;
+    ensure!(
+        matches!(action, Action::Enable | Action::Disable | Action::Reapply),
+        "Invalid power transition"
+    );
     if matches!(action, Action::Enable | Action::Reapply) {
+        let wanted = target_disabled(backend, options)?;
         if matches!(action, Action::Reapply) {
             ensure!(
                 current == "enabled",
                 "Keep Awake must be on before it can be reapplied"
             );
             let before = backend.read_power()?;
-            match backend.authorize(&before.apply_script(), true)? {
+            match backend.authorize(&before.apply_script(wanted), true)? {
                 Admin::Done => {
                     let applied = backend.read_power()?;
                     ensure!(
-                        applied.sleep_disabled && applied.charger_sleep == 0,
+                        applied.sleep_disabled == wanted && applied.charger_sleep == 0,
                         "macOS did not confirm the requested sleep settings"
                     );
                     return Ok(Admin::Done);
@@ -148,20 +234,20 @@ fn transition(
         );
         let power = backend.read_power()?;
         // Save the original values before any administrator command is run.
-        journal.save(&json!({"version":1,"stage":"prepared","original":power.value()}))?;
-        match backend.authorize(&power.apply_script(), true) {
+        journal.save(&replace_stage(previous.as_ref(), "prepared", Some(power))?)?;
+        match backend.authorize(&power.apply_script(wanted), true) {
             Ok(Admin::Done) => {
                 let applied = backend.read_power()?;
                 ensure!(
-                    applied.sleep_disabled && applied.charger_sleep == 0,
+                    applied.sleep_disabled == wanted && applied.charger_sleep == 0,
                     "macOS did not confirm the requested sleep settings; restore the saved settings"
                 );
-                journal.save(&json!({"version":1,"stage":"enabled","original":power.value()}))?;
+                journal.save(&replace_stage(previous.as_ref(), "enabled", Some(power))?)?;
                 Ok(Admin::Done)
             }
             Ok(Admin::Cancelled) => {
                 // No shell command runs when the administrator prompt is cancelled.
-                journal.save(&json!({"version":1,"stage":"off"}))?;
+                journal.save(&replace_stage(previous.as_ref(), "off", None)?)?;
                 Ok(Admin::Cancelled)
             }
             // The command may have run partially or completed without an
@@ -180,12 +266,237 @@ fn transition(
                     backend.read_power()? == original,
                     "macOS did not confirm the restored sleep settings; try restoring again"
                 );
-                journal.save(&json!({"version":1,"stage":"off"}))?;
+                let mut off = replace_stage(previous.as_ref(), "off", None)?;
+                set_options(
+                    &mut off,
+                    &[
+                        ("batteryApprovalPending", false),
+                        ("batteryDisablePending", false),
+                    ],
+                )?;
+                journal.save(&off)?;
                 Ok(Admin::Done)
             }
             Admin::Cancelled => Ok(Admin::Cancelled),
         }
     }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Outcome {
+    Done,
+    Cancelled,
+    NeedsApproval,
+    AudioPending,
+}
+
+fn active_or_pending(status: ServiceStatus) -> Result<Outcome> {
+    match status {
+        ServiceStatus::Enabled => Ok(Outcome::Done),
+        ServiceStatus::NeedsApproval => Ok(Outcome::NeedsApproval),
+        ServiceStatus::NotRegistered | ServiceStatus::Missing => {
+            bail!("The Keep Awake background helper is unavailable")
+        }
+    }
+}
+
+fn orchestrate(
+    journal: &mut impl Journal,
+    backend: &mut impl Backend,
+    action: Action,
+) -> Result<Outcome> {
+    let previous = journal.load()?;
+    let current = stage(previous.as_ref())?;
+    match action {
+        Action::Enable => {
+            ensure!(
+                backend.service_status(Service::Lid)? != ServiceStatus::Missing,
+                "This app build does not include the lid helper"
+            );
+            if transition(journal, backend, Action::Enable)? == Admin::Cancelled {
+                return Ok(Outcome::Cancelled);
+            }
+            let mut result = active_or_pending(
+                backend
+                    .register_service(Service::Lid)
+                    .context("24/7 is on, but its display helper could not be started")?,
+            )
+            .context("24/7 is on, but its display helper could not be started")?;
+            let saved = journal.load()?;
+            let options = preferences(saved.as_ref())?;
+            if options.sleep_on_battery || options.battery_approval_pending {
+                let mut document = saved.context("Keep Awake settings disappeared")?;
+                set_options(
+                    &mut document,
+                    &[
+                        ("batteryApprovalPending", true),
+                        ("batteryDisablePending", false),
+                    ],
+                )?;
+                journal.save(&document)?;
+                match active_or_pending(
+                    backend
+                        .register_service(Service::Battery)
+                        .context("24/7 is on, but its battery helper could not be started")?,
+                )? {
+                    Outcome::Done => {
+                        set_options(
+                            &mut document,
+                            &[("sleepOnBattery", true), ("batteryApprovalPending", false)],
+                        )?;
+                        journal.save(&document)?;
+                    }
+                    Outcome::NeedsApproval => result = Outcome::NeedsApproval,
+                    _ => unreachable!(),
+                }
+            }
+            Ok(result)
+        }
+        Action::Disable => {
+            ensure!(
+                current != "off",
+                "There are no Coincide sleep settings to restore"
+            );
+            // The privileged battery helper must be fully stopped before pmset
+            // restores the user's original values, or it could race the restore.
+            let options = preferences(previous.as_ref())?;
+            ensure!(
+                !(options.sleep_on_battery
+                    || options.battery_approval_pending
+                    || options.battery_disable_pending)
+                    || backend.service_status(Service::Battery)? != ServiceStatus::Missing,
+                "The battery helper is missing, so Coincide cannot confirm it has stopped. Reinstall the current app before restoring sleep settings."
+            );
+            backend.unregister_service(Service::Battery)?;
+            backend.unregister_service(Service::Lid)?;
+            let audio_restored = backend.restore_audio().unwrap_or(false);
+            match transition(journal, backend, Action::Disable)? {
+                Admin::Cancelled => Ok(Outcome::Cancelled),
+                Admin::Done if !audio_restored => Ok(Outcome::AudioPending),
+                Admin::Done => Ok(Outcome::Done),
+            }
+        }
+        Action::Reapply => {
+            ensure!(current == "enabled", "24/7 Keep Awake is not on");
+            match transition(journal, backend, Action::Reapply)? {
+                Admin::Done => Ok(Outcome::Done),
+                Admin::Cancelled => Ok(Outcome::Cancelled),
+            }
+        }
+        Action::SetDisplayOff(value)
+        | Action::SetKeepDisplaysOff(value)
+        | Action::SetMute(value) => {
+            ensure!(
+                current != "prepared",
+                "Restore the interrupted power change first"
+            );
+            let mut document = previous.unwrap_or_else(|| json!({"version":1,"stage":"off"}));
+            let key = match action {
+                Action::SetDisplayOff(_) => "displayOffOnClose",
+                Action::SetKeepDisplaysOff(_) => "keepDisplaysOff",
+                Action::SetMute(_) => "muteWhileClosed",
+                _ => unreachable!(),
+            };
+            set_options(&mut document, &[(key, value)])?;
+            journal.save(&document)?;
+            Ok(Outcome::Done)
+        }
+        Action::SetSleepOnBattery(true) => {
+            ensure!(current == "enabled", "Turn on 24/7 Keep Awake first");
+            let mut document = previous.context("Keep Awake settings disappeared")?;
+            // Durable intent precedes registering a privileged process. If the
+            // app exits or macOS asks for approval, the UI can finish or cancel.
+            set_options(
+                &mut document,
+                &[
+                    ("batteryApprovalPending", true),
+                    ("batteryDisablePending", false),
+                ],
+            )?;
+            journal.save(&document)?;
+            match active_or_pending(backend.register_service(Service::Battery)?)? {
+                Outcome::Done => {
+                    set_options(
+                        &mut document,
+                        &[("sleepOnBattery", true), ("batteryApprovalPending", false)],
+                    )?;
+                    journal.save(&document)?;
+                    Ok(Outcome::Done)
+                }
+                Outcome::NeedsApproval => Ok(Outcome::NeedsApproval),
+                _ => unreachable!(),
+            }
+        }
+        Action::SetSleepOnBattery(false) => {
+            ensure!(current == "enabled", "Turn on 24/7 Keep Awake first");
+            let mut document = previous.context("Keep Awake settings disappeared")?;
+            let options = preferences(Some(&document))?;
+            ensure!(
+                !(options.sleep_on_battery
+                    || options.battery_approval_pending
+                    || options.battery_disable_pending)
+                    || backend.service_status(Service::Battery)? != ServiceStatus::Missing,
+                "The battery helper is missing, so Coincide cannot confirm it has stopped. Reinstall the current app before changing this policy."
+            );
+            set_options(
+                &mut document,
+                &[
+                    ("batteryDisablePending", true),
+                    ("batteryApprovalPending", false),
+                ],
+            )?;
+            journal.save(&document)?;
+            backend.unregister_service(Service::Battery)?;
+            let power = backend.read_power()?;
+            if !power.sleep_disabled || power.charger_sleep != 0 {
+                match backend.authorize(&power.apply_script(true), true)? {
+                    Admin::Cancelled => return Ok(Outcome::Cancelled),
+                    Admin::Done => {
+                        let applied = backend.read_power()?;
+                        ensure!(
+                            applied.sleep_disabled && applied.charger_sleep == 0,
+                            "macOS did not confirm the updated sleep policy"
+                        );
+                    }
+                }
+            }
+            set_options(
+                &mut document,
+                &[("sleepOnBattery", false), ("batteryDisablePending", false)],
+            )?;
+            journal.save(&document)?;
+            Ok(Outcome::Done)
+        }
+        Action::RegisterLidHelper => {
+            ensure!(current == "enabled", "Turn on 24/7 Keep Awake first");
+            active_or_pending(backend.register_service(Service::Lid)?)
+        }
+        Action::RestoreAudio => {
+            if backend.restore_audio()? {
+                Ok(Outcome::Done)
+            } else {
+                Ok(Outcome::AudioPending)
+            }
+        }
+    }
+}
+
+fn sync_battery_approval(journal: &mut impl Journal, backend: &mut impl Backend) -> Result<()> {
+    let Some(mut document) = journal.load()? else {
+        return Ok(());
+    };
+    let options = preferences(Some(&document))?;
+    if options.enabled
+        && options.battery_approval_pending
+        && backend.service_status(Service::Battery)? == ServiceStatus::Enabled
+    {
+        set_options(
+            &mut document,
+            &[("sleepOnBattery", true), ("batteryApprovalPending", false)],
+        )?;
+        journal.save(&document)?;
+    }
+    Ok(())
 }
 
 struct EngineJournal(SharedEngine);
@@ -208,6 +519,75 @@ impl Journal for EngineJournal {
 
 #[cfg(target_os = "macos")]
 struct MacBackend;
+#[cfg(target_os = "macos")]
+mod mac_service {
+    use super::{Result, Service, ServiceStatus, bail};
+    use std::ffi::{CStr, c_char, c_int};
+
+    unsafe extern "C" {
+        fn coincide_awake_service_status(kind: c_int) -> c_int;
+        fn coincide_awake_service_register(
+            kind: c_int,
+            error: *mut c_char,
+            capacity: usize,
+        ) -> c_int;
+        fn coincide_awake_service_unregister(
+            kind: c_int,
+            error: *mut c_char,
+            capacity: usize,
+        ) -> c_int;
+        fn coincide_awake_open_login_items();
+    }
+    fn kind(service: Service) -> c_int {
+        match service {
+            Service::Lid => 0,
+            Service::Battery => 1,
+        }
+    }
+    fn status(value: c_int) -> Result<ServiceStatus> {
+        match value {
+            0 => Ok(ServiceStatus::NotRegistered),
+            1 => Ok(ServiceStatus::Enabled),
+            2 => Ok(ServiceStatus::NeedsApproval),
+            3 => Ok(ServiceStatus::Missing),
+            _ => bail!("macOS Service Management is unavailable"),
+        }
+    }
+    fn error(buffer: &[c_char]) -> String {
+        unsafe { CStr::from_ptr(buffer.as_ptr()) }
+            .to_string_lossy()
+            .chars()
+            .take(512)
+            .collect()
+    }
+    pub(super) fn read(service: Service) -> Result<ServiceStatus> {
+        status(unsafe { coincide_awake_service_status(kind(service)) })
+    }
+    pub(super) fn register(service: Service) -> Result<ServiceStatus> {
+        let mut buffer = [0 as c_char; 1024];
+        let value = unsafe {
+            coincide_awake_service_register(kind(service), buffer.as_mut_ptr(), buffer.len())
+        };
+        if value < 0 {
+            bail!("{}", error(&buffer));
+        }
+        status(value)
+    }
+    pub(super) fn unregister(service: Service) -> Result<()> {
+        let mut buffer = [0 as c_char; 1024];
+        let value = unsafe {
+            coincide_awake_service_unregister(kind(service), buffer.as_mut_ptr(), buffer.len())
+        };
+        if value < 0 {
+            bail!("{}", error(&buffer));
+        }
+        Ok(())
+    }
+    pub(super) fn open_login_items() {
+        unsafe { coincide_awake_open_login_items() }
+    }
+}
+
 #[cfg(target_os = "macos")]
 impl Backend for MacBackend {
     fn read_power(&mut self) -> Result<Power> {
@@ -245,43 +625,152 @@ impl Backend for MacBackend {
             error.trim().chars().take(512).collect::<String>()
         )
     }
-}
-
-#[cfg(target_os = "macos")]
-pub(super) fn run(engine: SharedEngine, action: Action) -> Result<bool> {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    static BUSY: AtomicBool = AtomicBool::new(false);
-    ensure!(
-        BUSY.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok(),
-        "Another Keep Awake change is already in progress"
-    );
-    struct BusyGuard;
-    impl Drop for BusyGuard {
-        fn drop(&mut self) {
-            BUSY.store(false, Ordering::Release);
-        }
+    fn on_battery(&mut self) -> Option<bool> {
+        coincide_awake_helper::on_battery()
     }
-    let _guard = BusyGuard;
-    Ok(transition(&mut EngineJournal(engine), &mut MacBackend, action)? == Admin::Done)
+    fn service_status(&mut self, service: Service) -> Result<ServiceStatus> {
+        mac_service::read(service)
+    }
+    fn register_service(&mut self, service: Service) -> Result<ServiceStatus> {
+        mac_service::register(service)
+    }
+    fn unregister_service(&mut self, service: Service) -> Result<()> {
+        mac_service::unregister(service)
+    }
+    fn restore_audio(&mut self) -> Result<bool> {
+        use coincide_awake_helper::{AudioJournal, journal::FileJournal};
+        use std::{
+            process::{Command, Stdio},
+            time::{Duration, Instant},
+        };
+        let directory = coincide_core::control::data_directory()?;
+        let mut journal = FileJournal::new(&directory)?;
+        if journal.load()?.is_empty() {
+            return Ok(true);
+        }
+        let executable = std::env::current_exe()?
+            .parent()
+            .context("Missing app executable directory")?
+            .join("coincide-awake-helper");
+        let metadata = std::fs::symlink_metadata(&executable)?;
+        ensure!(
+            metadata.is_file() && !metadata.file_type().is_symlink(),
+            "Keep Awake audio helper is unavailable"
+        );
+        let mut child = Command::new(executable)
+            .arg("--restore-audio")
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if child.try_wait()?.is_some() {
+                break;
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                bail!("Audio restoration timed out; its recovery journal is retained");
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        Ok(journal.load()?.is_empty())
+    }
 }
 
 #[cfg(target_os = "macos")]
-pub(super) fn verify() -> Result<bool> {
-    let power = MacBackend.read_power()?;
-    Ok(power.sleep_disabled && power.charger_sleep == 0)
+static BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(target_os = "macos")]
+struct BusyGuard;
+
+#[cfg(target_os = "macos")]
+impl BusyGuard {
+    fn acquire() -> Result<Self> {
+        use std::sync::atomic::Ordering;
+        ensure!(
+            BUSY.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok(),
+            "Another Keep Awake check or change is already in progress"
+        );
+        Ok(Self)
+    }
 }
 
 #[cfg(target_os = "macos")]
-pub(super) fn status(engine: &SharedEngine) -> Result<String> {
+impl Drop for BusyGuard {
+    fn drop(&mut self) {
+        BUSY.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn run(engine: SharedEngine, action: Action) -> Result<Outcome> {
+    let _guard = BusyGuard::acquire()?;
+    orchestrate(&mut EngineJournal(engine), &mut MacBackend, action)
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Health {
+    pub power_matches: bool,
+    pub lid: ServiceStatus,
+    pub battery: ServiceStatus,
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn verify(engine: SharedEngine) -> Result<Health> {
+    // Approval completion can update the journal, so it must not race a user
+    // turning the battery policy off or restoring the original power state.
+    let _guard = BusyGuard::acquire()?;
+    let mut journal = EngineJournal(engine);
+    let mut backend = MacBackend;
+    sync_battery_approval(&mut journal, &mut backend)?;
+    let document = journal.load()?;
+    let options = preferences(document.as_ref())?;
+    let wanted = target_disabled(&mut backend, options)?;
+    let power = backend.read_power()?;
+    Ok(Health {
+        power_matches: power.sleep_disabled == wanted && power.charger_sleep == 0,
+        lid: backend.service_status(Service::Lid)?,
+        battery: backend.service_status(Service::Battery)?,
+    })
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn status(engine: &SharedEngine) -> Result<(String, Preferences, bool)> {
+    use coincide_awake_helper::{AudioJournal, journal::FileJournal};
     let engine = super::try_state(engine)?;
     let document = engine.store.local_document(DOCUMENT)?;
-    Ok(stage(document.as_ref())?.to_owned())
+    let directory = coincide_core::control::data_directory()?;
+    let audio_pending = !FileJournal::new(&directory)?.load()?.is_empty();
+    Ok((
+        stage(document.as_ref())?.to_owned(),
+        preferences(document.as_ref())?,
+        audio_pending,
+    ))
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn open_login_items() {
+    mac_service::open_login_items();
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn approval_check_and_user_changes_cannot_run_at_the_same_time() {
+        let guard = BusyGuard::acquire().unwrap();
+        assert!(BusyGuard::acquire().is_err());
+        drop(guard);
+        assert!(BusyGuard::acquire().is_ok());
+    }
+
     #[derive(Default)]
     struct FakeJournal {
         value: Option<Value>,
@@ -360,7 +849,7 @@ mod tests {
         assert!(Power::parse("SleepDisabled garbage", "AC Power:\n sleep 12\n").is_err());
         assert!(Power::parse("", "AC Power:\n sleep 100001\n").is_err());
         assert!(Power::parse("", "Battery Power:\n sleep 3\n").is_err());
-        assert!(p.apply_script().contains("/usr/bin/pmset -c sleep 12"));
+        assert!(p.apply_script(true).contains("/usr/bin/pmset -c sleep 12"));
         assert!(p.restore_script().contains("disablesleep 1"));
     }
     #[test]
@@ -485,5 +974,226 @@ mod tests {
         assert_eq!(stage(journal.load().unwrap().as_ref()).unwrap(), "prepared");
         transition(&mut journal, &mut backend, Action::Disable).unwrap();
         assert_eq!(stage(journal.load().unwrap().as_ref()).unwrap(), "off");
+    }
+
+    struct Services {
+        power: Power,
+        original: Power,
+        on_battery: Option<bool>,
+        lid: ServiceStatus,
+        battery: ServiceStatus,
+        battery_registration: ServiceStatus,
+        fail_stop_battery: bool,
+        cancel_admin: bool,
+        audio_restored: bool,
+        calls: Vec<&'static str>,
+    }
+    impl Services {
+        fn new() -> Self {
+            let power = Power {
+                sleep_disabled: false,
+                charger_sleep: 12,
+            };
+            Self {
+                power,
+                original: power,
+                on_battery: Some(false),
+                lid: ServiceStatus::NotRegistered,
+                battery: ServiceStatus::NotRegistered,
+                battery_registration: ServiceStatus::Enabled,
+                fail_stop_battery: false,
+                cancel_admin: false,
+                audio_restored: true,
+                calls: vec![],
+            }
+        }
+    }
+    impl Backend for Services {
+        fn read_power(&mut self) -> Result<Power> {
+            Ok(self.power)
+        }
+        fn authorize(&mut self, script: &str, enabling: bool) -> Result<Admin> {
+            self.calls.push("authorize");
+            if self.cancel_admin {
+                return Ok(Admin::Cancelled);
+            }
+            self.power = if enabling {
+                let value = script
+                    .split("disablesleep ")
+                    .nth(1)
+                    .and_then(|s| s.chars().next())
+                    .context("missing fixture value")?;
+                Power {
+                    sleep_disabled: value == '1',
+                    charger_sleep: 0,
+                }
+            } else {
+                self.original
+            };
+            Ok(Admin::Done)
+        }
+        fn on_battery(&mut self) -> Option<bool> {
+            self.on_battery
+        }
+        fn service_status(&mut self, service: Service) -> Result<ServiceStatus> {
+            Ok(match service {
+                Service::Lid => self.lid,
+                Service::Battery => self.battery,
+            })
+        }
+        fn register_service(&mut self, service: Service) -> Result<ServiceStatus> {
+            Ok(match service {
+                Service::Lid => {
+                    self.calls.push("register lid");
+                    self.lid = ServiceStatus::Enabled;
+                    self.lid
+                }
+                Service::Battery => {
+                    self.calls.push("register battery");
+                    self.battery = self.battery_registration;
+                    self.battery
+                }
+            })
+        }
+        fn unregister_service(&mut self, service: Service) -> Result<()> {
+            match service {
+                Service::Battery => {
+                    self.calls.push("stop battery");
+                    ensure!(!self.fail_stop_battery, "fixture stop failed");
+                    self.battery = ServiceStatus::NotRegistered;
+                }
+                Service::Lid => {
+                    self.calls.push("stop lid");
+                    self.lid = ServiceStatus::NotRegistered;
+                }
+            }
+            Ok(())
+        }
+        fn restore_audio(&mut self) -> Result<bool> {
+            self.calls.push("restore audio");
+            Ok(self.audio_restored)
+        }
+    }
+
+    #[test]
+    fn background_services_are_opt_in_and_battery_approval_is_recoverable() {
+        let (mut journal, mut backend) = (FakeJournal::default(), Services::new());
+        orchestrate(&mut journal, &mut backend, Action::SetMute(true)).unwrap();
+        assert!(
+            backend.calls.is_empty(),
+            "preferences alone cannot change system state"
+        );
+        assert_eq!(
+            orchestrate(&mut journal, &mut backend, Action::Enable).unwrap(),
+            Outcome::Done
+        );
+        assert_eq!(backend.calls, ["authorize", "register lid"]);
+        assert!(
+            preferences(journal.value.as_ref())
+                .unwrap()
+                .mute_while_closed
+        );
+        backend.battery_registration = ServiceStatus::NeedsApproval;
+        assert_eq!(
+            orchestrate(&mut journal, &mut backend, Action::SetSleepOnBattery(true)).unwrap(),
+            Outcome::NeedsApproval
+        );
+        let pending = preferences(journal.value.as_ref()).unwrap();
+        assert!(pending.battery_approval_pending && !pending.sleep_on_battery);
+        backend.battery = ServiceStatus::Enabled;
+        sync_battery_approval(&mut journal, &mut backend).unwrap();
+        let approved = preferences(journal.value.as_ref()).unwrap();
+        assert!(approved.sleep_on_battery && !approved.battery_approval_pending);
+        backend.power.sleep_disabled = false; // The fake daemon saw battery power.
+        backend.calls.clear();
+        assert_eq!(
+            orchestrate(&mut journal, &mut backend, Action::Disable).unwrap(),
+            Outcome::Done
+        );
+        assert_eq!(
+            backend.calls,
+            ["stop battery", "stop lid", "restore audio", "authorize"]
+        );
+        assert_eq!(backend.power, backend.original);
+        assert_eq!(stage(journal.value.as_ref()).unwrap(), "off");
+    }
+
+    #[test]
+    fn failure_to_stop_root_helper_never_restores_power_under_a_live_daemon() {
+        let (mut journal, mut backend) = (FakeJournal::default(), Services::new());
+        orchestrate(&mut journal, &mut backend, Action::Enable).unwrap();
+        backend.calls.clear();
+        backend.fail_stop_battery = true;
+        assert!(orchestrate(&mut journal, &mut backend, Action::Disable).is_err());
+        assert_eq!(backend.calls, ["stop battery"]);
+        assert_eq!(stage(journal.value.as_ref()).unwrap(), "enabled");
+        assert!(backend.power.sleep_disabled);
+    }
+
+    #[test]
+    fn missing_registered_battery_helper_cannot_race_a_power_restore() {
+        let (mut journal, mut backend) = (FakeJournal::default(), Services::new());
+        orchestrate(&mut journal, &mut backend, Action::Enable).unwrap();
+        orchestrate(&mut journal, &mut backend, Action::SetSleepOnBattery(true)).unwrap();
+        backend.battery = ServiceStatus::Missing;
+        backend.calls.clear();
+        assert!(orchestrate(&mut journal, &mut backend, Action::Disable).is_err());
+        assert!(orchestrate(&mut journal, &mut backend, Action::SetSleepOnBattery(false)).is_err());
+        assert!(backend.calls.is_empty());
+        assert_eq!(stage(journal.value.as_ref()).unwrap(), "enabled");
+        assert!(
+            preferences(journal.value.as_ref())
+                .unwrap()
+                .sleep_on_battery
+        );
+    }
+
+    #[test]
+    fn interrupted_battery_disable_preserves_intent_and_can_be_finished() {
+        let (mut journal, mut backend) = (FakeJournal::default(), Services::new());
+        orchestrate(&mut journal, &mut backend, Action::Enable).unwrap();
+        orchestrate(&mut journal, &mut backend, Action::SetSleepOnBattery(true)).unwrap();
+        backend.power.sleep_disabled = false;
+        backend.cancel_admin = true;
+        assert_eq!(
+            orchestrate(&mut journal, &mut backend, Action::SetSleepOnBattery(false)).unwrap(),
+            Outcome::Cancelled
+        );
+        assert!(
+            preferences(journal.value.as_ref())
+                .unwrap()
+                .battery_disable_pending
+        );
+        assert_eq!(backend.battery, ServiceStatus::NotRegistered);
+        backend.cancel_admin = false;
+        assert_eq!(
+            orchestrate(&mut journal, &mut backend, Action::SetSleepOnBattery(false)).unwrap(),
+            Outcome::Done
+        );
+        let options = preferences(journal.value.as_ref()).unwrap();
+        assert!(!options.sleep_on_battery && !options.battery_disable_pending);
+        assert!(backend.power.sleep_disabled);
+    }
+
+    #[test]
+    fn unavailable_audio_never_blocks_sleep_restore_or_discards_the_journal() {
+        let (mut journal, mut backend) = (FakeJournal::default(), Services::new());
+        orchestrate(&mut journal, &mut backend, Action::Enable).unwrap();
+        backend.audio_restored = false;
+        assert_eq!(
+            orchestrate(&mut journal, &mut backend, Action::Disable).unwrap(),
+            Outcome::AudioPending
+        );
+        assert_eq!(backend.power, backend.original);
+        assert_eq!(stage(journal.value.as_ref()).unwrap(), "off");
+        assert_eq!(
+            orchestrate(&mut journal, &mut backend, Action::RestoreAudio).unwrap(),
+            Outcome::AudioPending
+        );
+        backend.audio_restored = true;
+        assert_eq!(
+            orchestrate(&mut journal, &mut backend, Action::RestoreAudio).unwrap(),
+            Outcome::Done
+        );
     }
 }
