@@ -124,11 +124,50 @@ fn display_path(path: &std::path::Path) -> String {
     }
 }
 
+struct CommandLineStatus {
+    tool: CommandLineTool,
+    checked_at: Option<Instant>,
+    pending: bool,
+}
+impl CommandLineStatus {
+    fn new(tool: CommandLineTool) -> Self {
+        Self {
+            tool,
+            checked_at: None,
+            pending: false,
+        }
+    }
+
+    fn start_check(&mut self, visible: bool, now: Instant) -> bool {
+        if !visible {
+            self.checked_at = None;
+            return false;
+        }
+        if self.pending
+            || self
+                .checked_at
+                .is_some_and(|last| now.saturating_duration_since(last) < Duration::from_secs(1))
+        {
+            return false;
+        }
+        self.pending = true;
+        self.checked_at = Some(now);
+        true
+    }
+
+    fn finish_check(&mut self, visible: bool, tool: CommandLineTool) -> bool {
+        self.pending = false;
+        if visible && self.tool != tool {
+            self.tool = tool;
+            return true;
+        }
+        false
+    }
+}
+
 pub(super) struct State {
     font: Entity<SliderState>,
-    command_line_tool: CommandLineTool,
-    command_line_checked_at: Option<Instant>,
-    command_line_check_pending: bool,
+    command_line: CommandLineStatus,
     /// Theme grids opened by their row: dark, light.
     expanded: [bool; 2],
     restore_prompt: Option<Task<()>>,
@@ -146,9 +185,7 @@ impl State {
                     .default_value(13.)
             }),
             expanded: [false; 2],
-            command_line_tool: CommandLineTool::Missing,
-            command_line_checked_at: None,
-            command_line_check_pending: false,
+            command_line: CommandLineStatus::new(CommandLineTool::Missing),
             restore_prompt: None,
             t3_license_open: false,
         };
@@ -177,7 +214,7 @@ impl State {
     /// Checks again where the command-line tool is, as Swift does when
     /// Settings opens.
     pub(super) fn refresh_command_line_tool(&mut self) {
-        self.command_line_tool = command_line_tool(
+        self.command_line.tool = command_line_tool(
             std::env::current_exe().ok().as_deref(),
             std::env::var_os("PATH").as_deref(),
         );
@@ -231,20 +268,15 @@ impl Coincide {
     /// Keep the displayed status in sync if the command is installed or removed
     /// while Settings is open. Filesystem checks run away from the UI thread.
     pub(super) fn poll_command_line_tool(&mut self, cx: &mut Context<Self>) {
-        if !self.settings_open || self.settings_section != settings::SettingsSection::General {
-            self.general_settings.command_line_checked_at = None;
-            return;
-        }
-        if self.general_settings.command_line_check_pending
-            || self
-                .general_settings
-                .command_line_checked_at
-                .is_some_and(|last| last.elapsed() < Duration::from_secs(1))
+        let visible =
+            self.settings_open && self.settings_section == settings::SettingsSection::General;
+        if !self
+            .general_settings
+            .command_line
+            .start_check(visible, Instant::now())
         {
             return;
         }
-        self.general_settings.command_line_check_pending = true;
-        self.general_settings.command_line_checked_at = Some(Instant::now());
         let app = std::env::current_exe().ok();
         let path = std::env::var_os("PATH");
         let check = cx
@@ -253,12 +285,13 @@ impl Coincide {
         cx.spawn(async move |this, cx| {
             let tool = check.await;
             let _ = this.update(cx, |this, cx| {
-                this.general_settings.command_line_check_pending = false;
-                if this.settings_open
-                    && this.settings_section == settings::SettingsSection::General
-                    && this.general_settings.command_line_tool != tool
+                let visible = this.settings_open
+                    && this.settings_section == settings::SettingsSection::General;
+                if this
+                    .general_settings
+                    .command_line
+                    .finish_check(visible, tool)
                 {
-                    this.general_settings.command_line_tool = tool;
                     cx.notify();
                 }
             });
@@ -695,7 +728,7 @@ impl Coincide {
                         this.change_setting("commandLineControl", json!(value), window, cx)
                     }))
             }));
-        let (status, ok, captions) = match &self.general_settings.command_line_tool {
+        let (status, ok, captions) = match &self.general_settings.command_line.tool {
             CommandLineTool::OnPath(tool) => (
                 "Ready",
                 true,
@@ -829,6 +862,8 @@ fn notification_denied_guidance() -> (&'static str, Option<(&'static str, &'stat
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use super::CommandLineStatus;
     use super::{
         CommandLineTool, PALETTES, RESTORED_KEYS, TOOL, appearance_option, command_line_tool,
         restore_defaults_patch, slider_size, theme, theme_patch,
@@ -1016,20 +1051,29 @@ mod tests {
         let link = bin.join(TOOL);
         let path = std::env::join_paths([bin]).unwrap();
         std::fs::write(&bundled, b"fixture").unwrap();
-        assert_eq!(
-            command_line_tool(Some(&exe), Some(&path)),
-            CommandLineTool::Installed(bundled.clone())
-        );
+        let mut status = CommandLineStatus::new(CommandLineTool::Installed(bundled.clone()));
+        let start = std::time::Instant::now();
+        assert!(!status.start_check(false, start));
+        assert!(status.start_check(true, start));
+        assert!(!status.start_check(true, start));
+        assert!(!status.finish_check(true, command_line_tool(Some(&exe), Some(&path))));
         std::os::unix::fs::symlink(&bundled, &link).unwrap();
-        assert_eq!(
-            command_line_tool(Some(&exe), Some(&path)),
-            CommandLineTool::OnPath(link.clone())
-        );
+        assert!(!status.start_check(true, start + std::time::Duration::from_millis(500)));
+        assert!(status.start_check(true, start + std::time::Duration::from_secs(1)));
+        assert!(status.finish_check(true, command_line_tool(Some(&exe), Some(&path))));
+        assert_eq!(status.tool, CommandLineTool::OnPath(link.clone()));
         std::fs::remove_file(link).unwrap();
-        assert_eq!(
-            command_line_tool(Some(&exe), Some(&path)),
-            CommandLineTool::Installed(bundled)
-        );
+        assert!(status.start_check(true, start + std::time::Duration::from_secs(2)));
+        assert!(status.finish_check(true, command_line_tool(Some(&exe), Some(&path))));
+        assert_eq!(status.tool, CommandLineTool::Installed(bundled.clone()));
+        std::os::unix::fs::symlink(&bundled, &link).unwrap();
+        assert!(status.start_check(true, start + std::time::Duration::from_secs(3)));
+        assert!(!status.start_check(false, start + std::time::Duration::from_secs(3)));
+        assert!(!status.finish_check(false, command_line_tool(Some(&exe), Some(&path))));
+        assert_eq!(status.tool, CommandLineTool::Installed(bundled));
+        assert!(status.start_check(true, start + std::time::Duration::from_secs(3)));
+        assert!(status.finish_check(true, command_line_tool(Some(&exe), Some(&path))));
+        assert_eq!(status.tool, CommandLineTool::OnPath(link));
     }
 
     #[::core::prelude::v1::test]
