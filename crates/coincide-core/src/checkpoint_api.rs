@@ -364,26 +364,7 @@ impl Engine {
                     Some(thread) => thread.clone(),
                     None => self.store.thread(&thread_id)?,
                 };
-                let present = user_item_ids(&thread);
-                let running = self
-                    .turn_checkpoints
-                    .before
-                    .get(&thread_id)
-                    .map(|pending| pending.user_item_id.clone());
-                let turns = self
-                    .turn_checkpoints(&thread_id)
-                    .into_iter()
-                    .filter(|turn| present.iter().any(|id| same_id(id, &turn.user_item_id)))
-                    .map(|turn| {
-                        json!({
-                            "userItemID": turn.user_item_id,
-                            "complete": turn.is_complete(),
-                            "running": running.as_deref().is_some_and(|id| same_id(id, &turn.user_item_id)),
-                            "files": turn.files.iter().map(file_json).collect::<Vec<_>>(),
-                        })
-                    })
-                    .collect::<Vec<_>>();
-                Ok(json!({"turns": turns}))
+                self.checkpoint_list_for_snapshot(&thread_id, &thread)
             }
             "checkpoints.canRestore" => {
                 let item = required(p, "userItemId")?;
@@ -429,6 +410,42 @@ impl Engine {
             "threads.rewind" => self.rewind_thread(&thread_id, p),
             _ => bail!("Unsupported checkpoint command"),
         }
+    }
+
+    /// Project checkpoint cards from an already captured thread, avoiding a
+    /// second decode of a long transcript on the desktop refresh path.
+    pub fn checkpoint_list_for_snapshot(
+        &mut self,
+        thread_id: &str,
+        thread: &Value,
+    ) -> Result<Value> {
+        self.require_admissions()?;
+        ensure!(
+            thread["id"]
+                .as_str()
+                .is_some_and(|id| same_id(id, thread_id)),
+            "Thread snapshot does not match"
+        );
+        let present = user_item_ids(thread);
+        let running = self
+            .turn_checkpoints
+            .before
+            .get(thread_id)
+            .map(|pending| pending.user_item_id.clone());
+        let turns = self
+            .turn_checkpoints(thread_id)
+            .into_iter()
+            .filter(|turn| present.iter().any(|id| same_id(id, &turn.user_item_id)))
+            .map(|turn| {
+                json!({
+                    "userItemID": turn.user_item_id,
+                    "complete": turn.is_complete(),
+                    "running": running.as_deref().is_some_and(|id| same_id(id, &turn.user_item_id)),
+                    "files": turn.files.iter().map(file_json).collect::<Vec<_>>(),
+                })
+            })
+            .collect::<Vec<_>>();
+        Ok(json!({"turns": turns}))
     }
 
     /// Swift's "Edit from here": the conversation is cut back to before the

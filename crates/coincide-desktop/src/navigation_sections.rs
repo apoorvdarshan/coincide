@@ -1,6 +1,6 @@
 //! Pure sidebar projection. Input search/archive filtering and summary order stay authoritative.
 use coincide_core::{bot_runtime::BOTS_PROJECT_ID, store::ThreadSummary};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 pub(super) const NO_PROJECT: &str = "00000000-0000-0000-0000-000000000000";
 pub(super) fn project_key(id: &str) -> &str {
@@ -28,10 +28,10 @@ pub(super) fn display<'a>(
     now: f64,
     searching: bool,
 ) -> Vec<Section<'a>> {
-    let order = projects
-        .iter()
-        .map(|(id, _)| id.clone())
-        .collect::<Vec<_>>();
+    let mut order = HashMap::with_capacity(projects.len());
+    for (index, (id, _)) in projects.iter().enumerate() {
+        order.entry(id.clone()).or_insert(index);
+    }
     let mut sections = project(
         threads,
         projects.clone(),
@@ -40,14 +40,16 @@ pub(super) fn display<'a>(
         now,
     );
     if !searching {
+        let mut present = sections
+            .iter()
+            .filter_map(|section| section.project_id.clone())
+            .collect::<HashSet<_>>();
         for (id, name) in projects {
             if id.is_empty()
                 || id == NO_PROJECT
                 || id.eq_ignore_ascii_case(BOTS_PROJECT_ID)
                 || selected_project.is_some_and(|selected| selected != id)
-                || sections
-                    .iter()
-                    .any(|section| section.project_id.as_deref() == Some(&id))
+                || !present.insert(id.clone())
             {
                 continue;
             }
@@ -62,13 +64,7 @@ pub(super) fn display<'a>(
         None => (1, 0),
         Some(id) if id.eq_ignore_ascii_case(BOTS_PROJECT_ID) => (0, 0),
         Some(NO_PROJECT) => (3, 0),
-        Some(id) => (
-            2,
-            order
-                .iter()
-                .position(|known| known == id)
-                .unwrap_or(usize::MAX),
-        ),
+        Some(id) => (2, order.get(id).copied().unwrap_or(usize::MAX)),
     });
     sections
 }
@@ -79,21 +75,61 @@ pub(super) fn project<'a>(
     show_snoozed: bool,
     now: f64,
 ) -> Vec<Section<'a>> {
+    let mut groups = Vec::with_capacity(projects.len() + 2);
+    let mut group_index = HashMap::with_capacity(projects.len() + 2);
+    for (id, name) in projects {
+        if id.is_empty()
+            || id == NO_PROJECT
+            || id.eq_ignore_ascii_case(BOTS_PROJECT_ID)
+            || group_index.contains_key(&id)
+        {
+            continue;
+        }
+        group_index.insert(id.clone(), groups.len());
+        groups.push(Section {
+            project_id: Some(id),
+            name,
+            threads: Vec::new(),
+        });
+    }
+    for (id, name) in [(BOTS_PROJECT_ID, "Bots"), (NO_PROJECT, "Chats")] {
+        group_index.insert(id.to_owned(), groups.len());
+        groups.push(Section {
+            project_id: Some(id.to_owned()),
+            name: name.into(),
+            threads: Vec::new(),
+        });
+    }
     let mut seen = HashSet::new();
-    let visible: Vec<_> = threads
-        .iter()
-        .filter(|thread| {
-            selected_project.is_none_or(|id| project_key(&thread.project_id) == id)
-                && (show_snoozed || thread.snoozed_until.is_none_or(|date| date <= now))
-                && seen.insert(thread.id.as_str())
-        })
-        .collect();
+    let mut pinned = Vec::new();
+    for thread in threads {
+        let id = project_key(&thread.project_id);
+        if selected_project.is_some_and(|selected| id != selected)
+            || !(show_snoozed || thread.snoozed_until.is_none_or(|date| date <= now))
+            || !seen.insert(thread.id.as_str())
+        {
+            continue;
+        }
+        let index = match group_index.get(id) {
+            Some(&index) => index,
+            None => {
+                let index = groups.len();
+                group_index.insert(id.to_owned(), index);
+                groups.push(Section {
+                    project_id: Some(id.into()),
+                    name: "Unavailable project".into(),
+                    threads: Vec::new(),
+                });
+                index
+            }
+        };
+        if thread.pinned {
+            pinned.push(thread);
+        } else {
+            groups[index].threads.push(thread);
+        }
+    }
     let mut sections = Vec::new();
-    let pinned: Vec<_> = visible
-        .iter()
-        .copied()
-        .filter(|thread| thread.pinned)
-        .collect();
     if !pinned.is_empty() {
         sections.push(Section {
             project_id: None,
@@ -101,38 +137,7 @@ pub(super) fn project<'a>(
             threads: pinned,
         });
     }
-    let mut known = HashSet::new();
-    let mut groups: Vec<_> = projects
-        .into_iter()
-        .filter(|(id, _)| {
-            !id.is_empty()
-                && id != NO_PROJECT
-                && !id.eq_ignore_ascii_case(BOTS_PROJECT_ID)
-                && known.insert(id.clone())
-        })
-        .collect();
-    groups.push((BOTS_PROJECT_ID.into(), "Bots".into()));
-    groups.push((NO_PROJECT.into(), "Chats".into()));
-    for thread in &visible {
-        let id = project_key(&thread.project_id);
-        if !groups.iter().any(|(known, _)| known == id) {
-            groups.push((id.into(), "Unavailable project".into()));
-        }
-    }
-    for (id, name) in groups {
-        let threads: Vec<_> = visible
-            .iter()
-            .copied()
-            .filter(|thread| !thread.pinned && project_key(&thread.project_id) == id)
-            .collect();
-        if !threads.is_empty() {
-            sections.push(Section {
-                project_id: Some(id),
-                name,
-                threads,
-            });
-        }
-    }
+    sections.extend(groups.into_iter().filter(|group| !group.threads.is_empty()));
     sections
 }
 /// The Swift fit-to-sidebar cut, in stable steps of five rows.

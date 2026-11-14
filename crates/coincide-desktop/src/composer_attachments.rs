@@ -546,7 +546,7 @@ impl Coincide {
         if is_selected
             && let Ok(value) = call(&self.engine, "threads.read", json!({"threadId":thread}))
         {
-            self.selected = Some(value);
+            self.replace_selected_thread(Some(value));
         }
         self.reconcile_buffered_sends();
         self.pump_image_imports(cx);

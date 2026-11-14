@@ -29,6 +29,14 @@ pub(super) fn opens_turn(item: &Value) -> bool {
     item["kind"] == "user" && item["steered"] != true
 }
 
+/// Find the active turn once for a transcript layout, including steered
+/// messages in that turn rather than treating them as a new opener.
+pub(super) fn running_opener(items: &[Value], running: bool) -> Option<usize> {
+    running
+        .then(|| items.iter().rposition(opens_turn))
+        .flatten()
+}
+
 fn blank(item: &Value) -> bool {
     item["text"]
         .as_str()
@@ -108,12 +116,11 @@ pub(super) struct Turns<'a> {
 
 impl Turns<'_> {
     pub(super) fn running_opener(&self) -> Option<usize> {
-        self.running
-            .then(|| self.items.iter().rposition(opens_turn))
-            .flatten()
+        running_opener(self.items, self.running)
     }
 
     /// A persisted running status is only live while its own turn is active.
+    #[cfg(test)]
     pub(super) fn is_running_item(&self, index: usize) -> bool {
         index < self.items.len() && self.running_opener().is_some_and(|opener| index >= opener)
     }
@@ -469,11 +476,6 @@ impl super::Coincide {
             expanded: &expanded,
         };
         Some(f(&turns, id))
-    }
-
-    pub(super) fn is_running_turn_item(&self, index: usize) -> bool {
-        self.selected_turns(|turns, _| turns.is_running_item(index))
-            .unwrap_or(false)
     }
 
     pub(super) fn turn_plan(&self, index: usize) -> RowPlan {
