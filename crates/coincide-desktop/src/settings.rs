@@ -262,7 +262,7 @@ pub(super) const PALETTES: &[Palette] = &[
         sidebar: 0xF5F5F5,
         content: 0xFFFFFF,
         surface: 0xFFFFFF,
-        raised: 0xF5F5F5,
+        raised: 0xE8E8E8,
         border: 0xE1E1E1,
         ink: 0x111111,
         accent: 0xE8660F,
@@ -274,7 +274,7 @@ pub(super) const PALETTES: &[Palette] = &[
         sidebar: 0xF2F0EC,
         content: 0xFBFAF8,
         surface: 0xFFFFFF,
-        raised: 0xF2F0EC,
+        raised: 0xE6E3DE,
         border: 0xE4E0D8,
         ink: 0x111111,
         accent: 0xC26A2E,
@@ -286,7 +286,7 @@ pub(super) const PALETTES: &[Palette] = &[
         sidebar: 0xEDF2F6,
         content: 0xF7FAFC,
         surface: 0xFFFFFF,
-        raised: 0xEDF2F6,
+        raised: 0xE1E9EF,
         border: 0xD9E2EA,
         ink: 0x1E2A36,
         accent: 0x2F7FD6,
@@ -298,7 +298,7 @@ pub(super) const PALETTES: &[Palette] = &[
         sidebar: 0xEEE5D3,
         content: 0xF6EFE1,
         surface: 0xFBF6EC,
-        raised: 0xEEE5D3,
+        raised: 0xE2D7C3,
         border: 0xDDD0B8,
         ink: 0x3B2F22,
         accent: 0xA0602A,
@@ -310,7 +310,7 @@ pub(super) const PALETTES: &[Palette] = &[
         sidebar: 0xF5EBED,
         content: 0xFCF6F7,
         surface: 0xFFFFFF,
-        raised: 0xF5EBED,
+        raised: 0xEADDE0,
         border: 0xEBD8DC,
         ink: 0x2E1D24,
         accent: 0xD14D72,
@@ -322,7 +322,7 @@ pub(super) const PALETTES: &[Palette] = &[
         sidebar: 0xEFEBF8,
         content: 0xF8F6FC,
         surface: 0xFFFFFF,
-        raised: 0xEFEBF8,
+        raised: 0xE3DDF0,
         border: 0xDDD6EE,
         ink: 0x241F33,
         accent: 0x7A5AE0,
@@ -334,7 +334,7 @@ pub(super) const PALETTES: &[Palette] = &[
         sidebar: 0xEDE9E1,
         content: 0xF7F5F0,
         surface: 0xFFFFFF,
-        raised: 0xEDE9E1,
+        raised: 0xE2DDD4,
         border: 0xDDD7CB,
         ink: 0x2B2A24,
         accent: 0xB8862E,
@@ -346,7 +346,7 @@ pub(super) const PALETTES: &[Palette] = &[
         sidebar: 0xEAF4EE,
         content: 0xF5FAF7,
         surface: 0xFFFFFF,
-        raised: 0xEAF4EE,
+        raised: 0xDCEBE2,
         border: 0xD3E6DA,
         ink: 0x1C2A22,
         accent: 0x1F9D6A,
@@ -1857,6 +1857,12 @@ mod navigation_tests {
                 assert!(
                     relative_luminance(palette.raised) > relative_luminance(palette.surface),
                     "{} selected surface",
+                    palette.name
+                );
+            } else {
+                assert!(
+                    relative_luminance(palette.raised) < relative_luminance(palette.sidebar),
+                    "{} selected sidebar row",
                     palette.name
                 );
             }
