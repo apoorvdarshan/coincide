@@ -329,6 +329,23 @@ impl Engine {
         Ok((self.revision, thread, queue))
     }
 
+    /// The desktop also needs the original queue fields for exact-match
+    /// actions; this internal view does not expand the public queue response.
+    pub fn native_queue_read(&self, id: &str) -> Result<Value> {
+        self.require_admissions()?;
+        ensure!(
+            !self.unsaved_threads.contains_key(id),
+            "Transcript persistence is recovering; retry after recovery"
+        );
+        let thread = self.store.thread_queue_snapshot(id)?;
+        Ok(json!({
+            "messages": crate::message_queue::read(&thread)?,
+            "rawQueue": thread["rustMessageQueue"],
+            "error": thread["rustQueueError"],
+            "enabled": self.enabled_queues.contains(id)
+        }))
+    }
+
     /// Keep the latest discovered lists for the next launch. A failure here is
     /// not a user-facing error: the catalog still works for this run.
     fn save_model_catalog(&mut self) {
@@ -1750,10 +1767,11 @@ impl Engine {
             "Transcript persistence is recovering; retry after recovery"
         );
         if method == "agent.queue.list" {
-            let thread = self.store.thread_queue_snapshot(id)?;
-            return Ok(
-                json!({"messages":queue::read(&thread)?, "rawQueue":thread["rustMessageQueue"], "error":thread["rustQueueError"],"enabled":self.enabled_queues.contains(id)}),
-            );
+            let mut result = self.native_queue_read(id)?;
+            if let Some(object) = result.as_object_mut() {
+                object.remove("rawQueue");
+            }
+            return Ok(result);
         }
         let mut thread = self.store.thread(id)?;
         ensure!(
@@ -3141,7 +3159,11 @@ mod tests {
             .execute("agent.queue.list", &json!({"threadId":id}))
             .unwrap();
         assert_eq!(result["messages"][0]["text"], "queued");
-        assert_eq!(result["rawQueue"], thread["rustMessageQueue"]);
+        assert!(result.get("rawQueue").is_none());
+        assert_eq!(
+            engine.native_queue_read(&id).unwrap()["rawQueue"],
+            thread["rustMessageQueue"]
+        );
         assert_eq!(result["error"], "paused");
         assert_eq!(
             engine

@@ -304,9 +304,11 @@ impl Coincide {
             self.queue_error.clear();
             return;
         };
-        let result = match call(&self.engine, "agent.queue.list", json!({"threadId":id})) {
-            Err(error) if engine_busy(&error) => return,
-            result => result.map_err(|error| error.to_string()),
+        let result = match try_state(&self.engine) {
+            Ok(engine) => engine
+                .native_queue_read(&id)
+                .map_err(|error| error.to_string()),
+            Err(_) => return,
         };
         self.accept_queue_read(&id, result, cx);
     }
