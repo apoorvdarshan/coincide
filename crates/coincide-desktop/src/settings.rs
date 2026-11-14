@@ -996,7 +996,10 @@ impl Coincide {
                         Button::new("awake-open-lid-approval").label("Open Login Items")
                             .on_click(cx.listener(|_, _, _, _| crate::persistent_awake::open_login_items())),
                     ));
-                } else if self.persistent_awake_lid_service == Some(ServiceStatus::NotRegistered) {
+                } else if matches!(
+                    self.persistent_awake_lid_service,
+                    Some(ServiceStatus::NotRegistered | ServiceStatus::Missing)
+                ) {
                     panel = panel.child(
                         self.labeled_row(
                             "Start the lid helper",
@@ -1012,13 +1015,6 @@ impl Coincide {
                                 })),
                         ),
                     );
-                } else if self.persistent_awake_lid_service == Some(ServiceStatus::Missing) {
-                    panel =
-                        panel.child(
-                            div().px_3().pb_3().text_sm().child(
-                                "This app build does not include the Keep Awake lid helper.",
-                            ),
-                        );
                 }
                 if preferences.battery_disable_pending {
                     panel = panel.child(self.labeled_row(
@@ -1037,7 +1033,10 @@ impl Coincide {
                             .on_click(cx.listener(|_, _, _, _| crate::persistent_awake::open_login_items())),
                     ));
                 } else if (preferences.battery_approval_pending || preferences.sleep_on_battery)
-                    && self.persistent_awake_battery_service == Some(ServiceStatus::NotRegistered)
+                    && matches!(
+                        self.persistent_awake_battery_service,
+                        Some(ServiceStatus::NotRegistered | ServiceStatus::Missing)
+                    )
                 {
                     panel = panel.child(
                         self.labeled_row(
@@ -1056,10 +1055,6 @@ impl Coincide {
                                 })),
                         ),
                     );
-                } else if (preferences.battery_approval_pending || preferences.sleep_on_battery)
-                    && self.persistent_awake_battery_service == Some(ServiceStatus::Missing)
-                {
-                    panel = panel.child(div().px_3().pb_3().text_sm().child("The battery helper is missing. Reinstall Coincide before changing the battery policy."));
                 }
             }
             if self.persistent_awake_audio_pending && !enabled {
