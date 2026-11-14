@@ -31,6 +31,9 @@ mod codex_speed;
 pub(crate) mod codex_steering;
 #[path = "provider_cursor.rs"]
 mod cursor;
+pub(crate) use cursor::usage_keychain_access_token;
+#[cfg(target_os = "macos")]
+pub(crate) use cursor::usage_keychain_capture;
 #[path = "provider_grok.rs"]
 mod grok;
 #[path = "provider_images.rs"]

@@ -460,7 +460,7 @@ impl Coincide {
                         .selected
                         .as_ref()
                         .and_then(|thread| thread["selection"]["provider"].as_str())
-                        .filter(|provider| chat_layout::provider_logo(provider).is_some())
+                        .filter(|provider| chat_layout::provider_known(provider))
                 {
                     entry.icon = Some(PaletteIcon::Provider(provider.into()));
                 }

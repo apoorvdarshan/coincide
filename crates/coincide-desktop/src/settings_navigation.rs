@@ -74,15 +74,9 @@ fn section_icon(section: Section) -> (gpui_kit::assets::IconName, u32) {
 
 fn icon_tile(section: Section, size: f32) -> AnyElement {
     if let Section::Provider(provider) = section
-        && let Some(logo) = chat_layout::provider_logo(provider_key(provider))
+        && let Some(logo) = chat_layout::provider_mark(provider_key(provider), size)
     {
-        return img(logo)
-            .w(px(size))
-            .h(px(size))
-            .flex_shrink_0()
-            .rounded(px(size * 0.2))
-            .bg(rgb(0x2b2b2b))
-            .into_any_element();
+        return logo.into_any_element();
     }
     let (icon, tint) = section_icon(section);
     div()
@@ -827,6 +821,19 @@ impl Coincide {
                     .bg(self.color(0x111722))
                     .child(accounts),
             );
+        }
+        if enabled && provider == ProviderId::Cursor && cfg!(target_os = "macos") {
+            pane = pane.child(self.settings_group(
+                "Account usage",
+                self.setting_toggle(
+                    "Show Cursor plan limits",
+                    "Read the Cursor CLI sign-in from Keychain to show its usage. macOS may ask to allow access.",
+                    "cursorKeychainUsageEnabled",
+                    false,
+                    "cursor-keychain-usage",
+                    cx,
+                ),
+            ));
         }
         match provider {
             ProviderId::Codex => {

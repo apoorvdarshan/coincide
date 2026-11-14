@@ -84,6 +84,27 @@ impl Driver {
             Err(()) => Phase::Failed("Codex limits refresh could not start. Refresh to try again."),
         }
     }
+    fn try_refresh(
+        &mut self,
+        mut call: impl FnMut(&str, Value) -> Result<Value, bool>,
+    ) -> Option<Phase> {
+        let previous = self.current.clone();
+        let mut busy = false;
+        let phase = self.refresh(|method, params| match call(method, params) {
+            Err(true) => {
+                busy = true;
+                Err(())
+            }
+            Err(false) => Err(()),
+            Ok(value) => Ok(value),
+        });
+        if busy {
+            self.current = previous;
+            None
+        } else {
+            Some(phase)
+        }
+    }
     fn poll(
         &mut self,
         mut call: impl FnMut(&str, Value) -> Result<Option<Value>, ()>,
@@ -169,11 +190,29 @@ impl Mount {
         }
     }
     pub fn refresh(&mut self, cx: &mut App) {
+        if !self.try_refresh(cx) {
+            // Explicit refreshes still report a failed start. The menu bar
+            // uses try_refresh directly and retries its background request.
+            self.driver.current = None;
+            self.panel.update(cx, |panel, cx| {
+                panel.set(
+                    Phase::Failed("Codex limits refresh could not start. Refresh to try again."),
+                    cx,
+                )
+            });
+        }
+    }
+    /// A busy engine proves the request never started. Keep the previous
+    /// observation so the caller can retry without losing a valid reading.
+    pub fn try_refresh(&mut self, cx: &mut App) -> bool {
         let engine = &self.engine;
-        let phase = self
-            .driver
-            .refresh(|method, params| crate::call(engine, method, params).map_err(|_| ()));
+        let Some(phase) = self.driver.try_refresh(|method, params| {
+            crate::call(engine, method, params).map_err(|error| crate::engine_busy(&error))
+        }) else {
+            return false;
+        };
         self.panel.update(cx, |panel, cx| panel.set(phase, cx));
+        true
     }
     pub fn poll(&mut self, cx: &mut App) {
         let engine = &self.engine;
@@ -202,6 +241,18 @@ mod tests {
     use super::*;
     fn loading(id: &str, generation: u64) -> Value {
         json!({"requestId":id,"provider":"codex","accountScope":"default_runtime_account_identity_unknown","accountIdentityVerified":false,"state":"loading","generation":generation,"observedAtEpochMs":null,"snapshot":null,"error":null})
+    }
+    #[::core::prelude::v1::test]
+    fn busy_start_keeps_the_observation_and_can_retry_without_a_click() {
+        let mut driver = Driver::default();
+        driver.refresh(|_, _| Ok(loading("old", 1)));
+        assert_eq!(driver.try_refresh(|_, _| Err(true)), None);
+        assert_eq!(driver.current.as_ref().unwrap().request_id, "old");
+        assert_eq!(
+            driver.try_refresh(|_, _| Ok(loading("new", 2))),
+            Some(Phase::Loading)
+        );
+        assert_eq!(driver.current.as_ref().unwrap().request_id, "new");
     }
     #[::core::prelude::v1::test]
     fn refresh_is_explicit_and_status_never_issues_another_refresh() {
@@ -239,6 +290,7 @@ mod tests {
                 phase: Phase::Ready {
                     observed_ms: Some(1),
                     buckets: vec![],
+                    reset_credits: None,
                 },
             }),
             closed: false,
@@ -286,6 +338,7 @@ mod tests {
             generation: 7,
             phase: Phase::Ready {
                 observed_ms: Some(1234),
+                reset_credits: None,
                 buckets: vec![Bucket {
                     id: "codex".into(),
                     name: None,
@@ -296,6 +349,7 @@ mod tests {
                         unlimited: Some(false),
                         balance: Some("3".into()),
                     }),
+                    individual_amounts: None,
                     notes: vec![],
                 }],
             },

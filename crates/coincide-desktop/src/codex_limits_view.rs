@@ -18,7 +18,19 @@ pub struct Bucket {
     pub plan: Option<String>,
     pub windows: Vec<WindowReport>,
     pub credits: Option<Credits>,
+    pub individual_amounts: Option<IndividualAmounts>,
     pub notes: Vec<String>,
+}
+#[derive(Clone, Debug, PartialEq)]
+pub struct IndividualAmounts {
+    pub used: Option<f64>,
+    pub limit: Option<f64>,
+    pub resets: Option<f64>,
+}
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResetCredits {
+    pub available: u64,
+    pub expires: Option<f64>,
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct Credits {
@@ -33,6 +45,7 @@ pub enum Phase {
     Ready {
         observed_ms: Option<u64>,
         buckets: Vec<Bucket>,
+        reset_credits: Option<ResetCredits>,
     },
     Failed(&'static str),
     Closing,
@@ -85,6 +98,14 @@ fn bucket(value: &Value) -> Result<Bucket, ()> {
             balance: optional(&v["balance"], text)?,
         })
     })?;
+    let individual_amounts = optional(&value["individualAmounts"], |v| {
+        v.as_object().ok_or(())?;
+        Ok(IndividualAmounts {
+            used: optional(&v["used"], number)?,
+            limit: optional(&v["limit"], number)?,
+            resets: optional(&v["resetsAtEpochSeconds"], number)?,
+        })
+    })?;
     let notes = value["notes"]
         .as_array()
         .filter(|v| v.len() <= 3)
@@ -108,6 +129,7 @@ fn bucket(value: &Value) -> Result<Bucket, ()> {
         plan: optional(&value["plan"], text)?,
         windows,
         credits,
+        individual_amounts,
         notes,
     })
 }
@@ -170,6 +192,16 @@ pub(super) fn decode_scoped(value: &Value, target: Option<&Value>) -> Result<Obs
             for model in models {
                 buckets.push(bucket(model)?);
             }
+            let reset_credits = optional(&snapshot["resetCredits"], |v| {
+                v.as_object().ok_or(())?;
+                Ok(ResetCredits {
+                    available: v["availableCount"]
+                        .as_u64()
+                        .filter(|n| *n > 0 && *n <= 9_007_199_254_740_992)
+                        .ok_or(())?,
+                    expires: optional(&v["expiresAtEpochSeconds"], number)?,
+                })
+            })?;
             if buckets.is_empty() {
                 return Err(());
             }
@@ -178,6 +210,7 @@ pub(super) fn decode_scoped(value: &Value, target: Option<&Value>) -> Result<Obs
                     v.as_u64().filter(|v| *v > 0).ok_or(())
                 })?,
                 buckets,
+                reset_credits,
             }
         }
         _ => return Err(()),
@@ -293,6 +326,7 @@ impl Render for LimitsView {
             Phase::Ready {
                 observed_ms,
                 buckets,
+                reset_credits,
             } => {
                 body = body.child(format!(
                     "Observed: {}",
@@ -300,6 +334,9 @@ impl Render for LimitsView {
                         .map(|v| utc(v as f64 / 1000.))
                         .unwrap_or_else(|| "time unavailable".into())
                 ));
+                if let Some(resets) = reset_credits {
+                    body = body.child(format!("Limit resets available: {}", resets.available));
+                }
                 for bucket in buckets {
                     let mut row = div()
                         .flex()

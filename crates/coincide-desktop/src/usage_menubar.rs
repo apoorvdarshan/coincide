@@ -27,6 +27,9 @@ struct Bar {
     running: bool,
     was_running: bool,
     last_refresh: Option<Instant>,
+    retry_codex: bool,
+    retry_claude: bool,
+    last_retry: Option<Instant>,
     last_settings: Option<Instant>,
     last_snapshot: Option<Value>,
     last_draw: Option<Instant>,
@@ -89,6 +92,9 @@ impl Bar {
             running: false,
             was_running: false,
             last_refresh: None,
+            retry_codex: false,
+            retry_claude: false,
+            last_retry: None,
             last_settings: None,
             last_snapshot: None,
             last_draw: None,
@@ -105,11 +111,21 @@ impl Bar {
     }
     fn receive_settings(&mut self, settings: Value, now: Instant) {
         if self.settings != settings {
-            if self.settings["providers"] != settings["providers"] {
+            let was_visible = self.visible();
+            if self.settings["providers"] != settings["providers"]
+                || self.settings["usageBrowserFallbackEnabled"]
+                    != settings["usageBrowserFallbackEnabled"]
+                || self.settings["usageBrowserSignIn"] != settings["usageBrowserSignIn"]
+                || self.settings["cursorKeychainUsageEnabled"]
+                    != settings["cursorKeychainUsageEnabled"]
+            {
                 self.cached.clear();
                 self.last_refresh = None;
             }
             self.settings = settings;
+            if !was_visible && self.visible() {
+                self.last_refresh = None;
+            }
             self.last_draw = None;
         }
         self.last_settings = Some(now);
@@ -120,18 +136,19 @@ impl Bar {
         }
         self.last_refresh = Some(now);
         self.history.load_dashboard();
+        self.history.refresh_external(&self.settings);
         if usage_dashboard_ui::provider_id("codex")
             .is_some_and(|id| crate::settings_navigation::provider_enabled(&self.settings, id))
             && !matches!(self.codex.panel.read(cx).phase(), Phase::Loading)
         {
             self.codex.set_context(self.selected.as_ref(), cx);
-            self.codex.refresh(cx);
+            self.retry_codex = !self.codex.try_refresh(cx);
         }
         if usage_dashboard_ui::provider_id("claude")
             .is_some_and(|id| crate::settings_navigation::provider_enabled(&self.settings, id))
             && self.history.dashboard.claude.state != Some(LimitState::Reading)
         {
-            self.history.dashboard.claude.refresh(&self.engine);
+            self.retry_claude = !self.history.dashboard.claude.try_refresh(&self.engine);
         }
     }
     fn tick(
@@ -188,6 +205,7 @@ impl Bar {
         self.was_running = running;
         if target_changed {
             self.codex.set_context(self.selected.as_ref(), cx);
+            self.retry_codex = false;
             self.last_refresh = None;
         }
         let due = self.last_refresh.is_none_or(|at| {
@@ -198,6 +216,28 @@ impl Bar {
             self.refresh(cx, now);
         }
         let history_changed = self.history.poll(cx);
+        let history_busy = self.history.dashboard.data.is_none()
+            && self.history.dashboard.error.as_deref() == Some(crate::usage_dashboard::USAGE_BUSY);
+        if (self.retry_codex || self.retry_claude || history_busy)
+            && self
+                .last_retry
+                .is_none_or(|at| now.duration_since(at) >= Duration::from_secs(2))
+        {
+            self.last_retry = Some(now);
+            if history_busy && !self.history.dashboard.loading {
+                self.history.load_dashboard();
+            }
+            if self.retry_codex {
+                self.retry_codex = usage_dashboard_ui::provider_id("codex").is_some_and(|id| {
+                    crate::settings_navigation::provider_enabled(&self.settings, id)
+                }) && !self.codex.try_refresh(cx);
+            }
+            if self.retry_claude {
+                self.retry_claude = usage_dashboard_ui::provider_id("claude").is_some_and(|id| {
+                    crate::settings_navigation::provider_enabled(&self.settings, id)
+                }) && !self.history.dashboard.claude.try_refresh(&self.engine);
+            }
+        }
         let prior = self.codex.panel.read(cx).phase().clone();
         self.codex.poll(cx);
         let changed = history_changed || prior != *self.codex.panel.read(cx).phase();
@@ -211,8 +251,15 @@ impl Bar {
             let key = (card.account.provider.to_owned(), card.account.id.clone());
             if let LimitState::Ready(limits) = &card.state {
                 self.cached.insert(key, limits.clone());
-            } else if let Some(previous) = self.cached.get(&key) {
+            } else if matches!(card.state, LimitState::Reading | LimitState::NotChecked)
+                && let Some(previous) = self.cached.get(&key)
+            {
                 card.state = LimitState::Ready(previous.clone());
+            } else if matches!(
+                card.state,
+                LimitState::Unavailable(_) | LimitState::NotRead(_)
+            ) {
+                self.cached.remove(&key);
             }
         }
         if changed
@@ -504,11 +551,17 @@ pub fn reuse_cached(cx: &App, cards: &mut [usage_dashboard_ui::Card]) {
         return;
     };
     for card in cards {
+        if card.account.is_default()
+            && let Some(state) = bar.history.dashboard.external.get(card.account.provider)
+            && !matches!(state, LimitState::NotChecked | LimitState::Reading)
+        {
+            card.state = state.clone();
+        }
         let key = (card.account.provider.to_owned(), card.account.id.clone());
         if let Some(limits) = bar.cached.get(&key) {
             let use_cached = match &card.state {
                 LimitState::Ready(current) => limits.checked_at > current.checked_at,
-                LimitState::Reading => false,
+                LimitState::Reading | LimitState::Unavailable(_) | LimitState::NotRead(_) => false,
                 _ => true,
             };
             if use_cached {

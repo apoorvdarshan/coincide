@@ -1014,6 +1014,7 @@ impl Coincide {
         if self.pending_successor_waiting(id) {
             return;
         }
+        let had_pending = self.pending_drafts.contains_key(id);
         let engine = self.engine.clone();
         if let Some(error) = draft_close::save_one(&mut self.pending_drafts, id, |id, text| {
             persist_pending_draft(&engine, id, text)
@@ -1024,6 +1025,54 @@ impl Coincide {
             if error != "App is busy processing another operation; try again shortly" {
                 self.status = format!("Draft remains in this window; not yet saved: {error}");
             }
+        }
+        if had_pending && !self.pending_drafts.contains_key(id) {
+            self.draft_saver.invalidate_thread(id);
+        }
+    }
+    fn collect_draft_results(&mut self) -> bool {
+        let mut changed = false;
+        for completion in self.draft_saver.poll() {
+            if self.pending_successor_waiting(&completion.thread) {
+                continue;
+            }
+            let Some(pending) = self.pending_drafts.get_mut(&completion.thread) else {
+                continue;
+            };
+            if pending.text != completion.text {
+                continue;
+            }
+            match completion.outcome {
+                draft_saver::Outcome::Saved => {
+                    self.pending_drafts.remove(&completion.thread);
+                    changed = true;
+                }
+                draft_saver::Outcome::Busy => {}
+                draft_saver::Outcome::Failed(error) => {
+                    pending.retry = false;
+                    pending.failed = true;
+                    self.status = format!("Draft remains in this window; not yet saved: {error}");
+                    changed = true;
+                }
+            }
+        }
+        changed
+    }
+    fn poll_draft_saves(&mut self, cx: &mut Context<Self>) {
+        if self.collect_draft_results() {
+            // A waiting thread switch advances from render; a save receipt or
+            // an actual failure must schedule that next frame even when idle.
+            cx.notify();
+        }
+        if !self.draft_saver.available() || !self.draft_saver.idle() {
+            return;
+        }
+        let next = self.pending_drafts.iter().find_map(|(id, draft)| {
+            (draft.retry && !self.pending_successor_waiting(id))
+                .then(|| (id.clone(), draft.text.clone()))
+        });
+        if let Some((id, text)) = next {
+            self.draft_saver.record(&id, &text);
         }
     }
     fn pending_successor_waiting(&self, id: &str) -> bool {
@@ -1057,6 +1106,7 @@ impl Coincide {
         }
     }
     fn flush_pending_drafts(&mut self) -> bool {
+        self.collect_draft_results();
         for id in self.pending_drafts.keys().cloned().collect::<Vec<_>>() {
             self.save_pending_draft(&id);
         }
@@ -1489,9 +1539,6 @@ impl Coincide {
                 }
             }),
             cx.subscribe(&composer, |this, _, event, cx| {
-                if matches!(event, InputEvent::Blur) {
-                    this.flush_pending_drafts();
-                }
                 if matches!(event, InputEvent::Change) {this.thread_bulk.invalidate();this.composer_files.text_changed();this.invalidate_terminal_contexts(cx);}
                 if matches!(event, InputEvent::Change) {
                     this.record_composer_draft(cx);
@@ -2566,7 +2613,32 @@ impl Coincide {
         complete
     }
     fn select(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
-        self.flush_pending_drafts();
+        self.collect_draft_results();
+        let previous = self.selected.as_ref().map(|thread| text(thread, "id"));
+        if previous.as_deref() == Some(id) && self.pending_select.as_deref() != Some(id) {
+            // Selecting the current thread cancels a queued navigation.
+            self.pending_select = None;
+        }
+        if let Some(previous) = previous.filter(|previous| previous != id)
+            && let Some(draft) = self.pending_drafts.get(&previous)
+        {
+            let expedite = self.pending_select.as_deref() != Some(id)
+                && draft.retry
+                && !self.pending_successor_waiting(&previous);
+            let value = draft.text.clone();
+            self.pending_select = Some(id.to_owned());
+            if expedite && self.draft_saver.available() {
+                self.draft_saver.record_now(&previous, &value);
+            }
+            if !self.draft_saver.available() {
+                self.flush_pending_drafts();
+            }
+            if self.pending_drafts.contains_key(&previous) {
+                // A late write for the old thread must not land after the new
+                // thread starts sending. Retry navigation when the save has a receipt.
+                return;
+            }
+        }
         self.startup_selection_pending = false;
         self.composer_files.invalidate();
         self.thread_bulk.close_selection();
@@ -3697,8 +3769,17 @@ impl Coincide {
         {
             self.request_quit(window, cx);
         }
-        // Persistence must precede either close path, including API app.quit.
-        let drafts_saved = self.flush_pending_drafts();
+        // Normal typing and navigation never write a long transcript on the
+        // main thread. Close and quit retain their explicit persistence fence.
+        self.poll_draft_saves(cx);
+        let drafts_saved = if self.media.close_requested
+            || self.media.shutdown_requested
+            || !self.draft_saver.available()
+        {
+            self.flush_pending_drafts()
+        } else {
+            self.pending_drafts.is_empty()
+        };
         self.sync_media_context(cx);
         self.poll_media_parent(cx);
         self.poll_thread_bulk(window, cx);

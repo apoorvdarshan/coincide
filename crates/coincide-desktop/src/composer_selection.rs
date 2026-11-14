@@ -3788,14 +3788,8 @@ impl Coincide {
                         slot.child(Icon::new(gpui_kit::assets::IconName::Check).xsmall())
                     }),
             );
-        if mixes && let Some(image) = chat_layout::provider_logo(provider) {
-            row_view = row_view.child(
-                img(image)
-                    .w(px(14.))
-                    .h(px(14.))
-                    .rounded(px(3.))
-                    .bg(rgb(0x2b2b2b)),
-            );
+        if mixes && let Some(image) = chat_layout::provider_mark(provider, 14.) {
+            row_view = row_view.child(image);
         }
         row_view
             .child(div().flex_1().min_w_0().truncate().text_sm().child(name))
@@ -3900,16 +3894,10 @@ impl Coincide {
                     .w(px(38.))
                     .rounded(px(7.))
                     .when(selected, |button| button.bg(self.picker_selection_bg()))
-                    .when_some(chat_layout::provider_logo(&id), |button, image| {
-                        button.child(
-                            img(image)
-                                .w(px(18.))
-                                .h(px(18.))
-                                .rounded(px(4.))
-                                .bg(rgb(0x2b2b2b)),
-                        )
+                    .when_some(chat_layout::provider_mark(&id, 18.), |button, image| {
+                        button.child(image)
                     })
-                    .when(chat_layout::provider_logo(&id).is_none(), |button| {
+                    .when(!chat_layout::provider_known(&id), |button| {
                         button.icon(gpui_kit::assets::IconName::Cpu)
                     })
                     .on_click(cx.listener(move |this, _, _, cx| {

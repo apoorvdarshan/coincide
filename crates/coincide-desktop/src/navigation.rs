@@ -396,12 +396,9 @@ impl Coincide {
             _ => match thread
                 .navigation
                 .as_ref()
-                .and_then(|meta| chat_layout::provider_logo(meta.provider.as_deref()?))
+                .and_then(|meta| chat_layout::provider_mark(meta.provider.as_deref()?, 14.))
             {
-                // Monochrome branding keeps a light backing in either appearance.
-                Some(logo) => {
-                    leading.child(img(logo).size(px(14.)).rounded(px(3.)).bg(rgb(0x2b2b2b)))
-                }
+                Some(logo) => leading.child(logo),
                 None => leading.child(Icon::new(IconName::Cpu).xsmall()),
             },
         };

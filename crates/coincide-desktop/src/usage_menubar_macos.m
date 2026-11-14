@@ -43,6 +43,20 @@ static NSColor *UsageProviderColor(NSString *provider) {
         return [NSColor colorWithSRGBRed:((hex>>16)&255)/255. green:((hex>>8)&255)/255. blue:(hex&255)/255. alpha:1];
     }];
 }
+static NSImage *UsageLogo(NSString *provider, NSImage *logo, CGFloat size) {
+    if (!logo) return nil;
+    BOOL originalColor = [provider isEqual:@"claude"] || [provider isEqual:@"antigravity"];
+    return [NSImage imageWithSize:NSMakeSize(size,size) flipped:NO drawingHandler:^BOOL(NSRect rect) {
+        [logo drawInRect:rect fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1];
+        if (!originalColor) {
+            // The original monochrome assets are templates. Adapt their ink to
+            // the current appearance while preserving their transparent shape.
+            [NSColor.labelColor setFill];
+            NSRectFillUsingOperation(rect, NSCompositingOperationSourceAtop);
+        }
+        return YES;
+    }];
+}
 @implementation CoincideUsagePanel
 - (BOOL)canBecomeKeyWindow { return YES; }
 - (BOOL)canBecomeMainWindow { return NO; }
@@ -66,6 +80,12 @@ static NSColor *UsageProviderColor(NSString *provider) {
 @end
 
 static NSString *UsageString(id value) { return [value isKindOfClass:NSString.class] ? value : @""; }
+int coincide_usage_default_browser_is_chrome(void) {
+    NSURL *site = [NSURL URLWithString:@"https://opencode.ai/"];
+    NSURL *application = [[NSWorkspace sharedWorkspace] URLForApplicationToOpenURL:site];
+    NSString *identifier = application ? [[NSBundle bundleWithURL:application] bundleIdentifier] : nil;
+    return [identifier isEqualToString:@"com.google.Chrome"] ? 1 : 0;
+}
 static NSArray *UsageArray(id value) { return [value isKindOfClass:NSArray.class] ? value : @[]; }
 static NSDictionary *UsageDict(id value) { return [value isKindOfClass:NSDictionary.class] ? value : @{}; }
 static NSTextField *UsageLabel(NSString *text, CGFloat size, NSFontWeight weight, NSColor *color) {
@@ -123,17 +143,18 @@ static NSStackView *UsageStack(NSUserInterfaceLayoutOrientation orientation, CGF
     NSArray *readings = UsageArray(self.snapshot[@"readings"]);
     if (readings.count == 0) readings = @[@{}];
     NSFont *font = [NSFont monospacedDigitSystemFontOfSize:NSFont.systemFontSize - 1 weight:NSFontWeightMedium];
-    NSDictionary *attributes = @{NSFontAttributeName:font, NSForegroundColorAttributeName:NSColor.blackColor};
+    NSDictionary *attributes = @{NSFontAttributeName:font, NSForegroundColorAttributeName:NSColor.labelColor};
     CGFloat icon = 15, height = 18, gap = 3, spacing = 7, width = 0;
     NSMutableArray *segments = [NSMutableArray new];
     for (id raw in readings) {
         NSDictionary *reading = UsageDict(raw);
         NSString *provider = UsageString(reading[@"provider"]);
-        NSImage *image = self.logos[provider] ?: [self gauge];
+        NSImage *logo = self.logos[provider];
+        NSImage *image = logo ? UsageLogo(provider, logo, icon) : [self gauge];
         NSString *text = UsageString(reading[@"text"]);
         NSAttributedString *label = [[NSAttributedString alloc] initWithString:text attributes:attributes];
         CGFloat segmentWidth = icon + (text.length ? gap + ceil(label.size.width) : 0);
-        [segments addObject:@{ @"image": image ?: NSNull.null, @"text": label, @"width": @(segmentWidth) }];
+        [segments addObject:@{ @"image": image ?: NSNull.null, @"text": label, @"width": @(segmentWidth), @"fallback": @(!logo) }];
         width += segmentWidth;
     }
     width += spacing * MAX(0, (NSInteger)segments.count - 1);
@@ -144,15 +165,17 @@ static NSStackView *UsageStack(NSUserInterfaceLayoutOrientation orientation, CGF
             NSRect iconRect = NSMakeRect(x, (height - icon) / 2, icon, icon);
             NSImage *image = segment[@"image"] == NSNull.null ? nil : segment[@"image"];
             [image drawInRect:iconRect fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1];
-            [NSColor.blackColor setFill];
-            NSRectFillUsingOperation(iconRect, NSCompositingOperationSourceAtop);
+            if ([segment[@"fallback"] boolValue]) {
+                [NSColor.labelColor setFill];
+                NSRectFillUsingOperation(iconRect, NSCompositingOperationSourceAtop);
+            }
             NSAttributedString *label = segment[@"text"];
             if (label.length) [label drawAtPoint:NSMakePoint(NSMaxX(iconRect) + gap, (height - label.size.height) / 2)];
             x += [segment[@"width"] doubleValue] + spacing;
         }
         return YES;
     }];
-    result.template = YES;
+    result.template = NO;
     return result;
 }
 - (void)updateButton {
@@ -319,7 +342,8 @@ static NSStackView *UsageStack(NSUserInterfaceLayoutOrientation orientation, CGF
     for (id raw in UsageArray(self.snapshot[@"accounts"])) {
         NSDictionary *account = UsageDict(raw); NSStackView *card = UsageStack(NSUserInterfaceLayoutOrientationVertical, 4);
         NSStackView *name = UsageStack(NSUserInterfaceLayoutOrientationHorizontal, 6);
-        NSImage *logo = self.logos[UsageString(account[@"provider"])];
+        NSString *provider = UsageString(account[@"provider"]);
+        NSImage *logo = UsageLogo(provider, self.logos[provider], 15);
         if (logo) { NSImageView *image = [[NSImageView alloc] initWithFrame:NSMakeRect(0,0,15,15)]; image.image = logo; [image.widthAnchor constraintEqualToConstant:15].active=YES; [image.heightAnchor constraintEqualToConstant:15].active=YES; [name addArrangedSubview:image]; }
         [name addArrangedSubview:UsageLabel(UsageString(account[@"title"]), 12, NSFontWeightSemibold, NSColor.labelColor)];
         NSString *plan = UsageString(account[@"plan"]);
@@ -355,7 +379,14 @@ static NSStackView *UsageStack(NSUserInterfaceLayoutOrientation orientation, CGF
             if (detail.length) [card addArrangedSubview:UsageLabel(detail,10,NSFontWeightRegular,NSColor.secondaryLabelColor)];
         }
         NSString *placeholder = UsageString(account[@"placeholder"]);
-        if (rows.count == 0 && placeholder.length) [card addArrangedSubview:UsageLabel(placeholder,10,NSFontWeightRegular,NSColor.secondaryLabelColor)];
+        if (rows.count == 0 && placeholder.length) {
+            NSTextField *message = UsageLabel(placeholder, 10, NSFontWeightRegular, NSColor.secondaryLabelColor);
+            message.maximumNumberOfLines = 2;
+            message.lineBreakMode = NSLineBreakByWordWrapping;
+            message.preferredMaxLayoutWidth = 300;
+            [message.widthAnchor constraintEqualToConstant:300].active = YES;
+            [card addArrangedSubview:message];
+        }
         NSString *tracked = UsageString(account[@"tracked"]);
         if (tracked.length) [card addArrangedSubview:UsageLabel(tracked,10,NSFontWeightRegular,NSColor.secondaryLabelColor)];
         NSClickGestureRecognizer *openCard = [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(openUsage:)];

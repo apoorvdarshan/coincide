@@ -1,12 +1,13 @@
 //! Shared chat structure and geometry, following the Swift desktop reference.
 use super::*;
 
-// Existing provider-owned branding, already used by the Coincide website.
-// Keep bytes local and embedded; rendering never downloads an image.
+// Provider marks stay local and embedded. The monochrome PDFs and their SVG
+// equivalents come from the Swift app's original template assets; Claude and
+// Antigravity retain their original colored artwork.
 pub(super) const PROVIDER_LOGOS: [(&str, &[u8]); 6] = [
     (
         "codex",
-        include_bytes!("../assets/providers/logo-codex.png"),
+        include_bytes!("../assets/providers/logo-codex.pdf"),
     ),
     (
         "claude",
@@ -14,12 +15,12 @@ pub(super) const PROVIDER_LOGOS: [(&str, &[u8]); 6] = [
     ),
     (
         "cursor",
-        include_bytes!("../assets/providers/logo-cursor.png"),
+        include_bytes!("../assets/providers/logo-cursor.pdf"),
     ),
-    ("grok", include_bytes!("../assets/providers/logo-grok.png")),
+    ("grok", include_bytes!("../assets/providers/logo-grok.pdf")),
     (
         "opencode",
-        include_bytes!("../assets/providers/logo-opencode.png"),
+        include_bytes!("../assets/providers/logo-opencode.pdf"),
     ),
     (
         "antigravity",
@@ -27,13 +28,28 @@ pub(super) const PROVIDER_LOGOS: [(&str, &[u8]); 6] = [
     ),
 ];
 
-pub(super) fn provider_logo(provider: &str) -> Option<Arc<Image>> {
+fn provider_template(provider: &str) -> Option<&'static [u8]> {
+    Some(match provider {
+        "codex" => include_bytes!("../assets/providers/logo-codex.svg"),
+        "cursor" => include_bytes!("../assets/providers/logo-cursor.svg"),
+        "grok" => include_bytes!("../assets/providers/logo-grok.svg"),
+        "opencode" => include_bytes!("../assets/providers/logo-opencode.svg"),
+        _ => return None,
+    })
+}
+
+pub(super) fn provider_known(provider: &str) -> bool {
+    PROVIDER_LOGOS.iter().any(|(name, _)| *name == provider)
+}
+
+fn provider_color_logo(provider: &str) -> Option<Arc<Image>> {
     static IMAGES: std::sync::OnceLock<std::collections::HashMap<&str, Arc<Image>>> =
         std::sync::OnceLock::new();
     IMAGES
         .get_or_init(|| {
             PROVIDER_LOGOS
                 .into_iter()
+                .filter(|(name, _)| provider_template(name).is_none())
                 .map(|(name, bytes)| {
                     (
                         name,
@@ -46,25 +62,56 @@ pub(super) fn provider_logo(provider: &str) -> Option<Arc<Image>> {
         .cloned()
 }
 
+#[derive(IntoElement)]
+struct ProviderTemplate {
+    svg: &'static [u8],
+    size: f32,
+}
+
+impl RenderOnce for ProviderTemplate {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let ink = if cx.theme().is_dark() {
+            0xf4f4f4
+        } else {
+            0x171717
+        };
+        Icon::default()
+            .data(self.svg)
+            .size(px(self.size))
+            .text_color(rgb(ink))
+    }
+}
+
+/// Draw the provider's own mark without an invented background. Monochrome
+/// templates use neutral ink appropriate for the current appearance.
+pub(super) fn provider_mark(provider: &str, size: f32) -> Option<Div> {
+    let mark = if let Some(svg) = provider_template(provider) {
+        ProviderTemplate { svg, size }.into_any_element()
+    } else {
+        img(provider_color_logo(provider)?)
+            .size(px(size))
+            .into_any_element()
+    };
+    Some(
+        div()
+            .size(px(size))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(mark),
+    )
+}
+
 pub(super) fn provider_label(provider: &str, label: String) -> AnyElement {
-    let image = provider_logo(provider);
+    let image = provider_mark(provider, 15.);
     div()
         .flex()
         .items_center()
         .gap(px(5.))
         .min_w_0()
-        .when_some(image.clone(), |view, image| {
-            // White template branding on a dark tile stays legible in either
-            // app appearance.
-            view.child(
-                img(image.clone())
-                    .w(px(13.))
-                    .h(px(13.))
-                    .rounded(px(3.))
-                    .bg(rgb(0x2b2b2b)),
-            )
-        })
-        .when(image.is_none(), |view| {
+        .when_some(image, |view, image| view.child(image))
+        .when(!provider_known(provider), |view| {
             view.child(Icon::new(gpui_kit::assets::IconName::Cpu).xsmall())
         })
         .child(div().truncate().child(label))
@@ -213,16 +260,34 @@ impl Coincide {
 mod tests {
     use super::{
         ComposerSizing, PROVIDER_LOGOS, composer_height, is_synthetic_turn_end, notice_label,
+        provider_known, provider_template,
     };
 
     #[test]
-    fn all_supported_provider_logos_are_local_png_assets() {
+    fn provider_marks_render_their_original_templates_and_colors() {
+        let renderer = gpui_kit::SvgRenderer::new(std::sync::Arc::new(()));
         let mut names = std::collections::HashSet::new();
         for (provider, bytes) in PROVIDER_LOGOS {
             assert!(names.insert(provider));
-            assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"), "{provider}");
+            assert!(provider_known(provider), "{provider}");
+            if let Some(template) = provider_template(provider) {
+                assert!(bytes.starts_with(b"%PDF"), "{provider}");
+                let rendered = renderer.render_single_frame(template, 1.).unwrap();
+                let pixels = rendered.as_bytes(0).unwrap();
+                assert!(pixels.chunks_exact(4).any(|p| p[3] > 0), "{provider}");
+                assert!(pixels.chunks_exact(4).any(|p| p[3] == 0), "{provider}");
+            } else {
+                let image = image::load_from_memory(bytes).unwrap().to_rgba8();
+                assert!(
+                    image
+                        .pixels()
+                        .any(|p| p[3] > 0 && (p[0] != p[1] || p[1] != p[2])),
+                    "{provider} must retain its original colors"
+                );
+            }
         }
         assert_eq!(names.len(), 6);
+        assert!(!provider_known("unknown"));
     }
 
     #[test]

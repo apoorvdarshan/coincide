@@ -3,6 +3,9 @@
 use super::*;
 #[path = "provider_cursor_auth.rs"]
 mod auth;
+#[cfg(target_os = "macos")]
+pub(crate) use auth::capture as usage_keychain_capture;
+pub(crate) use auth::native_access_token as usage_keychain_access_token;
 use rusqlite::{
     Connection, OpenFlags,
     backup::{Backup, StepResult},
