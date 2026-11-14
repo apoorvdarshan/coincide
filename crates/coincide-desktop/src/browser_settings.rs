@@ -1497,7 +1497,7 @@ impl BrowserSettings {
             );
             view = view.child(div().flex().items_center().justify_between().gap_3()
                 .child(div().flex_1().min_w_0().child("Use private sessions").child(div().text_xs().whitespace_normal().child("New browser sessions use temporary storage, cleared when Coincide quits. Existing conversations keep their selected profile.")))
-                .child(Switch::new("browser-private-default").color(gpui_kit::rgb(0xe4e9f2))
+                .child(Switch::new("browser-private-default")
                     .checked(snapshot.private_by_default).disabled(busy)
                     .accessibility_label("Use private sessions")
                     .on_click(cx.listener(|this, enabled: &bool, _, cx| {
@@ -1574,7 +1574,7 @@ impl BrowserSettings {
         let expected = default_control.unwrap_or(false);
         view = view.child(div().flex().items_center().justify_between().gap_3()
             .child(div().flex_1().min_w_0().child("Agent Control by default").child(div().text_xs().whitespace_normal().child("Let agents use their conversation’s browser. Each conversation can override this in its browser toolbar.")))
-            .child(Switch::new("browser-default-agent-control").color(gpui_kit::rgb(0xe4e9f2)).checked(expected).disabled(default_control.is_none()).accessibility_label("Agent Control by default")
+            .child(Switch::new("browser-default-agent-control").checked(expected).disabled(default_control.is_none()).accessibility_label("Agent Control by default")
                 .on_click(cx.listener(move |this, enabled: &bool, _, cx| {
                     let result = (|| -> Result<()> {
                         let shared = this.engine.as_ref().ok_or_else(|| anyhow::anyhow!("Browser is unavailable"))?;

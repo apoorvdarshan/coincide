@@ -655,7 +655,7 @@ impl Coincide {
                         )))
                         .accessibility_label(format!("Use {}", descriptor.display_name))
                         .checked(enabled)
-                        .color(self.color(0xe4e9f2))
+                        .color(self.color(0x98b1d4))
                         .on_click(cx.listener(
                             move |this, value: &bool, window, cx| {
                                 this.set_settings_provider_enabled(
@@ -802,7 +802,7 @@ impl Coincide {
                         gpui_kit::component::switch::Switch::new("provider-preferences-enabled")
                             .accessibility_label(format!("Use {}", section.label()))
                             .checked(enabled)
-                            .color(self.color(0xe4e9f2))
+                            .color(self.color(0x98b1d4))
                             .on_click(cx.listener(move |this, value: &bool, window, cx| {
                                 this.set_settings_provider_enabled(
                                     provider, enabled, *value, window, cx,

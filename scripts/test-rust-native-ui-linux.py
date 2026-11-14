@@ -92,7 +92,7 @@ def main():
         command("xdotool", "windowfocus", "--sync", window, env=env)
         return window
 
-    def capture(window, stage, expected=None):
+    def capture(window, stage, expected=None, settings_title=None):
         path = artifacts / f"{stage}.png"
         # Core persistence and a mapped window do not acknowledge presentation
         # of the new widget contents. Observe actual pixels/text under the
@@ -115,8 +115,17 @@ def main():
                 ocr_path = observed.with_name(observed.stem + "-ocr-region.png")
                 crop.resize((crop.width * 2, crop.height * 2), Image.Resampling.LANCZOS).save(ocr_path)
                 segmentation = "6"
+            elif settings_title is not None:
+                # The fixture uses the default 220-point Settings sidebar at
+                # X11 scale 1. Read only the detail pane: a search result or
+                # navigation label must not make a stale page look ready.
+                crop = image.crop((220, 0, image.width, image.height))
+                ocr_path = observed.with_name(observed.stem + "-ocr-region.png")
+                crop.save(ocr_path)
             text = command("tesseract", str(ocr_path), "stdout", "--psm", segmentation, env=env)
             observed.with_suffix(".txt").write_text(text)
+            if settings_title:
+                assert settings_title.lower() in text.lower(), f"Expected settings title {settings_title!r} in {stage}"
             if expected:
                 assert expected.lower() in text.lower(), f"Expected rendered text {expected!r} in {stage}"
             if stage == "reopened-draft":
@@ -437,7 +446,7 @@ def main():
             # not the provider is installed on this runner; a configured
             # provider's "Saved settings loaded" line is checked below. Never
             # click Check/Sign In or execute a provider for this check.
-            capture(settings_window, stage, "Reload Saved Settings" if provider_page else body_text)
+            capture(settings_window, stage, "Reload Saved Settings" if provider_page else body_text, settings_title=title)
             report["settingsScreens"].append({"title": title, "artifact": stage + ".png", "nativeTitleVerified": True, "savedConfigurationLoaded": provider_page})
         click_rendered_word(settings_window, "settings-all-pages-return-general", "General")
         wait_for("native General title after all pages", lambda: command("xdotool", "getwindowname", settings_window, env=env).strip() == "General")

@@ -172,7 +172,6 @@ impl Coincide {
                 ))
                 .child(
                     Switch::new("passkeys-use-bitwarden")
-                        .color(gpui_kit::rgb(0xe4e9f2))
                         .checked(preferences.uses_bitwarden)
                         .on_click(cx.listener(|this, checked, window, cx| {
                             this.change_setting(
@@ -201,7 +200,6 @@ impl Coincide {
                     )
                     .child(
                         Switch::new("passkeys-confirm-touch-id")
-                            .color(gpui_kit::rgb(0xe4e9f2))
                             .checked(preferences.always_verifies)
                             .on_click(cx.listener(|this, checked, window, cx| {
                                 this.change_setting(
