@@ -780,9 +780,13 @@ fn watch_loop(shared: Arc<Shared>) {
         if sessions.is_empty() {
             continue;
         }
-        let current = shared.adapter.revision();
-        let changed = current != revision;
-        revision = current;
+        let Some(current) = shared.adapter.revision() else {
+            // Keep the last confirmed revision when the engine is busy. An
+            // unavailable observation is not a change to an empty state.
+            continue;
+        };
+        let changed = Some(current) != revision;
+        revision = Some(current);
         workspace_dirty |= changed;
         let workspace = workspace_dirty && last_workspace.elapsed() >= WORKSPACE_INTERVAL;
         if !changed && !workspace {
@@ -796,8 +800,14 @@ fn watch_loop(shared: Arc<Shared>) {
             if shared.stop.load(Ordering::Relaxed) {
                 return;
             }
-            if let Ok(mut session) = session.lock() {
-                shared.with_context(|context| session.refresh(context, workspace));
+            // One phone may be waiting on a provider's acknowledgement. Do
+            // not let that session stall updates for every other phone.
+            if let Ok(mut session) = session.try_lock() {
+                if !shared.with_context(|context| session.refresh(context, workspace)) {
+                    workspace_dirty = true;
+                }
+            } else {
+                workspace_dirty = true;
             }
         }
     }

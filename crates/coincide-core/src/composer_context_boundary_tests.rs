@@ -231,6 +231,36 @@ fn provider_boundary_fixture_child() {
     valid_context_reaches_provider_and_historical_handoff(&root.join("valid"));
     failed_send_persistence_never_launches_or_clears(&root.join("failed-save"));
     background_dispatch_keeps_unrelated_draft_context(&root.join("background"));
+    remote_dispatch_keeps_unrelated_draft_context(&root.join("remote"));
+}
+
+#[cfg(unix)]
+fn remote_dispatch_keeps_unrelated_draft_context(root: &Path) {
+    let (mut engine, id) = fixture(root);
+    let mut thread = engine.store.thread(&id).unwrap();
+    thread["draftContext"] = json!([quote(12, "private desktop draft reference")]);
+    thread["rustDraftImages"] = json!([{"unknown":"retain the desktop draft image"}]);
+    engine.store.save(&thread).unwrap();
+    let mut changed = thread.clone();
+    changed["selection"]["provider"] = json!("codex");
+    engine.store.save(&changed).unwrap();
+    assert!(engine.send_remote_text(&thread, "phone message").is_err());
+    assert_eq!(engine.store.thread(&id).unwrap(), changed);
+    assert!(!root.join("launches.jsonl").exists());
+    engine.store.save(&thread).unwrap();
+    engine.send_remote_text(&thread, "phone message").unwrap();
+    let admitted = engine.store.thread(&id).unwrap();
+    assert_eq!(admitted["draft"], thread["draft"]);
+    assert_eq!(admitted["draftContext"], thread["draftContext"]);
+    assert_eq!(admitted["rustDraftImages"], thread["rustDraftImages"]);
+    let item = admitted["items"].as_array().unwrap().last().unwrap();
+    assert_eq!(item["text"], "phone message");
+    assert!(item["context"].is_null() && item["rustImages"].is_null());
+    wait_done(&mut engine);
+    let prompts = prompts(root);
+    assert_eq!(prompts.len(), 1);
+    assert!(prompts[0].ends_with("phone message"));
+    assert!(!prompts[0].contains("private desktop draft reference"));
 }
 #[cfg(unix)]
 fn rejected_context_never_launches_or_mutates(root: &Path) {

@@ -261,13 +261,14 @@ impl Session {
             Request::Ping => self.respond(id, "ok", None),
             Request::Workspace { include_archived } => {
                 self.includes_archived = include_archived;
-                let workspace = serde_json::to_value(adapter.workspace(include_archived, &runs())?)
-                    .map_err(|e| RemoteError::failed(e.to_string()))?;
+                let workspace =
+                    serde_json::to_value(adapter.workspace(include_archived, &runs()?)?)
+                        .map_err(|e| RemoteError::failed(e.to_string()))?;
                 self.last_workspace = Some(workspace.clone());
                 self.respond(id, "workspace", Some(workspace));
             }
             Request::OpenThread { thread_id, limit } => {
-                let runs = runs();
+                let runs = runs()?;
                 let (transcript, document) = adapter.transcript(thread_id, limit, &runs)?;
                 self.open.insert(
                     thread_id,
@@ -287,17 +288,15 @@ impl Session {
                 before_index,
                 limit,
             } => {
-                let page = adapter.items_before(thread_id, before_index, limit, &runs())?;
+                let page = adapter.items_before(thread_id, before_index, limit, &runs()?)?;
                 self.respond(id, "items", serde_json::to_value(page).ok());
             }
             Request::MarkSeen { thread_id } => {
-                if !adapter.has_thread(thread_id) {
-                    return Err(RemoteError::thread_not_found());
-                }
+                adapter.require_thread(thread_id)?;
                 return Err(RemoteError::unsupported("markSeen"));
             }
             Request::Send(send) => {
-                let delivery = adapter.send(&send, &runs())?;
+                let delivery = adapter.send(&send, &runs()?)?;
                 self.respond(id, "delivery", Some(protocol::value_body(delivery)));
             }
             Request::RemoveQueued {
@@ -308,7 +307,7 @@ impl Session {
                 self.respond(id, "ok", None);
             }
             Request::Stop { thread_id } => {
-                adapter.stop(thread_id, &runs())?;
+                adapter.stop(thread_id, &runs()?)?;
                 self.respond(id, "ok", None);
             }
             Request::Respond {
@@ -317,7 +316,7 @@ impl Session {
                 option_id,
                 ..
             } => {
-                adapter.respond(thread_id, item_id, &option_id, &runs())?;
+                adapter.respond(thread_id, item_id, &option_id, &runs()?)?;
                 self.respond(id, "ok", None);
             }
             Request::Answer {
@@ -325,11 +324,11 @@ impl Session {
                 item_id,
                 answers,
             } => {
-                adapter.answer(thread_id, item_id, &answers, &runs())?;
+                adapter.answer(thread_id, item_id, &answers, &runs()?)?;
                 self.respond(id, "ok", None);
             }
             Request::NewThread { project_id } => {
-                let thread = adapter.new_thread(project_id, &runs())?;
+                let thread = adapter.new_thread(project_id, &runs()?)?;
                 self.respond(id, "thread", Some(protocol::value_body(thread)));
             }
             Request::ThreadAction { thread_id, action } => {
@@ -358,47 +357,60 @@ impl Session {
 
     /// Sends what changed since the phone last heard: open threads' items and
     /// turns always, the sidebar and server settings when `workspace` is due.
-    pub fn refresh(&mut self, context: &Context<'_>, workspace: bool) {
+    pub fn refresh(&mut self, context: &Context<'_>, workspace: bool) -> bool {
         if self.device_id().is_none() {
-            return;
+            return true;
         }
         let adapter = context.adapter;
-        let runs = adapter.runs();
+        let Ok(runs) = adapter.runs() else {
+            // A busy engine is a temporary failure, not an empty workspace.
+            return false;
+        };
+        let mut complete = true;
         if workspace {
             let info = serde_json::to_value((context.server_info)()).ok();
             if info.is_some() && info != self.last_server {
                 self.last_server = info.clone();
                 self.send(protocol::event("server", info));
             }
-            if self.last_workspace.is_some()
-                && let Ok(next) = adapter
+            if self.last_workspace.is_some() {
+                match adapter
                     .workspace(self.includes_archived, &runs)
                     .map(|w| serde_json::to_value(w).unwrap_or_default())
-                && Some(&next) != self.last_workspace.as_ref()
-            {
-                self.last_workspace = Some(next.clone());
-                self.send(protocol::event("workspace", Some(next)));
+                {
+                    Ok(next) if Some(&next) != self.last_workspace.as_ref() => {
+                        self.last_workspace = Some(next.clone());
+                        self.send(protocol::event("workspace", Some(next)));
+                    }
+                    Ok(_) => {}
+                    Err(_) => complete = false,
+                }
             }
         }
         let threads = self.open.keys().copied().collect::<Vec<_>>();
         for thread in threads {
-            self.refresh_thread(thread, adapter, &runs);
+            complete &= self.refresh_thread(thread, adapter, &runs);
         }
+        complete
     }
 
-    fn refresh_thread(&mut self, thread: Uuid, adapter: &Adapter, runs: &Runs) {
-        let Some((id, document, _)) = adapter.snapshot(thread, runs) else {
-            self.open.remove(&thread);
-            self.send(protocol::event(
-                "threadRemoved",
-                Some(protocol::value_body(thread.to_string().to_uppercase())),
-            ));
-            return;
+    fn refresh_thread(&mut self, thread: Uuid, adapter: &Adapter, runs: &Runs) -> bool {
+        let (id, document, _) = match adapter.snapshot(thread, runs) {
+            Ok(snapshot) => snapshot,
+            Err(error) if error.code == ErrorCode::NotFound => {
+                self.open.remove(&thread);
+                self.send(protocol::event(
+                    "threadRemoved",
+                    Some(protocol::value_body(thread.to_string().to_uppercase())),
+                ));
+                return true;
+            }
+            Err(_) => return false,
         };
         let pending = pending_for(runs, &id);
         let items = mirror_items(&document, pending);
         let Some(mirror) = self.open.get(&thread) else {
-            return;
+            return true;
         };
         let reordered = items.len() < mirror.items.len()
             || mirror
@@ -406,17 +418,20 @@ impl Session {
                 .iter()
                 .zip(&items)
                 .any(|(old, new)| old.0 != new.0);
-        let turn =
-            serde_json::to_value(adapter.turn_state(&id, &document, runs)).unwrap_or_default();
+        let Ok(turn) = adapter.turn_state(&id, &document, runs) else {
+            return false;
+        };
+        let turn = serde_json::to_value(turn).unwrap_or_default();
         let turn_changed = turn != mirror.turn;
         if reordered {
             // Rewound or reloaded: the whole transcript again.
-            if let Ok((transcript, _)) = adapter.transcript(thread, 200, runs) {
-                self.send(protocol::event(
-                    "transcript",
-                    serde_json::to_value(transcript).ok(),
-                ));
-            }
+            let Ok((transcript, _)) = adapter.transcript(thread, 200, runs) else {
+                return false;
+            };
+            self.send(protocol::event(
+                "transcript",
+                serde_json::to_value(transcript).ok(),
+            ));
         } else {
             let all = document["items"].as_array().cloned().unwrap_or_default();
             let changed = items
@@ -442,5 +457,57 @@ impl Session {
             mirror.items = items;
             mirror.turn = turn;
         }
+        true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{api::Engine, store::Store};
+    use std::sync::Arc;
+
+    #[test]
+    fn busy_engine_never_reports_an_open_thread_as_removed() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut engine =
+            Engine::fixture(Store::open(&directory.path().join("state.sqlite")).unwrap());
+        let thread = engine
+            .store
+            .new_thread("00000000-0000-0000-0000-000000000000")
+            .unwrap();
+        let id = Uuid::parse_str(thread["id"].as_str().unwrap()).unwrap();
+        let engine = Arc::new(Mutex::new(engine));
+        let adapter = Adapter::new(engine.clone(), "fixture");
+        let mut session = Session::new("127.0.0.1");
+        session.state = State::Authenticated("fixture-phone".into());
+        session.open.insert(
+            id,
+            Mirror {
+                items: Vec::new(),
+                turn: Value::Null,
+            },
+        );
+        let guard = engine.lock().unwrap();
+        assert!(adapter.runs().is_err());
+        assert!(!session.refresh_thread(id, &adapter, &Runs::default()));
+        assert!(session.open.contains_key(&id));
+        assert!(session.take_outgoing().is_empty());
+        drop(guard);
+
+        let missing = Uuid::new_v4();
+        session.open.insert(
+            missing,
+            Mirror {
+                items: Vec::new(),
+                turn: Value::Null,
+            },
+        );
+        assert!(session.refresh_thread(missing, &adapter, &Runs::default()));
+        assert!(!session.open.contains_key(&missing));
+        assert!(session.open.contains_key(&id));
+        let outgoing = session.take_outgoing();
+        assert_eq!(outgoing.len(), 1);
+        assert_eq!(outgoing[0]["type"], "threadRemoved");
     }
 }

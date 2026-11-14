@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     sync::Mutex,
+    time::{Duration, Instant},
 };
 use uuid::Uuid;
 
@@ -61,6 +62,10 @@ pub type PendingRequest = (String, String, Value);
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Runs {
     pub running: HashSet<String>,
+    pub starting: HashSet<String>,
+    /// Milliseconds since the Unix epoch, as used by the phone protocol.
+    pub started_at: HashMap<String, f64>,
+    pub provider: HashMap<String, String>,
     /// Pending provider requests by thread: (request id, method, params).
     pub pending: HashMap<String, Vec<PendingRequest>>,
 }
@@ -73,6 +78,58 @@ pub struct Adapter {
 
 fn upper(id: &str) -> String {
     id.to_uppercase()
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum SteeringReceipt {
+    Accepted,
+    Rejected,
+}
+
+/// Admission isn't delivery: Codex acknowledges steering asynchronously.
+/// A missing acknowledgement is never retried or converted into a queued send.
+fn confirm_steering(
+    mut receipt: Value,
+    mut poll: impl FnMut(&str) -> Result<Value, RemoteError>,
+    timeout: Duration,
+    pause: Duration,
+) -> Result<SteeringReceipt, RemoteError> {
+    let deadline = Instant::now() + timeout;
+    let operation = receipt["operationId"].as_str().map(str::to_owned);
+    loop {
+        match receipt["status"].as_str() {
+            Some("accepted" | "delivered") if receipt["persisted"] == true => {
+                return Ok(SteeringReceipt::Accepted);
+            }
+            Some("rejected") => return Ok(SteeringReceipt::Rejected),
+            Some("pending" | "accepted_pending_persistence") => {}
+            _ => {
+                return Err(RemoteError::failed(
+                    "Steering delivery could not be confirmed. Check the conversation before retrying.",
+                ));
+            }
+        }
+        let Some(operation) = operation.as_deref() else {
+            return Err(RemoteError::failed(
+                "Steering receipt is missing. Check the conversation before retrying.",
+            ));
+        };
+        if Instant::now() >= deadline {
+            return Err(RemoteError::failed(
+                "Steering is still being confirmed. Check the conversation before retrying.",
+            ));
+        }
+        std::thread::sleep(pause);
+        match poll(operation) {
+            Ok(next) => receipt = next,
+            Err(error) if error.message == "The computer is busy. Try again." => continue,
+            Err(_) => {
+                return Err(RemoteError::failed(
+                    "Steering delivery could not be confirmed. Check the conversation before retrying.",
+                ));
+            }
+        }
+    }
 }
 
 impl Adapter {
@@ -138,33 +195,57 @@ impl Adapter {
         }
     }
 
-    pub fn runs(&self) -> Runs {
+    pub fn runs(&self) -> Result<Runs, RemoteError> {
         let mut runs = Runs::default();
-        let Ok(status) = self.call("app.status", json!({})) else {
-            return runs;
+        // One nonblocking engine snapshot prevents a temporary busy state from
+        // masquerading as an idle run or empty set of approvals on the phone.
+        let mut engine = self
+            .engine
+            .try_lock()
+            .map_err(|_| RemoteError::failed("The computer is busy. Try again."))?;
+        let result = |response: Value| -> Result<Value, RemoteError> {
+            if let Some(error) = response.get("error") {
+                return Err(RemoteError::failed(
+                    error["message"].as_str().unwrap_or("Command failed"),
+                ));
+            }
+            Ok(response["result"].clone())
         };
+        let status = result(engine.dispatch(json!({"method":"app.status","params":{}})))?;
         for id in status["running"].as_array().into_iter().flatten() {
             let Some(id) = id.as_str() else { continue };
-            runs.running.insert(upper(id));
-            if let Ok(pending) = self.call("agent.pending", json!({"threadId":id})) {
-                runs.pending.insert(
-                    upper(id),
-                    pending
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .map(|request| {
-                            (
-                                request["requestId"].as_str().unwrap_or_default().to_owned(),
-                                request["method"].as_str().unwrap_or_default().to_owned(),
-                                request["params"].clone(),
-                            )
-                        })
-                        .collect(),
-                );
+            let key = upper(id);
+            runs.running.insert(key.clone());
+            let clock = &status["runClocks"][id];
+            if clock["connecting"] == true {
+                runs.starting.insert(key.clone());
+            }
+            if let Some(started) = stored_date_ms(&clock["startedAt"]) {
+                runs.started_at.insert(key.clone(), started);
+            }
+            let pending = result(
+                engine.dispatch(json!({"method":"agent.pending","params":{"threadId":id}})),
+            )?;
+            runs.pending.insert(
+                key.clone(),
+                pending
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|request| {
+                        (
+                            request["requestId"].as_str().unwrap_or_default().to_owned(),
+                            request["method"].as_str().unwrap_or_default().to_owned(),
+                            request["params"].clone(),
+                        )
+                    })
+                    .collect(),
+            );
+            if let Some(provider) = engine.remote_running_provider(id) {
+                runs.provider.insert(key, provider.to_owned());
             }
         }
-        runs
+        Ok(runs)
     }
 
     fn fields(document: &Value) -> ThreadFields {
@@ -266,14 +347,14 @@ impl Adapter {
             branch: fields.branch.clone(),
             has_worktree: fields.has_worktree,
             is_running: runs.running.contains(&id),
-            is_starting: false,
+            is_starting: runs.starting.contains(&id),
             pending_approvals: pending.len() - questions,
             pending_questions: questions,
             unseen: None,
             queued_messages: fields.queued,
             has_draft: fields.has_draft,
             item_count: fields.item_count,
-            running_since: None,
+            running_since: runs.started_at.get(&id).copied(),
             id,
         }
     }
@@ -391,37 +472,36 @@ impl Adapter {
     }
 
     fn document(&self, thread: Uuid) -> Result<(String, Value), RemoteError> {
-        // A desktop save can hold Engine briefly. Retry a busy read instead of
-        // telling the phone the thread is gone.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        let mut resolved = self.call("threads.resolve_id", json!({"threadId":thread.to_string()}));
-        while let Err(error) = &resolved {
-            if !error.message.contains("busy") || std::time::Instant::now() >= deadline {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(20));
-            resolved = self.call("threads.resolve_id", json!({"threadId":thread.to_string()}));
+        let mut engine = self
+            .engine
+            .try_lock()
+            .map_err(|_| RemoteError::failed("The computer is busy. Try again."))?;
+        if engine.admissions_frozen() {
+            return Err(RemoteError::failed("The computer is closing."));
         }
-        // The stored id keeps its own spelling; the phone's may differ in case.
-        let resolved = resolved.map_err(|_| RemoteError::thread_not_found())?;
-        let id = resolved["threadId"]
-            .as_str()
-            .ok_or_else(RemoteError::thread_not_found)?
-            .to_owned();
-        let mut document = self.call("threads.read", json!({"threadId":id}));
-        while let Err(error) = &document {
-            if !error.message.contains("busy") || std::time::Instant::now() >= deadline {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(20));
-            document = self.call("threads.read", json!({"threadId":id}));
+        // Resolve and read under one lock: a busy or damaged store must never
+        // be reported to the phone as a deleted conversation.
+        let id = engine
+            .store
+            .resolve_thread_id(thread)
+            .map_err(|error| RemoteError::failed(error.to_string()))?
+            .ok_or_else(RemoteError::thread_not_found)?;
+        // Use the Engine's read path so any transcript awaiting persistence is
+        // still visible, exactly as it is in the desktop conversation.
+        let response = engine.dispatch(json!({"method":"threads.read","params":{"threadId":id}}));
+        if let Some(error) = response.get("error") {
+            return Err(RemoteError::failed(
+                error["message"]
+                    .as_str()
+                    .unwrap_or("Conversation read failed"),
+            ));
         }
-        let document = document.map_err(|_| RemoteError::thread_not_found())?;
+        let document = response["result"].clone();
         Ok((id, document))
     }
 
-    pub fn has_thread(&self, thread: Uuid) -> bool {
-        self.document(thread).is_ok()
+    pub fn require_thread(&self, thread: Uuid) -> Result<(), RemoteError> {
+        self.document(thread).map(|_| ())
     }
 
     /// The thread's summary as the sidebar would list it.
@@ -438,20 +518,27 @@ impl Adapter {
         Self::summary(&summary, &Self::fields(document), project, runs)
     }
 
-    pub fn turn_state(&self, id: &str, document: &Value, runs: &Runs) -> TurnState {
+    fn can_steer(&self, id: &str, document: &Value) -> Result<bool, RemoteError> {
+        let engine = self
+            .engine
+            .try_lock()
+            .map_err(|_| RemoteError::failed("The computer is busy. Try again."))?;
+        Ok(engine.remote_can_steer(id, document))
+    }
+
+    pub fn turn_state(
+        &self,
+        id: &str,
+        document: &Value,
+        runs: &Runs,
+    ) -> Result<TurnState, RemoteError> {
         let running = runs.running.contains(&upper(id));
-        TurnState {
+        Ok(TurnState {
             is_running: running,
-            is_starting: false,
-            started_at: None,
-            provider: running
-                .then(|| {
-                    document["selection"]["provider"]
-                        .as_str()
-                        .map(str::to_owned)
-                })
-                .flatten(),
-            can_steer: running,
+            is_starting: runs.starting.contains(&upper(id)),
+            started_at: runs.started_at.get(&upper(id)).copied(),
+            provider: runs.provider.get(&upper(id)).cloned(),
+            can_steer: running && self.can_steer(id, document)?,
             queued: crate::message_queue::read(document)
                 .unwrap_or_default()
                 .into_iter()
@@ -462,7 +549,7 @@ impl Adapter {
                     image_count: m.images.len(),
                 })
                 .collect(),
-        }
+        })
     }
 
     /// The thread's newest `limit` items with its turn state.
@@ -487,7 +574,7 @@ impl Adapter {
                 thread: self.thread_summary(&id, &document, runs),
                 items: remote,
                 has_earlier: start > 0,
-                turn: self.turn_state(&id, &document, runs),
+                turn: self.turn_state(&id, &document, runs)?,
                 turn_changes: BTreeMap::new(),
             },
             document,
@@ -517,10 +604,14 @@ impl Adapter {
     }
 
     /// Reads a thread for change tracking: its id, document and summary.
-    pub fn snapshot(&self, thread: Uuid, runs: &Runs) -> Option<(String, Value, ThreadSummary)> {
-        let (id, document) = self.document(thread).ok()?;
+    pub fn snapshot(
+        &self,
+        thread: Uuid,
+        runs: &Runs,
+    ) -> Result<(String, Value, ThreadSummary), RemoteError> {
+        let (id, document) = self.document(thread)?;
         let summary = self.thread_summary(&id, &document, runs);
-        Some((id, document, summary))
+        Ok((id, document, summary))
     }
 
     fn waiting_item(
@@ -624,6 +715,26 @@ impl Adapter {
         .map(|_| ())
     }
 
+    fn with_engine<T>(
+        &self,
+        f: impl FnOnce(&mut crate::api::Engine) -> anyhow::Result<T>,
+    ) -> Result<T, RemoteError> {
+        let mut engine = self
+            .engine
+            .try_lock()
+            .map_err(|_| RemoteError::failed("The computer is busy. Try again."))?;
+        f(&mut engine).map_err(|error| RemoteError::failed(error.to_string()))
+    }
+
+    fn queue_remote_text(&self, thread: &Value, text: &str) -> Result<(), RemoteError> {
+        let mut captured = thread.clone();
+        captured["draft"] = json!(text);
+        captured["draftContext"] = Value::Null;
+        captured["rustDraftImages"] = json!([]);
+        self.with_engine(|engine| engine.queue_captured_native_send(&captured, false))?;
+        Ok(())
+    }
+
     /// Sends as the composer does: while a turn runs it steers or queues per the
     /// follow-up setting (the alternate delivery does the other), and approvals
     /// still waiting are declined so the message redirects the agent.
@@ -642,7 +753,7 @@ impl Adapter {
             ));
         }
         if !runs.running.contains(&upper(&id)) {
-            self.call("agent.send", json!({"threadId":id,"text":request.text}))?;
+            self.with_engine(|engine| engine.send_remote_text(&document, &request.text))?;
             return Ok("sent");
         }
         let settings = self.call("settings.read", json!({})).unwrap_or_default();
@@ -667,17 +778,32 @@ impl Adapter {
                 );
             }
         }
-        if steers
-            && self
+        if steers && self.can_steer(&id, &document)? {
+            let started = self
                 .call("agent.steer", json!({"threadId":id,"text":request.text}))
-                .is_ok()
-        {
-            return Ok("steered");
+                .map_err(|_| {
+                    RemoteError::failed(
+                        "Steering could not be confirmed. Check the conversation before retrying.",
+                    )
+                })?;
+            match confirm_steering(
+                started,
+                |operation| {
+                    self.call(
+                        "agent.steer.result",
+                        json!({"threadId":id,"operationId":operation}),
+                    )
+                },
+                Duration::from_secs(35),
+                Duration::from_millis(25),
+            )? {
+                SteeringReceipt::Accepted => return Ok("steered"),
+                // An explicit rejection proves that this steering request did
+                // not deliver, so it is safe to queue once instead.
+                SteeringReceipt::Rejected => {}
+            }
         }
-        self.call(
-            "agent.queue.add",
-            json!({"threadId":id,"text":request.text}),
-        )?;
+        self.queue_remote_text(&document, &request.text)?;
         Ok("queued")
     }
 
@@ -1040,5 +1166,42 @@ mod tests {
         assert!(started.elapsed() < std::time::Duration::from_millis(100));
         drop(guard);
         assert!(adapter.call("settings.read", json!({})).is_ok());
+    }
+
+    #[test]
+    fn remote_queue_keeps_the_desktop_draft_and_rejects_changed_context() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut engine = crate::api::Engine::fixture(
+            crate::store::Store::open(&directory.path().join("state.sqlite")).unwrap(),
+        );
+        let mut thread = engine.store.new_thread(NO_PROJECT).unwrap();
+        thread["draft"] = json!("desktop draft");
+        thread["draftContext"] =
+            json!([{"id":Uuid::new_v4(),"kind":"quote","text":"desktop reference"}]);
+        thread["rustDraftImages"] = json!([{"future":"desktop image stays"}]);
+        engine.store.save(&thread).unwrap();
+        let id = thread["id"].as_str().unwrap().to_owned();
+        let engine = std::sync::Arc::new(std::sync::Mutex::new(engine));
+        let adapter = Adapter::new(engine.clone(), "fixture");
+        adapter
+            .queue_remote_text(&thread, "phone follow-up")
+            .unwrap();
+        let stored = engine.lock().unwrap().store.thread(&id).unwrap();
+        assert_eq!(stored["draft"], thread["draft"]);
+        assert_eq!(stored["draftContext"], thread["draftContext"]);
+        assert_eq!(stored["rustDraftImages"], thread["rustDraftImages"]);
+        let queued = crate::message_queue::read(&stored).unwrap();
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].text, "phone follow-up");
+        assert!(queued[0].images.is_empty() && queued[0].context.is_null());
+        let mut changed = stored.clone();
+        changed["projectID"] = json!(Uuid::new_v4());
+        engine.lock().unwrap().store.save(&changed).unwrap();
+        assert!(
+            adapter
+                .queue_remote_text(&thread, "must not queue")
+                .is_err()
+        );
+        assert_eq!(engine.lock().unwrap().store.thread(&id).unwrap(), changed);
     }
 }
