@@ -23,7 +23,6 @@ const RESTORED_KEYS: &[&str] = &[
     "lightTheme",
     "showsPointingHand",
     "terminalPlacement",
-    "terminalGPURendering",
     "terminalTranslucentBackground",
     "preferredOpenTarget",
     "sendOnReturn",

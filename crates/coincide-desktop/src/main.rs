@@ -119,6 +119,7 @@ mod notifications;
 mod open_targets;
 mod palette_catalog;
 mod palette_search_owner;
+mod pointing_cursor;
 mod presentation;
 mod project_defaults_ui;
 mod project_management;
@@ -1183,6 +1184,7 @@ impl Coincide {
         });
         let settings = call(&engine, "settings.read", json!({})).unwrap_or_else(|_| json!({}));
         quit_shortcut::configure(&settings, cx);
+        pointing_cursor::configure(&settings, cx);
         let composer = cx.new(|cx| {
             TextareaState::new(window, cx)
                 .placeholder("Ask anything. @ files, / commands")

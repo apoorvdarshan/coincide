@@ -7,6 +7,7 @@ export default {
   name: "Settings tour",
   summary: "What each pane of the Settings window holds, from General and Models to each agent’s page and About.",
   type: "TechArticle",
+  updated: "2026-11-15",
   eyebrow: "Reference",
   h1: "A tour of Settings",
   lede: "Open Settings with " + kbd("⌘", ",") + ". The sidebar lists the panes, then a page for each agent under Providers, then About. The search field at the top of the sidebar finds panes, agents and individual settings by name or keyword, such as “dark mode” or “steer”.",
@@ -28,7 +29,7 @@ export default {
 <h2 id="general">General</h2>
 <p>The longest pane, in sections. <strong>Restore Defaults…</strong> at the bottom resets them, keeping your providers, custom models and default model.</p>
 ${table(["Section", "What’s in it"], [
-  ["(top)", "Appearance (light, dark or system), number format, font size, reply font, which side your messages sit on, dark and light themes, the pointing hand over clickable items, where the terminal opens (below the chat or on the right), its GPU rendering and translucency, and which app opens project folders"],
+  ["(top)", "Appearance (light, dark or system), number format, font size, reply font, which side your messages sit on, dark and light themes, the pointing hand over clickable items, where the terminal opens (below the chat or on the right), its translucency, and which app opens project folders"],
   ["Chat", "Send messages with Return or Command-Return; follow-up behavior while an agent works (Steer, Queue or Interrupt); show reasoning; open links in your default browser; confirm before deleting or archiving threads; hold ⌘Q to quit; resume after usage limits"],
   ["New Threads", "The default agent, model and effort, access (Full access or Ask for approval), whether New Thread starts a chat, and whether the agent names threads and keeps their titles up to date"],
   ["Notifications", "Whether Coincide notifies you when a turn finishes or needs you while it’s in the background"],

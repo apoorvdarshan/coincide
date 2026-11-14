@@ -53,6 +53,18 @@ const DRAG_THRESHOLD: f64 = 2.;
 const DEFAULT_TOOLTIP_SHOW_DELAY: Duration = Duration::from_millis(500);
 const HOVERABLE_TOOLTIP_HIDE_DELAY: Duration = Duration::from_millis(500);
 
+/// Application-wide policy for cursors over clickable elements.
+///
+/// Apps opt in by setting this global; without it GPUI keeps its normal cursor
+/// behavior. Explicit text, resize and drag cursors still take precedence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ClickableCursorPolicy {
+    /// Whether clickable elements should use the pointing-hand cursor.
+    pub enabled: bool,
+}
+
+impl Global for ClickableCursorPolicy {}
+
 /// The styling information for a given group.
 pub struct GroupStyle {
     /// The identifier for this group.
@@ -2624,7 +2636,34 @@ impl Interactivity {
                                                     window.set_window_cursor_style(mouse_cursor);
                                                 }
                                             } else {
-                                                if let Some(mouse_cursor) = style.mouse_cursor {
+                                                let clickable_hand = !self.click_listeners.is_empty()
+                                                    && cx
+                                                        .try_global::<ClickableCursorPolicy>()
+                                                        .is_some_and(|policy| policy.enabled)
+                                                    && (style.mouse_cursor.is_none()
+                                                        // GPUI's styled buttons deliberately set
+                                                        // Arrow by default, so include semantic
+                                                        // controls with that default too.
+                                                        || matches!(
+                                                            (style.mouse_cursor, self.override_role),
+                                                            (
+                                                                Some(crate::CursorStyle::Arrow),
+                                                                Some(
+                                                                    crate::Role::Button
+                                                                        | crate::Role::Link
+                                                                        | crate::Role::Tab
+                                                                        | crate::Role::Switch
+                                                                        | crate::Role::CheckBox
+                                                                        | crate::Role::RadioButton
+                                                                )
+                                                            )
+                                                        ));
+                                                if clickable_hand {
+                                                    window.set_cursor_style(
+                                                        crate::CursorStyle::PointingHand,
+                                                        hitbox,
+                                                    );
+                                                } else if let Some(mouse_cursor) = style.mouse_cursor {
                                                     window.set_cursor_style(mouse_cursor, hitbox);
                                                 }
                                             }

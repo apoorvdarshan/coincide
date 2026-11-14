@@ -517,6 +517,7 @@ impl Coincide {
         let provider_preferences_changed = self.settings["providers"] != settings["providers"];
         self.settings = settings;
         quit_shortcut::configure(&self.settings, cx);
+        pointing_cursor::configure(&self.settings, cx);
         self.sync_provider_configuration_settings(window, cx);
         self.appshots.sync(&self.settings);
         if provider_preferences_changed {
@@ -1100,7 +1101,7 @@ impl Coincide {
                 "Pointing hand over clickable items",
                 "Buttons, links, tabs and list rows show the pointing hand, as on the web.",
                 "showsPointingHand",
-                false,
+                true,
                 "setting-pointing-hand",
                 cx,
             ));
@@ -1122,17 +1123,6 @@ impl Coincide {
             &mut count,
             cx,
         );
-        if matches(S::Appearance, "terminal gpu rendering metal cpu") {
-            count += 1;
-            content = content.child(self.setting_toggle(
-                "GPU rendering",
-                "The terminal draws its text with Metal on the graphics processor.",
-                "terminalGPURendering",
-                true,
-                "setting-terminal-gpu",
-                cx,
-            ));
-        }
         if matches(
             S::Appearance,
             "terminal translucent background blur transparent",

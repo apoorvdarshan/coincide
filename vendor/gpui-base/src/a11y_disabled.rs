@@ -15,8 +15,13 @@ pub(crate) struct A11yDisabled<E> {
     disabled: bool,
 }
 
-impl<E> A11yDisabled<E> {
-    pub(crate) fn new(inner: E, disabled: bool) -> Self {
+impl<E: InteractiveElement> A11yDisabled<E> {
+    pub(crate) fn new(mut inner: E, disabled: bool) -> Self {
+        // A disabled control nested inside a clickable row should not inherit
+        // the row's hand cursor. Keep an explicitly supplied cursor intact.
+        if disabled && inner.interactivity().base_style.mouse_cursor.is_none() {
+            inner.interactivity().base_style.mouse_cursor = Some(gpui::CursorStyle::Arrow);
+        }
         Self { inner, disabled }
     }
 }
