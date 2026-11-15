@@ -883,6 +883,20 @@ impl Adapter {
         .map(|_| ())
     }
 
+    pub fn dismiss_question(
+        &self,
+        thread: Uuid,
+        item: Uuid,
+        runs: &Runs,
+    ) -> Result<(), RemoteError> {
+        let (id, _, _) = self.waiting_item(thread, item, "question", runs)?;
+        self.call(
+            "agent.dismissQuestion",
+            json!({"threadId":id,"itemId":item}),
+        )
+        .map(|_| ())
+    }
+
     pub fn stop(&self, thread: Uuid, runs: &Runs) -> Result<(), RemoteError> {
         let (id, _) = self.document(thread)?;
         if runs.running.contains(&upper(&id)) {

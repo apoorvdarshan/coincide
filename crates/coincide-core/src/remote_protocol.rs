@@ -986,6 +986,11 @@ mod tests {
     #[test]
     fn decodes_requests_as_the_swift_decoder_does() {
         let thread = "E621E1F8-C36C-495A-93FC-0C247A3E6E5F";
+        let item = "A0F7B85C-4877-46C5-9F7B-9AD9709223E2";
+        assert_eq!(
+            decode(json!({"v":1,"id":"dismiss","type":"dismissQuestion","body":{"threadID":thread,"itemID":item}})).unwrap().request,
+            Request::DismissQuestion { thread_id: Uuid::parse_str(thread).unwrap(), item_id: Uuid::parse_str(item).unwrap() }
+        );
         let message =
             decode(json!({"v":1,"id":"a","type":"openThread","body":{"threadID":thread}})).unwrap();
         assert_eq!(message.id, "a");

@@ -760,6 +760,10 @@ sys.stdin.readline()
     #[test]
     fn questions_require_actual_answers_not_generic_approval() {
         let request = json!({"tool_name":"AskUserQuestion","input":{"questions":[{"question":"Which?"}],"future":42}});
+        let dismissed =
+            permission_reply(&request, &crate::api::question_dismissal("claude").unwrap()).unwrap();
+        assert_eq!(dismissed["behavior"], "deny");
+        assert!(dismissed.get("interrupt").is_none());
         assert_eq!(
             permission_reply(&request, &json!({"decision":"accept"})).unwrap()["behavior"],
             "deny"

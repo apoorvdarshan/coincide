@@ -95,6 +95,20 @@ fn answer_question(question: &Value, reply: &Value) -> Result<Value> {
         .context("Antigravity answer must match an offered option")?;
     Ok(json!({"outcome":{"outcome":"selected","optionId":option["value"]}}))
 }
+
+#[cfg(test)]
+mod dismissal_tests {
+    use super::*;
+
+    #[test]
+    fn dismissed_question_cancels_without_selecting_an_option() {
+        let reply = crate::api::question_dismissal("antigravity").unwrap();
+        assert_eq!(
+            answer_question(&json!({}), &reply).unwrap(),
+            json!({"outcome":{"outcome":"cancelled"}})
+        );
+    }
+}
 pub(super) fn run(
     launch: Launch,
     images: Vec<ImageAttachment>,

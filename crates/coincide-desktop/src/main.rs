@@ -4303,6 +4303,31 @@ impl Coincide {
             cx,
         );
     }
+    fn dismiss_pending_question(&mut self, request_id: &str, cx: &mut Context<Self>) {
+        let Some(thread) = self.selected.as_ref() else {
+            return;
+        };
+        let thread_id = text(thread, "id");
+        let Some(item_id) = thread["items"].as_array().and_then(|items| {
+            items
+                .iter()
+                .rev()
+                .find(|item| item["kind"] == "question" && item["externalID"] == request_id)
+                .and_then(|item| item["id"].as_str())
+                .map(str::to_owned)
+        }) else {
+            self.status = "The question is still loading. Try again.".into();
+            cx.notify();
+            return;
+        };
+        self.finish_pending(
+            &thread_id,
+            request_id,
+            "agent.dismissQuestion",
+            json!({"threadId":thread_id,"itemId":item_id}),
+            cx,
+        );
+    }
     fn finish_pending(
         &mut self,
         thread: &str,
@@ -4511,6 +4536,15 @@ impl Coincide {
                 .is_some_and(|input| !input.read(cx).value().trim().is_empty());
             let answered = has_choice || has_text;
             let mut footer = div().flex().justify_end().gap_1();
+            let dismiss_id = request_id.clone();
+            footer = footer.child(
+                Button::new(SharedString::from(format!("dismiss-question-{request_id}")))
+                    .label("Dismiss")
+                    .small()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.dismiss_pending_question(&dismiss_id, cx)
+                    })),
+            );
             if step > 0 {
                 let request = request_id.clone();
                 footer = footer.child(

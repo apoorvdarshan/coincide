@@ -17,7 +17,7 @@ workers. Address discovery uses bounded child process capture.
 
 Implemented protocol paths include workspace, transcripts/pagination, live
 item/turn updates, image and text send/queue, Codex image steering, private
-image thumbnails/full previews for managed Rust attachments, approval/question responses, new
+image thumbnails/full previews for managed Rust attachments, approval/question responses and question dismissal, new
 threads, rename/pin/archive/snooze, unread and settle/unsettle, stop, device
 presence, and marking a thread seen. Marking a thread seen clears its Mac alerts and informs connected phones;
 an active phone's visible thread also counts as seen. Requests use the existing
@@ -37,7 +37,7 @@ previews currently cover managed Rust attachments, not every Swift-era or
 assistant media type. Images that cannot be steered are queued.
 
 Remaining behavior gaps include move/delete actions,
-steer-queued, dismiss-question, show-thread, and the richer usage dashboard.
+steer-queued, local show-thread, and the richer usage dashboard.
 Unsupported commands return errors. Bonjour advertisement is implemented for macOS and Linux; Windows
 uses pairing-code addresses. CloudKit phone alerts are not implemented.
 

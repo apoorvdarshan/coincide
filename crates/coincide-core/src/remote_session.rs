@@ -406,6 +406,10 @@ impl Session {
                 adapter.answer(thread_id, item_id, &answers, &runs()?)?;
                 self.respond(id, "ok", None);
             }
+            Request::DismissQuestion { thread_id, item_id } => {
+                adapter.dismiss_question(thread_id, item_id, &runs()?)?;
+                self.respond(id, "ok", None);
+            }
             Request::NewThread { project_id } => {
                 let thread = adapter.new_thread(project_id, &runs()?)?;
                 self.respond(id, "thread", Some(protocol::value_body(thread)));
@@ -450,9 +454,6 @@ impl Session {
             // Only the computer's own command-line tool may open threads in its window.
             Request::ShowThread { .. } => return Err(RemoteError::unsupported("showThread")),
             Request::SteerQueued { .. } => return Err(RemoteError::unsupported("steerQueued")),
-            Request::DismissQuestion { .. } => {
-                return Err(RemoteError::unsupported("dismissQuestion"));
-            }
             Request::Unimplemented(kind) => return Err(RemoteError::unsupported(&kind)),
         }
         Ok(())
