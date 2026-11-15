@@ -9,7 +9,7 @@ const CHILD: &str = "COINCIDE_HEADLESS_GITHUB_STATUS_CHILD";
 
 struct Harness {
     panel: Entity<GitHubReviewPanel>,
-    opened: Vec<(String, String)>,
+    opened: Vec<(String, String, Modifiers)>,
     _links: Subscription,
 }
 impl Render for Harness {
@@ -54,7 +54,8 @@ fn headless_checks_expand_open_and_follow_background_results(cx: &mut TestAppCon
     let (view, cx): (Entity<Harness>, &mut VisualTestContext) = cx.add_window_view(|window, cx| {
         let panel = cx.new(|cx| GitHubReviewPanel::new(engine.clone(), window, cx));
         let links = cx.subscribe(&panel, |this: &mut Harness, _, event: &OpenCheckLink, _| {
-            this.opened.push((event.thread.clone(), event.url.clone()));
+            this.opened
+                .push((event.thread.clone(), event.url.clone(), event.modifiers));
         });
         Harness {
             panel,
@@ -64,7 +65,14 @@ fn headless_checks_expand_open_and_follow_background_results(cx: &mut TestAppCon
     });
     let panel = view.read_with(cx, |view, _| view.panel.clone());
     let request = request();
-    let pending = pr("IN_PROGRESS", None);
+    let mut pending = pr("IN_PROGRESS", None);
+    pending["statusCheckRollup"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+        "name":"Unsafe", "status":"COMPLETED", "conclusion":"SUCCESS",
+            "detailsUrl":"javascript:alert(1)"
+        }));
     cx.update(|window, cx| {
         panel.update(cx, |panel, _| {
             panel.scope = Some((request.binding.thread.clone(), request.binding.root.clone()));
@@ -94,9 +102,21 @@ fn headless_checks_expand_open_and_follow_background_results(cx: &mut TestAppCon
         view.read_with(cx, |view, _| view.opened.clone()),
         vec![(
             "thread-a".into(),
-            "https://github.com/fixture/repo/actions/runs/1".into()
+            "https://github.com/fixture/repo/actions/runs/1".into(),
+            Modifiers::default()
         )]
     );
+    let mut modified = Modifiers::default();
+    if cfg!(target_os = "macos") {
+        modified.platform = true;
+    } else {
+        modified.control = true;
+    }
+    cx.simulate_click(check.center(), modified);
+    assert_eq!(view.read_with(cx, |view, _| view.opened[1].2), modified);
+    let unsafe_check = cx.debug_bounds("github-check-42-1").unwrap();
+    cx.simulate_click(unsafe_check.center(), Modifiers::default());
+    assert_eq!(view.read_with(cx, |view, _| view.opened.len()), 2);
 
     // A completion from a different thread cannot update the current panel.
     let mut wrong = request.clone();

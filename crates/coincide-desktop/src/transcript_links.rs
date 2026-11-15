@@ -174,6 +174,18 @@ pub(super) fn destination(command: bool, option: bool, opens_in_default: bool) -
     }
 }
 
+pub(super) fn destination_for_modifiers(
+    modifiers: Modifiers,
+    opens_in_default: bool,
+) -> Destination {
+    let command = if cfg!(target_os = "macos") {
+        modifiers.platform
+    } else {
+        modifiers.control
+    };
+    destination(command, modifiers.alt, opens_in_default)
+}
+
 pub(super) fn shortened(text: &str) -> String {
     if text.chars().count() > SHOWN_LENGTH {
         text.chars().take(SHOWN_LENGTH).chain(['…']).collect()
@@ -190,7 +202,7 @@ pub(super) struct LinkMenu {
 }
 
 impl Coincide {
-    fn opens_links_in_default_browser(&self) -> bool {
+    pub(super) fn opens_links_in_default_browser(&self) -> bool {
         self.settings["opensLinksInDefaultBrowser"]
             .as_bool()
             .unwrap_or(false)
@@ -213,18 +225,11 @@ impl Coincide {
         if !event.standard_click() {
             return;
         }
-        let modifiers = event.modifiers();
-        let command = if cfg!(target_os = "macos") {
-            modifiers.platform
-        } else {
-            modifiers.control
-        };
         match classify(url) {
             Link::Ignore => {}
             Link::Web(url) => {
-                let destination = destination(
-                    command,
-                    modifiers.alt,
+                let destination = destination_for_modifiers(
+                    event.modifiers(),
                     self.opens_links_in_default_browser(),
                 );
                 self.open_web_link(url, destination, cx);
@@ -521,6 +526,20 @@ mod tests {
         assert_eq!(destination(true, false, true), Destination::BrowserNewTab);
         assert_eq!(destination(true, true, true), Destination::BrowserNewTab);
         assert_eq!(destination(false, true, false), Destination::BrowserNewTab);
+        let mut modifier = Modifiers::default();
+        if cfg!(target_os = "macos") {
+            modifier.platform = true;
+        } else {
+            modifier.control = true;
+        }
+        assert_eq!(
+            destination_for_modifiers(modifier, false),
+            Destination::Default
+        );
+        assert_eq!(
+            destination_for_modifiers(modifier, true),
+            Destination::BrowserNewTab
+        );
     }
 
     #[::core::prelude::v1::test]

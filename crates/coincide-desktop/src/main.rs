@@ -1399,8 +1399,14 @@ impl Coincide {
                 this.open_github_checkout(event, window, cx);
             }),
             cx.subscribe(&github_panel, |this, _, event: &github_review::OpenCheckLink, cx| {
-                if this.selected.as_ref().is_some_and(|thread| thread["id"] == event.thread) {
-                    this.open_web_link(event.url.clone(), transcript_links::Destination::BrowserNewTab, cx);
+                if this.selected.as_ref().is_some_and(|thread| thread["id"] == event.thread)
+                    && coincide_core::browser_protocol::validate_url(&event.url).is_ok()
+                {
+                    let destination = transcript_links::destination_for_modifiers(
+                        event.modifiers,
+                        this.opens_links_in_default_browser(),
+                    );
+                    this.open_web_link(event.url.clone(), destination, cx);
                 }
             }),
             cx.observe(&github_panel, |this,_,cx| {
