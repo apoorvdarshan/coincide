@@ -109,13 +109,20 @@ impl Panel {
             .into_any_element()
     }
     /// Metadata-only lists. The sole report request is the explicit button.
-    pub fn admin_usage_view(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    pub fn admin_usage_view(&mut self, enabled: &[&str], cx: &mut Context<Self>) -> AnyElement {
         let busy = self.pending.is_some() || !self.workers.can_start();
-        let mut pane=div().flex().flex_col().gap_3().p_3().rounded_md().border_1().border_color(rgb(0x29303d))
-            .child(div().font_weight(FontWeight::SEMIBOLD).child("Anthropic organization reports"))
-            .child(div().text_sm().child("Claude and OpenCode Anthropic API accounts can use a separate Admin key. UTC reports are read only when you choose Refresh."));
+        let mut pane = div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_4()
+            .child(div().font_weight(FontWeight::SEMIBOLD).child("Organization reports"))
+            .child(div().text_xs().text_color(cx.theme().muted_foreground).child("Anthropic API accounts can use an optional Admin key. Reports use UTC and are read only when you refresh."));
         let mut count = 0;
         for provider in ["claude", "opencode"] {
+            if !enabled.contains(&provider) {
+                continue;
+            }
             let Some(editor) = self.accounts.editors.get(provider) else {
                 continue;
             };
@@ -129,7 +136,7 @@ impl Panel {
                     .flex_col()
                     .gap_2()
                     .border_t_1()
-                    .border_color(rgb(0x29303d))
+                    .border_color(cx.theme().border)
                     .py_2()
                     .child(format!(
                         "{} · {}",
@@ -160,7 +167,8 @@ impl Panel {
                 if !row.has_admin_key {
                     card = card.child(
                         div()
-                            .text_sm()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
                             .child("Add an Admin key in this provider’s account settings."),
                     );
                 }
@@ -174,8 +182,14 @@ impl Panel {
             }
         }
         if count == 0 {
-            pane = pane
-                .child("No Anthropic API accounts loaded. Add one in Claude or OpenCode settings.");
+            pane = pane.child(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(
+                        "No Anthropic API accounts are loaded. Add one in the provider’s settings.",
+                    ),
+            );
         }
         pane.into_any_element()
     }

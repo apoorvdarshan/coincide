@@ -1826,9 +1826,6 @@ impl Coincide {
                         .on_click(cx.listener(|this, _, _, cx| this.undo_settle(cx))),
                 )
             })
-            .when_some(self.sidebar_resize.error(), |view, error| {
-                view.child(div().text_xs().child(error))
-            })
             .child(resize)
             .into_any_element()
     }
