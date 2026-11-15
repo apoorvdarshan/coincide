@@ -18,16 +18,13 @@ pub(super) fn bot_editor_backdrop(
     panel: Entity<bot_settings::BotSettingsPanel>,
     cx: &App,
 ) -> AnyElement {
-    div()
+    chat_layout::modal_backdrop()
         .id("bot-editor-overlay")
-        .absolute()
-        .inset_0()
         .flex()
         .items_center()
         .justify_center()
         .p_4()
         .bg(rgba(0x00000090))
-        .occlude()
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .child(
             div()

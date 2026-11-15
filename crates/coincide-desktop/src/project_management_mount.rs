@@ -1,6 +1,63 @@
 //! Native project forms using real Engine transactions and a directory-only picker.
 use super::project_management::{Mode, Session};
 use super::*;
+
+/// The title and actions stay visible while the folder list scrolls below.
+pub(super) fn project_form_shell(
+    header: AnyElement,
+    body: AnyElement,
+    border: Rgba,
+    background: Rgba,
+) -> AnyElement {
+    div()
+        .id("project-management-form")
+        .w_full()
+        .max_h_full()
+        .max_h(px(500.))
+        .min_h_0()
+        .flex()
+        .flex_col()
+        .overflow_hidden()
+        .border_1()
+        .border_color(border)
+        .rounded_md()
+        .bg(background)
+        .child(header)
+        .child(body)
+        .into_any_element()
+}
+
+#[cfg(test)]
+#[path = "project_management_ui_tests.rs"]
+mod ui_tests;
+
+pub(super) fn project_form_header(
+    title: &'static str,
+    actions: AnyElement,
+    border: Rgba,
+) -> AnyElement {
+    div()
+        .debug_selector(|| "project-management-header".into())
+        .flex_shrink_0()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap_2()
+        .px_4()
+        .py_3()
+        .border_b_1()
+        .border_color(border)
+        .child(
+            div()
+                .min_w_0()
+                .truncate()
+                .text_sm()
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(title),
+        )
+        .child(actions)
+        .into_any_element()
+}
 pub(super) struct Projects {
     pub session: Session,
     name: Entity<InputState>,
@@ -383,12 +440,20 @@ impl Coincide {
                 Button::new(SharedString::from(format!("project-completion-{index}")))
                     .accessibility_label(format!("Use folder {full}"))
                     .tooltip(full)
-                    .label(label)
+                    .child(
+                        div()
+                            .w_full()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(Icon::new(gpui_kit::assets::IconName::Folder).xsmall())
+                            .child(label),
+                    )
                     .compact()
                     .ghost()
                     .w_full()
                     .justify_start()
-                    .when(index == selected, |button| button.primary())
+                    .selected(index == selected)
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.complete_project_path(index, window, cx)
                     })),
@@ -413,10 +478,8 @@ impl Coincide {
     pub(super) fn project_management_overlay(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let form = self.project_management_form(cx)?;
         Some(
-            div()
+            chat_layout::modal_backdrop()
                 .id("project-management-overlay")
-                .absolute()
-                .inset_0()
                 .flex()
                 .items_center()
                 .justify_center()
@@ -458,27 +521,18 @@ impl Coincide {
                     .and_then(|id| self.projects.iter().find(|p| p["id"] == *id).cloned())
             })
             .unwrap_or(Value::Null);
-        let mut panel = div()
-            .id("project-management-form")
+        let mut body = div()
+            .id("project-management-scroll")
+            .debug_selector(|| "project-management-scroll".into())
             .flex()
             .flex_col()
             .gap_2()
-            .max_h(px(360.))
+            .flex_1()
+            .min_h_0()
             .overflow_y_scroll()
-            .border_1()
-            .border_color(self.color(0x29303d))
-            .rounded_md()
-            // Opaque like Swift's sheet: the transcript must not show through.
-            .bg(self.color(0x10141c))
-            .p_4()
-            .child(
-                div()
-                    .text_sm()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(title),
-            );
+            .p_4();
         if !project.is_null() {
-            panel = panel
+            body = body
                 .child(div().text_sm().child(text(&project, "name")))
                 .child(div().text_xs().child(text(&project, "path")));
         }
@@ -489,7 +543,7 @@ impl Coincide {
                 ("Remove from Coincide…", Mode::Remove),
             ] {
                 let target = target.clone();
-                panel = panel.child(
+                body = body.child(
                     Button::new(SharedString::from(format!("project-manage-{next:?}")))
                         .label(label)
                         .on_click(cx.listener(move |this, _, window, cx| {
@@ -500,7 +554,7 @@ impl Coincide {
         }
         if mode == Mode::Recovery {
             if state.recoveries.is_empty() && state.error.is_empty() {
-                panel = panel.child(
+                body = body.child(
                     div()
                         .text_sm()
                         .child("No removed projects are awaiting restore."),
@@ -508,7 +562,7 @@ impl Coincide {
             }
             for entry in &state.recoveries {
                 let id = text(entry, "id");
-                panel = panel.child(
+                body = body.child(
                     Button::new(SharedString::from(format!("project-restore-{id}")))
                         .label(format!(
                             "Review restore: {} ({} conversations)",
@@ -522,10 +576,10 @@ impl Coincide {
             }
         }
         if mode == Mode::Rename {
-            panel = panel.child(Input::new(&self.project_management.name));
+            body = body.child(Input::new(&self.project_management.name));
         }
         if matches!(mode, Mode::Add | Mode::Relocate) {
-            panel = panel.child(self.project_path_field(mode, cx)).child(
+            body = body.child(self.project_path_field(mode, cx)).child(
                 Button::new("project-choose-folder")
                     .label(if choosing {
                         "Choosing folder…"
@@ -538,7 +592,7 @@ impl Coincide {
                     ),
             );
             if mode == Mode::Add {
-                panel = panel.child(
+                body = body.child(
                     div()
                         .text_xs()
                         .text_color(self.color(0xe4e9f2).opacity(0.6))
@@ -546,21 +600,21 @@ impl Coincide {
                 );
             }
             if mode == Mode::Add && self.project_management.folders.len() > 1 {
-                panel = panel.child(div().text_xs().child(format!(
+                body = body.child(div().text_xs().child(format!(
                     "{} chosen folders; the first opens after adding.",
                     self.project_management.folders.len()
                 )));
             }
             if mode == Mode::Relocate {
-                panel=panel.child(div().text_xs().child("Only the saved folder location changes. Working files and conversation data are kept. Close terminal panes and finish active work first."));
+                body=body.child(div().text_xs().child("Only the saved folder location changes. Working files and conversation data are kept. Close terminal panes and finish active work first."));
             }
         }
         if matches!(mode, Mode::Remove | Mode::Restore) && state.preview.is_some() {
             let count = project["threadCount"].as_u64().unwrap_or(0);
-            panel=panel.child(div().text_sm().child(if mode==Mode::Remove {format!("Remove this project and all {count} conversations, including archived ones? Their complete data is kept in recovery. The folder and files are not changed.")}else {format!("Restore this project and all {count} conversations? Existing IDs or folders will not be overwritten.")}));
+            body=body.child(div().text_sm().child(if mode==Mode::Remove {format!("Remove this project and all {count} conversations, including archived ones? Their complete data is kept in recovery. The folder and files are not changed.")}else {format!("Restore this project and all {count} conversations? Existing IDs or folders will not be overwritten.")}));
         }
         if !state.error.is_empty() {
-            panel = panel.child(
+            body = body.child(
                 div()
                     .text_sm()
                     .text_color(self.color(0xf0a090))
@@ -570,7 +624,7 @@ impl Coincide {
         if (mode.operation().is_some() && state.preview.is_none())
             || (mode == Mode::Recovery && !state.error.is_empty())
         {
-            panel = panel.child(
+            body = body.child(
                 Button::new("project-review-again")
                     .label(if mode == Mode::Recovery {
                         "Reload removed projects"
@@ -582,24 +636,31 @@ impl Coincide {
                     ),
             );
         }
+        let mut actions = div().flex().items_center().gap_2().child(
+            Button::new("project-cancel-change")
+                .label("Cancel")
+                .compact()
+                .on_click(cx.listener(|this, _, window, cx| this.close_project_form(window, cx))),
+        );
         if mode == Mode::Add || state.preview.is_some() {
             let label = match mode {
-                Mode::Add => "Add selected folder".into(),
-                Mode::Rename => "Save project name".into(),
+                Mode::Add => "Add folder".into(),
+                Mode::Rename => "Save".into(),
                 Mode::Relocate => "Use this folder".into(),
-                Mode::Remove => format!(
-                    "Remove project and {} conversations",
-                    project["threadCount"]
-                ),
-                Mode::Restore => format!(
-                    "Restore project and {} conversations",
-                    project["threadCount"]
-                ),
+                Mode::Remove => "Remove".into(),
+                Mode::Restore => "Restore".into(),
                 _ => String::new(),
             };
             let accessibility_label = if mode == Mode::Add {
                 self.project_management.folders.first().map_or_else(
-                    || "Add selected folder: choose a folder first".to_owned(),
+                    || {
+                        let typed = self.project_path.read(cx).value().trim().to_owned();
+                        if typed.is_empty() {
+                            "Add folder: choose a folder first".to_owned()
+                        } else {
+                            format!("Add folder {typed}")
+                        }
+                    },
                     |path| {
                         format!(
                             "Add {} selected folders; first folder: {}",
@@ -615,10 +676,12 @@ impl Coincide {
                     text(&project, "path")
                 )
             };
-            panel = panel.child(
+            actions = actions.child(
                 Button::new("project-confirm-change")
                     .accessibility_label(accessibility_label)
                     .label(label)
+                    .primary()
+                    .compact()
                     .disabled(
                         choosing
                             || (mode == Mode::Add
@@ -630,11 +693,16 @@ impl Coincide {
                     ),
             );
         }
-        panel = panel.child(
-            Button::new("project-cancel-change")
-                .label("Cancel")
-                .on_click(cx.listener(|this, _, window, cx| this.close_project_form(window, cx))),
+        let header = project_form_header(
+            title,
+            actions.flex_shrink_0().into_any_element(),
+            self.color(0x29303d),
         );
-        Some(panel.into_any_element())
+        Some(project_form_shell(
+            header,
+            body.into_any_element(),
+            self.color(0x29303d),
+            self.color(0x10141c),
+        ))
     }
 }

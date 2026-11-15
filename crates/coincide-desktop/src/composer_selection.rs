@@ -4276,6 +4276,7 @@ impl Coincide {
                     .left_0()
                     .right_0()
                     .bottom(px(clearance))
+                    .occlude()
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, _, _, cx| {
@@ -4296,6 +4297,7 @@ impl Coincide {
                     .child(
                         div()
                             .id("composer-popover-card")
+                            .occlude()
                             .w(px(width))
                             .max_h(px(height))
                             .overflow_y_scroll()

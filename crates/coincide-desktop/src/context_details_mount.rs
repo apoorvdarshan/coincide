@@ -230,10 +230,8 @@ impl Coincide {
             300.,
         ));
         Some(
-            div()
+            chat_layout::modal_backdrop()
                 .id("context-details-overlay")
-                .absolute()
-                .inset_0()
                 .flex()
                 .items_center()
                 .justify_center()

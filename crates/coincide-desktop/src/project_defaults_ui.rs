@@ -755,9 +755,7 @@ impl Coincide {
                 ),
         );
         Some(
-            div()
-                .absolute()
-                .inset_0()
+            chat_layout::modal_backdrop()
                 .flex()
                 .items_center()
                 .justify_center()
