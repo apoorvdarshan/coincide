@@ -39,6 +39,7 @@ fn height(requested: f64, available: f64) -> f64 {
 }
 struct Drag {
     right: bool,
+    browser: bool,
     pointer: f64,
     original: f64,
     rendered: f64,
@@ -46,10 +47,12 @@ struct Drag {
 }
 pub(super) struct State {
     share: f64,
+    browser_share: f64,
     height: f64,
     drag: Option<Drag>,
     load_pending: bool,
     pending_share: Option<Option<f64>>,
+    pending_browser_share: Option<Option<f64>>,
     pending_height: Option<f64>,
     applied_placement: Option<Placement>,
 }
@@ -57,10 +60,12 @@ impl Default for State {
     fn default() -> Self {
         Self {
             share: 0.5,
+            browser_share: 0.5,
             height: 260.,
             drag: None,
             load_pending: false,
             pending_share: None,
+            pending_browser_share: None,
             pending_height: None,
             applied_placement: None,
         }
@@ -86,19 +91,27 @@ impl State {
         self.load_pending = false;
         match key {
             "inspectorFraction" => self.pending_share = Some(Some(value)),
+            "browserInspectorFraction" => self.pending_browser_share = Some(Some(value)),
             "terminalHeight" => self.pending_height = Some(value),
             _ => unreachable!("geometry keys come from the divider"),
         }
     }
-    fn queue_reset(&mut self) {
+    fn queue_reset(&mut self, browser: bool) {
         self.load_pending = false;
-        self.pending_share = Some(None);
+        if browser {
+            self.pending_browser_share = Some(None);
+        } else {
+            self.pending_share = Some(None);
+        }
     }
     /// A busy engine is temporary. Preserve the live geometry and retry the
     /// newest value on the next UI tick, without covering whichever panel is open.
     fn retry(&mut self, engine: &SharedEngine) -> bool {
         if self.drag.is_some()
-            || (!self.load_pending && self.pending_share.is_none() && self.pending_height.is_none())
+            || (!self.load_pending
+                && self.pending_share.is_none()
+                && self.pending_browser_share.is_none()
+                && self.pending_height.is_none())
         {
             return false;
         }
@@ -109,6 +122,7 @@ impl State {
                 eprintln!("Panel geometry is unavailable: {error}");
                 self.load_pending = false;
                 self.pending_share = None;
+                self.pending_browser_share = None;
                 self.pending_height = None;
                 return true;
             }
@@ -119,10 +133,19 @@ impl State {
         if let Some(value) = self.pending_share.take() {
             let result = match value {
                 Some(value) => persist(&mut owner.store, "inspectorFraction", value),
-                None => reset_share(&mut owner.store),
+                None => reset_share(&mut owner.store, "inspectorFraction"),
             };
             if let Err(error) = result {
                 eprintln!("Panel width could not be saved: {error}");
+            }
+        }
+        if let Some(value) = self.pending_browser_share.take() {
+            let result = match value {
+                Some(value) => persist(&mut owner.store, "browserInspectorFraction", value),
+                None => reset_share(&mut owner.store, "browserInspectorFraction"),
+            };
+            if let Err(error) = result {
+                eprintln!("Browser width could not be saved: {error}");
             }
         }
         if let Some(value) = self.pending_height.take()
@@ -145,6 +168,10 @@ impl State {
                         .as_f64()
                         .map(fraction)
                         .unwrap_or(0.5);
+                    self.browser_share = value["browserInspectorFraction"]
+                        .as_f64()
+                        .map(fraction)
+                        .unwrap_or(0.5);
                     self.height = value["terminalHeight"].as_f64().unwrap_or(260.);
                 }
                 Err(error) => eprintln!("Saved panel geometry could not be read: {error}"),
@@ -152,16 +179,21 @@ impl State {
         }
         true
     }
-    fn begin(&mut self, right: bool, pointer: f64, available: f64) {
+    fn begin(&mut self, right: bool, browser: bool, pointer: f64, available: f64) {
         if !pointer.is_finite() || !available.is_finite() || available <= 0. {
             return;
         }
         self.drag = Some(Drag {
             right,
+            browser: right && browser,
             pointer,
-            original: if right { self.share } else { self.height },
+            original: if right {
+                self.share_for(browser)
+            } else {
+                self.height
+            },
             rendered: if right {
-                width(self.share, available)
+                width(self.share_for(browser), available)
             } else {
                 height(self.height, available)
             },
@@ -188,7 +220,9 @@ impl State {
         } else {
             shown
         };
-        let current = if drag.right {
+        let current = if drag.right && drag.browser {
+            &mut self.browser_share
+        } else if drag.right {
             &mut self.share
         } else {
             &mut self.height
@@ -201,7 +235,9 @@ impl State {
     }
     fn cancel(&mut self) {
         if let Some(drag) = self.drag.take() {
-            if drag.right {
+            if drag.right && drag.browser {
+                self.browser_share = drag.original;
+            } else if drag.right {
                 self.share = drag.original;
             } else {
                 self.height = drag.original;
@@ -210,17 +246,30 @@ impl State {
     }
     fn finish(&mut self) -> Option<(&'static str, f64)> {
         let drag = self.drag.take()?;
-        let (key, value) = if drag.right {
+        let (key, value) = if drag.right && drag.browser {
+            ("browserInspectorFraction", self.browser_share)
+        } else if drag.right {
             ("inspectorFraction", self.share)
         } else {
             ("terminalHeight", self.height)
         };
         ((value - drag.original).abs() > 0.0001).then_some((key, value))
     }
+    fn share_for(&self, browser: bool) -> f64 {
+        if browser {
+            self.browser_share
+        } else {
+            self.share
+        }
+    }
 }
 fn valid(document: &Value) -> Result<()> {
     anyhow::ensure!(document.is_object(), "Saved interface state is malformed");
-    for key in ["inspectorFraction", "terminalHeight"] {
+    for key in [
+        "inspectorFraction",
+        "browserInspectorFraction",
+        "terminalHeight",
+    ] {
         anyhow::ensure!(
             document[key].is_null()
                 || document[key]
@@ -234,7 +283,8 @@ fn valid(document: &Value) -> Result<()> {
 fn persist(store: &mut Store, key: &str, value: f64) -> Result<()> {
     anyhow::ensure!(
         value.is_finite()
-            && ((key == "inspectorFraction" && (0.05..=0.95).contains(&value))
+            && (((key == "inspectorFraction" || key == "browserInspectorFraction")
+                && (0.05..=0.95).contains(&value))
                 || (key == "terminalHeight" && value >= HEIGHT_MIN)),
         "Invalid terminal geometry"
     );
@@ -250,18 +300,23 @@ fn persist(store: &mut Store, key: &str, value: f64) -> Result<()> {
 }
 /// Double-clicking the divider: back to half and half, for every panel, as
 /// Swift's `resetInspectorWidth`. The saved share is cleared, not set to 0.5.
-fn reset_share(store: &mut Store) -> Result<()> {
+fn reset_share(store: &mut Store, key: &str) -> Result<()> {
+    anyhow::ensure!(
+        matches!(key, "inspectorFraction" | "browserInspectorFraction"),
+        "Invalid panel geometry key"
+    );
     valid(
         &store
             .document("ui-state.json")?
             .unwrap_or_else(|| json!({})),
     )?;
-    store.patch_document("ui-state.json", &json!({"inspectorFraction":null}))?;
+    store.patch_document("ui-state.json", &json!({(key):null}))?;
     Ok(())
 }
 #[derive(Clone)]
 struct ResizeTerminal {
     right: bool,
+    browser: bool,
 }
 impl Render for ResizeTerminal {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
@@ -294,7 +349,12 @@ impl Coincide {
         let available = self.terminal_available_width(window);
         let chat = if self.chat_inspector_panel().is_some() {
             available
-                - inspector_width(self.terminal_layout.share, available)
+                - inspector_width(
+                    self.terminal_layout.share_for(
+                        self.chat_inspector_panel() == Some(chat_inspector::Panel::Browser),
+                    ),
+                    available,
+                )
                 - f64::from(DIVIDER_HIT_WIDTH)
         } else {
             available
@@ -385,6 +445,7 @@ impl Coincide {
         };
         let border = self.color(0x29303d);
         let accent = self.color(0x98b1d4);
+        let browser = right && self.chat_inspector_panel() == Some(chat_inspector::Panel::Browser);
         let dragging = self
             .terminal_layout
             .drag
@@ -442,24 +503,28 @@ impl Coincide {
                     .w_full()
                     .cursor(CursorStyle::ResizeRow)
             })
-            .on_drag(ResizeTerminal { right }, move |drag, _, window, cx| {
-                let point = window.mouse_position();
-                let pointer = if drag.right { point.x } else { point.y };
-                let _ = parent.update(cx, |this, cx| {
-                    if window.is_window_active()
-                        && !this.media.close_requested
-                        && !this.media.shutdown_requested
-                    {
-                        this.terminal_layout.begin(
-                            drag.right,
-                            f64::from(f32::from(pointer)),
-                            available,
-                        );
-                        cx.notify();
-                    }
-                });
-                cx.new(|_| drag.clone())
-            });
+            .on_drag(
+                ResizeTerminal { right, browser },
+                move |drag, _, window, cx| {
+                    let point = window.mouse_position();
+                    let pointer = if drag.right { point.x } else { point.y };
+                    let _ = parent.update(cx, |this, cx| {
+                        if window.is_window_active()
+                            && !this.media.close_requested
+                            && !this.media.shutdown_requested
+                        {
+                            this.terminal_layout.begin(
+                                drag.right,
+                                drag.browser,
+                                f64::from(f32::from(pointer)),
+                                available,
+                            );
+                            cx.notify();
+                        }
+                    });
+                    cx.new(|_| drag.clone())
+                },
+            );
         Some(
             div()
                 .id(id)
@@ -469,7 +534,7 @@ impl Coincide {
                 .overflow_hidden()
                 .when(right, |view| {
                     view.w(px(
-                        inspector_width(self.terminal_layout.share, available) as f32
+                        inspector_width(self.terminal_layout.share_for(browser), available) as f32,
                     ))
                     .h_full()
                     .flex_shrink_0()
@@ -511,8 +576,13 @@ impl Coincide {
             return;
         }
         self.terminal_layout.drag = None;
-        self.terminal_layout.share = 0.5;
-        self.terminal_layout.queue_reset();
+        let browser = self.chat_inspector_panel() == Some(chat_inspector::Panel::Browser);
+        if browser {
+            self.terminal_layout.browser_share = 0.5;
+        } else {
+            self.terminal_layout.share = 0.5;
+        }
+        self.terminal_layout.queue_reset(browser);
         self.poll_terminal_resize(cx);
         cx.notify();
     }
@@ -533,6 +603,8 @@ impl Coincide {
         if self.terminal_layout.drag.as_ref().is_some_and(|drag| {
             if drag.right {
                 self.chat_inspector_panel().is_none()
+                    || (self.chat_inspector_panel() == Some(chat_inspector::Panel::Browser))
+                        != drag.browser
             } else {
                 self.terminal_on_right() || self.terminal_visible_thread.is_none()
             }
@@ -555,16 +627,16 @@ mod tests {
         assert_eq!(width(0.1, 1000.), 320.);
         assert_eq!(height(260., 500.), 260.);
         let mut state = State::default();
-        state.begin(true, 500., 600.);
+        state.begin(true, false, 500., 600.);
         assert!(!state.move_to(500.));
         assert!(state.finish().is_none());
-        state.begin(true, 500., 1000.);
+        state.begin(true, false, 500., 1000.);
         assert!(state.move_to(550.));
         assert_eq!(state.share, 0.45);
         state.cancel();
         assert_eq!(state.share, 0.5);
         assert!(state.finish().is_none());
-        state.begin(false, 500., 500.);
+        state.begin(false, false, 500., 500.);
         assert!(state.move_to(600.));
         assert_eq!(state.finish(), Some(("terminalHeight", 160.)));
         assert!(state.finish().is_none());
@@ -585,14 +657,14 @@ mod tests {
             Some(expected.clone())
         );
         persist(&mut store, "inspectorFraction", 0.7).unwrap();
-        reset_share(&mut store).unwrap();
+        reset_share(&mut store, "inspectorFraction").unwrap();
         // The reset clears the share back to the default and keeps the rest.
         expected["inspectorFraction"] = serde_json::Value::Null;
         assert_eq!(store.document("ui-state.json").unwrap(), Some(expected));
         let malformed = serde_json::json!({"terminalHeight":"future","opaque":true});
         store.save_document("ui-state.json", &malformed).unwrap();
         assert!(persist(&mut store, "inspectorFraction", 0.6).is_err());
-        assert!(reset_share(&mut store).is_err());
+        assert!(reset_share(&mut store, "inspectorFraction").is_err());
         assert_eq!(store.document("ui-state.json").unwrap(), Some(malformed));
         drop(store);
         std::fs::remove_dir_all(root).unwrap();
@@ -632,7 +704,7 @@ mod tests {
         assert_eq!(document["listWidth"], 288);
         assert_eq!(document["future"]["keep"], true);
         let guard = engine.lock().unwrap();
-        state.queue_reset();
+        state.queue_reset(false);
         assert!(!state.retry(&engine));
         drop(guard);
         assert!(state.retry(&engine));
@@ -646,6 +718,56 @@ mod tests {
                 .unwrap()["inspectorFraction"]
                 .is_null()
         );
+        drop(engine);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[::core::prelude::v1::test]
+    fn browser_defaults_to_half_and_keeps_its_resize_independent() {
+        use coincide_core::api::{Engine, SharedEngine};
+        use std::sync::{Arc, Mutex};
+        let root =
+            std::env::temp_dir().join(format!("coincide-browser-width-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let mut store = coincide_core::store::Store::open(&root.join("state.sqlite")).unwrap();
+        store
+            .save_document(
+                "ui-state.json",
+                &serde_json::json!({"inspectorFraction":0.3,"future":7}),
+            )
+            .unwrap();
+        let engine: SharedEngine = Arc::new(Mutex::new(Engine::new(store)));
+        let mut state = State::load(&engine);
+        assert_eq!(state.share_for(false), 0.3);
+        assert_eq!(state.share_for(true), 0.5);
+        state.begin(true, true, 600., 1200.);
+        assert!(state.move_to(480.));
+        assert_eq!(state.finish(), Some(("browserInspectorFraction", 0.6)));
+        state.queue_save("browserInspectorFraction", 0.6);
+        assert!(state.retry(&engine));
+        let document = engine
+            .lock()
+            .unwrap()
+            .store
+            .document("ui-state.json")
+            .unwrap()
+            .unwrap();
+        assert_eq!(document["inspectorFraction"], 0.3);
+        assert_eq!(document["browserInspectorFraction"], 0.6);
+        assert_eq!(document["future"], 7);
+        let restored = State::load(&engine);
+        assert_eq!(restored.share_for(true), 0.6);
+        assert_eq!(restored.share_for(false), 0.3);
+        state.queue_reset(true);
+        assert!(state.retry(&engine));
+        let document = engine
+            .lock()
+            .unwrap()
+            .store
+            .document("ui-state.json")
+            .unwrap()
+            .unwrap();
+        assert!(document["browserInspectorFraction"].is_null());
+        assert_eq!(document["inspectorFraction"], 0.3);
         drop(engine);
         std::fs::remove_dir_all(root).unwrap();
     }

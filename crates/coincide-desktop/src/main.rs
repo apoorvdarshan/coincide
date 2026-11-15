@@ -7034,18 +7034,18 @@ impl Render for Coincide {
                                                 )
                                         })
                                         .child(
-                                            div()
-                                                .id("composer-actions")
+                                            chat_layout::composer_actions(
+                                                self.composer_selection_footer(window, implement_button.is_some(), cx),
+                                                div()
                                                 .flex()
-                                                .flex_shrink_0()
+                                                .flex_wrap()
                                                 .items_center()
+                                                .justify_end()
                                                 .min_w_0()
-                                                .gap_1()
                                                 .gap(px(6.))
-                                                .mt_2()
-                                                .child(self.composer_selection_footer(window, implement_button.is_some(), cx))
                                                 .child(
                                                     Button::new("attach-images")
+                                                        .flex_shrink_0()
                                                         .icon(gpui_kit::assets::IconName::Paperclip)
                                                         .accessibility_label(if importing_images {
                                                             "Importing images…"
@@ -7060,11 +7060,12 @@ impl Render for Coincide {
                                                             this.attach_images(cx)
                                                         })),
                                                 )
-                                                .child(self.composer_voice_control(cx))
-                                                .child(self.composer_meters(cx))
+                                                .child(div().flex_shrink_0().child(self.composer_voice_control(cx)))
+                                                .child(div().flex_shrink_0().child(self.composer_meters(cx)))
                                                 .when(self.running.contains(&selected_id), |view| view.child(self.composer_stop_button(cx)))
                                                 .when(implement_button.is_none(), |view| view.child(
                                                     Button::new("send")
+                                                        .flex_shrink_0()
                                                         .primary()
                                                         .accessibility_label(composer_follow_up_mount::dispatch_label(self.composer_send_dispatch(false)))
                                                         .tooltip(composer_follow_up_mount::dispatch_label(self.composer_send_dispatch(false)))
@@ -7079,7 +7080,8 @@ impl Render for Coincide {
                                                         )),
                                                 ))
                                                 .when_some(implement_button, |view, button| view.child(button))
-
+                                                .into_any_element(),
+                                            )
                                         )
                                 )
                                 .when_some(self.branch_toolbar(cx), |view, toolbar| view.child(toolbar)),

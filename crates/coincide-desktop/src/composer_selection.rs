@@ -3533,7 +3533,7 @@ impl Coincide {
             },
         );
         let compact = footer_compaction(widths, (available - trailing).max(0.));
-        let mut controls = div().flex().items_center().gap(px(2.));
+        let mut controls = chat_layout::composer_selection_controls();
 
         let facets = [
             (
@@ -3580,6 +3580,7 @@ impl Coincide {
             }];
             controls = controls.child(
                 Button::new(id)
+                    .flex_shrink_0()
                     .when(facet != PickerFacet::Model && !small, |button| {
                         button.label(label.clone())
                     })

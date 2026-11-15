@@ -559,6 +559,7 @@ impl Coincide {
             ),
         );
         Button::new("selection-follow-up-disclosure")
+            .flex_shrink_0()
             .when(!compact, |button| button.label(behavior.label()))
             .when(compact, |button| button.w(px(28.)).p_0())
             .icon(behavior_icon(behavior))

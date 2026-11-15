@@ -1522,13 +1522,18 @@ impl BotSettingsPanel {
             .child(
                 div()
                     .id("bot-editor-sheet-scroll")
+                    .debug_selector(|| "bot-editor-scroll-viewport".into())
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
                     .px_5()
                     .py_3()
                     .when_some(editor, |body, editor| {
-                        body.child(self.editor_view(editor, cx))
+                        body.child(
+                            div()
+                                .debug_selector(|| "bot-editor-scroll-content".into())
+                                .child(self.editor_view(editor, cx)),
+                        )
                     })
                     .when(editor.is_none(), |body| {
                         body.child(
