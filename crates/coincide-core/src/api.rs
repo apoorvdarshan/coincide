@@ -64,6 +64,8 @@ mod bot_starters;
 mod browser_bookmarks_api;
 #[path = "browser_history_api.rs"]
 mod browser_history_api;
+#[path = "browser_link_api.rs"]
+mod browser_link_api;
 #[path = "browser_settings_api.rs"]
 mod browser_settings_api;
 #[path = "named_profile_departure_api.rs"]
@@ -92,6 +94,7 @@ mod provider_restore_api;
 mod provider_switch_api;
 mod provider_tool_metadata;
 pub use browser_bookmarks_api::{PreparedBookmarkOpen, QueuedBookmarkOpen};
+pub use browser_link_api::QueuedBrowserLink;
 #[cfg(test)]
 #[path = "browser_bookmarks_api_tests.rs"]
 mod browser_bookmarks_api_tests;

@@ -391,16 +391,16 @@ fn relative_luminance(color: u32) -> f64 {
 fn link_routing_caption(default_browser: bool) -> &'static str {
     match (default_browser, cfg!(target_os = "macos")) {
         (true, true) => {
-            "Clicking a web link opens your default browser. ⌘-click opens it in Coincide’s browser preview."
+            "Clicking a web link opens your default browser. ⌘-click opens a new tab in Coincide."
         }
         (true, false) => {
-            "Clicking a web link opens your default browser. Ctrl-click opens it in Coincide’s browser preview."
+            "Clicking a web link opens your default browser. Ctrl-click opens a new tab in Coincide."
         }
         (false, true) => {
-            "Clicking a web link opens it in Coincide’s browser preview. ⌘-click opens your default browser."
+            "Clicking a web link opens a new tab in Coincide. ⌘-click opens your default browser."
         }
         (false, false) => {
-            "Clicking a web link opens it in Coincide’s browser preview. Ctrl-click opens your default browser."
+            "Clicking a web link opens a new tab in Coincide. Ctrl-click opens your default browser."
         }
     }
 }
