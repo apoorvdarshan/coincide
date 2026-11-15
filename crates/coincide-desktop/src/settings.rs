@@ -1347,26 +1347,81 @@ impl Coincide {
         ) {
             count += 1;
             if self.settings_section == S::Usage {
-                let admin_usage = self
-                    .provider_configuration_panel
-                    .update(cx, |panel, cx| panel.admin_usage_view(cx));
+                let details_open = self.usage_history.dashboard.details_open;
+                let details = Button::new("usage-details-toggle")
+                    .ghost()
+                    .w_full()
+                    .h(px(58.))
+                    .accessibility_label(if details_open {
+                        "Hide detailed usage reports"
+                    } else {
+                        "Show detailed usage reports"
+                    })
+                    .child(
+                        div()
+                            .w_full()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .flex()
+                                    .flex_col()
+                                    .items_start()
+                                    .gap(px(2.))
+                                    .child(
+                                        div()
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .child("Detailed reports"),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(self.color(0x98a6ba).opacity(0.72))
+                                            .child("Saved turns and organization reports"),
+                                    ),
+                            )
+                            .child(
+                                Icon::new(if details_open {
+                                    gpui_kit::assets::IconName::ChevronDown
+                                } else {
+                                    gpui_kit::assets::IconName::ChevronRight
+                                })
+                                .xsmall(),
+                            ),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.usage_history.dashboard.details_open =
+                            !this.usage_history.dashboard.details_open;
+                        cx.notify();
+                    }));
+                let mut advanced = div().flex().flex_col().child(details);
+                if details_open {
+                    advanced = advanced
+                        .child(div().h(px(1.)).bg(self.color(0x29303d)))
+                        .child(self.usage_history.panel.clone());
+                    let enabled = ["claude", "opencode"]
+                        .into_iter()
+                        .filter(|provider| {
+                            crate::usage_dashboard_ui::provider_id(provider).is_some_and(|id| {
+                                settings_navigation::provider_enabled(&self.settings, id)
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    if !enabled.is_empty() {
+                        let admin_usage = self
+                            .provider_configuration_panel
+                            .update(cx, |panel, cx| panel.admin_usage_view(&enabled, cx));
+                        advanced = advanced
+                            .child(div().h(px(1.)).bg(self.color(0x29303d)))
+                            .child(admin_usage);
+                    }
+                }
                 content = content
                     .child(self.usage_dashboard(cx))
-                    .child(admin_usage)
-                    .child(
-                        div()
-                            .mt_2()
-                            .px_1()
-                            .text_sm()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child("Saved turn reports"),
-                    )
-                    .child(
-                        div()
-                            .h(px(460.))
-                            .min_h(px(260.))
-                            .child(self.usage_history.panel.clone()),
-                    );
+                    .child(self.settings_card(advanced));
             } else {
                 content = content.child(
                     Button::new("settings-usage-history")

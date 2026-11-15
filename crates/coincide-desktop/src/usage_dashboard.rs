@@ -386,6 +386,8 @@ pub struct Dashboard {
     /// The chart shows estimated cost instead of tokens.
     pub cost: bool,
     pub hovered: Option<NaiveDate>,
+    /// Detailed local and organization reports are available on demand.
+    pub details_open: bool,
     pub data: Option<Data>,
     pub error: Option<String>,
     pub loading: bool,
@@ -405,6 +407,7 @@ impl Default for Dashboard {
             days: 30,
             cost: false,
             hovered: None,
+            details_open: false,
             data: None,
             error: None,
             loading: false,

@@ -3814,6 +3814,7 @@ impl Coincide {
         true
     }
     fn tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.poll_sidebar_resize(cx);
         self.poll_project_defaults(window, cx);
         self.tick_schedule_times(cx);
         self.poll_git_controls(window, cx);

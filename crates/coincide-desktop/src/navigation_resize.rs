@@ -44,6 +44,8 @@ struct Drag {
 pub struct State {
     requested: f64,
     drag: Option<Drag>,
+    load_pending: bool,
+    save_pending: Option<f64>,
     error: Option<&'static str>,
 }
 impl Default for State {
@@ -51,13 +53,52 @@ impl Default for State {
         Self {
             requested: DEFAULT,
             drag: None,
+            load_pending: false,
+            save_pending: None,
             error: None,
         }
     }
 }
 impl State {
     pub fn load(engine: &SharedEngine) -> Self {
-        let value = (|| -> Result<f64> {
+        let mut state = Self {
+            load_pending: true,
+            ..Self::default()
+        };
+        state.retry(engine);
+        state
+    }
+    /// A busy engine is temporary. Retry without covering the conversation
+    /// list, and never let a late load replace a width the user has dragged.
+    pub fn retry(&mut self, engine: &SharedEngine) -> bool {
+        if self.drag.is_some() {
+            return false;
+        }
+        if let Some(width) = self.save_pending {
+            let result = (|| -> Result<()> {
+                let mut engine = try_state(engine)?;
+                anyhow::ensure!(!engine.admissions_frozen(), "App is closing");
+                persist(&mut engine.store, width)
+            })();
+            match result {
+                Ok(()) => {
+                    self.save_pending = None;
+                    self.error = None;
+                    return true;
+                }
+                Err(error) if engine_busy(&error) => return false,
+                Err(error) => {
+                    eprintln!("Conversation width could not be saved: {error}");
+                    self.save_pending = None;
+                    self.error = Some(SAVE_ERROR);
+                    return true;
+                }
+            }
+        }
+        if !self.load_pending {
+            return false;
+        }
+        let result = (|| -> Result<f64> {
             let engine = try_state(engine)?;
             preference(
                 &engine
@@ -66,17 +107,18 @@ impl State {
                     .unwrap_or_else(|| json!({})),
             )
         })();
-        match value {
-            Ok(requested) => Self {
-                requested,
-                ..Self::default()
-            },
-            Err(_) => Self {
-                error: Some(
-                    "Saved conversation width could not be read. Default width is shown; existing interface state is retained.",
-                ),
-                ..Self::default()
-            },
+        match result {
+            Ok(requested) => {
+                self.requested = requested;
+                self.load_pending = false;
+                true
+            }
+            Err(error) if engine_busy(&error) => false,
+            Err(error) => {
+                eprintln!("Saved conversation width could not be read: {error}");
+                self.load_pending = false;
+                false
+            }
         }
     }
     pub fn visible(&self, window: f64) -> f64 {
@@ -128,11 +170,13 @@ impl State {
             self.requested = drag.original;
         }
     }
-    pub fn saved(&mut self, success: bool) {
-        self.error = (!success).then_some(SAVE_ERROR);
+    pub fn queue_save(&mut self, width: f64) {
+        self.load_pending = false;
+        self.save_pending = Some(width);
+        self.error = None;
     }
-    pub fn error(&self) -> Option<&'static str> {
-        self.error
+    pub fn take_error(&mut self) -> Option<&'static str> {
+        self.error.take()
     }
 }
 #[derive(Clone)]
@@ -157,13 +201,16 @@ impl Coincide {
         let Some(width) = self.sidebar_resize.finish() else {
             return;
         };
-        let result = (|| -> Result<()> {
-            let mut engine = try_state(&self.engine)?;
-            anyhow::ensure!(!engine.admissions_frozen(), "App is closing");
-            persist(&mut engine.store, width)
-        })();
-        self.sidebar_resize.saved(result.is_ok());
-        cx.notify();
+        self.sidebar_resize.queue_save(width);
+        self.poll_sidebar_resize(cx);
+    }
+    pub(super) fn poll_sidebar_resize(&mut self, cx: &mut Context<Self>) {
+        if self.sidebar_resize.retry(&self.engine) {
+            if let Some(error) = self.sidebar_resize.take_error() {
+                self.status = error.into();
+            }
+            cx.notify();
+        }
     }
 }
 
@@ -230,5 +277,45 @@ mod tests {
         }
         drop(store);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[::core::prelude::v1::test]
+    fn busy_startup_retries_and_a_drag_wins_over_a_late_load() {
+        let root = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&root.path().join("coincide.sqlite")).unwrap();
+        store
+            .save_document("ui-state.json", &json!({"listWidth": 350., "other": true}))
+            .unwrap();
+        let engine: SharedEngine = std::sync::Arc::new(std::sync::Mutex::new(
+            coincide_core::api::Engine::new(store),
+        ));
+
+        let guard = engine.lock().unwrap();
+        let mut state = State::load(&engine);
+        assert!(state.load_pending);
+        assert!(state.take_error().is_none());
+        drop(guard);
+        assert!(state.retry(&engine));
+        assert_eq!(state.requested, 350.);
+
+        let guard = engine.lock().unwrap();
+        let mut state = State::load(&engine);
+        state.begin(500., 1200.);
+        assert!(state.move_to(530., 1200.));
+        let width = state.finish().unwrap();
+        state.queue_save(width);
+        assert!(!state.retry(&engine));
+        drop(guard);
+        assert!(state.retry(&engine));
+        assert_eq!(state.requested, 318.);
+        assert_eq!(
+            engine
+                .lock()
+                .unwrap()
+                .store
+                .document("ui-state.json")
+                .unwrap(),
+            Some(json!({"listWidth": 318., "other": true}))
+        );
     }
 }

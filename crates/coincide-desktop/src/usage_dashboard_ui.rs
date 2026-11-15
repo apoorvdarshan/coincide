@@ -276,7 +276,7 @@ impl Coincide {
         }
     }
 
-    /// A grouped section: its header above a bordered box, as Swift's grouped `Form`.
+    /// A quiet, themed card shared by the usage sections.
     fn usage_section(
         &self,
         header: Option<AnyElement>,
@@ -303,8 +303,8 @@ impl Coincide {
                     .flex()
                     .flex_col()
                     .gap_3()
-                    .p(px(16.))
-                    .rounded(px(10.))
+                    .p(px(14.))
+                    .rounded(px(12.))
                     .border_1()
                     .border_color(self.color(0x29303d))
                     .bg(self.color(0x111722))
@@ -326,6 +326,8 @@ impl Coincide {
     fn usage_header_detail(&self, title: &str, detail: &str) -> AnyElement {
         div()
             .flex()
+            .flex_wrap()
+            .gap_2()
             .justify_between()
             .child(title.to_owned())
             .child(
@@ -341,28 +343,15 @@ impl Coincide {
         &self,
         id: SharedString,
         selected: bool,
-        content: AnyElement,
+        label: impl Into<SharedString>,
         on_click: impl Fn(&mut Self, &mut Context<Self>) + 'static,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        div()
-            .id(id)
-            .flex()
-            .items_center()
-            .gap_1()
-            .px_2()
-            .py(px(3.))
-            .rounded(px(6.))
-            .border_1()
-            .border_color(if selected {
-                self.color(0x98b1d4)
-            } else {
-                self.color(0x29303d)
-            })
-            .when(selected, |view| view.bg(self.color(0x202a3b)))
-            .text_sm()
-            .cursor_pointer()
-            .child(content)
+        Button::new(id)
+            .ghost()
+            .compact()
+            .selected(selected)
+            .label(label)
             .on_click(cx.listener(move |this, _, _, cx| {
                 on_click(this, cx);
                 cx.notify();
@@ -498,17 +487,28 @@ impl Coincide {
         let muted = self.usage_muted(cx);
         div()
             .flex_1()
-            .min_w_0()
+            .min_w(px(125.))
             .flex()
             .flex_col()
-            .gap(px(3.))
+            .gap(px(4.))
+            .p(px(12.))
+            .rounded(px(9.))
+            .bg(self.color(0x202a3b).opacity(0.48))
             .overflow_hidden()
             .child(div().text_xs().text_color(muted).child(title.to_owned()))
             .child(
                 div()
-                    .text_2xl()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(format::tokens(totals.tokens.total())),
+                    .flex()
+                    .flex_wrap()
+                    .items_baseline()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_xl()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(format::tokens(totals.tokens.total())),
+                    )
+                    .child(div().text_xs().text_color(muted).child("tokens")),
             )
             .child(
                 div()
@@ -524,6 +524,7 @@ impl Coincide {
                 view.child(
                     div()
                         .flex()
+                        .flex_wrap()
                         .items_center()
                         .gap_1()
                         .min_w_0()
@@ -537,13 +538,7 @@ impl Coincide {
                             })
                             .xsmall(),
                         )
-                        .child(div().truncate().child(compact_trend(trend))),
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(muted)
-                        .truncate()
+                        .child(compact_trend(trend))
                         .child(format!("vs {compared}")),
                 )
             })
@@ -591,7 +586,7 @@ impl Coincide {
                     .bg(*color),
             );
         }
-        let mut legend = div().flex().flex_wrap().gap_4();
+        let mut legend = div().flex().flex_wrap().gap_3();
         for (name, count, color) in parts {
             legend = legend.child(
                 div()
@@ -603,7 +598,12 @@ impl Coincide {
                         div()
                             .flex()
                             .flex_col()
-                            .child(div().text_sm().child(format::tokens(count)))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child(format::tokens(count)),
+                            )
                             .child(div().text_xs().text_color(muted).child(name)),
                     ),
             );
@@ -624,7 +624,12 @@ impl Coincide {
                     div()
                         .flex()
                         .flex_col()
-                        .child(div().text_sm().child(format::tokens(tokens.reasoning)))
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(format::tokens(tokens.reasoning)),
+                        )
                         .child(
                             div()
                                 .text_xs()
@@ -640,10 +645,12 @@ impl Coincide {
             .child(
                 div()
                     .flex()
+                    .flex_wrap()
+                    .gap_1()
                     .justify_between()
                     .text_xs()
                     .text_color(muted)
-                    .child(title.to_owned())
+                    .child(format!("Token breakdown · {title}"))
                     .child(summary),
             )
             .child(bar)
@@ -910,10 +917,11 @@ impl Coincide {
         let limits = card.limits();
         div()
             .flex()
+            .flex_wrap()
             .items_center()
             .gap_2()
             .child(self.usage_logo(card.account.provider, 16.))
-            .child(card.title())
+            .child(div().min_w_0().truncate().child(card.title()))
             .when_some(limits.and_then(|l| l.plan.clone()), |view, plan| {
                 view.child(
                     div()
@@ -1156,28 +1164,44 @@ impl Coincide {
                 crate::codex_limits_view::Phase::Loading
             );
 
-        // Header.
+        // An introduction and compact filters share one card, leaving the
+        // activity itself visible without scrolling through large settings rows.
         let header = div()
             .flex()
             .items_center()
-            .gap(px(14.))
+            .gap(px(12.))
             .child(
                 div()
-                    .w(px(44.))
-                    .h(px(44.))
+                    .w(px(38.))
+                    .h(px(38.))
                     .flex_shrink_0()
-                    .rounded(px(11.))
-                    .bg(rgb(0x278349))
-                    .text_color(rgb(0xffffff))
+                    .rounded(px(10.))
+                    .bg(self.provider_ink("codex").opacity(0.16))
+                    .text_color(self.provider_ink("codex"))
                     .flex()
                     .items_center()
                     .justify_center()
                     .child(Icon::new(gpui_kit::assets::IconName::ChartColumn)),
             )
-            .child(div().flex_1().min_w_0().text_color(muted).child(format!(
-                "Plan limits, and the tokens your agents used on {}.",
-                this_computer()
-            )))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(
+                        div()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("Usage overview"),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(format!("Activity and plan limits on {}", this_computer())),
+                    ),
+            )
             .child(
                 div()
                     .flex()
@@ -1187,6 +1211,7 @@ impl Coincide {
                     .child(
                         Button::new("usage-refresh")
                             .label("Refresh")
+                            .compact()
                             .loading(loading)
                             .disabled(loading)
                             .on_click(cx.listener(|this, _, _, cx| this.refresh_usage(cx))),
@@ -1228,12 +1253,12 @@ impl Coincide {
                 }
                 menu
             });
-        let mut filters = vec![self.usage_labeled("Show", None, providers.into_any_element(), cx)];
+        let mut accounts_filter = None;
         if !account_choices.is_empty() {
             let mut accounts = div().flex().flex_wrap().gap_1().child(self.usage_chip(
                 "usage-account-all".into(),
                 filter_account.is_none(),
-                div().child("All accounts").into_any_element(),
+                "All accounts",
                 |this, _| this.usage_history.dashboard.account = None,
                 cx,
             ));
@@ -1242,12 +1267,12 @@ impl Coincide {
                 accounts = accounts.child(self.usage_chip(
                     SharedString::from(format!("usage-account-{index}")),
                     selected,
-                    div().child(name).into_any_element(),
+                    name,
                     move |this, _| this.usage_history.dashboard.account = Some(id.clone()),
                     cx,
                 ));
             }
-            filters.push(self.usage_labeled("Account", None, accounts.into_any_element(), cx));
+            accounts_filter = Some(accounts.into_any_element());
         }
         let owner = cx.entity().downgrade();
         let selected_days = dashboard.days;
@@ -1273,18 +1298,27 @@ impl Coincide {
                 }
                 menu
             });
-        filters.push(self.usage_labeled(
-            "Period",
-            Some("For the chart, the split and the lists below."),
-            periods.into_any_element(),
-            cx,
-        ));
+        let filters = div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap_2()
+            .child(div().text_xs().text_color(muted).child("Showing"))
+            .child(providers)
+            .child(div().text_xs().text_color(muted).child("for"))
+            .child(periods)
+            .into_any_element();
+        let mut introduction = vec![header.into_any_element(), filters];
+        if let Some(accounts) = accounts_filter {
+            introduction.push(accounts);
+        }
 
         // Overview.
         let mut overview = vec![
             div()
                 .flex()
-                .gap(px(14.))
+                .flex_wrap()
+                .gap_2()
                 .child(self.usage_tile(
                     "Today",
                     &report.today,
@@ -1292,20 +1326,18 @@ impl Coincide {
                     "yesterday",
                     cx,
                 ))
-                .child(div().w(px(1.)).bg(self.color(0x29303d)))
                 .child(self.usage_tile(
                     "Last 7 days",
                     &report.last_week,
                     report::trend(&report.last_week, &report.previous_week),
-                    "the 7 days before",
+                    "preceding 7 days",
                     cx,
                 ))
-                .child(div().w(px(1.)).bg(self.color(0x29303d)))
                 .child(self.usage_tile(
                     "Last 30 days",
                     &report.last_month,
                     report::trend(&report.last_month, &report.previous_month),
-                    "the 30 days before",
+                    "preceding 30 days",
                     cx,
                 ))
                 .into_any_element(),
@@ -1352,13 +1384,15 @@ impl Coincide {
             metric = metric.child(self.usage_chip(
                 SharedString::from(format!("usage-metric-{index}")),
                 dashboard.cost == cost,
-                div().child(label).into_any_element(),
+                label,
                 move |this, _| this.usage_history.dashboard.cost = cost,
                 cx,
             ));
         }
         let chart_header = div()
             .flex()
+            .flex_wrap()
+            .gap_2()
             .items_center()
             .justify_between()
             .child(
@@ -1391,12 +1425,14 @@ impl Coincide {
             .flex()
             .flex_col()
             .gap_4()
-            .child(self.usage_section(None, vec![header.into_any_element()], None, cx))
-            .child(self.usage_section(None, filters, None, cx))
+            .child(self.usage_section(None, introduction, None, cx))
             .child(self.usage_section(Some(scope_title.into_any_element()), overview, None, cx))
             .child(self.usage_section(None, vec![chart_header, chart], None, cx));
 
-        if cfg!(target_os = "macos") && enabled.contains(&"opencode") {
+        if cfg!(target_os = "macos")
+            && enabled.contains(&"opencode")
+            && filter_provider.is_none_or(|provider| provider == "opencode")
+        {
             content = content.child(self.settings_group(
                 "Browser details",
                 div().flex().flex_col().gap_2()
@@ -1578,17 +1614,20 @@ impl Coincide {
             .flex()
             .flex_col()
             .gap(px(6.))
+            .px_1()
             .text_xs()
             .text_color(muted)
-            .child("Costs are estimates at API list prices: what the tokens would cost through the API. Subscription plans aren’t billed per token.");
+            .child(
+                "Cost estimates use API list prices. Subscription plans aren’t billed per token.",
+            );
         if report.period.unpriced_tokens > 0 {
             notes = notes.child(format!(
-                "{} tokens are from models without a known price and aren’t in the cost.",
+                "{} tokens have no known price and aren’t included in the estimate.",
                 format::tokens(report.period.unpriced_tokens)
             ));
         }
         notes = notes.child(format!(
-            "Usage counts turns run in Coincide whose agent reported its token use. This version doesn’t read the Claude Code or Codex logs on {}. Nothing is uploaded.",
+            "Only Coincide turns with reported usage are counted. Claude Code and Codex logs on {} aren’t read.",
             this_computer()
         ));
         if let Some(skipped) = dashboard
@@ -1602,7 +1641,7 @@ impl Coincide {
                 format::integer(skipped as u64)
             ));
         }
-        content = content.child(self.usage_section(None, vec![notes.into_any_element()], None, cx));
+        content = content.child(notes);
         content.into_any_element()
     }
 }

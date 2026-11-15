@@ -3,7 +3,14 @@ use coincide_core::local_usage::{
     CaptureCoverage, CounterSummary, Figure, Query, Report, Source, since_days,
 };
 use gpui_kit::prelude::FluentBuilder;
-use gpui_kit::{base::Disableable, component::button::Button, *};
+use gpui_kit::{
+    base::Disableable,
+    component::{
+        ActiveTheme, Selectable,
+        button::{Button, ButtonVariants},
+    },
+    *,
+};
 
 pub enum UsageHistoryEvent {
     Load(Query),
@@ -13,6 +20,9 @@ pub struct UsageHistoryView {
     error: Option<String>,
     loading: bool,
     selected: Option<String>,
+    scroll: ScrollHandle,
+    period: Option<u16>,
+    pending_period: Option<Option<u16>>,
 }
 impl EventEmitter<UsageHistoryEvent> for UsageHistoryView {}
 fn figure<T: std::fmt::Display>(value: &Figure<T>) -> String {
@@ -42,6 +52,9 @@ impl UsageHistoryView {
             error: None,
             loading: false,
             selected: None,
+            scroll: ScrollHandle::new(),
+            period: None,
+            pending_period: None,
         }
     }
     /// Root calls after a bounded saved-history read, never after live refresh.
@@ -49,6 +62,9 @@ impl UsageHistoryView {
         self.loading = false;
         match result {
             Ok(report) => {
+                if let Some(period) = self.pending_period.take() {
+                    self.period = period;
+                }
                 if self
                     .selected
                     .as_ref()
@@ -59,7 +75,10 @@ impl UsageHistoryView {
                 self.report = Some(report);
                 self.error = None;
             }
-            Err(error) => self.error = Some(error.chars().take(1024).collect()),
+            Err(error) => {
+                self.pending_period = None;
+                self.error = Some(error.chars().take(1024).collect());
+            }
         }
         cx.notify();
     }
@@ -73,6 +92,9 @@ impl UsageHistoryView {
         cx.notify();
     }
     fn period(&mut self, days: Option<u16>, cx: &mut Context<Self>) {
+        if self.loading {
+            return;
+        }
         let mut query = self
             .report
             .as_ref()
@@ -101,6 +123,7 @@ impl UsageHistoryView {
                 }
             }
         };
+        self.pending_period = Some(days);
         self.request(query, cx);
     }
 }
@@ -116,83 +139,121 @@ impl Render for UsageHistoryView {
             .as_ref()
             .map(|report| report.query.clone())
             .unwrap_or_default();
-        let mut controls = div()
-            .flex()
-            .flex_wrap()
-            .gap_2()
-            .child(
-                Button::new("usage-reload")
-                    .label(if self.loading {
-                        "Loading saved history…"
-                    } else {
-                        "Reload saved history"
-                    })
-                    .disabled(self.loading)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        let query = this
-                            .report
-                            .as_ref()
-                            .map(|report| report.query.clone())
-                            .unwrap_or_default();
-                        this.request(query, cx);
-                    })),
-            )
-            .child(
-                Button::new("usage-all-dates")
-                    .label("All dates")
-                    .disabled(self.loading)
-                    .on_click(cx.listener(|this, _, _, cx| this.period(None, cx))),
-            )
-            .child(
-                Button::new("usage-seven-days")
-                    .label("7 days (UTC)")
-                    .disabled(self.loading)
-                    .on_click(cx.listener(|this, _, _, cx| this.period(Some(7), cx))),
-            )
-            .child(
-                Button::new("usage-thirty-days")
-                    .label("30 days (UTC)")
-                    .disabled(self.loading)
-                    .on_click(cx.listener(|this, _, _, cx| this.period(Some(30), cx))),
-            );
-        let mut all = query.clone();
-        all.provider = None;
-        all.offset = 0;
-        controls = controls.child(
-            Button::new("usage-all-providers")
-                .label("All providers")
-                .disabled(self.loading)
-                .on_click(cx.listener(move |this, _, _, cx| this.request(all.clone(), cx))),
-        );
-        if let Some(report) = &self.report {
-            for (index, provider) in report.available_providers.iter().take(12).enumerate() {
-                let mut next = query.clone();
-                next.provider = Some(provider.clone());
-                next.offset = 0;
-                controls = controls.child(
-                    Button::new(("usage-provider", index))
-                        .label(provider.clone())
+        let reload = Button::new("usage-reload")
+            .compact()
+            .label(if self.loading {
+                "Loading…"
+            } else if self.report.is_some() {
+                "Reload"
+            } else {
+                "Load reports"
+            })
+            .disabled(self.loading)
+            .on_click(cx.listener(|this, _, _, cx| {
+                let query = this
+                    .report
+                    .as_ref()
+                    .map(|report| report.query.clone())
+                    .unwrap_or_default();
+                this.request(query, cx);
+            }));
+        let mut controls = div().flex().flex_wrap().items_center().gap_1();
+        if self.report.is_some() {
+            controls = controls
+                .child(
+                    Button::new("usage-all-dates")
+                        .ghost()
+                        .compact()
+                        .selected(self.period.is_none())
+                        .label("All dates")
                         .disabled(self.loading)
-                        .on_click(
-                            cx.listener(move |this, _, _, cx| this.request(next.clone(), cx)),
-                        ),
+                        .on_click(cx.listener(|this, _, _, cx| this.period(None, cx))),
+                )
+                .child(
+                    Button::new("usage-seven-days")
+                        .ghost()
+                        .compact()
+                        .selected(self.period == Some(7))
+                        .label("7 days (UTC)")
+                        .disabled(self.loading)
+                        .on_click(cx.listener(|this, _, _, cx| this.period(Some(7), cx))),
+                )
+                .child(
+                    Button::new("usage-thirty-days")
+                        .ghost()
+                        .compact()
+                        .selected(self.period == Some(30))
+                        .label("30 days (UTC)")
+                        .disabled(self.loading)
+                        .on_click(cx.listener(|this, _, _, cx| this.period(Some(30), cx))),
                 );
+            let mut all = query.clone();
+            all.provider = None;
+            all.offset = 0;
+            controls = controls.child(
+                Button::new("usage-all-providers")
+                    .ghost()
+                    .compact()
+                    .selected(query.provider.is_none())
+                    .label("All providers")
+                    .disabled(self.loading)
+                    .on_click(cx.listener(move |this, _, _, cx| this.request(all.clone(), cx))),
+            );
+            if let Some(report) = &self.report {
+                for (index, provider) in report.available_providers.iter().take(12).enumerate() {
+                    let mut next = query.clone();
+                    next.provider = Some(provider.clone());
+                    next.offset = 0;
+                    controls = controls.child(
+                        Button::new(("usage-provider", index))
+                            .ghost()
+                            .compact()
+                            .selected(query.provider.as_deref() == Some(provider.as_str()))
+                            .label(
+                                if crate::usage_dashboard_ui::provider_id(provider).is_some() {
+                                    crate::usage_dashboard_ui::provider_name(provider).to_owned()
+                                } else {
+                                    provider.clone()
+                                },
+                            )
+                            .disabled(self.loading)
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| this.request(next.clone(), cx)),
+                            ),
+                    );
+                }
             }
         }
         let mut body = div()
             .id("saved-usage-scroll")
-            .flex_1()
-            .min_h_0()
+            .max_h(px(340.))
+            .track_scroll(&self.scroll)
             .overflow_y_scroll()
             .flex()
             .flex_col()
             .gap_2();
         if let Some(report) = &self.report {
-            body=body.child(format!("Filters: provider {} · project {} · account {} · since {}", report.query.provider.as_deref().unwrap_or("all"), report.query.project_id.as_deref().unwrap_or("all"), report.query.account_id.as_deref().unwrap_or("all"), report.query.since.as_deref().unwrap_or("all dates")))
-                .child(match report.source {Source::LocalDocument=>"Source: local saved usage history",Source::CapturedOriginal=>"Source: captured historical usage document"})
-                .child(match report.capture {CaptureCoverage::NotConnected=>"New Rust turns do not currently record usage in this build.",CaptureCoverage::CodexRequestSnapshots=>"New Rust turns record Codex request snapshots only. Other providers are not recorded yet."})
-                .child(format!("{} matching turns · {} saved · showing {}–{}",report.matched_records,report.stored_records,if report.rows.is_empty(){0}else{report.query.offset+1},report.query.offset+report.rows.len()))
-                .child(format!("Reported additive turn counters: input {} · cache read {} · cache write {} · output {}",total(&report.totals.input,report.matched_records),total(&report.totals.cache_read,report.matched_records),total(&report.totals.cache_write,report.matched_records),total(&report.totals.output,report.matched_records)));
+            body = body.child(div().font_weight(FontWeight::MEDIUM).child(format!(
+                    "{} matching turns · {} saved · showing {}–{}",
+                    report.matched_records, report.stored_records,
+                    if report.rows.is_empty() { 0 } else { report.query.offset + 1 },
+                    report.query.offset + report.rows.len()
+                )))
+                .child(div().text_xs().text_color(cx.theme().muted_foreground).child(match report.source {Source::LocalDocument=>"Local saved usage history",Source::CapturedOriginal=>"Captured historical usage document"}))
+                .child(div().text_xs().text_color(cx.theme().muted_foreground).child(match report.capture {CaptureCoverage::NotConnected=>"New Rust turns do not currently record usage in this build.",CaptureCoverage::CodexRequestSnapshots=>"New Rust turns record Codex request snapshots only. Other providers are not recorded yet."}))
+                .child(div().text_xs().text_color(cx.theme().muted_foreground).child(format!("Reported turn counters: input {} · cache read {} · cache write {} · output {}",total(&report.totals.input,report.matched_records),total(&report.totals.cache_read,report.matched_records),total(&report.totals.cache_write,report.matched_records),total(&report.totals.output,report.matched_records))));
+            if report.query.project_id.is_some() || report.query.account_id.is_some() {
+                body = body.child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(format!(
+                            "Project: {} · Account: {}",
+                            report.query.project_id.as_deref().unwrap_or("all"),
+                            report.query.account_id.as_deref().unwrap_or("all")
+                        )),
+                );
+            }
             if report.missing_date_excluded > 0 {
                 body = body.child(format!(
                     "{} saved turns have no valid date and are excluded by this period.",
@@ -211,11 +272,14 @@ impl Render for UsageHistoryView {
                     .flex()
                     .flex_col()
                     .gap_1()
-                    .p_2()
-                    .border_1()
-                    .border_color(rgb(0x354050))
+                    .py_2()
+                    .border_t_1()
+                    .border_color(cx.theme().border)
                     .child(
                         Button::new(("saved-usage-row", index))
+                            .ghost()
+                            .compact()
+                            .w_full()
                             .label(format!(
                                 "{} · {} · {}",
                                 figure(&row.finished_at),
@@ -231,12 +295,17 @@ impl Render for UsageHistoryView {
                                 cx.notify();
                             })),
                     )
-                    .child(format!(
-                        "Outcome: {} · Input/context snapshot: {} · Output snapshot: {}",
-                        figure(&row.outcome),
-                        figure(&row.usage.input_tokens),
-                        figure(&row.usage.output_tokens)
-                    ));
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(format!(
+                                "Outcome: {} · Input/context snapshot: {} · Output snapshot: {}",
+                                figure(&row.outcome),
+                                figure(&row.usage.input_tokens),
+                                figure(&row.usage.output_tokens)
+                            )),
+                    );
                 if expanded {
                     item=item.child(format!("Project ID: {} · Account ID: {}",figure(&row.project_id),figure(&row.account_id)))
                         .child("An unrecorded account may mean the provider default or an older record; it is not a verified account identity.")
@@ -277,13 +346,45 @@ impl Render for UsageHistoryView {
                     ),
             );
         } else {
-            body = body.child("Load saved history to view actual provider-reported usage.");
+            body = body.child(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("Load saved reports to inspect individual turns."),
+            );
         }
-        div().size_full().min_h_0().flex().flex_col().gap_2().p_3()
-            .child(div().text_lg().child("Saved usage"))
-            .child("Local reports only. Context, output and cost snapshots are shown per turn and are not summed into billing totals. Live plan limits are unavailable here.")
-            .child(controls)
-            .when_some(self.error.clone(),|view,error|view.child(error))
+        div()
+            .w_full()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .p_4()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .child(
+                        div()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("Saved turn reports"),
+                    )
+                    .child(reload),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(
+                        "Local per-turn snapshots. They aren’t billing totals or live plan limits.",
+                    ),
+            )
+            .when(self.report.is_some(), |view| view.child(controls))
+            .when_some(self.error.clone(), |view, error| {
+                view.child(div().text_color(cx.theme().danger).child(error))
+            })
             .child(body)
     }
 }
