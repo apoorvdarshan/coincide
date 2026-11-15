@@ -71,6 +71,28 @@ pub struct Runs {
     pub pending: HashMap<String, Vec<PendingRequest>>,
 }
 
+#[derive(Default)]
+struct ThreadMarkers {
+    unseen: HashMap<String, String>,
+    settled: HashMap<String, f64>,
+}
+impl ThreadMarkers {
+    fn apply(&self, thread: &mut ThreadSummary) {
+        thread.unseen = self.unseen.get(&thread.id).cloned();
+        thread.is_settled = self
+            .settled
+            .get(&thread.id)
+            .is_some_and(|date| thread.updated_at > 0. && *date >= thread.updated_at);
+        let needs_user =
+            thread.is_running || thread.pending_approvals > 0 || thread.pending_questions > 0;
+        thread.is_hidden = !needs_user
+            && (thread.is_settled
+                || thread
+                    .snoozed_until
+                    .is_some_and(|until| until > super::pairing::now_ms()));
+    }
+}
+
 pub struct Adapter {
     engine: SharedEngine,
     app_version: String,
@@ -377,7 +399,7 @@ impl Adapter {
     /// them, most recently active first.
     pub fn workspace(&self, include_archived: bool, runs: &Runs) -> Result<Workspace, RemoteError> {
         let stored = self.call("projects.list", json!({}))?;
-        let unseen = self.unseen()?;
+        let markers = self.markers()?;
         let chats_id = stored
             .as_array()
             .into_iter()
@@ -456,7 +478,7 @@ impl Adapter {
             if let Some(fields) = self.cached_fields(summary, runs) {
                 seen.insert(upper(summary["id"].as_str().unwrap_or_default()));
                 let mut thread = Self::summary(summary, &fields, &project, runs);
-                thread.unseen = unseen.get(&thread.id).cloned();
+                markers.apply(&mut thread);
                 threads.push(thread);
             }
         }
@@ -564,7 +586,7 @@ impl Adapter {
         Ok(())
     }
 
-    fn unseen(&self) -> Result<HashMap<String, String>, RemoteError> {
+    fn markers(&self) -> Result<ThreadMarkers, RemoteError> {
         let engine = self
             .engine
             .try_lock()
@@ -575,15 +597,17 @@ impl Adapter {
             .map_err(|e| RemoteError::failed(e.to_string()))?
             .unwrap_or(json!({}));
         if !state.is_object()
-            || state
-                .get("unseen")
-                .is_some_and(|v| !v.is_null() && !v.is_object())
+            || ["unseen", "settledThreads"].iter().any(|key| {
+                state
+                    .get(*key)
+                    .is_some_and(|v| !v.is_null() && !v.is_object())
+            })
         {
             return Err(RemoteError::failed(
                 "Saved conversation markers are invalid.",
             ));
         }
-        Ok(state["unseen"]
+        let unseen = state["unseen"]
             .as_object()
             .into_iter()
             .flatten()
@@ -593,7 +617,14 @@ impl Adapter {
                     .filter(|value| matches!(*value, "completed" | "failed"))
                     .map(|value| (upper(id), value.to_owned()))
             })
-            .collect())
+            .collect();
+        let settled = state["settledThreads"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter_map(|(id, value)| stored_date_ms(value).map(|date| (upper(id), date)))
+            .collect();
+        Ok(ThreadMarkers { unseen, settled })
     }
 
     /// The thread's summary as the sidebar would list it.
@@ -613,7 +644,7 @@ impl Adapter {
         });
         let project = document["projectID"].as_str().unwrap_or(NO_PROJECT);
         let mut summary = Self::summary(&summary, &Self::fields(document), project, runs);
-        summary.unseen = self.unseen()?.get(&summary.id).cloned();
+        self.markers()?.apply(&mut summary);
         Ok(summary)
     }
 
@@ -1093,7 +1124,77 @@ impl Adapter {
         Ok(upper(created["id"].as_str().unwrap_or_default()))
     }
 
+    fn set_marker(
+        &self,
+        thread: Uuid,
+        key: &str,
+        value: Option<Value>,
+        idle: bool,
+    ) -> Result<(), RemoteError> {
+        let mut engine = self
+            .engine
+            .try_lock()
+            .map_err(|_| RemoteError::failed("The computer is busy. Try again."))?;
+        if engine.admissions_frozen() {
+            return Err(RemoteError::failed("The computer is closing."));
+        }
+        let id = engine
+            .store
+            .resolve_thread_id(thread)
+            .map_err(|e| RemoteError::failed(e.to_string()))?
+            .ok_or_else(RemoteError::thread_not_found)?;
+        if idle && !engine.remote_thread_idle(&id) {
+            return Err(RemoteError::new(
+                ErrorCode::NotAllowed,
+                "Finish this conversation’s work and approvals first.",
+            ));
+        }
+        let current = engine
+            .store
+            .document("ui-state.json")
+            .map_err(|e| RemoteError::failed(e.to_string()))?
+            .unwrap_or(json!({}));
+        if !current.is_object()
+            || current
+                .get(key)
+                .is_some_and(|v| !v.is_null() && !v.is_object())
+        {
+            return Err(RemoteError::failed(
+                "Saved conversation markers are invalid.",
+            ));
+        }
+        let mut entries = current[key].as_object().cloned().unwrap_or_default();
+        entries.retain(|saved, _| Uuid::parse_str(saved).ok() != Some(thread));
+        if let Some(value) = value {
+            entries.insert(id, value);
+        }
+        let mut patch = json!({});
+        patch[key] = json!(entries);
+        if patch[key] != current[key] {
+            engine
+                .store
+                .patch_document("ui-state.json", &patch)
+                .map_err(|e| RemoteError::failed(e.to_string()))?;
+            engine.revision += 1;
+        }
+        Ok(())
+    }
+
     pub fn perform(&self, thread: Uuid, action: &ThreadAction) -> Result<(), RemoteError> {
+        match action {
+            ThreadAction::MarkUnread => {
+                return self.set_marker(thread, "unseen", Some(json!("completed")), false);
+            }
+            ThreadAction::Settle(value) => {
+                return self.set_marker(
+                    thread,
+                    "settledThreads",
+                    value.then(|| json!(crate::store::swift_timestamp())),
+                    *value,
+                );
+            }
+            _ => {}
+        }
         let (id, _) = self.document(thread)?;
         let patch = match action {
             ThreadAction::Rename(title) => {
@@ -1107,12 +1208,39 @@ impl Adapter {
                 json!({"title":title.chars().take(512).collect::<String>()})
             }
             ThreadAction::Pin(value) => json!({"isPinned":value}),
-            ThreadAction::Archive(value) => json!({"isArchived":value}),
-            ThreadAction::Snooze(date) => json!({"snoozedUntil":date.map(swift_seconds)}),
-            ThreadAction::Settle(_)
-            | ThreadAction::MarkUnread
-            | ThreadAction::Move(_)
-            | ThreadAction::Delete => {
+            ThreadAction::Archive(true) => {
+                let mut engine = self
+                    .engine
+                    .try_lock()
+                    .map_err(|_| RemoteError::failed("The computer is busy. Try again."))?;
+                if !engine.remote_thread_idle(&id) {
+                    return Err(RemoteError::new(
+                        ErrorCode::NotAllowed,
+                        "Stop the thread before archiving it.",
+                    ));
+                }
+                let response = engine.dispatch(json!({"method":"threads.patch","params":{"threadId":id,"patch":{"isArchived":true}}}));
+                if let Some(error) = response.get("error") {
+                    return Err(RemoteError::failed(
+                        error["message"]
+                            .as_str()
+                            .unwrap_or("Unable to archive thread."),
+                    ));
+                }
+                return Ok(());
+            }
+            ThreadAction::Archive(false) => json!({"isArchived":false}),
+            ThreadAction::Snooze(date) => {
+                if date.is_some_and(|date| !date.is_finite() || date <= super::pairing::now_ms()) {
+                    return Err(RemoteError::new(
+                        ErrorCode::BadRequest,
+                        "Pick a time in the future.",
+                    ));
+                }
+                json!({"snoozedUntil":date.map(swift_seconds)})
+            }
+            ThreadAction::Settle(_) | ThreadAction::MarkUnread => unreachable!("handled above"),
+            ThreadAction::Move(_) | ThreadAction::Delete => {
                 return Err(RemoteError::new(
                     ErrorCode::NotAllowed,
                     "Do this on the computer; Coincide Remote can’t do it here yet.",

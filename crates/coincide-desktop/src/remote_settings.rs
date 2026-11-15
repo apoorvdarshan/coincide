@@ -23,6 +23,7 @@ pub(super) struct RemoteSettingsPanel {
     /// The pairing code's modules, made once per code.
     code: Option<(String, qr::Matrix)>,
     last_usage_sync: Option<Instant>,
+    sidebar_revision: u64,
     #[cfg(not(target_os = "macos"))]
     last_usage_refresh: Option<Instant>,
     #[cfg(not(target_os = "macos"))]
@@ -56,6 +57,7 @@ impl RemoteSettingsPanel {
             countdown: String::new(),
             code: None,
             last_usage_sync: None,
+            sidebar_revision: 0,
             #[cfg(not(target_os = "macos"))]
             last_usage_refresh: None,
             #[cfg(not(target_os = "macos"))]
@@ -65,6 +67,15 @@ impl RemoteSettingsPanel {
 
     pub(super) fn enabled(&self) -> bool {
         self.server.as_ref().is_some_and(RemoteServer::is_enabled)
+    }
+
+    pub(super) fn pending_sidebar_revision(&self) -> Option<u64> {
+        let revision = self.server.as_ref()?.sidebar_revision();
+        (revision != self.sidebar_revision).then_some(revision)
+    }
+
+    pub(super) fn acknowledge_sidebar_revision(&mut self, revision: u64) {
+        self.sidebar_revision = revision;
     }
 
     pub(super) fn usage_sync_due(&mut self) -> bool {
