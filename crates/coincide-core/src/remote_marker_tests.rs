@@ -9,6 +9,7 @@ use crate::remote::{
 fn remote_settle_and_archive_refuse_an_active_run_without_losing_markers() {
     let dir = tempfile::tempdir().unwrap();
     let mut engine = Engine::fixture(Store::open(&dir.path().join("state.sqlite")).unwrap());
+    assert_eq!(engine.running_thread_count(), 0);
     let thread = engine
         .execute("threads.create", &json!({"cwd":dir.path()}))
         .unwrap();
@@ -44,6 +45,7 @@ fn remote_settle_and_archive_refuse_an_active_run_without_losing_markers() {
             persistence_error: None,
         },
     );
+    assert_eq!(engine.running_thread_count(), 1);
     let shared = Arc::new(Mutex::new(engine));
     let adapter = Adapter::new(shared.clone(), "fixture");
     let before = shared

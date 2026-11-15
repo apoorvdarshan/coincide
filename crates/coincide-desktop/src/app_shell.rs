@@ -46,8 +46,14 @@ fn push(cx: &mut App, request: impl FnOnce(&[(String, String)]) -> Option<DockRe
     }
     let state = cx.global::<DockState>();
     let request = state.recent.lock().ok().and_then(|recent| request(&recent));
-    if let (Some(request), Ok(mut pending)) = (request, state.pending.lock()) {
+    let queued = if let (Some(request), Ok(mut pending)) = (request, state.pending.lock()) {
         pending.push(request);
+        true
+    } else {
+        false
+    };
+    if queued && cx.has_global::<super::Launch>() {
+        super::reopen_main_window(cx);
     }
 }
 fn recent(index: usize) -> impl Fn(&[(String, String)]) -> Option<DockRequest> {

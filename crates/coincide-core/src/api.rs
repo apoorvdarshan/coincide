@@ -1706,6 +1706,10 @@ impl Engine {
         );
         self.runs.insert(id, run);
     }
+    /// Current provider turns, independent of whether a desktop window exists.
+    pub fn running_thread_count(&self) -> usize {
+        self.runs.len()
+    }
     /// Each running thread's start (Swift reference seconds) and whether it is
     /// still connecting: its provider has sent nothing since the run began.
     fn run_clocks_status(&self) -> Value {
