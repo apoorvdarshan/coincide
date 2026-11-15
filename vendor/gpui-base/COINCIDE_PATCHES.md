@@ -7,6 +7,9 @@ modified. The registry's `.cargo-ok` cache marker is omitted.
 
 Local source changes:
 
+- `src/text/mod.rs`: exposes the default Markdown parser's plain-copy text so
+  Coincide can index long transcripts on a background worker with the same
+  byte offsets as native TextView highlights.
 - `src/input/base/state.rs`: registers and re-exports the small native preview
   module.
 - `src/input/base/native_preview.rs`: textarea-only source and native revision

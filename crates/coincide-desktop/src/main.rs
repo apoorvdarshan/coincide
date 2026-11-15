@@ -168,6 +168,7 @@ mod thread_bulk;
 mod tool_detail;
 mod transcript;
 mod transcript_find;
+mod transcript_find_large;
 mod transcript_links;
 mod transcript_media;
 mod transcription_composer;
@@ -355,35 +356,32 @@ struct FindReveal {
     serial: u64,
 }
 fn find_sources(thread: &Value) -> Result<Vec<transcript_find::FindItem>> {
+    find_sources_reusing(thread, &[])
+}
+fn find_sources_reusing(
+    thread: &Value,
+    previous: &[transcript_find::FindItem],
+) -> Result<Vec<transcript_find::FindItem>> {
     let items = thread["items"]
         .as_array()
         .ok_or_else(|| anyhow::anyhow!("Conversation items unavailable"))?;
-    anyhow::ensure!(
-        items.len() <= 2000,
-        "Find supports at most 2000 full messages"
-    );
     let mut ids = std::collections::HashSet::new();
-    let mut size = 0usize;
     let mut sources = Vec::with_capacity(items.len());
-    for item in items {
+    for (index, item) in items.iter().enumerate() {
         let id = item["id"]
             .as_str()
             .filter(|id| !id.is_empty() && id.len() <= 512 && !id.contains('\0'))
             .ok_or_else(|| anyhow::anyhow!("Find requires stable message IDs"))?;
         anyhow::ensure!(ids.insert(id), "Find requires unique message IDs");
         let source = item["text"].as_str().unwrap_or("");
-        anyhow::ensure!(
-            source.len() <= 2 * 1024 * 1024,
-            "Find message exceeds 2 MiB"
-        );
-        size = size.saturating_add(id.len()).saturating_add(source.len());
-        anyhow::ensure!(
-            size <= 16 * 1024 * 1024,
-            "Find full-source snapshot exceeds 16 MiB"
-        );
+        let source = previous
+            .get(index)
+            .filter(|old| old.item_id == id && old.source.as_ref() == source)
+            .map(|old| old.source.clone())
+            .unwrap_or_else(|| source.into());
         sources.push(transcript_find::FindItem {
             item_id: id.into(),
-            source: source.into(),
+            source,
         });
     }
     Ok(sources)
@@ -393,7 +391,7 @@ fn find_source_matches(thread: &Value, sources: &[transcript_find::FindItem]) ->
         items.len() == sources.len()
             && items.iter().zip(sources).all(|(item, source)| {
                 item["id"].as_str() == Some(source.item_id.as_str())
-                    && item["text"].as_str().unwrap_or("") == source.source.as_str()
+                    && item["text"].as_str().unwrap_or("") == source.source.as_ref()
             })
     })
 }
@@ -456,6 +454,7 @@ struct Coincide {
     find_thread: Option<String>,
     find_generation: u64,
     find_items: Vec<transcript_find::FindItem>,
+    find_checked_selected_generation: u64,
     find_pending: Option<FindReveal>,
     find_revealed: Option<(String, String, u64)>,
     find_last_serial: u64,
@@ -1708,6 +1707,7 @@ impl Coincide {
             find_thread: None,
             find_generation: 0,
             find_items: Vec::new(),
+            find_checked_selected_generation: 0,
             find_pending: None,
             find_revealed: None,
             find_last_serial: 0,
@@ -2956,6 +2956,7 @@ impl Coincide {
                 self.find_thread = Some(snapshot.thread_id.clone());
                 self.find_generation = snapshot.generation;
                 self.find_items = snapshot.items.clone();
+                self.find_checked_selected_generation = self.selected_generation;
                 if let Err(error) = self
                     .transcript_find
                     .update(cx, |find, cx| find.open(snapshot, window, cx))
@@ -2985,10 +2986,14 @@ impl Coincide {
             }
             return;
         }
+        if self.find_checked_selected_generation == self.selected_generation {
+            return;
+        }
+        self.find_checked_selected_generation = self.selected_generation;
         if find_source_matches(selected.unwrap(), &self.find_items) {
             return;
         }
-        match find_sources(selected.unwrap()) {
+        match find_sources_reusing(selected.unwrap(), &self.find_items) {
             Ok(items) if items == self.find_items => {}
             Ok(items) => {
                 let Some(generation) = self.find_generation.checked_add(1) else {
@@ -7578,8 +7583,8 @@ mod find_mount_tests {
         let long = format!("**bold** {} needle", "x".repeat(400));
         let thread = json!({"id":"thread","draft":"private draft needle","items":[{"id":"reason","kind":"reasoning","text":long},{"id":"tool","kind":"tool","text":"`code` 中"}]});
         let sources = find_sources(&thread).unwrap();
-        assert_eq!(sources[0].source, long);
-        assert_eq!(sources[1].source, "`code` 中");
+        assert_eq!(sources[0].source.as_ref(), long);
+        assert_eq!(sources[1].source.as_ref(), "`code` 中");
         assert!(
             !sources
                 .iter()
@@ -7608,6 +7613,31 @@ mod find_mount_tests {
         assert!(find_sources(&thread).is_err());
         thread["items"][1]["id"] = Value::Null;
         assert!(find_sources(&thread).is_err());
+    }
+    #[::core::prelude::v1::test]
+    fn source_snapshot_supports_a_long_conversation_without_losing_older_messages() {
+        let items: Vec<_> = (0..25_515)
+            .map(|i| json!({"id":format!("item-{i}"),"text":format!("message {i}")}))
+            .collect();
+        let thread = json!({"id":"long", "items":items});
+        let sources = find_sources(&thread).unwrap();
+        assert_eq!(sources.len(), 25_515);
+        assert_eq!(sources[0].source.as_ref(), "message 0");
+        assert_eq!(sources.last().unwrap().source.as_ref(), "message 25514");
+        assert!(find_source_matches(&thread, &sources));
+    }
+    #[::core::prelude::v1::test]
+    fn streamed_find_snapshot_reuses_unchanged_message_text() {
+        let mut thread = json!({"items":[{"id":"a","text":"old"},{"id":"b","text":"stream"}]});
+        let previous = find_sources(&thread).unwrap();
+        thread["items"][1]["text"] = json!("streaming");
+        let next = find_sources_reusing(&thread, &previous).unwrap();
+        assert!(std::sync::Arc::ptr_eq(&previous[0].source, &next[0].source));
+        assert!(!std::sync::Arc::ptr_eq(
+            &previous[1].source,
+            &next[1].source
+        ));
+        assert_eq!(next[1].source.as_ref(), "streaming");
     }
     #[::core::prelude::v1::test]
     fn browser_visible_find_shortcut_passthrough_is_selected_thread_scoped() {
