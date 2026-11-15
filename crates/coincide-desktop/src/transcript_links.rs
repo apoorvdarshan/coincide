@@ -162,16 +162,28 @@ pub(super) fn resolve(path: &str, folder: Option<&Path>, home: Option<&Path>) ->
     }
 }
 
-/// Where a click goes: the thread's browser, unless the setting or the
-/// command key (but not both) asks for the default browser.
+/// A normal in-app click opens a new tab. The setting and modifier swap the
+/// destination; command-option remains an explicit in-app new-tab shortcut.
 pub(super) fn destination(command: bool, option: bool, opens_in_default: bool) -> Destination {
     if command && option {
         Destination::BrowserNewTab
     } else if command != opens_in_default {
         Destination::Default
     } else {
-        Destination::Browser
+        Destination::BrowserNewTab
     }
+}
+
+pub(super) fn destination_for_modifiers(
+    modifiers: Modifiers,
+    opens_in_default: bool,
+) -> Destination {
+    let command = if cfg!(target_os = "macos") {
+        modifiers.platform
+    } else {
+        modifiers.control
+    };
+    destination(command, modifiers.alt, opens_in_default)
 }
 
 pub(super) fn shortened(text: &str) -> String {
@@ -190,7 +202,7 @@ pub(super) struct LinkMenu {
 }
 
 impl Coincide {
-    fn opens_links_in_default_browser(&self) -> bool {
+    pub(super) fn opens_links_in_default_browser(&self) -> bool {
         self.settings["opensLinksInDefaultBrowser"]
             .as_bool()
             .unwrap_or(false)
@@ -213,18 +225,11 @@ impl Coincide {
         if !event.standard_click() {
             return;
         }
-        let modifiers = event.modifiers();
-        let command = if cfg!(target_os = "macos") {
-            modifiers.platform
-        } else {
-            modifiers.control
-        };
         match classify(url) {
             Link::Ignore => {}
             Link::Web(url) => {
-                let destination = destination(
-                    command,
-                    modifiers.alt,
+                let destination = destination_for_modifiers(
+                    event.modifiers(),
                     self.opens_links_in_default_browser(),
                 );
                 self.open_web_link(url, destination, cx);
@@ -249,9 +254,8 @@ impl Coincide {
         }
     }
 
-    /// A web link loads as an ordinary navigation of the user's in the
-    /// thread's browser. Without a conversation or a browser it opens in the
-    /// default browser instead.
+    /// Open web links in the owning conversation's browser or the default
+    /// browser. A new tab and its show request are admitted together.
     pub(super) fn open_web_link(
         &mut self,
         url: String,
@@ -268,15 +272,28 @@ impl Coincide {
             .as_ref()
             .map(|v| text(v, "id"))
             .unwrap_or_default();
+        if destination == Destination::BrowserNewTab {
+            let queued = try_state(&self.engine)
+                .and_then(|mut engine| engine.open_browser_link_in_new_tab(&thread, &url));
+            match queued {
+                Ok(queued) => {
+                    if self.status.starts_with("Browser:") {
+                        self.status.clear();
+                    }
+                    self.browser_ui_operations
+                        .insert(queued.tab_operation, queued.thread.clone());
+                    self.browser_ui_operations
+                        .insert(queued.show_operation, queued.thread);
+                }
+                Err(error) => self.status = format!("Browser: {error}"),
+            }
+            cx.notify();
+            return;
+        }
         if !self.browser_panels.contains(&thread) {
             self.browser_action(BrowserAction::Show, None, cx);
         }
-        let action = if destination == Destination::BrowserNewTab {
-            BrowserAction::NewTab { url: Some(url) }
-        } else {
-            BrowserAction::Navigate { url }
-        };
-        self.browser_action(action, None, cx);
+        self.browser_action(BrowserAction::Navigate { url }, None, cx);
     }
 
     fn open_file_link(&mut self, reference: &str, window: &mut Window, cx: &mut Context<Self>) {
@@ -502,13 +519,27 @@ mod tests {
     }
 
     #[::core::prelude::v1::test]
-    fn command_swaps_the_setting_and_command_option_opens_a_new_tab() {
-        assert_eq!(destination(false, false, false), Destination::Browser);
+    fn clicks_open_new_tabs_and_command_swaps_the_setting() {
+        assert_eq!(destination(false, false, false), Destination::BrowserNewTab);
         assert_eq!(destination(true, false, false), Destination::Default);
         assert_eq!(destination(false, false, true), Destination::Default);
-        assert_eq!(destination(true, false, true), Destination::Browser);
+        assert_eq!(destination(true, false, true), Destination::BrowserNewTab);
         assert_eq!(destination(true, true, true), Destination::BrowserNewTab);
-        assert_eq!(destination(false, true, false), Destination::Browser);
+        assert_eq!(destination(false, true, false), Destination::BrowserNewTab);
+        let mut modifier = Modifiers::default();
+        if cfg!(target_os = "macos") {
+            modifier.platform = true;
+        } else {
+            modifier.control = true;
+        }
+        assert_eq!(
+            destination_for_modifiers(modifier, false),
+            Destination::Default
+        );
+        assert_eq!(
+            destination_for_modifiers(modifier, true),
+            Destination::BrowserNewTab
+        );
     }
 
     #[::core::prelude::v1::test]

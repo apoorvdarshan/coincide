@@ -475,10 +475,11 @@ pub struct CheckoutOpened {
     pub notice: Option<String>,
 }
 impl EventEmitter<CheckoutOpened> for GitHubReviewPanel {}
-/// A validated check details link, opened in the owning conversation's browser.
+/// A validated pull-request or check link from the owning conversation.
 pub struct OpenCheckLink {
     pub thread: String,
     pub url: String,
+    pub modifiers: Modifiers,
 }
 impl EventEmitter<OpenCheckLink> for GitHubReviewPanel {}
 
@@ -1848,6 +1849,7 @@ impl GitHubReviewPanel {
         }
         if let Some(pr) = &self.detail {
             let url = text(pr, "url");
+            let thread = self.scope.as_ref().map(|(thread, _)| thread.clone());
             header = header.child(
                 Button::new("github-open-browser")
                     .icon(IconName::ExternalLink)
@@ -1855,7 +1857,17 @@ impl GitHubReviewPanel {
                     .compact()
                     .tooltip("Open in Browser")
                     .accessibility_label("Open in Browser")
-                    .on_click(move |_, _, cx| cx.open_url(&url)),
+                    .on_click(cx.listener(move |_, event: &ClickEvent, _, cx| {
+                        if let Some(thread) = &thread
+                            && coincide_core::browser_protocol::validate_url(&url).is_ok()
+                        {
+                            cx.emit(OpenCheckLink {
+                                thread: thread.clone(),
+                                url: url.clone(),
+                                modifiers: event.modifiers(),
+                            });
+                        }
+                    })),
             );
         }
         header.child(
@@ -2526,7 +2538,10 @@ impl GitHubReviewPanel {
         let theme = cx.theme();
         let (muted, hover) = (theme.muted_foreground, theme.list_hover);
         let glyph = check.status.glyph();
-        let url = check.url.clone();
+        let url = check
+            .url
+            .clone()
+            .filter(|url| coincide_core::browser_protocol::validate_url(url).is_ok());
         let thread = self.scope.as_ref().map(|(thread, _)| thread.clone());
         let tooltip = match &url {
             Some(_) => format!("Open {} in the browser", check.name),
@@ -2575,11 +2590,12 @@ impl GitHubReviewPanel {
                             .xsmall()
                             .text_color(muted.opacity(0.6)),
                     )
-                    .on_click(cx.listener(move |_, _, _, cx| {
+                    .on_click(cx.listener(move |_, event: &ClickEvent, _, cx| {
                         if let Some(thread) = &thread {
                             cx.emit(OpenCheckLink {
                                 thread: thread.clone(),
                                 url: url.clone(),
+                                modifiers: event.modifiers(),
                             });
                         }
                     }))
