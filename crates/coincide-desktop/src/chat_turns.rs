@@ -111,6 +111,7 @@ pub(super) struct GroupPlan {
 
 pub(super) struct Turns<'a> {
     pub items: &'a [Value],
+    pub recorded_durations: Option<&'a serde_json::Map<String, Value>>,
     /// The selected thread runs a turn, which is its last opening message.
     pub running: bool,
     pub running_started_at: Option<f64>,
@@ -180,8 +181,10 @@ impl Turns<'_> {
     /// Old transcripts do not contain a run clock. If their timestamps have
     /// a long unexplained gap, do not present that wall time as time worked.
     fn worked_duration(&self, opener: usize, range: std::ops::Range<usize>) -> Option<f64> {
-        if let Some(duration) = self.items[opener]["rustTurnDuration"]
-            .as_f64()
+        if let Some(duration) = self
+            .recorded_durations
+            .and_then(|durations| durations.get(self.id(opener)))
+            .and_then(Value::as_f64)
             .filter(|duration| duration.is_finite() && *duration >= 0.)
         {
             return Some(duration);
@@ -518,6 +521,7 @@ impl super::Coincide {
         let expanded = |anchor: &str| self.chat_turns.is_expanded(id, anchor);
         let turns = Turns {
             items,
+            recorded_durations: thread["rustTurnDurations"].as_object(),
             running: self.running.iter().any(|running| running == id),
             running_started_at: self.window_chrome.run_started_at(id),
             show_reasoning: self.settings["showReasoning"].as_bool().unwrap_or(true),
@@ -900,9 +904,8 @@ mod tests {
 
     #[::core::prelude::v1::test]
     fn recorded_run_time_wins_and_ambiguous_old_gaps_are_not_called_work_time() {
-        let mut opener = item("u", "user", 10.);
         let items = [
-            opener.clone(),
+            item("u", "user", 10.),
             item("tool", "tool", 11.),
             item("reply", "assistant", 20_010.),
         ];
@@ -911,10 +914,18 @@ mod tests {
             unknown[0].header,
             Some(Header::WorkedUnknown { expanded: false })
         );
-        opener["rustTurnDuration"] = json!(42.);
-        let recorded = [opener, items[1].clone(), items[2].clone()];
+        let recorded = json!({"u":42.});
+        let expanded = |_: &str| false;
+        let turns = Turns {
+            items: &items,
+            recorded_durations: recorded.as_object(),
+            running: false,
+            running_started_at: None,
+            show_reasoning: true,
+            expanded: &expanded,
+        };
         assert_eq!(
-            plans(&recorded, false, &[])[0].header,
+            turns.plan(0).header,
             Some(Header::Worked {
                 duration: 42.,
                 expanded: false
@@ -928,6 +939,7 @@ mod tests {
         let expanded = |_: &str| false;
         let turns = Turns {
             items: &items,
+            recorded_durations: None,
             running: true,
             running_started_at: Some(200.),
             show_reasoning: true,
@@ -954,6 +966,7 @@ mod tests {
         let expanded = |_: &str| false;
         let mut turns = Turns {
             items: &items,
+            recorded_durations: None,
             running: true,
             running_started_at: None,
             show_reasoning: true,
@@ -980,6 +993,7 @@ mod tests {
         let expanded = |id: &str| opened.contains(id);
         let turns = Turns {
             items,
+            recorded_durations: None,
             running,
             running_started_at: None,
             show_reasoning: true,
@@ -1201,6 +1215,7 @@ mod tests {
         let items = [item("u", "user", 0.), item("r", "reasoning", 1.)];
         let turns = Turns {
             items: &items,
+            recorded_durations: None,
             running: false,
             running_started_at: None,
             show_reasoning: false,
@@ -1223,6 +1238,7 @@ mod tests {
         let expanded = |_: &str| false;
         let turns = Turns {
             items: &items,
+            recorded_durations: None,
             running: true,
             running_started_at: None,
             show_reasoning: true,

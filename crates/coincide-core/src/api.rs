@@ -3154,17 +3154,29 @@ fn completed_message_kind(item: &Value, method: &str) -> Option<&'static str> {
         _ => None,
     }
 }
-/// Save only this run's own opener; resumed work must not rewrite another turn.
+/// Keep display-only timing outside the immutable transcript prefix used by
+/// interrupted follow-ups. Resumed work must not rewrite another turn.
 fn record_turn_duration(thread: &mut Value, opener: &str, duration: f64) {
     if !duration.is_finite() || duration < 0. {
         return;
     }
-    if let Some(item) = thread["items"].as_array_mut().and_then(|items| {
+    let eligible = thread["items"].as_array().is_some_and(|items| {
         items
-            .iter_mut()
-            .find(|item| item["id"] == opener && item["kind"] == "user" && item["steered"] != true)
-    }) {
-        item["rustTurnDuration"] = json!(duration);
+            .iter()
+            .any(|item| item["id"] == opener && item["kind"] == "user" && item["steered"] != true)
+    });
+    if !eligible {
+        return;
+    }
+    if let Some(object) = thread.as_object_mut()
+        && let Some(durations) = object
+            .entry("rustTurnDurations")
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+    {
+        durations
+            .entry(opener.to_owned())
+            .or_insert(json!(duration));
     }
 }
 
