@@ -14,7 +14,7 @@ static NSDictionary *NextEvent(void) {
     free(event);
     return [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
 }
-static void SetFixture(NSUInteger accountCount) {
+static void SetFixture(NSUInteger accountCount, NSString *appearance) {
     NSMutableArray *accounts = [NSMutableArray new];
     for (NSUInteger i = 0; i < accountCount; i++) {
         [accounts addObject:@{
@@ -26,7 +26,9 @@ static void SetFixture(NSUInteger accountCount) {
         }];
     }
     NSDictionary *fixture = @{
-        @"mode": @"used", @"updated": @"just now",
+        @"mode": @"used", @"updated": @"just now", @"appearance": appearance,
+        @"themes": @{@"dark":@{@"surface":@0x18241D, @"ink":@0xD4E2D8, @"accent":@0x6FD08C},
+                     @"light":@{@"surface":@0xFBF6EC, @"ink":@0x211B12, @"accent":@0xC26A2E}},
         @"periods": @[@{@"label":@"Today", @"tokens":@"2.3M", @"cost":@"—"},
                        @{@"label":@"7 days", @"tokens":@"210M", @"cost":@"—"},
                        @{@"label":@"30 days", @"tokens":@"1.35B", @"cost":@"—"}],
@@ -62,8 +64,15 @@ int main(void) {
         coincide_usage_status_install();
         for (NSAppearanceName appearance in @[NSAppearanceNameDarkAqua, NSAppearanceNameAqua]) {
             NSApp.appearance = [NSAppearance appearanceNamed:appearance];
-            SetFixture(12);
+            SetFixture(12, @"system");
             CheckLayout();
+            CoincideUsageBackground *background = (CoincideUsageBackground *)usageStatus.panel.contentView;
+            __block NSColor *resolved;
+            [[NSAppearance appearanceNamed:appearance] performAsCurrentDrawingAppearance:^{
+                resolved = [background.fillColor colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+            }];
+            CGFloat expectedRed = [appearance isEqual:NSAppearanceNameDarkAqua] ? 0x18 / 255.0 : 0xFB / 255.0;
+            Require(fabs(resolved.redComponent - expectedRed) < 0.01, @"Menu did not use the selected theme surface");
             NSView *document = usageStatus.scroll.documentView;
             NSStackView *list = (NSStackView *)document.subviews.firstObject;
             Require(list.arrangedSubviews.count == 12, @"Enabled accounts were lost");
@@ -80,8 +89,10 @@ int main(void) {
             NSDictionary *event = NextEvent();
             Require([event[@"key"] isEqual:@"usageDisplayMode"] && [event[@"value"] isEqual:@"remaining"],
                     @"Used/Left selection was not preserved");
-            SetFixture(0);
+            SetFixture(0, @"dark");
             CheckLayout();
+            Require([usageStatus.panel.appearance.name isEqual:NSAppearanceNameDarkAqua],
+                    @"Explicit app appearance did not override the system appearance");
         }
         coincide_usage_status_destroy();
         puts("Synthetic macOS usage menu: PASS");
