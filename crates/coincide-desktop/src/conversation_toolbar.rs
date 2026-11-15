@@ -368,6 +368,8 @@ impl Coincide {
     }
     /// The Scheduled panel; while the open thread has schedules it opens on them.
     fn toggle_schedules_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let closing_thread_schedule =
+            self.schedules_open && !self.schedule_editor.all_conversations;
         self.settings_open = false;
         self.workspace_open = false;
         self.session_import_open = false;
@@ -381,6 +383,9 @@ impl Coincide {
             self.open_conversation_schedules(window, cx);
         } else {
             self.open_global_schedules(cx);
+        }
+        if closing_thread_schedule {
+            self.remember_inspector_choice(None, cx);
         }
         self.sync_transcription_binding(cx);
         cx.notify();

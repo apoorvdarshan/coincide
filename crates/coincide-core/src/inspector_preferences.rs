@@ -6,18 +6,24 @@ use uuid::Uuid;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Panel {
     Diff,
+    LocalGit,
     PullRequests,
+    ReviewComments,
     Preview,
     Terminal,
+    ConversationSchedules,
     Schedules,
 }
 impl Panel {
     pub fn parse(value: &Value) -> Option<Self> {
         match value.as_str()? {
             "diff" => Some(Self::Diff),
+            "localGit" => Some(Self::LocalGit),
             "pullRequests" => Some(Self::PullRequests),
+            "reviewComments" => Some(Self::ReviewComments),
             "preview" => Some(Self::Preview),
             "terminal" => Some(Self::Terminal),
+            "conversationSchedules" => Some(Self::ConversationSchedules),
             "schedules" => Some(Self::Schedules),
             _ => None,
         }
@@ -25,9 +31,12 @@ impl Panel {
     pub fn key(self) -> &'static str {
         match self {
             Self::Diff => "diff",
+            Self::LocalGit => "localGit",
             Self::PullRequests => "pullRequests",
+            Self::ReviewComments => "reviewComments",
             Self::Preview => "preview",
             Self::Terminal => "terminal",
+            Self::ConversationSchedules => "conversationSchedules",
             Self::Schedules => "schedules",
         }
     }

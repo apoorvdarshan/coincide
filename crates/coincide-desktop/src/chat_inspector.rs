@@ -118,7 +118,7 @@ impl Coincide {
         )
     }
     pub(super) fn close_chat_inspector(&mut self, cx: &mut Context<Self>) {
-        let window_wide = self.schedules_open;
+        let window_wide = self.global_schedules_route();
         match self.chat_inspector_panel() {
             Some(Panel::Workspace) => {
                 self.workspace_open = false;

@@ -1177,6 +1177,14 @@ impl Coincide {
         }
     }
     pub(crate) fn replace_selected_thread(&mut self, thread: Option<Value>) {
+        let old_id = self
+            .selected
+            .as_ref()
+            .and_then(|value| value["id"].as_str());
+        let new_id = thread.as_ref().and_then(|value| value["id"].as_str());
+        if old_id != new_id {
+            self.prepare_inspector_thread_change();
+        }
         self.selected_generation = self.selected_generation.wrapping_add(1);
         self.selected.replace(thread);
     }
@@ -2229,6 +2237,7 @@ impl Coincide {
         let selected_id = self.selected.as_ref().map(|thread| text(thread, "id"));
         let mut changed = requested_login || !requests.is_empty();
         let mut browser_note: Option<Option<inspector_follow::SavedPanel>> = None;
+        let mut background_browser_notes = Vec::new();
         let selected_closes_last = requests.iter().any(|request| {
             matches!(&request.action, BrowserAction::CloseTab)
                 && selected_id.as_deref() == Some(request.thread_id.as_str())
@@ -2253,6 +2262,9 @@ impl Coincide {
                         }
                     }
                     self.browser_panels.insert(request.thread_id.clone());
+                    if selected_id.as_deref() != Some(request.thread_id.as_str()) {
+                        background_browser_notes.push((request.thread_id.clone(), true));
+                    }
                 }
                 BrowserAction::Hide => {
                     if selected_id.as_deref() == Some(request.thread_id.as_str())
@@ -2262,9 +2274,15 @@ impl Coincide {
                         browser_note = Some(None);
                     }
                     self.browser_panels.remove(&request.thread_id);
+                    if selected_id.as_deref() != Some(request.thread_id.as_str()) {
+                        background_browser_notes.push((request.thread_id.clone(), false));
+                    }
                 }
                 _ => {}
             }
+        }
+        for (id, visible) in background_browser_notes {
+            self.remember_background_browser_visibility(&id, visible, cx);
         }
         if requests.iter().any(|request| {
             matches!(
@@ -2763,6 +2781,10 @@ impl Coincide {
                 return;
             }
             Ok(mut v) => {
+                let changing_thread = self
+                    .selected
+                    .as_ref()
+                    .is_none_or(|thread| thread["id"] != id);
                 if self.global_schedules_route() {
                     self.close_schedule_surface();
                 }
@@ -2890,7 +2912,9 @@ impl Coincide {
                     window.activate_window();
                 }
                 let keep_bottom_terminal = self.terminal_open && !self.terminal_on_right();
-                self.terminal_open = false;
+                if changing_thread {
+                    self.terminal_open = false;
+                }
                 self.restore_inspector_for_selected(cx);
                 if keep_bottom_terminal {
                     self.terminal_open = true;
