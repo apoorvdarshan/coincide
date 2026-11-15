@@ -155,7 +155,9 @@ mod tests {
                 .contains("my own answer")
         );
         assert_eq!(
-            questions.answer(&json!({"decision":"cancel"})).unwrap()["outcome"]["outcome"],
+            questions
+                .answer(&crate::api::question_dismissal("cursor").unwrap())
+                .unwrap()["outcome"]["outcome"],
             "cancelled"
         );
     }

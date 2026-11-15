@@ -321,6 +321,10 @@ mod tests {
     #[test]
     fn questions_preserve_typed_notes_and_option_previews() {
         let questions=questions(&json!({"questions":[{"id":"q","question":"Which?","options":[{"label":"A","preview":"plan A"}]}]})).unwrap();
+        assert_eq!(
+            answer(&questions, &crate::api::question_dismissal("grok").unwrap()).unwrap(),
+            json!({"outcome":"cancelled"})
+        );
         let result = answer(
             &questions,
             &json!({"answers":{"q":{"answers":["A","and keep the file"]}}}),

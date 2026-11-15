@@ -703,7 +703,7 @@ impl Engine {
             .filter(|_| dispatch != Dispatch::Queue && !goal_control)
         {
             let result = if frame["method"] == "item/tool/requestUserInput" {
-                json!({"answers":{}})
+                question_dismissal(&run.provider)?
             } else {
                 let offered = frame["params"]["availableDecisions"].as_array();
                 let decision = ["decline", "cancel"]

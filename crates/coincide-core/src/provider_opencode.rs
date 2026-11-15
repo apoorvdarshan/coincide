@@ -324,6 +324,23 @@ struct Pending {
     native_id: String,
     kind: PendingKind,
 }
+
+fn form_reply_request(
+    root: &str,
+    request: &str,
+    form: &forms::Form,
+    result: &Value,
+) -> Result<(String, String, Option<Value>)> {
+    if result["decision"] == "cancel" {
+        Ok(("DELETE".into(), format!("{root}/form/{request}"), None))
+    } else {
+        Ok((
+            "POST".into(),
+            format!("{root}/form/{request}/reply"),
+            Some(form.answer(result)?),
+        ))
+    }
+}
 struct Mapper {
     session: String,
     prompt: String,
@@ -951,15 +968,7 @@ fn run_inner(
                                 ))
                             }
                             PendingKind::Form(form) => {
-                                if result["decision"] == "cancel" {
-                                    Ok(("DELETE".into(), format!("{root}/form/{request}"), None))
-                                } else {
-                                    Ok((
-                                        "POST".into(),
-                                        format!("{root}/form/{request}/reply"),
-                                        Some(form.answer(&result)?),
-                                    ))
-                                }
+                                form_reply_request(&root, &request, form, &result)
                             }
                         }
                     })();
@@ -1051,6 +1060,16 @@ mod model_reference_tests {
     use super::model;
     use serde_json::json;
     use std::path::Path;
+    #[test]
+    fn dismissed_question_deletes_the_pending_form_without_answers() {
+        let form =
+            super::forms::Form::parse(&json!({"fields":[{"key":"q","type":"string"}]})).unwrap();
+        let reply = crate::api::question_dismissal("opencode").unwrap();
+        assert_eq!(
+            super::form_reply_request("/api/session/s", "request", &form, &reply).unwrap(),
+            ("DELETE".into(), "/api/session/s/form/request".into(), None)
+        );
+    }
     #[test]
     fn reasoning_variant_is_carried_in_the_model_reference() {
         assert_eq!(

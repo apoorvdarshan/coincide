@@ -774,7 +774,7 @@ impl Engine {
                 "agent.queue.add", "agent.queue.list", "agent.queue.remove", "agent.queue.pause", "agent.queue.resume", "agent.send", "agent.steer", "agent.steer.result",
                 "agent.stop",
                 "agent.respond"
-                ,"agent.pending", "agent.answer", "agent.provider.select", "agent.provider.cancelRestore", "agent.select", "agent.selection.capabilities", "agent.models.refresh", "agent.models.status", "usage.codexLimits.refresh", "usage.codexLimits.status", "usage.claudeLimits.refresh", "usage.claudeLimits.status"
+                ,"agent.pending", "agent.answer", "agent.dismissQuestion", "agent.provider.select", "agent.provider.cancelRestore", "agent.select", "agent.selection.capabilities", "agent.models.refresh", "agent.models.status", "usage.codexLimits.refresh", "usage.codexLimits.status", "usage.claudeLimits.refresh", "usage.claudeLimits.status"
                 ];
                 methods.extend_from_slice(&[
                     "providers.codex.profiles.status", "providers.codex.profiles.create", "providers.codex.profiles.select",
@@ -1106,6 +1106,32 @@ impl Engine {
                 self.notification_events.cancel_request(thread,key);
                 self.revision += 1;
                 Ok(json!({"answered":true}))
+            }
+            "agent.dismissQuestion" => {
+                let thread = required(p,"threadId")?;
+                let item_id = Uuid::parse_str(required(p,"itemId")?).context("Invalid question ID")?;
+                let mut document = self.store.thread(thread)?;
+                let items = document["items"].as_array_mut().context("Missing transcript")?;
+                let item = items.iter_mut().find(|item| {
+                    item["kind"] == "question" && item["id"].as_str()
+                        .and_then(|id| Uuid::parse_str(id).ok()) == Some(item_id)
+                }).context("Question no longer exists")?;
+                ensure!(!matches!(item["status"].as_str(), Some("completed" | "declined")), "Question is no longer pending");
+                let key = required(item,"externalID")?.to_owned();
+                let (frame_id, reply) = {
+                    let run = self.runs.get(thread).context("Thread is not running")?;
+                    let frame = run.pending.get(&key).context("Question is no longer pending")?;
+                    ensure!(frame["method"] == "item/tool/requestUserInput", "Request is not a user question");
+                    (frame["id"].clone(), question_dismissal(&run.provider)?)
+                };
+                self.runs.get_mut(thread).unwrap().session.reply(frame_id,reply)?;
+                self.runs.get_mut(thread).unwrap().pending.remove(&key);
+                item["status"] = json!("declined");
+                item["completedAt"] = json!(swift_timestamp());
+                self.store.save(&document)?;
+                self.notification_events.cancel_request(thread,&key);
+                self.revision += 1;
+                Ok(json!({"dismissed":true}))
             }
             "agent.queue.add" | "agent.queue.list" | "agent.queue.remove" | "agent.queue.pause" | "agent.queue.resume" => self.queue_command(method, p),
             "agent.steer" | "agent.steer.result" => self.steer_command(method,p),
@@ -3082,6 +3108,16 @@ fn mark_completed(row: &mut Value, method: &str) {
             .or_insert_with(|| json!(swift_timestamp()));
     }
 }
+/// A dismissed question must use each provider adapter's cancellation shape.
+/// In particular, an empty answer alone is rejected by the ACP adapters.
+pub(crate) fn question_dismissal(provider: &str) -> Result<Value> {
+    match provider {
+        "codex" | "claude" => Ok(json!({"answers":{}})),
+        "cursor" | "grok" | "opencode" | "antigravity" => Ok(json!({"decision":"cancel"})),
+        _ => bail!("This provider does not support dismissing questions"),
+    }
+}
+
 fn append(v: &mut Value, kind: &str, text: &str, external: Option<&str>) {
     let provider = v["selection"]["provider"].clone();
     let model = v["selection"]["modelID"].clone();
@@ -3565,6 +3601,9 @@ mod usage_capture_engine_tests;
 #[path = "composer_policy_api_tests.rs"]
 mod composer_policy_api_tests;
 
+#[cfg(test)]
+#[path = "question_dismiss_tests.rs"]
+mod question_dismiss_tests;
 #[cfg(test)]
 #[path = "remote_marker_tests.rs"]
 mod remote_marker_tests;
