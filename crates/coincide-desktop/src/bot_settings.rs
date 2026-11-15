@@ -16,7 +16,7 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
     assets::IconName,
     component::{
-        ActiveTheme,
+        ActiveTheme, Icon, Sizable,
         button::*,
         input::{Input, InputEvent, InputState, Textarea, TextareaState},
         menu::PopupMenuItem,
@@ -427,6 +427,18 @@ struct Editor {
     blocked: bool,
     _subscriptions: Vec<Subscription>,
 }
+
+/// A temporary folder choice. The bot draft changes only when Use Folder is
+/// pressed, so cancelling the picker preserves all existing edits.
+struct FolderPicker {
+    editor_key: String,
+    path: Entity<InputState>,
+    completions: Vec<std::path::PathBuf>,
+    completion_index: usize,
+    error: String,
+    restore_focus: Option<FocusHandle>,
+    _subscription: Subscription,
+}
 impl Editor {
     /// An editor over `bound`, starting from `draft` when given (a new bot's
     /// suggested look, name and personality), else from the saved values.
@@ -582,6 +594,7 @@ pub struct BotSettingsPanel {
     pending_write: bool,
     pending_conversation: bool,
     choosing_folder: bool,
+    folder_picker: Option<FolderPicker>,
     /// A sidebar sheet has its own editor and never shares a draft with Settings.
     standalone: bool,
     /// A requested new or existing bot, opened after the asynchronous list load.
@@ -654,6 +667,7 @@ impl BotSettingsPanel {
             pending_write: false,
             pending_conversation: false,
             choosing_folder: false,
+            folder_picker: None,
             standalone: false,
             pending_open: None,
             notice: String::new(),
@@ -854,7 +868,95 @@ impl BotSettingsPanel {
         let key = self.selected.as_ref()?;
         self.editors.get_mut(key).filter(|editor| !editor.blocked)
     }
-    fn choose_folder(&mut self, cx: &mut Context<Self>) {
+    fn begin_folder_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.busy || self.choosing_folder || self.folder_picker.is_some() {
+            return;
+        }
+        let Some(key) = self.selected.clone() else {
+            return;
+        };
+        let Some(editor) = self.editors.get(&key).filter(|editor| !editor.blocked) else {
+            return;
+        };
+        let current = editor
+            .folder
+            .clone()
+            .or_else(|| home_folder().map(|path| path.to_string_lossy().into_owned()))
+            .unwrap_or_default();
+        let restore_focus = window.focused(cx);
+        let path = cx.new(|cx| InputState::new(window, cx).placeholder("Folder path"));
+        path.update(cx, |input, cx| input.set_value(current.clone(), window, cx));
+        let subscription = cx.subscribe(&path, |this, _, event, cx| {
+            if matches!(event, InputEvent::Change) {
+                this.folder_path_changed(cx);
+            }
+        });
+        self.folder_picker = Some(FolderPicker {
+            editor_key: key,
+            path: path.clone(),
+            completions: crate::project_management::path_completions(&current),
+            completion_index: 0,
+            error: String::new(),
+            restore_focus,
+            _subscription: subscription,
+        });
+        path.update(cx, |input, cx| input.focus(window, cx));
+        cx.notify();
+    }
+
+    fn folder_path_changed(&mut self, cx: &mut Context<Self>) {
+        if let Some(picker) = &mut self.folder_picker {
+            let typed = picker.path.read(cx).value().to_string();
+            picker.completions = crate::project_management::path_completions(&typed);
+            picker.completion_index = 0;
+            picker.error.clear();
+            cx.notify();
+        }
+    }
+
+    fn close_folder_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.choosing_folder {
+            if let Some(focus) = self
+                .folder_picker
+                .take()
+                .and_then(|picker| picker.restore_focus)
+            {
+                focus.focus(window, cx);
+            }
+            cx.notify();
+        }
+    }
+
+    fn use_folder_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.choosing_folder {
+            return;
+        }
+        let Some(picker) = &mut self.folder_picker else {
+            return;
+        };
+        let typed = picker.path.read(cx).value().trim().to_owned();
+        let path = crate::project_management::expand_home(&typed);
+        if !path.is_absolute() || !path.is_dir() {
+            picker.error = "Choose an existing folder.".into();
+            cx.notify();
+            return;
+        }
+        let key = picker.editor_key.clone();
+        let home = home_folder();
+        if let Some(editor) = self.editors.get_mut(&key).filter(|editor| !editor.blocked) {
+            editor.folder = chosen_folder(&path, home.as_deref());
+            if let Some(focus) = self
+                .folder_picker
+                .take()
+                .and_then(|picker| picker.restore_focus)
+            {
+                focus.focus(window, cx);
+            }
+        }
+        cx.notify();
+    }
+
+    fn choose_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.choosing_folder || !self.workers.begin_picker() {
             return;
         }
@@ -869,28 +971,246 @@ impl BotSettingsPanel {
             multiple: false,
             prompt: Some("Choose".into()),
         });
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let result: Result<_> = async { picker.await? }.await;
-            let _ = this.update(cx, |this, cx| {
+            let _ = this.update_in(cx, |this, window, cx| {
                 this.choosing_folder = false;
                 if !this.workers.finish_picker() {
                     return;
                 }
                 match result {
                     Ok(Some(paths)) if paths.len() == 1 => {
-                        let home = home_folder();
-                        if let Some(editor) = this.editors.get_mut(&key) {
-                            editor.folder = chosen_folder(&paths[0], home.as_deref());
+                        if let Some(picker) = this
+                            .folder_picker
+                            .as_ref()
+                            .filter(|picker| picker.editor_key == key)
+                        {
+                            if let Some(path) = paths[0].to_str() {
+                                let input = picker.path.clone();
+                                input.update(cx, |input, cx| input.set_value(path, window, cx));
+                                this.folder_path_changed(cx);
+                            } else {
+                                if let Some(picker) = &mut this.folder_picker {
+                                    picker.error = "The selected folder path is not UTF-8.".into();
+                                }
+                            }
                         }
                     }
                     Ok(_) => {}
-                    Err(error) => this.notice = format!("Folder selection failed: {error}"),
+                    Err(error) => {
+                        if let Some(picker) = &mut this.folder_picker {
+                            picker.error = format!("Folder selection failed: {error}");
+                        }
+                    }
                 }
                 cx.notify();
             });
         })
         .detach();
         cx.notify();
+    }
+
+    fn complete_folder_path(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(picker) = &self.folder_picker else {
+            return;
+        };
+        let Some(path) = picker.completions.get(index) else {
+            return;
+        };
+        let text = path.to_string_lossy().into_owned();
+        let input = picker.path.clone();
+        input.update(cx, |input, cx| {
+            input.set_value(text, window, cx);
+            input.focus(window, cx);
+        });
+        self.folder_path_changed(cx);
+    }
+
+    fn folder_picker_key(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(picker) = &mut self.folder_picker else {
+            return;
+        };
+        let count = picker.completions.len();
+        match event.keystroke.key.as_str() {
+            "escape" => {
+                self.close_folder_picker(window, cx);
+                cx.stop_propagation();
+            }
+            "down" if count > 0 => {
+                picker.completion_index = (picker.completion_index + 1) % count;
+                cx.notify();
+                cx.stop_propagation();
+            }
+            "up" if count > 0 => {
+                picker.completion_index = (picker.completion_index + count - 1) % count;
+                cx.notify();
+                cx.stop_propagation();
+            }
+            "tab" if count > 0 => {
+                let index = picker.completion_index.min(count - 1);
+                self.complete_folder_path(index, window, cx);
+                cx.stop_propagation();
+            }
+            "enter" => {
+                let typed = picker.path.read(cx).value().trim().to_owned();
+                if crate::project_management::expand_home(&typed).is_dir() || count == 0 {
+                    self.use_folder_picker(window, cx);
+                } else {
+                    let index = picker.completion_index.min(count - 1);
+                    self.complete_folder_path(index, window, cx);
+                }
+                cx.stop_propagation();
+            }
+            _ => {}
+        }
+    }
+
+    fn folder_picker_view(&self, picker: &FolderPicker, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme();
+        let (border, muted) = (theme.border, theme.muted_foreground);
+        let mut folders = div()
+            .debug_selector(|| "bot-folder-content".into())
+            .flex()
+            .flex_col()
+            .gap_1();
+        for (index, path) in picker.completions.iter().enumerate() {
+            let label = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.to_string_lossy().into_owned());
+            let full = path.to_string_lossy().into_owned();
+            folders = folders.child(
+                div()
+                    .debug_selector(move || format!("bot-folder-completion-{index}"))
+                    .child(
+                        Button::new(SharedString::from(format!("bot-folder-completion-{index}")))
+                            .accessibility_label(format!("Open folder {full}"))
+                            .tooltip(full)
+                            .ghost()
+                            .compact()
+                            .w_full()
+                            .selected(index == picker.completion_index)
+                            .child(
+                                div()
+                                    .w_full()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(Icon::new(IconName::Folder).xsmall())
+                                    .child(label),
+                            )
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.complete_folder_path(index, window, cx)
+                            })),
+                    ),
+            );
+        }
+        div()
+            .id("bot-folder-picker")
+            .size_full()
+            .flex()
+            .flex_col()
+            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                this.folder_picker_key(event, window, cx)
+            }))
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .px_5()
+                    .py_3()
+                    .border_b_1()
+                    .border_color(border)
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("Choose Bot Folder"),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .gap_2()
+                            .child(
+                                Button::new("bot-folder-cancel")
+                                    .label("Cancel")
+                                    .compact()
+                                    .disabled(self.choosing_folder)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.close_folder_picker(window, cx)
+                                    })),
+                            )
+                            .child(
+                                div().debug_selector(|| "bot-folder-use".into()).child(
+                                    Button::new("bot-folder-use")
+                                        .label("Use Folder")
+                                        .compact()
+                                        .primary()
+                                        .disabled(self.choosing_folder)
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.use_folder_picker(window, cx)
+                                        })),
+                                ),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .px_5()
+                    .pt_4()
+                    .flex()
+                    .gap_2()
+                    .items_center()
+                    .child(div().flex_1().min_w_0().child(Input::new(&picker.path)))
+                    .child(
+                        Button::new("bot-folder-browse")
+                            .label("Browse…")
+                            .compact()
+                            .disabled(self.choosing_folder)
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.choose_folder(window, cx)),
+                            ),
+                    ),
+            )
+            .when(!picker.error.is_empty(), |view| {
+                view.child(
+                    div()
+                        .px_5()
+                        .pt_2()
+                        .text_sm()
+                        .text_color(cx.theme().danger)
+                        .child(picker.error.clone()),
+                )
+            })
+            .child(
+                div()
+                    .id("bot-folder-list")
+                    .debug_selector(|| "bot-folder-list".into())
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .px_5()
+                    .py_3()
+                    .child(folders)
+                    .when(picker.completions.is_empty(), |view| {
+                        view.child(
+                            div()
+                                .text_sm()
+                                .text_color(muted)
+                                .child("No matching folders."),
+                        )
+                    }),
+            )
+            .into_any_element()
     }
     fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let modifiers = event.keystroke.modifiers;
@@ -1377,7 +1697,7 @@ impl BotSettingsPanel {
                 )
             })
             .child(hint(
-                "How the bot talks and behaves, apart from its job. A change reaches its conversations with their next message.",
+                "How the bot talks and behaves, apart from its job. New conversations use the saved personality.",
                 cx,
             ))
             .child(section_label("Instructions", cx))
@@ -1432,7 +1752,7 @@ impl BotSettingsPanel {
                         Button::new("bot-folder-choose")
                             .label("Choose…")
                             .disabled(locked || self.choosing_folder)
-                            .on_click(cx.listener(|this, _, _, cx| this.choose_folder(cx))),
+                            .on_click(cx.listener(|this, _, window, cx| this.begin_folder_picker(window, cx))),
                     ),
             )
             .child(hint(
@@ -1611,6 +1931,9 @@ impl BotSettingsPanel {
 }
 impl Render for BotSettingsPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(picker) = &self.folder_picker {
+            return self.folder_picker_view(picker, cx);
+        }
         if self.standalone {
             return self.sheet(cx);
         }

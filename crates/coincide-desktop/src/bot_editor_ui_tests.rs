@@ -7,7 +7,7 @@ use coincide_core::{
 use gpui_kit::{
     App, AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement, Render,
     ScrollDelta, ScrollEvent, ScrollHandle, StatefulInteractiveElement, Styled, Subscription,
-    TestAppContext, VisualTestContext, Window, div, point, px,
+    TestAppContext, VisualTestContext, Window, div, point, px, size,
 };
 use serde_json::{Value, json};
 use std::{
@@ -119,7 +119,6 @@ fn headless_bot_sheet_saves_folder_and_escape_discards_edits(cx: &mut TestAppCon
                 "cached bots open without waiting for the engine"
             );
             let editor = panel.editors.get_mut(NEW).unwrap();
-            editor.folder = Some(folder.to_string_lossy().into_owned());
             editor
                 .name
                 .update(cx, |input, cx| input.set_value("Sample bot", window, cx));
@@ -127,6 +126,56 @@ fn headless_bot_sheet_saves_folder_and_escape_discards_edits(cx: &mut TestAppCon
         });
         draw(window, cx);
     });
+    vcx.update(|window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.begin_folder_picker(window, cx);
+            let input = panel.folder_picker.as_ref().unwrap().path.clone();
+            input.update(cx, |input, cx| {
+                input.set_value(
+                    folder.join("missing").to_string_lossy().into_owned(),
+                    window,
+                    cx,
+                )
+            });
+        });
+        draw(window, cx);
+    });
+    let use_folder = vcx
+        .debug_bounds("bot-folder-use")
+        .expect("folder action stays visible");
+    vcx.simulate_click(use_folder.center(), gpui_kit::Modifiers::default());
+    assert!(panel.read_with(vcx, |panel, _| {
+        !panel.folder_picker.as_ref().unwrap().error.is_empty()
+    }));
+    vcx.update(|window, cx| {
+        panel.update(cx, |panel, cx| {
+            let input = panel.folder_picker.as_ref().unwrap().path.clone();
+            input.update(cx, |input, cx| {
+                input.set_value("", window, cx);
+                input.focus(window, cx);
+            });
+        });
+        draw(window, cx);
+    });
+    vcx.simulate_input(&root.join("sample-w").to_string_lossy());
+    vcx.run_until_parked();
+    vcx.update(draw);
+    let suggestion = vcx
+        .debug_bounds("bot-folder-completion-0")
+        .expect("matching folder is offered");
+    vcx.simulate_click(suggestion.center(), gpui_kit::Modifiers::default());
+    assert!(panel.read_with(vcx, |panel, cx| {
+        panel
+            .folder_picker
+            .as_ref()
+            .unwrap()
+            .path
+            .read(cx)
+            .value()
+            .starts_with(folder.to_string_lossy().as_ref())
+    }));
+    vcx.simulate_click(use_folder.center(), gpui_kit::Modifiers::default());
+    assert!(panel.read_with(vcx, |panel, _| panel.folder_picker.is_none()));
     vcx.simulate_keystrokes(if cfg!(target_os = "macos") {
         "cmd-enter"
     } else {
@@ -146,9 +195,19 @@ fn headless_bot_sheet_saves_folder_and_escape_discards_edits(cx: &mut TestAppCon
                 input.set_value("Discarded edit", window, cx)
             });
             editor.name.update(cx, |input, cx| input.focus(window, cx));
+            panel.begin_folder_picker(window, cx);
+            let input = panel.folder_picker.as_ref().unwrap().path.clone();
+            input.update(cx, |input, cx| {
+                input.set_value(root.to_string_lossy().into_owned(), window, cx)
+            });
         });
         draw(window, cx);
     });
+    vcx.simulate_keystrokes("escape");
+    assert!(panel.read_with(vcx, |panel, _| {
+        panel.folder_picker.is_none() && panel.editors[&bot_id].folder.as_deref() == folder.to_str()
+    }));
+    vcx.update(draw);
     vcx.simulate_keystrokes("escape");
     assert!(
         events
@@ -243,6 +302,41 @@ fn headless_bot_sheet_scroll_does_not_move_conversation(cx: &mut TestAppContext)
         before,
         "the backdrop also blocks scroll through to the conversation"
     );
+    let folders = std::env::current_dir().unwrap().join("folder-list");
+    std::fs::create_dir_all(&folders).unwrap();
+    for index in 0..8 {
+        std::fs::create_dir(folders.join(format!("folder-{index}"))).unwrap();
+    }
+    let panel = view.read_with(vcx, |view, _| view.panel.clone());
+    vcx.simulate_resize(size(px(700.), px(340.)));
+    vcx.update(|window, cx| {
+        panel.update(cx, |panel, cx| {
+            panel.begin_folder_picker(window, cx);
+            let input = panel.folder_picker.as_ref().unwrap().path.clone();
+            input.update(cx, |input, cx| {
+                input.set_value(folders.to_string_lossy().into_owned(), window, cx)
+            });
+            panel.folder_path_changed(cx);
+        });
+        draw(window, cx);
+        draw(window, cx);
+    });
+    let picker = vcx.debug_bounds("bot-folder-list").unwrap();
+    let action = vcx.debug_bounds("bot-folder-use").unwrap();
+    let content_y = vcx.debug_bounds("bot-folder-content").unwrap().origin.y;
+    let position = picker.center();
+    vcx.simulate_mouse_move(position, None, Default::default());
+    for _ in 0..8 {
+        vcx.simulate_event(ScrollEvent {
+            position,
+            delta: ScrollDelta::Pixels(point(px(0.), px(-150.))),
+            ..Default::default()
+        });
+        vcx.update(draw);
+    }
+    assert!(vcx.debug_bounds("bot-folder-content").unwrap().origin.y < content_y);
+    assert_eq!(vcx.debug_bounds("bot-folder-use").unwrap(), action);
+    assert_eq!(view.read_with(vcx, |view, _| view.behind.offset()), before);
 }
 
 #[::core::prelude::v1::test]

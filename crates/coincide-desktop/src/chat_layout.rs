@@ -1,6 +1,12 @@
 //! Shared chat structure and geometry, following the Swift desktop reference.
 use super::*;
 
+/// A modal owns pointer and wheel input within its bounds, including when its
+/// content is already at a scroll edge.
+pub(super) fn modal_backdrop() -> Div {
+    div().absolute().inset_0().occlude()
+}
+
 // Provider marks stay local and embedded. The monochrome PDFs and their SVG
 // equivalents come from the Swift app's original template assets; Claude and
 // Antigravity retain their original colored artwork.

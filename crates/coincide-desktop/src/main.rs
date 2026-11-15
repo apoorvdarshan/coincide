@@ -7188,9 +7188,7 @@ impl Render for Coincide {
             .when_some(self.link_menu_overlay(), |view, menu| view.child(menu))
             .when(self.command_palette.read(cx).is_open(), |view| {
                 view.child(
-                    div()
-                        .absolute()
-                        .inset_0()
+                    chat_layout::modal_backdrop()
                         .flex()
                         .justify_center()
                         .pt(px(palette_top))
