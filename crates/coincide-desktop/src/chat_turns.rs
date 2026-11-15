@@ -63,6 +63,7 @@ pub(super) fn visible(item: &Value, show_reasoning: bool) -> bool {
 pub(super) enum Header {
     Working { started_at: f64 },
     Worked { duration: f64, expanded: bool },
+    WorkedUnknown { expanded: bool },
     Continued { duration: f64, expanded: bool },
 }
 
@@ -73,6 +74,7 @@ impl Header {
                 format!("Working for {}", elapsed(now - started_at))
             }
             Self::Worked { duration, .. } => format!("Worked for {}", duration_label(*duration)),
+            Self::WorkedUnknown { .. } => "Worked".into(),
             Self::Continued { duration, .. } => {
                 format!("Continued for {}", duration_label(*duration))
             }
@@ -81,7 +83,9 @@ impl Header {
     pub(super) fn expanded(&self) -> Option<bool> {
         match self {
             Self::Working { .. } => None,
-            Self::Worked { expanded, .. } | Self::Continued { expanded, .. } => Some(*expanded),
+            Self::Worked { expanded, .. }
+            | Self::WorkedUnknown { expanded }
+            | Self::Continued { expanded, .. } => Some(*expanded),
         }
     }
 }
@@ -107,8 +111,10 @@ pub(super) struct GroupPlan {
 
 pub(super) struct Turns<'a> {
     pub items: &'a [Value],
+    pub recorded_durations: Option<&'a serde_json::Map<String, Value>>,
     /// The selected thread runs a turn, which is its last opening message.
     pub running: bool,
+    pub running_started_at: Option<f64>,
     pub show_reasoning: bool,
     /// Whether the user opened the header anchored at this item ID.
     pub expanded: &'a dyn Fn(&str) -> bool,
@@ -170,6 +176,34 @@ impl Turns<'_> {
                     .or_else(|| self.time(index, "createdAt"))
             })
             .reduce(f64::max)
+    }
+
+    /// Old transcripts do not contain a run clock. If their timestamps have
+    /// a long unexplained gap, do not present that wall time as time worked.
+    fn worked_duration(&self, opener: usize, range: std::ops::Range<usize>) -> Option<f64> {
+        if let Some(duration) = self
+            .recorded_durations
+            .and_then(|durations| durations.get(self.id(opener)))
+            .and_then(Value::as_f64)
+            .filter(|duration| duration.is_finite() && *duration >= 0.)
+        {
+            return Some(duration);
+        }
+        let start = self.time(opener, "createdAt")?;
+        let mut previous = start;
+        for index in range.clone().skip(1) {
+            if let Some(time) = self.time(index, "createdAt") {
+                if time > previous && time - previous > 30. * 60. {
+                    return None;
+                }
+                previous = previous.max(time);
+            }
+        }
+        let end = self.end(range).unwrap_or(start);
+        if end - previous > 30. * 60. {
+            return None;
+        }
+        Some((end - start).max(0.))
     }
 
     fn id(&self, index: usize) -> &str {
@@ -239,7 +273,10 @@ impl Turns<'_> {
         if let Some(opener) = opener
             && Some(opener) == self.running_opener()
         {
-            let started_at = self.time(opener, "createdAt").unwrap_or_default();
+            let started_at = self
+                .running_started_at
+                .or_else(|| self.time(opener, "createdAt"))
+                .unwrap_or_else(coincide_core::store::swift_timestamp);
             headers.push((opener, Header::Working { started_at }));
             return (hidden, headers, groups);
         }
@@ -287,16 +324,12 @@ impl Turns<'_> {
                 if folded.is_empty() {
                     continue;
                 }
-                let start = self.time(opener, "createdAt").unwrap_or_default();
-                let end = self.end(range.clone()).unwrap_or(start);
                 let expanded = (self.expanded)(self.id(opener));
-                (
-                    opener,
-                    Header::Worked {
-                        duration: (end - start).max(0.),
-                        expanded,
-                    },
-                )
+                let header = self
+                    .worked_duration(opener, range.clone())
+                    .map(|duration| Header::Worked { duration, expanded })
+                    .unwrap_or(Header::WorkedUnknown { expanded });
+                (opener, header)
             } else {
                 if shown == slice.len() {
                     continue;
@@ -440,16 +473,32 @@ pub(super) fn elapsed(interval: f64) -> String {
 #[derive(Default)]
 pub(super) struct State {
     expanded: HashSet<(String, String)>,
-    // Cleared at the start of each render. A long turn is planned once per
-    // layout pass, not once for every measured virtual row.
+    // Reuse turn plans while the selected transcript and display options are
+    // unchanged, including during continuous trackpad or mouse scrolling.
     plans: std::cell::RefCell<HashMap<usize, RowPlan>>,
+    plan_context: std::cell::Cell<Option<(u64, bool, bool, Option<u64>)>>,
     tick: Option<(String, String)>,
     pub starting: HashSet<String>,
 }
 
 impl State {
-    pub(super) fn begin_render(&self) {
-        self.plans.borrow_mut().clear();
+    pub(super) fn begin_render(
+        &self,
+        revision: u64,
+        running: bool,
+        show_reasoning: bool,
+        started_at: Option<f64>,
+    ) {
+        let context = (
+            revision,
+            running,
+            show_reasoning,
+            started_at.map(f64::to_bits),
+        );
+        if self.plan_context.get() != Some(context) {
+            self.plan_context.set(Some(context));
+            self.plans.borrow_mut().clear();
+        }
     }
     pub(super) fn is_expanded(&self, thread: &str, anchor: &str) -> bool {
         self.expanded
@@ -460,6 +509,7 @@ impl State {
         if !self.expanded.remove(&key) {
             self.expanded.insert(key);
         }
+        self.plans.borrow_mut().clear();
     }
 }
 
@@ -471,7 +521,9 @@ impl super::Coincide {
         let expanded = |anchor: &str| self.chat_turns.is_expanded(id, anchor);
         let turns = Turns {
             items,
+            recorded_durations: thread["rustTurnDurations"].as_object(),
             running: self.running.iter().any(|running| running == id),
+            running_started_at: self.window_chrome.run_started_at(id),
             show_reasoning: self.settings["showReasoning"].as_bool().unwrap_or(true),
             expanded: &expanded,
         };
@@ -572,7 +624,10 @@ impl super::Coincide {
         let tick = self
             .selected_turns(|turns, id| {
                 let opener = turns.running_opener()?;
-                let started = seconds(&turns.items[opener]["createdAt"]).unwrap_or(now);
+                let started = turns
+                    .running_started_at
+                    .or_else(|| seconds(&turns.items[opener]["createdAt"]))
+                    .unwrap_or(now);
                 Some((opener, id.to_owned(), elapsed(now - started)))
             })
             .flatten();
@@ -828,6 +883,75 @@ mod tests {
     use serde_json::json;
 
     #[::core::prelude::v1::test]
+    fn a_cached_layout_survives_scroll_frames_but_not_edits_or_expansion() {
+        let mut state = State::default();
+        state.begin_render(1, false, true, None);
+        state.plans.borrow_mut().insert(
+            7,
+            RowPlan {
+                hidden: true,
+                ..Default::default()
+            },
+        );
+        state.begin_render(1, false, true, None);
+        assert!(state.plans.borrow().contains_key(&7));
+        state.begin_render(2, false, true, None);
+        assert!(state.plans.borrow().is_empty());
+        state.plans.borrow_mut().insert(7, RowPlan::default());
+        state.toggle("thread", "anchor");
+        assert!(state.plans.borrow().is_empty());
+    }
+
+    #[::core::prelude::v1::test]
+    fn recorded_run_time_wins_and_ambiguous_old_gaps_are_not_called_work_time() {
+        let items = [
+            item("u", "user", 10.),
+            item("tool", "tool", 11.),
+            item("reply", "assistant", 20_010.),
+        ];
+        let unknown = plans(&items, false, &[]);
+        assert_eq!(
+            unknown[0].header,
+            Some(Header::WorkedUnknown { expanded: false })
+        );
+        let recorded = json!({"u":42.});
+        let expanded = |_: &str| false;
+        let turns = Turns {
+            items: &items,
+            recorded_durations: recorded.as_object(),
+            running: false,
+            running_started_at: None,
+            show_reasoning: true,
+            expanded: &expanded,
+        };
+        assert_eq!(
+            turns.plan(0).header,
+            Some(Header::Worked {
+                duration: 42.,
+                expanded: false
+            })
+        );
+    }
+
+    #[::core::prelude::v1::test]
+    fn a_restarted_turn_uses_its_current_run_clock() {
+        let items = [item("u", "user", 10.), item("tool", "tool", 11.)];
+        let expanded = |_: &str| false;
+        let turns = Turns {
+            items: &items,
+            recorded_durations: None,
+            running: true,
+            running_started_at: Some(200.),
+            show_reasoning: true,
+            expanded: &expanded,
+        };
+        assert_eq!(
+            turns.plan(0).header,
+            Some(Header::Working { started_at: 200. })
+        );
+    }
+
+    #[::core::prelude::v1::test]
     fn only_the_current_turn_can_show_running_work() {
         let mut steer = item("steer", "user", 4.);
         steer["steered"] = json!(true);
@@ -842,7 +966,9 @@ mod tests {
         let expanded = |_: &str| false;
         let mut turns = Turns {
             items: &items,
+            recorded_durations: None,
             running: true,
+            running_started_at: None,
             show_reasoning: true,
             expanded: &expanded,
         };
@@ -867,7 +993,9 @@ mod tests {
         let expanded = |id: &str| opened.contains(id);
         let turns = Turns {
             items,
+            recorded_durations: None,
             running,
+            running_started_at: None,
             show_reasoning: true,
             expanded: &expanded,
         };
@@ -1087,7 +1215,9 @@ mod tests {
         let items = [item("u", "user", 0.), item("r", "reasoning", 1.)];
         let turns = Turns {
             items: &items,
+            recorded_durations: None,
             running: false,
+            running_started_at: None,
             show_reasoning: false,
             expanded: &hide_reasoning,
         };
@@ -1108,7 +1238,9 @@ mod tests {
         let expanded = |_: &str| false;
         let turns = Turns {
             items: &items,
+            recorded_durations: None,
             running: true,
+            running_started_at: None,
             show_reasoning: true,
             expanded: &expanded,
         };

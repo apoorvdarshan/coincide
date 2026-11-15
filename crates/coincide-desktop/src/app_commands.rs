@@ -189,11 +189,7 @@ impl Coincide {
                 self.open_settings_section(settings::SettingsSection::Archive, window, cx)
             }
             K::Stop => {
-                if let Some(id) = self.selected_id()
-                    && let Err(error) = call(&self.engine, "agent.stop", json!({"threadId":id}))
-                {
-                    self.status = error.to_string();
-                }
+                self.stop_current_turn(cx);
             }
             K::PreviousThread => self.step_thread(-1, window, cx),
             K::NextThread => self.step_thread(1, window, cx),

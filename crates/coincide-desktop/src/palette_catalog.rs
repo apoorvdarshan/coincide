@@ -554,11 +554,7 @@ impl Coincide {
             }
             "action:new-bot" => self.run_app_action(AppAction::NewBot, window, cx),
             "thread:stop" => {
-                if let Some(id) = self.selected_id()
-                    && let Err(error) = call(&self.engine, "agent.stop", json!({"threadId":id}))
-                {
-                    self.status = error.to_string();
-                }
+                self.stop_current_turn(cx);
             }
             _ => {}
         }

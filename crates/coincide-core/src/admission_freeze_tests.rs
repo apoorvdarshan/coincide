@@ -70,6 +70,60 @@ fn wait_worker(observer: &agent::WorkerCompletion) {
 }
 
 #[test]
+fn delayed_stop_never_cancels_a_different_run() {
+    let (_dir, mut engine, id) = fixture();
+    let (stopped_tx, stopped_rx) = mpsc::channel();
+    let session = Session::fixture_worker(move |commands, events| {
+        assert!(matches!(commands.recv().unwrap(), agent::Control::Stop));
+        events.send(Event::Finished).unwrap();
+        stopped_tx.send(()).unwrap();
+    });
+    insert_worker(&mut engine, &id, session);
+    let current = engine.current_run_id(&id).unwrap();
+    assert!(
+        !engine
+            .request_provider_stop_if_current(&id, Uuid::new_v4())
+            .unwrap()
+    );
+    assert!(!engine.runs[&id].cancelled);
+    assert!(
+        engine
+            .request_provider_stop_if_current(&id, current)
+            .unwrap()
+    );
+    assert!(engine.runs[&id].cancelled);
+    stopped_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+}
+
+#[test]
+fn captured_native_send_refuses_changed_selection_for_every_provider() {
+    let (_dir, mut engine, id) = fixture();
+    for provider in [
+        "codex",
+        "claude",
+        "cursor",
+        "grok",
+        "opencode",
+        "antigravity",
+    ] {
+        let mut current = engine.store.thread(&id).unwrap();
+        current["selection"] = json!({"provider":provider,"modelID":"current"});
+        engine.store.save(&current).unwrap();
+        let mut captured = current.clone();
+        captured["selection"]["modelID"] = json!("old");
+        let error = engine
+            .send_captured_native_turn(&captured, "hello")
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("context changed"),
+            "{provider}: {error}"
+        );
+        assert_eq!(engine.store.thread(&id).unwrap(), current);
+        assert!(!engine.is_thread_running(&id));
+    }
+}
+
+#[test]
 fn freeze_is_irreversible_and_all_json_rejects_before_poll_or_routing() {
     let (_dir, mut engine, id) = fixture();
     assert!(!engine.admissions_frozen());

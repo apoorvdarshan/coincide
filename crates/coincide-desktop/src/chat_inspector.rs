@@ -78,7 +78,7 @@ impl Coincide {
         }
     }
     pub(super) fn hide_selected_browser_surface(&mut self, cx: &mut Context<Self>) {
-        if let Some(thread) = &self.selected {
+        if let Some(thread) = self.selected.as_ref() {
             self.browser_panels.remove(&text(thread, "id"));
         }
         if let Some(browser) = &mut self.browser {

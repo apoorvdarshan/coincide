@@ -342,8 +342,10 @@ impl Coincide {
                 // Keep the raw queue source (including future row metadata) for
                 // exact native Send now admission; list returns typed previews.
                 if let Some(raw_queue) = value.get("rawQueue")
+                    && self.selected.as_ref().is_some_and(|selected| {
+                        selected["id"] == id && selected.get("rustMessageQueue") != Some(raw_queue)
+                    })
                     && let Some(selected) = self.selected.as_mut()
-                    && selected["id"] == id
                 {
                     selected["rustMessageQueue"] = raw_queue.clone();
                 }

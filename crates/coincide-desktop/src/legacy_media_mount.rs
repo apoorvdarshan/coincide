@@ -25,6 +25,7 @@ struct RenderRequest {
 }
 struct FreshnessCheck {
     epoch: u64,
+    selected_revision: u64,
     request: RenderRequest,
     snapshot: Value,
 }
@@ -35,7 +36,7 @@ pub(super) struct ParentMedia {
     pub shutdown_requested: bool,
     panel: Entity<legacy_media_settings::LegacyMediaSettingsPanel>,
     owner: legacy_media_recovery::ParentRecoveryOwner,
-    source: Option<Value>,
+    observed_selected_revision: Option<u64>,
     revision: u64,
     draft_pending: bool,
     context: Option<(Option<String>, u64, Vec<String>)>,
@@ -73,7 +74,7 @@ impl ParentMedia {
             shutdown_requested: false,
             panel,
             owner,
-            source: None,
+            observed_selected_revision: None,
             revision: 0,
             draft_pending: false,
             context: None,
@@ -109,13 +110,13 @@ fn snapshot_current(
 ) -> bool {
     !draft_pending && revision == current_revision && thread["id"] == id && thread == captured
 }
-fn media_source_changed(
-    source: Option<&Value>,
-    selected: Option<&Value>,
-    was_draft_pending: bool,
-    draft_pending: bool,
+fn needs_source_check(
+    observed: Option<u64>,
+    current: u64,
+    was_pending: bool,
+    pending: bool,
 ) -> bool {
-    was_draft_pending != draft_pending || (!draft_pending && source != selected)
+    observed != Some(current) || was_pending != pending
 }
 fn row_intersects(row: Bounds<Pixels>, viewport: Bounds<Pixels>) -> bool {
     viewport.size.height > px(0.)
@@ -270,12 +271,14 @@ impl Coincide {
             .selected
             .as_ref()
             .is_some_and(|thread| self.pending_drafts.contains_key(&text(thread, "id")));
-        if media_source_changed(
-            self.media.source.as_ref(),
-            self.selected.as_ref(),
+        let selected_revision = self.selected.revision();
+        let check_source = needs_source_check(
+            self.media.observed_selected_revision,
+            selected_revision,
             self.media.draft_pending,
             draft_pending,
-        ) {
+        );
+        if check_source && (self.media.draft_pending != draft_pending || !draft_pending) {
             let Some(revision) = self.media.revision.checked_add(1) else {
                 self.media.status =
                     "Historical image display revision exhausted; restart before continuing."
@@ -286,16 +289,11 @@ impl Coincide {
                 return;
             };
             self.media.revision = revision;
-            // A pending draft already revokes image authority. Retaining a
-            // full transcript snapshot on every keystroke needlessly copies
-            // large conversations while it cannot be used.
-            self.media.source = if draft_pending {
-                None
-            } else {
-                self.selected.clone()
-            };
             self.media.draft_pending = draft_pending;
             self.invalidate_media_images(cx);
+        }
+        if check_source {
+            self.media.observed_selected_revision = Some(selected_revision);
         }
         let stopping = self.media.close_requested || self.media.shutdown_requested;
         let thread = (!stopping)
@@ -320,7 +318,7 @@ impl Coincide {
             || !self.find_context_available()
             || self.command_palette.read(cx).is_open()
             || self.media.draft_pending
-            || self.media.source != self.selected
+            || self.media.observed_selected_revision != Some(self.selected.revision())
         {
             return None;
         }
@@ -419,27 +417,24 @@ impl Coincide {
             || self.media.shutdown_requested
             || self.media.freshness.is_some()
             || self.media.freshness_task.is_some()
+            || self.media.observed_selected_revision != Some(self.selected.revision())
         {
             return;
         }
         let Some(request) = self.media.pending_render.take() else {
             return;
         };
-        let Some(snapshot) = self.media.source.clone() else {
+        // Capture a full source only when an actual image request needs it,
+        // rather than cloning long conversations on each streaming update.
+        let Some(snapshot) = self.selected.as_ref().cloned() else {
             return;
         };
-        if !self.selected.as_ref().is_some_and(|thread| {
-            snapshot_current(
-                thread,
-                &snapshot,
-                &request.thread,
-                request.revision,
-                self.media.revision,
-                self.pending_drafts.contains_key(&request.thread),
-            )
-        }) || !request
-            .selection
-            .accepts(&request.thread, request.generation)
+        if snapshot["id"] != request.thread
+            || request.revision != self.media.revision
+            || self.pending_drafts.contains_key(&request.thread)
+            || !request
+                .selection
+                .accepts(&request.thread, request.generation)
         {
             return;
         }
@@ -483,6 +478,7 @@ impl Coincide {
         }));
         self.media.freshness = Some(FreshnessCheck {
             epoch,
+            selected_revision: self.selected.revision(),
             request,
             snapshot,
         });
@@ -645,6 +641,7 @@ impl Coincide {
                 Ok((stored, images)) => {
                     let valid = !self.media.close_requested
                         && !self.media.shutdown_requested
+                        && self.selected.revision() == check.selected_revision
                         && self.selected.as_ref().is_some_and(|thread| {
                             snapshot_current(
                                 thread,
@@ -994,23 +991,20 @@ impl Coincide {
 mod tests {
     use super::*;
     #[::core::prelude::v1::test]
+    fn unchanged_frames_skip_full_conversation_comparisons() {
+        assert!(!needs_source_check(Some(8), 8, false, false));
+        assert!(needs_source_check(Some(8), 9, false, false));
+        assert!(needs_source_check(Some(8), 8, false, true));
+        assert!(needs_source_check(None, 8, false, false));
+    }
+    #[::core::prelude::v1::test]
     fn pending_edits_revoke_media_without_recopying_the_conversation() {
         let first = json!({"id":"t","draft":"one","items":[{"id":"i"}]});
         let second = json!({"id":"t","draft":"two","items":[{"id":"i"}]});
-        assert!(media_source_changed(
-            Some(&first),
-            Some(&second),
-            false,
-            true
-        ));
-        assert!(!media_source_changed(None, Some(&second), true, true));
-        assert!(media_source_changed(None, Some(&second), true, false));
-        assert!(media_source_changed(
-            Some(&first),
-            Some(&second),
-            false,
-            false
-        ));
+        assert!(needs_source_check(Some(1), 2, false, true));
+        assert!(!needs_source_check(Some(2), 2, true, true));
+        assert!(needs_source_check(Some(2), 2, true, false));
+        assert!(needs_source_check(Some(1), 2, false, false));
         assert!(!snapshot_current(&second, &first, "t", 1, 1, true));
     }
     #[::core::prelude::v1::test]

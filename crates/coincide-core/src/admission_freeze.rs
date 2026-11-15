@@ -56,4 +56,21 @@ impl Engine {
         self.enabled_queues.remove(thread_id);
         Ok(())
     }
+
+    /// A delayed UI Stop must never cancel a newer run in the same thread.
+    pub fn request_provider_stop_if_current(
+        &mut self,
+        thread_id: &str,
+        run_id: Uuid,
+    ) -> Result<bool> {
+        if self
+            .run_clocks
+            .get(thread_id)
+            .is_none_or(|clock| clock.run_id != run_id)
+        {
+            return Ok(false);
+        }
+        self.request_provider_stop(thread_id)?;
+        Ok(true)
+    }
 }

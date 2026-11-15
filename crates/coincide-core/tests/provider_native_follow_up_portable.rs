@@ -141,6 +141,20 @@ fn fixture(root: &Path) {
     let saved = engine.store.thread(&id).unwrap();
     assert_eq!(saved["draft"], "");
     assert_eq!(saved["followUpBehavior"], "interrupt");
+    for message in ["synthetic first turn", "synthetic interrupt message"] {
+        let opener = saved["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["kind"] == "user" && item["text"] == message)
+            .unwrap();
+        assert!(opener.get("rustTurnDuration").is_none());
+        assert!(
+            saved["rustTurnDurations"][opener["id"].as_str().unwrap()]
+                .as_f64()
+                .is_some()
+        );
+    }
     assert_eq!(
         saved["items"]
             .as_array()

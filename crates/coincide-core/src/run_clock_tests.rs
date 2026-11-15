@@ -3,6 +3,31 @@ use super::*;
 use std::sync::mpsc;
 use std::time::Duration;
 
+#[test]
+fn duration_is_written_only_to_the_run_opener() {
+    let mut thread = json!({"items":[
+        {"id":"a","kind":"user","text":"first"},
+        {"id":"steer","kind":"user","steered":true},
+        {"id":"b","kind":"user","text":"second"}
+    ], "unknown":{"preserved":true}});
+    let original_items = thread["items"].clone();
+    record_turn_duration(&mut thread, "a", 42.5);
+    record_turn_duration(&mut thread, "steer", 900.);
+    record_turn_duration(&mut thread, "b", f64::NAN);
+    assert_eq!(thread["rustTurnDurations"], json!({"a":42.5}));
+    assert_eq!(thread["items"], original_items);
+    assert_eq!(thread["unknown"]["preserved"], true);
+    thread["rustTurnDurations"] = json!({"a":"preserve","unknown":1});
+    record_turn_duration(&mut thread, "a", 100.);
+    assert_eq!(
+        thread["rustTurnDurations"],
+        json!({"a":"preserve","unknown":1})
+    );
+    thread["rustTurnDurations"] = json!("unrecognized");
+    record_turn_duration(&mut thread, "b", 10.);
+    assert_eq!(thread["rustTurnDurations"], "unrecognized");
+}
+
 fn running(session: Session) -> Running {
     Running {
         configuration: None,

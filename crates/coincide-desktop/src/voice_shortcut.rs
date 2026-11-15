@@ -201,7 +201,7 @@ impl Coincide {
         {
             return false;
         }
-        let Some(thread) = &self.selected else {
+        let Some(thread) = self.selected.as_ref() else {
             return false;
         };
         let Ok(owner) = try_state(&self.engine) else {
