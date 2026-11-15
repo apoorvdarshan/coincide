@@ -638,7 +638,16 @@ mod tests {
 
     #[test]
     fn disabled_provider_history_does_not_appear_in_overall_or_auto_choice() {
-        let now = Utc::now();
+        // Keep both earlier records on the same local day even when this test
+        // runs just after midnight in the machine's time zone.
+        let now = Local::now()
+            .date_naive()
+            .and_hms_opt(12, 0, 0)
+            .unwrap()
+            .and_local_timezone(Local)
+            .single()
+            .unwrap()
+            .with_timezone(&Utc);
         let cards = vec![
             card("claude", "default", 40., now),
             card("codex", "default", 60., now),
