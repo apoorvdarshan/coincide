@@ -108,10 +108,6 @@ fn enabled_patch(
     expected: bool,
     enabled: bool,
 ) -> Result<Value> {
-    anyhow::ensure!(
-        provider != ProviderId::Antigravity,
-        "Use the Antigravity account-risk controls"
-    );
     enabled_value_patch(settings, provider, expected, enabled)
 }
 
@@ -424,55 +420,6 @@ impl Coincide {
         {
             return;
         }
-        if provider == ProviderId::Antigravity && enabled {
-            match call(&self.engine, "providers.antigravity.status", json!({})) {
-                Ok(status) if status["riskAcknowledged"] != true => {
-                    let answer = window.prompt(
-                        PromptLevel::Warning,
-                        "Use Antigravity?",
-                        Some(provider_settings::RISK_NOTICE),
-                        &["I Understand", "Cancel"],
-                        cx,
-                    );
-                    let custody = self
-                        .provider_configuration_panel
-                        .read(cx)
-                        .native_action_custody();
-                    self.provider_enable_prompt =
-                        Some(cx.spawn_in(window, async move |this, cx| {
-                            let _custody = custody;
-                            let accepted = answer.await.unwrap_or(1) == 0;
-                            if accepted {
-                                this.update_in(cx, |this, window, cx| {
-                                    // The prompt is now resolved; this direct continuation
-                                    // performs acknowledgement and the original CAS once.
-                                    match call(
-                                        &this.engine,
-                                        "providers.antigravity.acknowledge",
-                                        json!({"key":provider_settings::RISK_KEY,"accepted":true}),
-                                    ) {
-                                        Ok(_) => this.apply_settings_provider_enabled(
-                                            provider, expected, enabled, window, cx,
-                                        ),
-                                        Err(error) => {
-                                            this.settings_status = error.to_string();
-                                            cx.notify();
-                                        }
-                                    }
-                                })
-                                .ok();
-                            }
-                        }));
-                    return;
-                }
-                Err(error) => {
-                    self.settings_status = error.to_string();
-                    cx.notify();
-                    return;
-                }
-                _ => {}
-            }
-        }
         self.apply_settings_provider_enabled(provider, expected, enabled, window, cx);
     }
 
@@ -490,19 +437,7 @@ impl Coincide {
                 .store
                 .document("settings.json")?
                 .unwrap_or_else(|| json!({}));
-            let patch = if provider == ProviderId::Antigravity {
-                if enabled {
-                    let status = owner
-                        .dispatch(json!({"method":"providers.antigravity.status","params":{}}));
-                    anyhow::ensure!(
-                        status["result"]["riskAcknowledged"] == true,
-                        "Acknowledge the Antigravity account risk first"
-                    );
-                }
-                enabled_value_patch(&current, provider, expected, enabled)?
-            } else {
-                enabled_patch(&current, provider, expected, enabled)?
-            };
+            let patch = enabled_patch(&current, provider, expected, enabled)?;
             let reply = owner.dispatch(json!({"method":"settings.patch","params":{"patch":patch}}));
             if let Some(error) = reply.get("error") {
                 anyhow::bail!(
@@ -814,7 +749,7 @@ impl Coincide {
                 div()
                     .text_xs()
                     .text_color(self.color(0x98a6ba))
-                    .child("Uses the provider’s command-line tool and your existing sign-in."),
+                    .child(if provider == ProviderId::Antigravity { "Uses the Gemini API with a saved API-key account. Google-account login is unavailable." } else { "Uses the provider’s command-line tool and your existing sign-in." }),
             );
         if enabled {
             pane = pane.child(
@@ -846,15 +781,6 @@ impl Coincide {
                         .ghost()
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.open_codex_account_settings(window, cx)
-                        })),
-                )
-            }
-            ProviderId::Antigravity => {
-                pane = pane.child(
-                    Button::new("provider-antigravity-accounts")
-                        .label("Account setup and risk information")
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.open_antigravity_settings(window, cx)
                         })),
                 )
             }
@@ -956,12 +882,12 @@ mod tests {
                 super::models_settings::provider_value(&off, "antigravity")["opaque"],
                 42
             );
-            assert!(enabled_patch(&initial, P::Antigravity, false, true).is_err());
+            assert!(enabled_patch(&initial, P::Antigravity, false, true).is_ok());
         }
     }
     #[::core::prelude::v1::test]
-    fn generic_toggle_cannot_bypass_antigravity_risk_controls() {
+    fn antigravity_can_be_enabled_for_api_key_setup_without_oauth_prompt() {
         assert!(!provider_enabled(&json!({}), P::Antigravity));
-        assert!(enabled_patch(&json!({}), P::Antigravity, false, true).is_err());
+        assert!(enabled_patch(&json!({}), P::Antigravity, false, true).is_ok());
     }
 }

@@ -5,6 +5,17 @@ The running Swift application and its data remain authoritative until cutover.
 The new desktop uses `Coincide Rust`, a separate data directory and control socket.
 Do not point both applications at one mutable data store.
 
+## Antigravity authentication
+
+Coincide uses Antigravity's ACP server only with a selected Gemini API-key
+account. Add the key in Settings › Antigravity, find or choose the server,
+save to approve it and its adjacent helper, and select the account in the
+composer. Google-account login
+and its subscription quota reader are disabled. Previous conversations and
+credential files are preserved, but a session belonging to the old login is
+not silently resumed under a different account. Gemini API usage is subject to
+its own quota and billing; it is not the Google-account subscription quota.
+
 ## Acceptance checklist
 
 This inventory counts fully accepted feature groups. It is not a weighted

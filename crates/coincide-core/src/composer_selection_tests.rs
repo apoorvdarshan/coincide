@@ -38,7 +38,7 @@ fn strict_selection_rejects_atomically_without_touching_sessions_or_revision() {
         engine
             .execute(
                 "agent.select",
-                &json!({"threadId":id,"provider":"antigravity"})
+                &json!({"threadId":id,"provider":"antigravity","accountId":Uuid::new_v4().to_string()})
             )
             .is_err()
     );
@@ -252,7 +252,7 @@ fn catalog_routes_reject_account_path_and_turn_options_without_mutation_or_launc
 }
 
 #[test]
-fn antigravity_launch_copy_resolves_default_aliases_without_rewriting_stored_selection() {
+fn antigravity_legacy_accounts_cannot_authorize_a_launch_or_rewrite_selection() {
     let (_dir, mut engine, id) = fixture();
     let named = "11111111-1111-4111-8111-111111111111";
     engine.store.save_document("rust-antigravity.json", &json!({"version":1,
@@ -266,8 +266,11 @@ fn antigravity_launch_copy_resolves_default_aliases_without_rewriting_stored_sel
         let revision = engine.revision;
         crate::composer_selection::validate_thread(&thread).unwrap();
         let launch = crate::composer_selection::launch_selection(&thread["selection"]).unwrap();
-        let (account, _) = engine.antigravity_selection(&launch).unwrap();
-        assert_eq!(account, if alias == named { named } else { "default" });
+        assert_eq!(
+            engine.antigravity_selection(&launch).unwrap().1["auth"],
+            "apiKeyRequired"
+        );
+        assert!(engine.antigravity_launch(&id, &launch).is_err());
         assert_eq!(launch["modelID"], "fixture-exact");
         assert_eq!(engine.store.thread(&id).unwrap(), thread);
         assert_eq!(engine.revision, revision);

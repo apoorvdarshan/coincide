@@ -106,7 +106,7 @@ impl Coincide {
             || self.selection_ui.pending_provider_picker.is_some()
             || self.selection_ui.pending_native_account.is_some();
         let mut choices = Vec::new();
-        if provider != "codex" || native_current {
+        if provider != "antigravity" && (provider != "codex" || native_current) {
             choices.push((None, "Default account".to_string(), true));
         }
         choices.extend(rows.into_iter().map(|row| {

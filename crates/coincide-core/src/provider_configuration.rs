@@ -174,6 +174,19 @@ pub(crate) fn native_key_profile(provider: &str) -> bool {
         .and_then(|configuration| configuration.profile.as_ref())
         .is_some_and(|profile| profile.is_key_for(provider))
 }
+/// Read only the selected native key account, never a global environment override.
+pub(crate) fn native_key_var(provider: &str, name: &str) -> Option<std::ffi::OsString> {
+    current()
+        .filter(|configuration| {
+            configuration
+                .profile
+                .as_ref()
+                .is_some_and(|profile| profile.is_key_for(provider))
+        })
+        // build_configuration strips global credentials before the selected
+        // native key is inserted into this launch-only record.
+        .and_then(|configuration| configuration.record.environment.get(name).map(Into::into))
+}
 pub(crate) fn current_stamp() -> Option<Stamp> {
     CURRENT.with(|slot| slot.borrow().as_ref().map(|value| value.stamp.clone()))
 }
@@ -1235,6 +1248,41 @@ pub(crate) mod tests {
         let (configuration, home) = accounts::synthetic_key_configuration(&mut engine, provider);
         let _scope = enter(Some(configuration));
         body(&mut engine, &home)
+    }
+    pub(crate) fn with_native_key_executable<T>(
+        provider: &str,
+        bytes: &[u8],
+        body: impl FnOnce(&mut Engine, &Path, &Path) -> T,
+    ) -> T {
+        let (_root, mut engine, binary) = fixture();
+        fs::write(&binary, bytes).unwrap();
+        if provider == "antigravity" {
+            fs::copy(&binary, binary.with_file_name(antigravity_companion_name())).unwrap();
+        }
+        let baseline = engine
+            .native_provider_configuration(provider)
+            .unwrap()
+            .baseline;
+        let plan = engine
+            .prepare_native_provider_configuration(
+                provider,
+                &baseline,
+                Some(&binary),
+                BTreeMap::from([
+                    ("GEMINI_API_KEY".into(), "wrong-global-account".into()),
+                    ("GOOGLE_CLOUD_PROJECT".into(), "wrong-project".into()),
+                    ("AGY_ACP_ENABLE_OAUTH".into(), "true".into()),
+                    (
+                        "AGY_LLM_GATEWAY_URL".into(),
+                        "https://invalid.example".into(),
+                    ),
+                ]),
+            )
+            .unwrap();
+        engine.apply_native_provider_configuration(plan).unwrap();
+        let (configuration, home) = accounts::synthetic_key_configuration(&mut engine, provider);
+        let _scope = enter(Some(configuration));
+        body(&mut engine, &home, &binary)
     }
     pub(crate) fn save(engine: &mut Engine, provider: &str, binary: &Path, value: &str) {
         let baseline = engine

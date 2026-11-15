@@ -1093,13 +1093,13 @@ impl Panel {
             .border_1()
             .border_color(cx.theme().border)
             .child(div().font_weight(FontWeight::SEMIBOLD).child("Accounts"))
-            .child(
+            .child(if provider == "antigravity" {
+                div().text_sm().child("Add a Gemini API key account, then select it in the composer. Google-account login is unavailable.")
+            } else {
                 div().flex().flex_col().gap_1().child("Default").child(
-                    div()
-                        .text_sm()
-                        .child("Uses this provider’s existing command-line credentials."),
-                ),
-            );
+                    div().text_sm().child("Uses this provider’s existing command-line credentials."),
+                )
+            });
         if let Some(review) = &self.accounts.review
             && review.provider == provider
         {

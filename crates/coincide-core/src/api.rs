@@ -765,7 +765,7 @@ impl Engine {
             "app.capabilities" => {
                 let mut methods = vec![
                 "app.status", "app.quit", "app.activate", "terminal.create", "terminal.list", "terminal.read", "terminal.prompt_marks", "terminal.scroll", "terminal.selection", "terminal.input", "terminal.write", "terminal.clear", "terminal.resize", "terminal.close",
-                "app.capabilities", "notifications.status", "host.awake.status", "host.awake.configure", "providers.list", "providers.antigravity.status", "providers.antigravity.configure", "providers.antigravity.acknowledge", "browser.request", "browser.result", "browser.bookmarks.list", "browser.bookmarks.import", "browser.bookmarks.open", "browser.settings.read", "browser.settings.patch", "git.status", "git.diff", "files.list", "files.read", "workspace.result", "attachments.add", "attachments.remove",
+                "app.capabilities", "notifications.status", "host.awake.status", "host.awake.configure", "providers.list", "providers.antigravity.status", "browser.request", "browser.result", "browser.bookmarks.list", "browser.bookmarks.import", "browser.bookmarks.open", "browser.settings.read", "browser.settings.patch", "git.status", "git.diff", "files.list", "files.read", "workspace.result", "attachments.add", "attachments.remove",
                 "schedules.list", "schedules.create", "schedules.patch", "schedules.pause", "schedules.resume", "schedules.delete", "schedules.run-now",
                 "projects.list", "projects.create", "projects.patch", "settings.read", "settings.patch",
                 "threads.list", "threads.resolve_id",
@@ -3425,10 +3425,7 @@ mod tests {
             catalog["runtimeConnected"],
             json!(Provider::supported_names())
         );
-        for provider in Provider::supported_names()
-            .iter()
-            .filter(|name| **name != "antigravity")
-        {
+        for provider in Provider::supported_names() {
             let selected = engine
                 .execute(
                     "agent.select",
@@ -3439,7 +3436,7 @@ mod tests {
             assert_eq!(selected["selection"]["modelID"], "fixture-model");
         }
         let before = engine.store.thread(id.as_str().unwrap()).unwrap();
-        for provider in ["antigravity", "unknown"] {
+        for provider in ["unknown"] {
             assert!(
                 engine
                     .execute("agent.select", &json!({"threadId":id,"provider":provider}))

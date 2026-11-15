@@ -756,7 +756,20 @@ fn discover(
     if provider == "opencode" {
         return opencode_models(&executable, cancelled);
     }
-    if matches!(provider, "cursor" | "grok" | "antigravity") {
+    // The Antigravity ACP executable is not a model-list CLI. Running it here
+    // would inherit the ambient Google login outside the API-key profile.
+    if provider == "antigravity" {
+        ensure!(
+            !cancelled.load(Ordering::Acquire),
+            "Model discovery cancelled"
+        );
+        return Ok(vec![
+            json!({"id":"antigravity-default","displayName":"Antigravity Default",
+            "reportedEfforts":[],"reportedDefaultEffort":null,"reportedSpeeds":[],
+            "supportsImages":null}),
+        ]);
+    }
+    if matches!(provider, "cursor" | "grok") {
         return cli_models(provider, &executable, timeout, cancelled);
     }
     let mut rpc = ProcessRpc::spawn(provider, executable, timeout, cancelled)?;
@@ -767,8 +780,7 @@ fn discover(
     }
 }
 
-/// Cursor, Grok and Antigravity list models through their own CLIs (or a
-/// built-in fallback). The read is bounded and never starts an agent turn.
+/// Cursor and Grok list models through their own CLIs (or a built-in fallback).
 #[cfg(any(unix, windows))]
 fn cli_models(
     provider: &str,
@@ -875,7 +887,6 @@ fn cli_models(
         let fallback = match provider {
             "cursor" => Some(("composer-2.5", "Composer 2.5")),
             "grok" => Some(("grok-build", "Grok Build")),
-            "antigravity" => Some(("antigravity-default", "Antigravity Default")),
             _ => None,
         };
         if let Some((id, name)) = fallback {
@@ -1511,6 +1522,23 @@ printf '%s\n' '{"id":2,"result":{"data":[{"model":"held-writer"}],"nextCursor":n
             "Success must precede the inherited writer's release"
         );
     }
+    #[cfg(unix)]
+    #[test]
+    fn antigravity_model_refresh_never_starts_an_unscoped_login() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("started");
+        let path = executable(dir.path(), &format!("touch '{}'", marker.display()));
+        let models = discover(
+            "antigravity",
+            path,
+            Duration::from_secs(2),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(models[0]["id"], "antigravity-default");
+        assert!(!marker.exists());
+    }
+
     #[cfg(unix)]
     #[test]
     fn codex_subprocess_only_initializes_lists_and_reaps_its_group() {

@@ -1,5 +1,4 @@
-//! Subscription profiles and runtime pairs belong exclusively to this Rust client.
-//! Originals are opened as ordinary read-only files, never as SQLite connections.
+//! Isolated API-key profiles and runtime pairs belong to this Rust client.
 use super::*;
 use sha2::{Digest, Sha256};
 use std::{
@@ -20,18 +19,20 @@ impl Profile {
         session: Option<&str>,
     ) -> Result<Self> {
         ensure!(
+            original.is_none() && crate::provider_configuration::native_key_profile("antigravity"),
+            "Antigravity requires a selected Gemini API-key account; Google-account login is unavailable"
+        );
+        ensure!(
             directory.is_absolute(),
             "Antigravity profile must be absolute"
         );
         check_components(directory)?;
         let directory = resolve(directory)?;
-        let original = original.map(resolve).transpose()?;
-        if let Some(source) = &original {
-            ensure!(
-                !directory.starts_with(source) && !source.starts_with(&directory),
-                "Antigravity private profile must be separate from the original"
-            );
-        }
+        ensure!(
+            fs::symlink_metadata(directory.join("antigravity-acp/acp_token.json"))
+                .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
+            "This profile contains an older Google sign-in. Select an API-key account and start a new conversation; the old data is preserved"
+        );
         if !directory.exists() {
             fs::create_dir_all(&directory)?;
             permissions(&directory, 0o700)?;
@@ -71,50 +72,9 @@ impl Profile {
         #[cfg(not(unix))]
         lock.try_lock()
             .context("Antigravity private profile is already in use")?;
-        if let Some(source) = &original {
-            let binding = directory.join(".source-profile");
-            let expected = source
-                .to_str()
-                .context("Antigravity source profile path must be UTF-8")?
-                .as_bytes();
-            if binding.exists() {
-                ensure!(
-                    read(&binding, 16 * 1024)? == expected,
-                    "Antigravity private profile belongs to another source account"
-                );
-            } else {
-                ensure!(
-                    !directory.join("antigravity-acp/acp_token.json").exists(),
-                    "An existing Antigravity profile cannot be silently rebound to another account"
-                );
-                write_new(&binding, expected, 0o600)?;
-            }
-        }
         let acp = directory.join("antigravity-acp");
         make_directory(&acp)?;
-        let token = acp.join("acp_token.json");
-        let native_key = crate::provider_configuration::native_key_profile("antigravity");
-        if !native_key {
-            if !token.exists() {
-                let source = original
-                    .as_ref()
-                    .context(AUTH_FAILURE)?
-                    .join("antigravity-acp/acp_token.json");
-                check_components(&source)?;
-                let bytes =
-                    read(&source, 1024 * 1024).map_err(|_| anyhow::anyhow!(AUTH_FAILURE))?;
-                validate_token(&bytes)?;
-                write_new(&token, &bytes, 0o600)?;
-            } else {
-                safe_file(&token, true)?;
-                validate_token(&read(&token, 1024 * 1024)?)?;
-            }
-        }
-        let settings = if native_key {
-            b"{\"auth\":{\"type\":\"gemini-api-key\"}}\n".as_slice()
-        } else {
-            b"{\"auth\":{\"type\":\"oauth-personal\"}}\n".as_slice()
-        };
+        let settings = b"{\"auth\":{\"type\":\"gemini-api-key\"}}\n".as_slice();
         replace(&acp.join("settings.json"), settings, 0o600)?;
         let helper = directory.join("browser-suppressed.sh");
         ensure!(
@@ -126,7 +86,7 @@ impl Profile {
         // cannot fall back to another browser, while the adapter sees a safe marker.
         replace(&helper,b"#!/bin/sh\ntrap '' PIPE\nprintf '%s\\n' '__COINCIDE_ANTIGRAVITY_SIGN_IN_REQUIRED__' >&2\nexit 0\n",0o700)?;
         if let Some(id) = session {
-            import_session(&directory, original.as_deref(), id)?;
+            require_existing_session(&directory, id)?;
         }
         make_directory(&directory.join("runtime"))?;
         let temporary = directory
@@ -240,7 +200,8 @@ impl Profile {
             ("TEMP".into(), self.temporary.as_os_str().to_owned()),
         ];
         if crate::provider_configuration::native_key_profile("antigravity")
-            && let Some(key) = crate::provider_configuration::effective_var("GEMINI_API_KEY")
+            && let Some(key) =
+                crate::provider_configuration::native_key_var("antigravity", "GEMINI_API_KEY")
         {
             environment.push(("GEMINI_API_KEY".into(), key));
         }
@@ -252,17 +213,7 @@ impl Drop for Profile {
         let _ = fs::remove_dir_all(&self.temporary);
     }
 }
-fn validate_token(bytes: &[u8]) -> Result<()> {
-    let value: Value = serde_json::from_slice(bytes).map_err(|_| anyhow::anyhow!(AUTH_FAILURE))?;
-    ensure!(
-        ["client_id", "client_secret", "refresh_token"]
-            .iter()
-            .all(|key| value[key].as_str().is_some_and(|s| !s.is_empty())),
-        "{AUTH_FAILURE}"
-    );
-    Ok(())
-}
-fn import_session(directory: &Path, source: Option<&Path>, id: &str) -> Result<()> {
+fn require_existing_session(directory: &Path, id: &str) -> Result<()> {
     let parsed =
         uuid::Uuid::parse_str(id).context("Antigravity native session ID must be a UUID")?;
     ensure!(
@@ -279,89 +230,9 @@ fn import_session(directory: &Path, source: Option<&Path>, id: &str) -> Result<(
         }
         return Ok(());
     }
-    let source = source
-        .context("Antigravity native session is missing; no replacement was created")?
-        .join("antigravity-acp");
-    let conversations = source.join("conversations");
-    let original = conversations.join(format!("{id}.db"));
-    check_components(&original)?;
-    let inactive = || -> Result<()> {
-        for suffix in [".db-wal", ".db-journal"] {
-            ensure!(
-                fs::symlink_metadata(conversations.join(format!("{id}{suffix}")))
-                    .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
-                "Antigravity native session has live SQLite sidecars; close/checkpoint the original before importing"
-            );
-        }
-        Ok(())
-    };
-    inactive()?;
-    let bytes = read(&original, 64 * 1024 * 1024)?;
-    let second = read(&original, 64 * 1024 * 1024)?;
-    inactive()?;
-    ensure!(
-        bytes == second,
-        "Antigravity native session changed while importing"
-    );
-    let metadata = read(&conversations.join(format!("{id}.meta")), 64 * 1024)?;
-    let value: Value = serde_json::from_slice(&metadata)
-        .context("Antigravity native session metadata is invalid")?;
-    ensure!(
-        value.is_object(),
-        "Antigravity native metadata is not an object"
-    );
-    let brain = source.join("brain").join(id);
-    if brain.exists() {
-        let root = acp.join("brain");
-        make_directory(&root)?;
-        let dest = root.join(id);
-        ensure!(!dest.exists(), "Partial Antigravity session import exists");
-        let mut budget = 64 * 1024 * 1024;
-        let mut files = 0;
-        copy_tree(&brain, &dest, &mut budget, &mut files, 0)?;
-    }
-    write_new(&target.join(format!("{id}.meta")), &metadata, 0o600)?;
-    write_new(&db, &bytes, 0o600)?;
-    Ok(())
-}
-fn copy_tree(
-    source: &Path,
-    target: &Path,
-    budget: &mut usize,
-    files: &mut usize,
-    depth: usize,
-) -> Result<()> {
-    ensure!(
-        depth < 16 && *files < 2048,
-        "Antigravity session artifacts exceed import limits"
-    );
-    check_components(source)?;
-    ensure!(
-        source.is_dir(),
-        "Antigravity session artifacts are not a directory"
-    );
-    make_directory(target)?;
-    for entry in fs::read_dir(source)? {
-        let entry = entry?;
-        let path = entry.path();
-        *files += 1;
-        ensure!(*files <= 2048, "Antigravity session has too many artifacts");
-        safe_file(&path, false)?;
-        if path.is_dir() {
-            copy_tree(
-                &path,
-                &target.join(entry.file_name()),
-                budget,
-                files,
-                depth + 1,
-            )?;
-        } else {
-            let bytes = read(&path, *budget)?;
-            *budget -= bytes.len();
-            write_new(&target.join(entry.file_name()), &bytes, 0o600)?;
-        }
-    }
-    Ok(())
+    bail!(
+        "Antigravity native session is missing from this API-key account; no replacement was created"
+    )
 }
 pub(super) fn removed_environment() -> Vec<String> {
     const KEYS: &[&str] = &[
@@ -376,6 +247,12 @@ pub(super) fn removed_environment() -> Vec<String> {
         "CLOUDSDK_CORE_PROJECT",
         "AGY_ACP_CCPA_PROJECT",
         "AGY_ACP_ENABLE_OAUTH",
+        "AGY_LLM_GATEWAY_URL",
+        "AGY_LLM_GATEWAY_API_KEY",
+        "AGY_LLM_GATEWAY_HEADERS",
+        "AGY_LLM_GATEWAY_CA_CERT",
+        "AGY_LLM_GATEWAY_MODELS",
+        "AGY_LLM_GATEWAY_WIRE_PROTOCOL",
         "GEMINI_HOME",
         "AGY_ACP_FORCE_FILE_STORAGE",
         "ANTIGRAVITY_HARNESS_PATH",
@@ -383,10 +260,16 @@ pub(super) fn removed_environment() -> Vec<String> {
         "PYTHONUNBUFFERED",
         "ELECTRON_RUN_AS_NODE",
     ];
-    std::env::vars_os()
+    let mut removed = KEYS.iter().map(|key| (*key).to_owned()).collect::<Vec<_>>();
+    for key in std::env::vars_os()
         .filter_map(|(key, _)| key.into_string().ok())
         .filter(|key| KEYS.contains(&key.to_ascii_uppercase().as_str()))
-        .collect()
+    {
+        if !removed.contains(&key) {
+            removed.push(key);
+        }
+    }
+    removed
 }
 fn hash_file(path: &Path) -> Result<String> {
     let mut file = open_read(path)?;
@@ -555,17 +438,6 @@ fn replace(path: &Path, bytes: &[u8], mode: u32) -> Result<()> {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    fn source(root: &Path) -> PathBuf {
-        let source = root.join("source");
-        fs::create_dir_all(source.join("antigravity-acp/conversations")).unwrap();
-        fs::write(
-            source.join("antigravity-acp/acp_token.json"),
-            json!({"client_id":"fixture","client_secret":"fixture","refresh_token":"fixture"})
-                .to_string(),
-        )
-        .unwrap();
-        source
-    }
     #[test]
     fn native_api_key_profile_requires_no_oauth_copy_and_keeps_key_in_child_environment() {
         crate::provider_configuration::tests::with_native_key_configuration(
@@ -598,41 +470,51 @@ mod tests {
         assert!(Profile::prepare(&root.path().join("without-native-grant"), None, None).is_err());
     }
     #[test]
-    fn antigravity_profile_rejects_overlap_and_account_rebinding_before_source_writes() {
-        let root = tempfile::tempdir().unwrap();
-        let original = source(root.path());
-        let target = root.path().join("private");
-        assert!(
-            Profile::prepare(&original.join("must-not-create"), Some(&original), None).is_err()
+    fn legacy_oauth_source_and_tokens_are_never_opened_or_removed() {
+        crate::provider_configuration::tests::with_native_key_configuration(
+            "antigravity",
+            |_engine, home| {
+                let source = home.join("old-profile");
+                let token = source.join("antigravity-acp/acp_token.json");
+                fs::create_dir_all(token.parent().unwrap()).unwrap();
+                fs::write(&token, b"old account data").unwrap();
+                let target = home.join("threads/new");
+                assert!(Profile::prepare(&target, Some(&source), None).is_err());
+                assert!(!target.exists());
+                assert_eq!(fs::read(&token).unwrap(), b"old account data");
+                let target_token = target.join("antigravity-acp/acp_token.json");
+                fs::create_dir_all(target_token.parent().unwrap()).unwrap();
+                fs::write(&target_token, b"private old data").unwrap();
+                assert!(Profile::prepare(&target, None, None).is_err());
+                assert_eq!(fs::read(&target_token).unwrap(), b"private old data");
+            },
         );
-        assert!(!original.join("must-not-create").exists());
-        let first = Profile::prepare(&target, Some(&original), None).unwrap();
-        assert!(Profile::prepare(&target, Some(&original), None).is_err());
-        drop(first);
-        let second = root.path().join("second");
-        fs::create_dir(&second).unwrap();
-        assert!(Profile::prepare(&target, Some(&second), None).is_err());
-        let token = target.join("antigravity-acp/acp_token.json");
-        fs::remove_file(&token).unwrap();
-        fs::hard_link(original.join("antigravity-acp/acp_token.json"), &token).unwrap();
-        assert!(Profile::prepare(&target, Some(&original), None).is_err());
     }
     #[test]
-    fn antigravity_live_native_sqlite_import_is_rejected_without_modifying_source() {
-        let root = tempfile::tempdir().unwrap();
-        let original = source(root.path());
-        let id = "3f2b8c1e-9d4a-4b6f-8e2d-1c0a9b8f7e6d";
-        let conversations = original.join("antigravity-acp/conversations");
-        let db = conversations.join(format!("{id}.db"));
-        let wal = conversations.join(format!("{id}.db-wal"));
-        fs::write(&db, b"original").unwrap();
-        fs::write(&wal, b"uncheckpointed").unwrap();
-        let error = Profile::prepare(&root.path().join("private"), Some(&original), Some(id))
-            .err()
-            .unwrap();
-        assert!(error.to_string().contains("live SQLite sidecars"));
-        assert_eq!(fs::read(db).unwrap(), b"original");
-        assert_eq!(fs::read(wal).unwrap(), b"uncheckpointed");
-        assert_eq!(fs::read_dir(conversations).unwrap().count(), 2);
+    fn api_key_sessions_resume_only_from_their_existing_private_profile() {
+        crate::provider_configuration::tests::with_native_key_configuration(
+            "antigravity",
+            |_engine, home| {
+                let missing = home.join("threads/missing");
+                let target = home.join("threads/existing");
+                let id = "3f2b8c1e-9d4a-4b6f-8e2d-1c0a9b8f7e6d";
+                assert!(Profile::prepare(&missing, None, Some(id)).is_err());
+                let db = target
+                    .join("antigravity-acp/conversations")
+                    .join(format!("{id}.db"));
+                fs::create_dir_all(db.parent().unwrap()).unwrap();
+                permissions(&target, 0o700).unwrap();
+                permissions(&target.join("antigravity-acp"), 0o700).unwrap();
+                permissions(db.parent().unwrap(), 0o700).unwrap();
+                fs::write(
+                    target.join(".coincide-antigravity"),
+                    b"Coincide Antigravity private profile v1\n",
+                )
+                .unwrap();
+                fs::write(&db, b"api-key session").unwrap();
+                drop(Profile::prepare(&target, None, Some(id)).unwrap());
+                assert_eq!(fs::read(db).unwrap(), b"api-key session");
+            },
+        );
     }
 }
