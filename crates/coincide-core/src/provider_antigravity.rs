@@ -1,11 +1,11 @@
-//! Antigravity ACP 1.x, using a private OAuth profile and immutable runtime copy.
+//! Antigravity ACP 1.x, using a private API-key profile and immutable runtime copy.
 use super::{transport::*, *};
 use std::collections::HashMap;
 #[path = "provider_antigravity_files.rs"]
 mod files;
 #[path = "provider_antigravity_profile.rs"]
 mod profile;
-pub(super) const AUTH_FAILURE: &str = "Antigravity Google sign-in is unavailable or expired; sign in through the dedicated setup flow. No interactive login was started";
+pub(super) const AUTH_FAILURE: &str = "The Gemini API key could not be used. Check the selected API-key account in Settings; no Google sign-in was started";
 
 enum Pending {
     Permission(Value),
@@ -127,13 +127,17 @@ fn run_owned(
     images: Vec<ImageAttachment>,
     directory: Option<PathBuf>,
     source: Option<PathBuf>,
-    acknowledged: bool,
+    _acknowledged: bool,
     commands: Receiver<Control>,
     events: &Sender<Event>,
 ) -> Result<()> {
     ensure!(
-        acknowledged,
-        "Antigravity requires explicit account-risk acknowledgement in this Rust app before launch"
+        crate::provider_configuration::native_key_profile("antigravity") && source.is_none(),
+        "Antigravity requires a selected Gemini API-key account; Google-account login is unavailable"
+    );
+    ensure!(
+        crate::provider_configuration::native_key_var("antigravity", "GEMINI_API_KEY").is_some(),
+        "Save a Gemini API key for the selected Antigravity account first"
     );
     ensure!(
         cfg!(unix),
@@ -141,11 +145,7 @@ fn run_owned(
     );
     launch.cwd = launch.cwd.canonicalize()?;
     let files = files::Files::new(&launch.cwd)?;
-    let auth_method = if crate::provider_configuration::native_key_profile("antigravity") {
-        "gemini-api-key"
-    } else {
-        "oauth-personal"
-    };
+    let auth_method = "gemini-api-key";
     let profile = profile::Profile::prepare(
         &directory.context("Antigravity requires a private profile")?,
         source.as_deref(),
@@ -514,6 +514,197 @@ mod dismissal_tests {
         assert_eq!(
             answer_question(&json!({}), &reply).unwrap(),
             json!({"outcome":{"outcome":"cancelled"}})
+        );
+    }
+}
+
+#[cfg(all(test, unix))]
+mod api_key_tests {
+    use super::*;
+    use std::{fs, os::unix::fs::PermissionsExt};
+
+    const ID: &str = "3f2b8c1e-9d4a-4b6f-8e2d-1c0a9b8f7e6d";
+
+    #[test]
+    fn api_key_protocol_preserves_approvals_resume_cancellation_and_cleanup() {
+        for mode in [
+            "new",
+            "resume",
+            "resume-failed",
+            "auth-stdout",
+            "auth-stderr",
+            "stop",
+        ] {
+            let script = format!(
+                "#!/usr/bin/env python3\nMODE={mode:?}\nID={ID:?}\n{}",
+                include_str!("../tests/fixtures/antigravity_api_fixture.py")
+            );
+            crate::provider_configuration::tests::with_native_key_executable(
+                "antigravity",
+                script.as_bytes(),
+                |_engine, home, binary| {
+                    let profile = home.join("private");
+                    if mode.starts_with("resume") {
+                        let conversations = profile.join("antigravity-acp/conversations");
+                        let artifacts = profile.join("antigravity-acp/brain").join(ID);
+                        fs::create_dir_all(&conversations).unwrap();
+                        fs::create_dir_all(&artifacts).unwrap();
+                        for directory in
+                            [&profile, &profile.join("antigravity-acp"), &conversations]
+                        {
+                            fs::set_permissions(directory, fs::Permissions::from_mode(0o700))
+                                .unwrap();
+                        }
+                        fs::write(
+                            profile.join(".coincide-antigravity"),
+                            b"Coincide Antigravity private profile v1\n",
+                        )
+                        .unwrap();
+                        fs::write(conversations.join(format!("{ID}.db")), b"native history")
+                            .unwrap();
+                        fs::write(artifacts.join("artifact.txt"), b"preserve artifact").unwrap();
+                    }
+                    let session = Session::start_with(
+                        Provider::Antigravity {
+                            profile: Some(profile.clone()),
+                            source_profile: None,
+                            risk_acknowledged: false,
+                        },
+                        Launch {
+                            executable: binary.to_path_buf(),
+                            cwd: home.to_path_buf(),
+                            session: mode.starts_with("resume").then(|| ID.into()),
+                            prompt: "fixture prompt".into(),
+                            model: Some("chosen".into()),
+                            variant: None,
+                            full_access: false,
+                        },
+                    );
+                    let deadline = Instant::now() + Duration::from_secs(20);
+                    let mut text = String::new();
+                    let mut stopped = false;
+                    let success = loop {
+                        assert!(Instant::now() < deadline, "fixture timed out: {mode}");
+                        if mode == "stop" && home.join("ready").exists() && !stopped {
+                            session.stop();
+                            stopped = true;
+                        }
+                        match session.events.recv_timeout(Duration::from_millis(20)) {
+                            Ok(Event::Frame(frame)) => {
+                                assert!(!frame.to_string().contains("secret-must-not-leak"));
+                                match frame["method"].as_str() {
+                                    Some("item/commandExecution/requestApproval") => {
+                                        if frame["id"] == "file" { assert!(!home.join("output.txt").exists()); }
+                                        session.reply(frame["id"].clone(), json!({"decision":"accept"})).unwrap();
+                                    }
+                                    Some("item/tool/requestUserInput") => session.reply(frame["id"].clone(), json!({"answers":{"interaction_choose":{"answers":["First"]}}})).unwrap(),
+                                    Some("item/agentMessage/delta") => text.push_str(frame["params"]["delta"].as_str().unwrap()),
+                                    _ => {}
+                                }
+                            }
+                            Ok(Event::Session(id)) => assert_eq!(id, ID),
+                            Ok(Event::Finished) => break true,
+                            Ok(Event::Failed(error)) => {
+                                assert!(!error.contains("secret-must-not-leak"));
+                                break false;
+                            }
+                            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                            other => panic!("unexpected event: {other:?}"),
+                        }
+                    };
+                    assert_eq!(success, matches!(mode, "new" | "resume" | "stop"), "{mode}");
+                    assert!(!text.contains("OLD REPLAY"));
+                    if matches!(mode, "new" | "resume") {
+                        assert_eq!(text, "NEW ANSWER");
+                        assert_eq!(
+                            fs::read(home.join("output.txt")).unwrap(),
+                            b"approved output"
+                        );
+                    }
+                    if let Ok(pid) = fs::read_to_string(home.join("pid")) {
+                        assert_ne!(
+                            unsafe { libc::kill(pid.parse().unwrap(), 0) },
+                            0,
+                            "terminal event preceded child reap"
+                        );
+                    }
+                    if let Ok(entries) = fs::read_dir(profile.join("runtime")) {
+                        assert!(!entries.into_iter().any(|entry| {
+                            entry
+                                .unwrap()
+                                .file_name()
+                                .to_string_lossy()
+                                .starts_with("extract-")
+                        }));
+                    }
+                },
+            );
+        }
+    }
+
+    #[test]
+    fn selected_key_uses_api_auth_even_when_google_login_is_offered() {
+        let script = br##"#!/usr/bin/env python3
+import json, os, sys
+from pathlib import Path
+profile = Path(os.environ['GEMINI_HOME'])
+assert os.environ['GEMINI_API_KEY'] == 'synthetic-owned-account-key'
+assert 'AGY_ACP_ENABLE_OAUTH' not in os.environ
+assert not (profile / 'antigravity-acp/acp_token.json').exists()
+assert json.loads((profile / 'antigravity-acp/settings.json').read_text())['auth']['type'] == 'gemini-api-key'
+def read(): return json.loads(sys.stdin.readline())
+def reply(request, result): print(json.dumps({'jsonrpc':'2.0','id':request['id'],'result':result}), flush=True)
+r=read(); assert r['method']=='initialize'
+reply(r, {'protocolVersion':1,'authMethods':[{'id':'oauth-personal'},{'id':'gemini-api-key'}]})
+r=read(); assert r['method']=='authenticate' and r['params']['methodId']=='gemini-api-key'
+reply(r, {})
+r=read(); assert r['method']=='session/new'
+sid='3f2b8c1e-9d4a-4b6f-8e2d-1c0a9b8f7e6d'
+reply(r, {'sessionId':sid,'configOptions':[{'id':'mode','category':'mode','options':[{'value':'default'}]}]})
+r=read(); assert r['method']=='session/set_config_option' and r['params']['value']=='default'
+reply(r, {'configOptions':[{'id':'mode','category':'mode','currentValue':'default'}]})
+r=read(); assert r['method']=='session/prompt'
+print(json.dumps({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':sid,'update':{'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':'key fixture response'}}}}),flush=True)
+reply(r, {'stopReason':'end_turn'})
+sys.stdin.readline()
+"##;
+        crate::provider_configuration::tests::with_native_key_executable(
+            "antigravity",
+            script,
+            |_engine, home, binary| {
+                let session = Session::start_with(
+                    Provider::Antigravity {
+                        profile: Some(home.join("threads/key")),
+                        source_profile: None,
+                        risk_acknowledged: false,
+                    },
+                    Launch {
+                        executable: binary.to_path_buf(),
+                        cwd: home.to_path_buf(),
+                        session: None,
+                        prompt: "fixture prompt".into(),
+                        model: None,
+                        variant: None,
+                        full_access: false,
+                    },
+                );
+                let mut response = String::new();
+                loop {
+                    match session
+                        .events
+                        .recv_timeout(Duration::from_secs(20))
+                        .unwrap()
+                    {
+                        Event::Frame(frame) if frame["method"] == "item/agentMessage/delta" => {
+                            response.push_str(frame["params"]["delta"].as_str().unwrap());
+                        }
+                        Event::Finished => break,
+                        Event::Failed(error) => panic!("API-key fixture failed: {error}"),
+                        _ => {}
+                    }
+                }
+                assert_eq!(response, "key fixture response");
+            },
         );
     }
 }

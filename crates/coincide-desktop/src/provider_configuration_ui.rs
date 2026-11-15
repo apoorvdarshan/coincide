@@ -483,10 +483,10 @@ impl Panel {
                         Ok(Outcome::SetupHandedOff)
                     }
                     Request::Check if provider == "antigravity" => {
-                        let status = call(&engine, "providers.antigravity.status", json!({}))?;
-                        Ok(Outcome::ManagedChecked(
-                            status["accounts"].as_object().map_or(0, |rows| rows.len()),
-                        ))
+                        let count = try_state(&engine)?
+                            .native_key_accounts("antigravity")?
+                            .len();
+                        Ok(Outcome::ManagedChecked(count))
                     }
                     Request::Check => {
                         let plan = {
@@ -603,7 +603,7 @@ impl Panel {
                     if let Some(editor) = self.editors.get_mut(&reply.provider) {
                         editor.checked = Some(Instant::now());
                         editor.notice = format!(
-                            "Managed runtime configuration checked: {accounts} accounts. Sign-in has not been verified."
+                            "{accounts} API-key accounts saved. The runtime and keys have not been verified."
                         );
                     }
                 }
@@ -911,7 +911,11 @@ impl Panel {
                     .child(
                         div()
                             .text_xs()
-                            .child("Leave empty to find the command-line tool automatically."),
+                            .child(if provider == "antigravity" {
+                                "Select the Antigravity ACP server and save to approve it and its adjacent helper."
+                            } else {
+                                "Leave empty to find the command-line tool automatically."
+                            }),
                     )
                     .child(
                         div()
@@ -929,6 +933,29 @@ impl Panel {
                                     })),
                             ),
                     );
+                if provider == "antigravity" && cfg!(target_os = "macos") {
+                    pane = pane.child(
+                        Button::new("provider-find-antigravity")
+                            .label("Find installed ACP server")
+                            .small()
+                            .ghost()
+                            .disabled(busy || !loaded)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                let platform = if cfg!(target_arch = "aarch64") { "darwin-arm64" } else { "darwin-x64" };
+                                let found = std::env::var_os("HOME").map(PathBuf::from)
+                                    .and_then(|home| managed_antigravity_executable(&home, platform));
+                                if let Some(editor) = this.editors.get_mut("antigravity") {
+                                    if let Some(path) = found {
+                                        editor.path.update(cx, |input, cx| input.set_value(path.to_string_lossy().into_owned(), window, cx));
+                                        this.edited("antigravity", window, cx);
+                                    } else {
+                                        editor.notice = "No installed ACP server was found. Choose the server file manually.".into();
+                                    }
+                                }
+                                cx.notify();
+                            })),
+                    );
+                }
             }
             Part::Environment => {
                 pane = pane
@@ -1106,7 +1133,11 @@ impl Panel {
                             .label("Open Setup Website")
                             .on_click(move |_, _, cx| cx.open_url(url)),
                     )
-                    .child("After installing or signing in, choose Check Again.");
+                    .child(if provider == "antigravity" {
+                        "Add a Gemini API key account and select it in the composer."
+                    } else {
+                        "After installing or signing in, choose Check Again."
+                    });
             }
         }
         pane.into_any_element()
@@ -1156,6 +1187,21 @@ fn expand_path(path: &str) -> Result<Option<PathBuf>> {
     }
     Ok(Some(PathBuf::from(path)))
 }
+fn managed_antigravity_executable(home: &std::path::Path, platform: &str) -> Option<PathBuf> {
+    if !home.is_absolute() || !matches!(platform, "darwin-arm64" | "darwin-x64") {
+        return None;
+    }
+    ["Coincide Rust", "Coincide"]
+        .into_iter()
+        .map(|app| {
+            home.join("Library/Application Support")
+                .join(app)
+                .join("tools/antigravity-acp")
+                .join(platform)
+                .join("current/agy_acp_server.par")
+        })
+        .find(|path| path.is_file() && path.with_file_name("localharness_external").is_file())
+}
 fn setup_website(provider: &str) -> &'static str {
     match provider {
         "claude" => "https://claude.com/product/claude-code",
@@ -1163,6 +1209,7 @@ fn setup_website(provider: &str) -> &'static str {
         "cursor" => "https://cursor.com/cli",
         "grok" => "https://x.ai/cli",
         "opencode" => "https://opencode.ai",
+        "antigravity" => "https://antigravity.google/docs/ide/extensions/acp",
         _ => "https://antigravity.google",
     }
 }
@@ -1176,5 +1223,30 @@ fn configuration_request_notice(request: &Request) -> Option<&'static str> {
         Request::Save { .. } => Some("Saving settings…"),
         Request::Check => Some("Checking provider…"),
         Request::Setup { .. } => Some("Opening setup in a separate terminal…"),
+    }
+}
+
+#[cfg(test)]
+mod antigravity_discovery_tests {
+    use super::managed_antigravity_executable;
+    use std::fs;
+
+    #[::core::prelude::v1::test]
+    fn suggests_only_an_existing_server_and_helper_without_reading_accounts() {
+        let home = tempfile::tempdir().unwrap();
+        let base = home.path().join(
+            "Library/Application Support/Coincide/tools/antigravity-acp/darwin-arm64/current",
+        );
+        fs::create_dir_all(&base).unwrap();
+        let server = base.join("agy_acp_server.par");
+        fs::write(&server, b"fixture server; never executed").unwrap();
+        assert!(managed_antigravity_executable(home.path(), "darwin-arm64").is_none());
+        fs::write(base.join("localharness_external"), b"fixture helper").unwrap();
+        assert_eq!(
+            managed_antigravity_executable(home.path(), "darwin-arm64"),
+            Some(server)
+        );
+        assert!(managed_antigravity_executable(home.path(), "unexpected").is_none());
+        assert_eq!(fs::read_dir(&base).unwrap().count(), 2);
     }
 }

@@ -843,22 +843,11 @@ impl Coincide {
                 .flex()
                 .items_center()
                 .gap_1p5()
-                .when_some(chat_layout::provider_mark(&row.provider, 14.), |cell, mark| {
-                    cell.child(mark)
-                })
-                .child(div().flex_1().min_w_0().truncate().child(provider.clone()))
-                .when(row.provider == "antigravity", |cell| {
-                    cell.child(
-                        div()
-                            .id(SharedString::from(format!("models-risk-{}", row.model)))
-                            .text_xs()
-                            .text_color(rgb(0xF5A524))
-                            .child("⚠")
-                            .tooltip(|window, cx| {
-                                Tooltip::new("Using Antigravity through Coincide may break Google’s terms. Details are in Settings › Antigravity.").build(window, cx)
-                            }),
-                    )
-                });
+                .when_some(
+                    chat_layout::provider_mark(&row.provider, 14.),
+                    |cell, mark| cell.child(mark),
+                )
+                .child(div().flex_1().min_w_0().truncate().child(provider.clone()));
             let model_id = row.model.clone();
             let menu_row = row.clone();
             let menu_parent = cx.entity().downgrade();

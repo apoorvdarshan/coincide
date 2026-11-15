@@ -54,12 +54,6 @@ pub struct Prepared {
     config: Option<LaunchConfiguration>,
     cursor_keychain: bool,
     browser_fallback: bool,
-    antigravity: Option<AntigravitySource>,
-}
-#[derive(Clone, PartialEq, Eq)]
-struct AntigravitySource {
-    source: PathBuf,
-    private_threads: PathBuf,
 }
 pub struct Completed {
     prepared: Prepared,
@@ -68,11 +62,6 @@ pub struct Completed {
 struct Credential {
     token: Zeroizing<String>,
     org: Option<String>,
-    oauth: Option<OAuthClient>,
-}
-struct OAuthClient {
-    id: Zeroizing<String>,
-    secret: Zeroizing<String>,
 }
 impl Credential {
     fn signature(&self) -> [u8; 32] {
@@ -80,12 +69,6 @@ impl Credential {
         digest.update(self.token.as_bytes());
         digest.update([0]);
         digest.update(self.org.as_deref().unwrap_or("").as_bytes());
-        if let Some(oauth) = &self.oauth {
-            digest.update([0]);
-            digest.update(oauth.id.as_bytes());
-            digest.update([0]);
-            digest.update(oauth.secret.as_bytes());
-        }
         digest.finalize().into()
     }
 }
@@ -112,11 +95,6 @@ impl Engine {
                     .store
                     .document("settings.json")?
                     .is_some_and(|settings| browser_fallback_enabled(&settings)),
-            antigravity: if provider == "antigravity" {
-                antigravity_source(self)?
-            } else {
-                None
-            },
         })
     }
 }
@@ -150,11 +128,6 @@ impl Completed {
                 return false;
             }
         }
-        if self.prepared.provider == "antigravity"
-            && !matches!(antigravity_source(engine), Ok(ref source) if *source == self.prepared.antigravity)
-        {
-            return false;
-        }
         match engine.provider_launch_configuration(self.prepared.provider) {
             Ok(current) => {
                 current.as_ref().map(|c| c.stamp())
@@ -172,24 +145,14 @@ impl Prepared {
     ) -> Completed {
         let _scope = provider_configuration::enter(self.config.clone());
         let result = (|| {
-            let first = match credential(
-                self.provider,
-                self.cursor_keychain,
-                self.antigravity.as_ref(),
-            ) {
+            let first = match credential(self.provider, self.cursor_keychain) {
                 Ok(credential) => credential,
                 Err(original) if self.provider == "opencode" && self.browser_fallback => {
                     if browser_cookie.is_none() && !chrome_default {
                         return Err(original);
                     }
                     let result = read_browser_fallback(None, browser_cookie, chrome_default, true);
-                    if credential(
-                        self.provider,
-                        self.cursor_keychain,
-                        self.antigravity.as_ref(),
-                    )
-                    .is_ok()
-                    {
+                    if credential(self.provider, self.cursor_keychain).is_ok() {
                         return Err("The provider sign-in changed. Refresh to try again.");
                     }
                     return result;
@@ -201,7 +164,6 @@ impl Prepared {
                 "grok" => read_grok(&first),
                 "opencode" => read_opencode(&first),
                 "cursor" => read_cursor(&first),
-                "antigravity" => read_antigravity(&first),
                 _ => Err("This provider does not report limits yet."),
             };
             if self.provider == "opencode"
@@ -223,13 +185,9 @@ impl Prepared {
             }
             // Re-resolve the selected account after I/O; never display a report
             // for a sign-in that changed while the request was in flight.
-            if credential(
-                self.provider,
-                self.cursor_keychain,
-                self.antigravity.as_ref(),
-            )
-            .map(|c| c.signature())
-            .ok()
+            if credential(self.provider, self.cursor_keychain)
+                .map(|c| c.signature())
+                .ok()
                 != Some(signature)
             {
                 return Err("The provider sign-in changed. Refresh to try again.");
@@ -284,110 +242,16 @@ fn token(value: Option<&str>) -> Result<Zeroizing<String>, &'static str> {
         .ok_or("This provider has no supported signed-in account to read.")?;
     Ok(Zeroizing::new(token.to_owned()))
 }
-fn credential(
-    provider: &str,
-    cursor_keychain: bool,
-    antigravity: Option<&AntigravitySource>,
-) -> Result<Credential, &'static str> {
+fn credential(provider: &str, cursor_keychain: bool) -> Result<Credential, &'static str> {
     match provider {
         "grok" => grok_credential(),
         "opencode" => opencode_credential(),
         "cursor" => cursor_credential(cursor_keychain),
-        "antigravity" => antigravity_credential(antigravity),
+        "antigravity" => {
+            Err("Gemini API-key accounts do not expose Antigravity subscription limits.")
+        }
         _ => Err("This provider does not report limits yet."),
     }
-}
-fn antigravity_source(engine: &Engine) -> anyhow::Result<Option<AntigravitySource>> {
-    let Some(config) = engine.store.local_document("rust-antigravity.json")? else {
-        return Ok(None);
-    };
-    if config["version"] != 1 || !config["accounts"].is_object() {
-        anyhow::bail!("Invalid Antigravity configuration");
-    }
-    if config["riskAcknowledgement"]["key"] != "provider:antigravity-account-risk"
-        || config["riskAcknowledgement"]["accepted"] != true
-    {
-        return Ok(None);
-    }
-    let account = &config["accounts"]["default"];
-    if account["auth"] != "login" {
-        return Ok(None);
-    }
-    let Some(source) = account["sourceProfile"].as_str().map(PathBuf::from) else {
-        return Ok(None);
-    };
-    anyhow::ensure!(source.is_absolute(), "Antigravity profile must be absolute");
-    let data = engine.store.data_directory()?;
-    anyhow::ensure!(
-        !source.starts_with(&data) && !data.starts_with(&source),
-        "Antigravity profile overlaps app data"
-    );
-    Ok(Some(AntigravitySource {
-        source,
-        private_threads: data.join("providers/antigravity/default/threads"),
-    }))
-}
-fn antigravity_token(path: &Path) -> Result<Credential, &'static str> {
-    if path
-        .parent()
-        .and_then(|p| std::fs::symlink_metadata(p).ok())
-        .is_some_and(|m| m.file_type().is_symlink())
-        || std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
-    {
-        return Err("Antigravity's account path cannot contain a symbolic link.");
-    }
-    let raw = read_file(path)?.ok_or("Antigravity's configured account is not signed in.")?;
-    let value: Value =
-        serde_json::from_str(&raw).map_err(|_| "Antigravity's sign-in could not be read.")?;
-    let project = value["project_id"].as_str().map(str::to_owned);
-    if project
-        .as_ref()
-        .is_some_and(|p| p.len() > 1024 || p.chars().any(char::is_control))
-    {
-        return Err("Antigravity's sign-in is invalid.");
-    }
-    Ok(Credential {
-        token: token(value["refresh_token"].as_str())?,
-        org: project,
-        oauth: Some(OAuthClient {
-            id: token(value["client_id"].as_str())?,
-            secret: token(value["client_secret"].as_str())?,
-        }),
-    })
-}
-fn antigravity_credential(source: Option<&AntigravitySource>) -> Result<Credential, &'static str> {
-    let source = source.ok_or("Configure the Antigravity account to see its limits.")?;
-    if source.source.canonicalize().ok().as_deref() != Some(source.source.as_path()) {
-        return Err("Antigravity's configured account path changed.");
-    }
-    let credential = antigravity_token(&source.source.join("antigravity-acp/acp_token.json"))?;
-    let entries = match std::fs::read_dir(&source.private_threads) {
-        Ok(entries) => Some(entries),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(_) => return Err("Antigravity's private account could not be checked."),
-    };
-    if let Some(entries) = entries {
-        for (index, entry) in entries.enumerate() {
-            if index >= 4096 {
-                return Err("Antigravity has too many private profiles to check safely.");
-            }
-            let entry = entry.map_err(|_| "Antigravity's private account could not be checked.")?;
-            if !entry
-                .file_type()
-                .is_ok_and(|kind| kind.is_dir() && !kind.is_symlink())
-            {
-                continue;
-            }
-            let path = entry.path().join("antigravity-acp/acp_token.json");
-            if !path.exists() {
-                continue;
-            }
-            if antigravity_token(&path)?.signature() != credential.signature() {
-                return Err("Antigravity's private sign-in differs from its configured account.");
-            }
-        }
-    }
-    Ok(credential)
 }
 fn custom_grok_config(text: &str) -> bool {
     text.lines().any(|line| {
@@ -454,7 +318,6 @@ fn grok_credential() -> Result<Credential, &'static str> {
     Ok(Credential {
         token: token(entry["key"].as_str())?,
         org: None,
-        oauth: None,
     })
 }
 fn opencode_credential() -> Result<Credential, &'static str> {
@@ -522,7 +385,6 @@ fn opencode_credential() -> Result<Credential, &'static str> {
                     return Ok(Credential {
                         token: token(value)?,
                         org,
-                        oauth: None,
                     });
                 }
             }
@@ -545,7 +407,6 @@ fn opencode_credential() -> Result<Credential, &'static str> {
     Ok(Credential {
         token: token(stored.or(supplied.as_deref()))?,
         org: None,
-        oauth: None,
     })
 }
 fn cursor_credential(allow_keychain: bool) -> Result<Credential, &'static str> {
@@ -586,7 +447,6 @@ fn cursor_credential(allow_keychain: bool) -> Result<Credential, &'static str> {
     Ok(Credential {
         token: token(Some(&value))?,
         org: None,
-        oauth: None,
     })
 }
 fn date(value: Option<&str>) -> Option<DateTime<Utc>> {
@@ -957,258 +817,6 @@ fn parse_opencode_browser(body: &Value) -> Result<Limits, &'static str> {
     limits.figures.push(figure);
     Ok(limits)
 }
-fn google_request(
-    url: &'static str,
-    bearer: Option<&str>,
-    body: &str,
-    content_type: &'static str,
-) -> Result<Value, &'static str> {
-    let agent = ureq::Agent::config_builder()
-        .proxy(None)
-        .max_redirects(0)
-        .http_status_as_error(false)
-        .timeout_global(Some(Duration::from_secs(6)))
-        .build()
-        .new_agent();
-    let system = if cfg!(target_os = "macos") {
-        "darwin"
-    } else {
-        "linux"
-    };
-    let arch = if cfg!(target_arch = "aarch64") {
-        "arm64"
-    } else {
-        "x64"
-    };
-    let user_agent = format!(
-        "antigravity/hub/1.0.0 (aidev_client; os_type={system}; arch={arch}; cl=963137146)"
-    );
-    let mut request = ureq::http::Request::builder()
-        .method("POST")
-        .uri(url)
-        .header("Content-Type", content_type)
-        .header("Accept", "application/json")
-        .header("User-Agent", user_agent);
-    let header = bearer.map(|token| Zeroizing::new(format!("Bearer {token}")));
-    if let Some(header) = &header {
-        request = request.header("Authorization", header.as_str());
-    }
-    let mut response = agent
-        .run(
-            request
-                .body(body)
-                .map_err(|_| "Antigravity usage could not start.")?,
-        )
-        .map_err(|_| "Antigravity usage failed or timed out.")?;
-    if !response.status().is_success() {
-        return Err("Antigravity did not accept the usage request.");
-    }
-    let mut bytes = Zeroizing::new(Vec::new());
-    response
-        .body_mut()
-        .as_reader()
-        .take(MAX_RESPONSE + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| "Antigravity's usage response could not be read.")?;
-    if bytes.len() as u64 > MAX_RESPONSE {
-        return Err("Antigravity's usage response was too large.");
-    }
-    serde_json::from_slice(&bytes).map_err(|_| "Antigravity returned an invalid usage response.")
-}
-fn read_antigravity(cred: &Credential) -> Result<Limits, &'static str> {
-    let oauth = cred
-        .oauth
-        .as_ref()
-        .ok_or("Antigravity's sign-in is invalid.")?;
-    let mut form = url::form_urlencoded::Serializer::new(String::new());
-    form.append_pair("client_id", &oauth.id)
-        .append_pair("client_secret", &oauth.secret)
-        .append_pair("refresh_token", &cred.token)
-        .append_pair("grant_type", "refresh_token");
-    let form = Zeroizing::new(form.finish());
-    let answer = google_request(
-        "https://oauth2.googleapis.com/token",
-        None,
-        &form,
-        "application/x-www-form-urlencoded",
-    )?;
-    let access = token(answer["access_token"].as_str())
-        .map_err(|_| "Antigravity's sign-in could not be refreshed.")?;
-    let request = cred
-        .org
-        .as_ref()
-        .map(|project| serde_json::json!({"project":project}))
-        .unwrap_or_else(|| serde_json::json!({}))
-        .to_string();
-    let endpoints = [
-        (
-            "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
-            "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
-        ),
-        (
-            "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
-            "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
-        ),
-    ];
-    let mut windows = std::collections::BTreeMap::<String, Window>::new();
-    let mut reported = false;
-    for (summary, models) in endpoints {
-        let found = google_request(summary, Some(&access), &request, "application/json")
-            .ok()
-            .and_then(|value| antigravity_summary(&value));
-        reported |= found.is_some();
-        let found = match found {
-            Some(windows) if !windows.is_empty() => windows,
-            _ => {
-                let models = google_request(models, Some(&access), &request, "application/json")
-                    .ok()
-                    .and_then(|value| antigravity_models(&value));
-                reported |= models.is_some();
-                models.unwrap_or_default()
-            }
-        };
-        for window in found {
-            if windows
-                .get(&window.id)
-                .is_none_or(|previous| previous.used_percent < window.used_percent)
-            {
-                windows.insert(window.id.clone(), window);
-            }
-        }
-    }
-    if windows.is_empty() {
-        return Err(if reported {
-            "Antigravity did not report any account limits."
-        } else {
-            "Antigravity's usage could not be read."
-        });
-    }
-    Ok(Limits::new(windows.into_values().collect(), Utc::now()))
-}
-fn antigravity_quota(
-    id: &str,
-    label: &str,
-    kind: WindowKind,
-    minutes: Option<u64>,
-    quota: &Value,
-) -> Option<Window> {
-    let remaining = quota["remainingFraction"]
-        .as_f64()
-        .filter(|n| n.is_finite())?;
-    if id.is_empty() || id.len() > 128 || id.chars().any(char::is_control) {
-        return None;
-    }
-    Some(
-        Window::new(id, kind, label, (1. - remaining.clamp(0., 1.)) * 100.)
-            .resetting(date(quota["resetTime"].as_str()), minutes),
-    )
-}
-fn antigravity_summary(body: &Value) -> Option<Vec<Window>> {
-    body.as_object()?;
-    let groups = body["groups"].as_array();
-    if groups.is_some_and(|rows| rows.len() > 128) {
-        return None;
-    }
-    let mut buckets = Vec::new();
-    if let Some(groups) = groups {
-        for group in groups {
-            let label = group["displayName"]
-                .as_str()
-                .filter(|s| s.len() <= 80 && !s.chars().any(char::is_control));
-            if let Some(rows) = group["buckets"].as_array() {
-                if rows.len() > 128 {
-                    return None;
-                }
-                buckets.extend(rows.iter().map(|row| (label, row)));
-            }
-        }
-    }
-    if buckets.is_empty()
-        && let Some(rows) = body["buckets"].as_array()
-    {
-        if rows.len() > 128 {
-            return None;
-        }
-        buckets.extend(rows.iter().map(|row| (None, row)));
-    }
-    let mut windows = Vec::new();
-    for (group, quota) in buckets {
-        if quota["disabled"] == true {
-            continue;
-        }
-        let Some(id) = quota["bucketId"].as_str() else {
-            continue;
-        };
-        let family = if id.starts_with("gemini-") {
-            "Gemini"
-        } else if id.starts_with("3p-") {
-            "Claude & GPT (shared)"
-        } else {
-            group.unwrap_or(id)
-        };
-        let (kind, period, minutes) = match quota["window"].as_str() {
-            Some("weekly") => (WindowKind::Weekly, "Weekly", Some(10080)),
-            Some("5h") => (WindowKind::Session, "5-hour", Some(300)),
-            _ => (WindowKind::Other, "Quota", None),
-        };
-        if let Some(window) =
-            antigravity_quota(id, &format!("{family} · {period}"), kind, minutes, quota)
-        {
-            windows.push(window);
-        }
-    }
-    Some(windows)
-}
-fn antigravity_models(body: &Value) -> Option<Vec<Window>> {
-    let models = body["models"].as_object()?;
-    if models.len() > 1024 {
-        return None;
-    }
-    let mut windows = std::collections::BTreeMap::<String, Window>::new();
-    for (id, model) in models {
-        let provider = model["modelProvider"].as_str().unwrap_or("");
-        let family = if provider == "MODEL_PROVIDER_GOOGLE" || id.starts_with("gemini-") {
-            "Gemini"
-        } else if provider == "MODEL_PROVIDER_ANTHROPIC" || id.starts_with("claude-") {
-            "Claude"
-        } else if provider == "MODEL_PROVIDER_OPENAI" || id.starts_with("gpt-") {
-            "GPT"
-        } else {
-            continue;
-        };
-        for (key, suffix, kind, label, minutes) in [
-            (
-                "quotaInfo",
-                "quota",
-                WindowKind::Other,
-                "Reported quota",
-                None,
-            ),
-            (
-                "weeklyQuotaInfo",
-                "weekly",
-                WindowKind::Weekly,
-                "Weekly",
-                Some(10080),
-            ),
-        ] {
-            let id = format!("{}-{suffix}", family.to_ascii_lowercase());
-            if let Some(window) = antigravity_quota(
-                &id,
-                &format!("{family} · {label}"),
-                kind,
-                minutes,
-                &model[key],
-            ) && windows
-                .get(&id)
-                .is_none_or(|previous| previous.used_percent < window.used_percent)
-            {
-                windows.insert(id, window);
-            }
-        }
-    }
-    Some(windows.into_values().collect())
-}
 fn read_cursor(cred: &Credential) -> Result<Limits, &'static str> {
     let (status, body) = read_http(
         "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
@@ -1275,6 +883,14 @@ fn parse_cursor(body: &Value) -> Result<Limits, &'static str> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn antigravity_usage_never_reads_a_subscription_credential() {
+        assert_eq!(
+            credential("antigravity", false).err(),
+            Some("Gemini API-key accounts do not expose Antigravity subscription limits.")
+        );
+    }
     #[test]
     fn grok_shows_zero_only_for_a_real_weekly_period() {
         let report = json!({"config":{"currentPeriod":{"type":"USAGE_PERIOD_TYPE_WEEKLY","start":"2026-11-01T00:00:00Z","end":"2026-11-08T00:00:00Z"}}});
@@ -1378,51 +994,10 @@ mod tests {
         );
     }
     #[test]
-    fn antigravity_reports_only_real_quota_and_most_used_models() {
-        let summary = json!({"groups":[{"buckets":[
-            {"bucketId":"gemini-5h","window":"5h","remainingFraction":0.25,"resetTime":"2030-01-01T00:00:00Z"},
-            {"bucketId":"3p-weekly","window":"weekly","remainingFraction":0.75,"disabled":false},
-            {"bucketId":"gemini-hidden","window":"5h","disabled":true,"remainingFraction":0.1},
-            {"bucketId":"missing","window":"5h"}
-        ]}]});
-        let limits = antigravity_summary(&summary).unwrap();
-        assert_eq!(limits.len(), 2);
-        assert_eq!(limits[0].used_percent, 75.);
-        assert_eq!(limits[0].duration_minutes, Some(300));
-        assert!(limits[0].resets_at.is_some());
-        let models = json!({"models":{"gemini-a":{"quotaInfo":{"remainingFraction":0.8}},"gemini-b":{"quotaInfo":{"remainingFraction":0.2}}}});
-        let limits = antigravity_models(&models).unwrap();
-        assert_eq!(limits.len(), 1);
-        assert_eq!(limits[0].used_percent, 80.);
-        assert_eq!(limits[0].duration_minutes, None);
-    }
-    #[test]
-    fn antigravity_does_not_mix_different_private_accounts() {
-        let root = tempfile::tempdir().unwrap();
-        let source = root.path().join("source");
-        let private = root.path().join("threads");
-        std::fs::create_dir_all(source.join("antigravity-acp")).unwrap();
-        std::fs::create_dir_all(private.join("thread/antigravity-acp")).unwrap();
-        let make = |refresh| {
-            json!({"client_id":"fixture","client_secret":"fixture","refresh_token":refresh})
-                .to_string()
-        };
-        std::fs::write(source.join("antigravity-acp/acp_token.json"), make("first")).unwrap();
-        let copy = private.join("thread/antigravity-acp/acp_token.json");
-        std::fs::write(&copy, make("first")).unwrap();
-        let account = AntigravitySource {
-            source: source.canonicalize().unwrap(),
-            private_threads: private,
-        };
-        assert!(antigravity_credential(Some(&account)).is_ok());
-        std::fs::write(copy, make("other")).unwrap();
-        assert!(antigravity_credential(Some(&account)).is_err());
-    }
-    #[test]
     #[ignore = "explicit read-only check of the local provider accounts"]
     fn live_default_provider_limits() {
         for provider in ["grok", "opencode", "cursor"] {
-            let result = credential(provider, false, None).and_then(|cred| match provider {
+            let result = credential(provider, false).and_then(|cred| match provider {
                 "grok" => read_grok(&cred),
                 "opencode" => read_opencode(&cred),
                 _ => read_cursor(&cred),

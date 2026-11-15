@@ -113,7 +113,7 @@ fn unsupported_defaults_reject_before_any_row_revision_or_document_write() {
         invalid.push(candidate);
     }
     invalid.push(json!({}));
-    invalid.push(json!({"selection":{"provider":"antigravity","modelID":"default"}}));
+    invalid.push(json!({"selection":{"provider":"antigravity","modelID":"default","accountID":Uuid::new_v4().to_string()}}));
     for candidate in invalid {
         configure(&mut engine, &project, candidate, false);
         let before = rows(&mut engine);
