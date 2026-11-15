@@ -4667,7 +4667,7 @@ impl Coincide {
     /// from a native edit or a recalled prompt.
     fn record_composer_draft(&mut self, cx: &mut Context<Self>) {
         let draft = self.composer.read(cx).value().to_string();
-        let Some(thread) = self.selected.as_mut() else {
+        let Some(thread) = self.selected.composer_metadata_mut() else {
             return;
         };
         if !self.pending_drafts.contains_key(&text(thread, "id")) {
@@ -6379,7 +6379,7 @@ impl Render for Coincide {
             (thread["draft"].as_str() != Some(draft)).then(|| draft.to_owned())
         });
         if let Some(draft) = projected_draft
-            && let Some(thread) = self.selected.as_mut()
+            && let Some(thread) = self.selected.composer_metadata_mut()
         {
             thread["draft"] = json!(draft);
         }
@@ -6691,7 +6691,7 @@ impl Render for Coincide {
                 self.restore_composer = None;
                 self.composer
                     .update(cx, |input, cx| input.set_value(text.clone(), window, cx));
-                if let Some(thread) = self.selected.as_mut() {
+                if let Some(thread) = self.selected.composer_metadata_mut() {
                     thread["draft"] = json!(text);
                 }
                 self.draft_saver.record(&id, &text);
@@ -6761,7 +6761,7 @@ impl Render for Coincide {
                 .any(|id| thread["id"].as_str() == Some(id.as_str()))
         });
         self.chat_turns.begin_render(
-            self.selected.revision(),
+            self.selected.transcript_revision(),
             selected_running,
             self.settings["showReasoning"].as_bool().unwrap_or(true),
             self.selected
