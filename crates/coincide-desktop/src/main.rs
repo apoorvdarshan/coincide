@@ -1395,8 +1395,13 @@ impl Coincide {
                 this.usage_history.load(event, cx);
             }),
             cx.observe(&provider_configuration_panel, |_, _, cx| cx.notify()),
-            cx.subscribe_in(&github_panel, window, |this, _, event, window, cx| {
+            cx.subscribe_in(&github_panel, window, |this, _, event: &github_review::CheckoutOpened, window, cx| {
                 this.open_github_checkout(event, window, cx);
+            }),
+            cx.subscribe(&github_panel, |this, _, event: &github_review::OpenCheckLink, cx| {
+                if this.selected.as_ref().is_some_and(|thread| thread["id"] == event.thread) {
+                    this.open_web_link(event.url.clone(), transcript_links::Destination::BrowserNewTab, cx);
+                }
             }),
             cx.observe(&github_panel, |this,_,cx| {
                 let loaded=this.github_panel.read(cx).loaded_pr_scope(cx);
