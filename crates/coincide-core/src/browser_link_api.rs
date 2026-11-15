@@ -97,7 +97,7 @@ mod tests {
         }
         let requests: Vec<_> = engine.browser_requests.iter().collect();
         assert_eq!(requests.len(), 6);
-        for (pair, (thread, url)) in requests.chunks_exact(2).zip([
+        for (pair, (thread, url)) in requests.as_chunks::<2>().0.iter().zip([
             (&a, "https://example.com/one"),
             (&a, "https://example.com/two"),
             (&b, "https://example.org/other"),
