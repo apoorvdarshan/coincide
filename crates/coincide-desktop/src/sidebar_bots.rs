@@ -145,6 +145,16 @@ fn folder_badge(bot: &Value, bot_name: &str) -> Option<String> {
         .is_some_and(|(_, suffix)| suffix.trim().eq_ignore_ascii_case(&folder));
     (!repeated).then_some(folder)
 }
+/// This runs on a background executor, so waiting for the engine here keeps a
+/// newly saved bot from failing to open during a concurrent settings refresh.
+fn create_bot_conversation(engine: &SharedEngine, id: &str) -> Result<Value> {
+    let saved = coincide_core::api::call(engine, "bots.read", json!({"botId":id}))?;
+    coincide_core::api::call(
+        engine,
+        "bots.conversations.create",
+        json!({"botId":id,"baseline":saved["baseline"]}),
+    )
+}
 /// Swift's bot row tooltip: its name, personality, latest conversation, agent
 /// and model, folder and status.
 fn bot_tooltip(
@@ -326,14 +336,9 @@ impl Coincide {
         }
         self.sidebar_bot_pending = Some(id.clone());
         let engine = self.engine.clone();
-        let create = cx.background_executor().spawn(async move {
-            let saved = call(&engine, "bots.read", json!({"botId":id}))?;
-            call(
-                &engine,
-                "bots.conversations.create",
-                json!({"botId":id,"baseline":saved["baseline"]}),
-            )
-        });
+        let create = cx
+            .background_executor()
+            .spawn(async move { create_bot_conversation(&engine, &id) });
         let completion = cx.spawn_in(window, async move |this, cx| {
             let result = create.await;
             let _ = this.update_in(cx, |this, window, cx| {
@@ -792,6 +797,53 @@ pub(super) fn bot_conversations<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[::core::prelude::v1::test]
+    fn creating_a_bot_conversation_waits_for_a_busy_engine_without_sending() {
+        use std::{
+            sync::{Arc, Mutex, mpsc},
+            time::Duration,
+        };
+        let root = std::env::temp_dir().join(format!("coincide-bot-open-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let folder = root.join("workspace");
+        std::fs::create_dir(&folder).unwrap();
+        let engine: SharedEngine = Arc::new(Mutex::new(Engine::new(
+            Store::open(&root.join("state.sqlite")).unwrap(),
+        )));
+        let list = coincide_core::api::call(&engine, "bots.list", json!({})).unwrap();
+        let bot = coincide_core::api::call(
+            &engine,
+            "bots.save",
+            json!({"baseline":list["baseline"],"patch":{"name":"Fixture bot","folder":folder}}),
+        )
+        .unwrap();
+        let id = text(&bot["bot"], "id");
+        let held = engine.lock().unwrap();
+        let worker_engine = engine.clone();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (result_tx, result_rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            result_tx
+                .send(create_bot_conversation(&worker_engine, &id))
+                .unwrap();
+        });
+        started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(matches!(
+            result_rx.recv_timeout(Duration::from_millis(50)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        drop(held);
+        let created = result_rx
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap();
+        assert_eq!(created["created"], true);
+        assert_eq!(created["executionStarted"], false);
+        worker.join().unwrap();
+        drop(engine);
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[::core::prelude::v1::test]
     fn preview_shows_readable_markdown_even_when_the_cached_snippet_is_truncated() {
         assert_eq!(
