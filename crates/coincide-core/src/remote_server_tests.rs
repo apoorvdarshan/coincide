@@ -441,6 +441,10 @@ fn authenticated_phone_receives_only_enabled_reported_provider_windows() {
     );
     fixture.server.set_enabled(true);
     let (mut phone, _, _) = pair(&mut fixture);
+    // This success case must not race the watcher's independent Engine poll.
+    // Other fixtures explicitly exercise the busy response.
+    let shared = fixture.server.running.as_ref().unwrap().0.clone();
+    let _watch_gate = shared.watch_gate.lock().unwrap();
     request(&mut phone, "usage-all", "usageLimits", None);
     let first = reply(&mut phone, "usage-all");
     assert_eq!(first["type"], "usage");
@@ -551,6 +555,11 @@ fn pairing_then_hello_drives_the_workspace_and_open_threads() {
     assert_eq!(hello["body"]["appVersion"], "9.9.9");
     assert_eq!(hello["body"]["protocolVersion"], 1);
 
+    // Serialize these success-case requests against the background watcher.
+    // The following event checks run only after the watcher is released.
+    let shared = fixture.server.running.as_ref().unwrap().0.clone();
+    let watch_gate = shared.watch_gate.lock().unwrap();
+
     // The adapter answers a read while the desktop holds Engine with the
     // documented busy failure instead of waiting; a client retries the read.
     let workspace = {
@@ -618,6 +627,7 @@ fn pairing_then_hello_drives_the_workspace_and_open_threads() {
         Some(json!({"threadID":thread["id"],"action":{"action":"rename","title":"Renamed"}})),
     );
     assert_eq!(reply(&mut client, "r")["type"], "ok");
+    drop(watch_gate);
     let changed = event_of(&mut client, "workspace");
     assert!(
         changed["body"]["threads"]
