@@ -2796,9 +2796,6 @@ impl Coincide {
                     .selected
                     .as_ref()
                     .is_none_or(|thread| thread["id"] != id);
-                if self.global_schedules_route() {
-                    self.close_schedule_surface();
-                }
                 self.session_import_open = false;
                 if self
                     .selected
@@ -6872,8 +6869,6 @@ impl Render for Coincide {
                 .into_any_element()
         } else if self.settings_in_main_window() {
             self.settings_surface(cx)
-        } else if self.global_schedules_route() {
-            self.schedules_pane(cx)
         } else {
             transcript.into_any_element()
         };

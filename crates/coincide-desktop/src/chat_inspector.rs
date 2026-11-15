@@ -5,6 +5,7 @@ use super::*;
 pub(super) enum Panel {
     Workspace,
     ConversationSchedules,
+    Schedules,
     Browser,
     Terminal,
 }
@@ -17,7 +18,7 @@ pub(super) struct ChatRoute {
 }
 impl ChatRoute {
     pub fn available(self) -> bool {
-        !self.settings && !self.global_schedules && !self.importing
+        !self.settings && !self.importing
     }
     pub fn visible(self) -> bool {
         self.selected && self.available()
@@ -42,7 +43,11 @@ pub(super) fn panel(
     right_terminal: bool,
     browser: bool,
 ) -> Option<Panel> {
-    if !route.visible() {
+    if !route.available() {
+        None
+    } else if route.global_schedules {
+        Some(Panel::Schedules)
+    } else if !route.selected {
         None
     } else if workspace {
         Some(Panel::Workspace)
@@ -118,21 +123,18 @@ impl Coincide {
         )
     }
     pub(super) fn close_chat_inspector(&mut self, cx: &mut Context<Self>) {
-        let window_wide = self.global_schedules_route();
         match self.chat_inspector_panel() {
             Some(Panel::Workspace) => {
                 self.workspace_open = false;
                 self.sync_github_context(cx);
             }
-            Some(Panel::ConversationSchedules) => self.close_schedule_surface(),
+            Some(Panel::ConversationSchedules | Panel::Schedules) => self.close_schedule_surface(),
             Some(Panel::Browser) => self.hide_selected_browser_surface(cx),
             Some(Panel::Terminal) => self.terminal_open = false,
             None => (),
         }
         self.clear_inspector_placeholders();
-        if !window_wide {
-            self.remember_inspector_choice(None, cx);
-        }
+        self.remember_inspector_choice(None, cx);
         cx.notify();
     }
     pub(super) fn chat_inspector_surface(
@@ -155,6 +157,7 @@ impl Coincide {
             Panel::ConversationSchedules => {
                 ("conversation-schedules-inspector", self.schedules_pane(cx))
             }
+            Panel::Schedules => ("schedules-inspector", self.schedules_pane(cx)),
             Panel::Browser
                 if self.inspector_follow.preview_placeholder && self.browser.is_none() =>
             {
@@ -167,7 +170,7 @@ impl Coincide {
         };
         let body = if matches!(
             self.chat_inspector_panel(),
-            Some(Panel::Workspace | Panel::ConversationSchedules)
+            Some(Panel::Workspace | Panel::ConversationSchedules | Panel::Schedules)
         ) {
             div()
                 .flex()
@@ -226,10 +229,6 @@ mod tests {
                 ..route
             },
             ChatRoute {
-                global_schedules: true,
-                ..route
-            },
-            ChatRoute {
                 importing: true,
                 ..route
             },
@@ -237,6 +236,24 @@ mod tests {
             assert!(!unavailable.visible());
             assert_eq!(panel(unavailable, true, true, true, true), None);
         }
+        let schedules = ChatRoute {
+            global_schedules: true,
+            ..route
+        };
+        assert!(schedules.visible());
+        assert_eq!(
+            panel(schedules, false, false, false, false),
+            Some(Panel::Schedules)
+        );
+        let no_thread = ChatRoute {
+            selected: false,
+            ..schedules
+        };
+        assert!(!no_thread.visible());
+        assert_eq!(
+            panel(no_thread, false, false, false, false),
+            Some(Panel::Schedules)
+        );
     }
     #[::core::prelude::v1::test]
     fn right_panes_have_one_deterministic_owner_during_reconciliation() {

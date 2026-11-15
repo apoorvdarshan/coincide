@@ -171,9 +171,9 @@ impl Coincide {
                 self.workspace_open = false;
                 self.session_import_open = false;
                 if self.schedules_open {
-                    self.schedules_open = false;
+                    self.close_chat_inspector(cx);
                 } else {
-                    self.open_global_schedules(cx);
+                    self.open_global_schedules(window, cx);
                 }
             }
             K::Palette => self.toggle_palette(window, cx),

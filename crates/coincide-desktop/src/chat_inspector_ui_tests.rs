@@ -132,6 +132,7 @@ fn headless_real_columns_keep_composer_focus_draft_geometry_and_retained_panel_e
                     panels: [
                         Panel::Workspace,
                         Panel::ConversationSchedules,
+                        Panel::Schedules,
                         Panel::Terminal,
                         Panel::Browser,
                     ]
@@ -174,6 +175,7 @@ fn headless_real_columns_keep_composer_focus_draft_geometry_and_retained_panel_e
     for shown in [
         Some(Panel::Workspace),
         Some(Panel::ConversationSchedules),
+        Some(Panel::Schedules),
         Some(Panel::Browser),
         Some(Panel::Terminal),
         None,

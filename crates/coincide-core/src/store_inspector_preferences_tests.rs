@@ -10,7 +10,7 @@ fn fixture() -> (tempfile::TempDir, Store) {
     (directory, store)
 }
 #[test]
-fn swift_panel_mapping_follows_each_thread_and_windowwide_exception() {
+fn panel_mapping_follows_each_thread_including_schedules() {
     use crate::inspector_preferences::{Change, follow, saved};
     let state = json!({"threadPanels":{A:"diff",B:"preview","future-non-uuid":{"opaque":true}}});
     assert_eq!(saved(&state, A).unwrap(), Some(Panel::Diff));
@@ -20,7 +20,7 @@ fn swift_panel_mapping_follows_each_thread_and_windowwide_exception() {
     );
     assert_eq!(
         follow(Some(Panel::Schedules), saved(&state, A).unwrap(), true),
-        Change::None
+        Change::Show(Panel::Diff)
     );
     assert_eq!(
         follow(Some(Panel::Diff), Some(Panel::Terminal), false),
@@ -46,6 +46,7 @@ fn each_thread_retains_its_own_workspace_and_schedule_panel() {
         Panel::LocalGit,
         Panel::ReviewComments,
         Panel::ConversationSchedules,
+        Panel::Schedules,
     ] {
         state = store
             .remember_native_inspector_panel(Some(&state), A, Some(panel))
@@ -60,18 +61,12 @@ fn each_thread_retains_its_own_workspace_and_schedule_panel() {
     state = store
         .remember_native_inspector_panel(Some(&state), B, Some(Panel::Preview))
         .unwrap();
-    assert_eq!(
-        saved(&state, A).unwrap(),
-        Some(Panel::ConversationSchedules)
-    );
+    assert_eq!(saved(&state, A).unwrap(), Some(Panel::Schedules));
     assert_eq!(saved(&state, B).unwrap(), Some(Panel::Preview));
     state = store
         .remember_native_inspector_panel(Some(&state), B, None)
         .unwrap();
-    assert_eq!(
-        saved(&state, A).unwrap(),
-        Some(Panel::ConversationSchedules)
-    );
+    assert_eq!(saved(&state, A).unwrap(), Some(Panel::Schedules));
     assert_eq!(saved(&state, B).unwrap(), None);
     assert_eq!(state["unrelated"]["preserved"], true);
 }
@@ -142,18 +137,17 @@ fn stale_external_writer_and_ambiguous_or_malformed_mapping_never_write() {
     }
 }
 #[test]
-fn explicit_close_preserves_unrelated_future_panel_and_windowwide_never_overwrites() {
+fn explicit_close_preserves_unrelated_future_panel() {
     let (_directory, mut store) = fixture();
     let source = json!({"threadPanels":{A:"diff",B:{"future":"preserve"}},"unknown":9});
     store.save_document(DOCUMENT, &source).unwrap();
-    let serial = store.mutation_serial().unwrap();
+    let source = store
+        .remember_native_inspector_panel(Some(&source), A, Some(Panel::Schedules))
+        .unwrap();
     assert_eq!(
-        store
-            .remember_native_inspector_panel(Some(&source), A, Some(Panel::Schedules))
-            .unwrap(),
-        source
+        preferences::saved(&source, A).unwrap(),
+        Some(Panel::Schedules)
     );
-    assert_eq!(store.mutation_serial().unwrap(), serial);
     let next = store
         .remember_native_inspector_panel(Some(&source), A, None)
         .unwrap();
@@ -228,14 +222,11 @@ fn bounded_overlay_read_never_falls_back_or_overwrites_future_or_original_state(
         .unwrap()
         .execute("DELETE FROM original_files WHERE path='ui-state.json'", [])
         .unwrap();
-    let serial = store.mutation_serial().unwrap();
-    store
+    let saved = store
         .remember_native_inspector_panel(None, A, Some(Panel::Schedules))
         .unwrap();
-    assert!(store.native_inspector_document().unwrap().is_none());
     assert_eq!(
-        store.mutation_serial().unwrap(),
-        serial,
-        "window-wide Scheduled never creates a per-thread preference"
+        preferences::saved(&saved, A).unwrap(),
+        Some(Panel::Schedules)
     );
 }

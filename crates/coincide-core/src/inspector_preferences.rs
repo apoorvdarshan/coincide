@@ -40,9 +40,6 @@ impl Panel {
             Self::Schedules => "schedules",
         }
     }
-    pub fn window_wide(self) -> bool {
-        self == Self::Schedules
-    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Change {
@@ -51,11 +48,7 @@ pub enum Change {
     Close,
 }
 pub fn follow(current: Option<Panel>, saved: Option<Panel>, terminal_on_right: bool) -> Change {
-    if current.is_some_and(Panel::window_wide) {
-        return Change::None;
-    }
-    let saved = saved
-        .filter(|panel| !panel.window_wide() && (*panel != Panel::Terminal || terminal_on_right));
+    let saved = saved.filter(|panel| *panel != Panel::Terminal || terminal_on_right);
     match saved {
         Some(saved) if current == Some(saved) => Change::None,
         Some(saved) => Change::Show(saved),
@@ -101,8 +94,7 @@ pub fn saved(document: &Value, thread: &str) -> Result<Option<Panel>> {
     validate(document)?;
     if document.get("threadPanels").is_some() {
         return Ok(thread_key(document, thread)?
-            .and_then(|key| Panel::parse(&document["threadPanels"][key]))
-            .filter(|panel| !panel.window_wide()));
+            .and_then(|key| Panel::parse(&document["threadPanels"][key])));
     }
     // Swift migrates the former window-wide panel only for its actual selected
     // conversation. Missing maps and explicitly empty maps are distinct.
@@ -111,18 +103,14 @@ pub fn saved(document: &Value, thread: &str) -> Result<Option<Panel>> {
         .and_then(|id| Uuid::parse_str(id).ok());
     let thread = Uuid::parse_str(thread)?;
     if document["isInspectorOpen"] == true && selected == Some(thread) {
-        return Ok(
-            Some(Panel::parse(&document["inspectorPanel"]).unwrap_or(Panel::Diff))
-                .filter(|panel| !panel.window_wide()),
-        );
+        return Ok(Some(
+            Panel::parse(&document["inspectorPanel"]).unwrap_or(Panel::Diff),
+        ));
     }
     Ok(None)
 }
 pub(crate) fn updated(document: &Value, thread: &str, panel: Option<Panel>) -> Result<Value> {
     validate(document)?;
-    if panel.is_some_and(Panel::window_wide) {
-        return Ok(document.clone());
-    }
     let canonical = Uuid::parse_str(thread)?.to_string().to_uppercase();
     let key = thread_key(document, thread)?.unwrap_or(canonical);
     let mut next = document.clone();

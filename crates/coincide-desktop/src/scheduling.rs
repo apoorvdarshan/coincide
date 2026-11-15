@@ -372,8 +372,19 @@ impl Coincide {
             self.schedule_editor.scope_epoch = self.schedule_editor.scope_epoch.wrapping_add(1);
         }
     }
-    pub(super) fn open_global_schedules(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn open_global_schedules(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.clear_inspector_placeholders();
+        self.workspace_open = false;
+        self.ensure_inspector_space(window);
+        self.hide_selected_browser_surface(cx);
+        if self.terminal_on_right() {
+            self.terminal_open = false;
+        }
+        self.restore_global_schedules(cx);
+        self.remember_current_inspector(cx);
+    }
+    /// Restore the global list without opening an editor or creating a task.
+    pub(super) fn restore_global_schedules(&mut self, cx: &mut Context<Self>) {
         self.schedule_editor.all_conversations = true;
         self.schedule_editor.scope_epoch = self.schedule_editor.scope_epoch.wrapping_add(1);
         self.schedule_editor.open = false;
@@ -1806,18 +1817,16 @@ impl Coincide {
                         }); }))
                 }),
         );
-        if !global {
-            header = header.child(
-                Button::new("close-chat-inspector")
-                    .icon(Symbol::Close)
-                    .ghost()
-                    .compact()
-                    .small()
-                    .accessibility_label("Close panel")
-                    .tooltip("Close panel")
-                    .on_click(cx.listener(|this, _, _, cx| this.close_chat_inspector(cx))),
-            );
-        }
+        header = header.child(
+            Button::new("close-chat-inspector")
+                .icon(Symbol::Close)
+                .ghost()
+                .compact()
+                .small()
+                .accessibility_label("Close panel")
+                .tooltip("Close panel")
+                .on_click(cx.listener(|this, _, _, cx| this.close_chat_inspector(cx))),
+        );
         let mut content = div()
             .id("schedule-panel")
             .flex()
