@@ -526,9 +526,24 @@ pub fn install(cx: &mut App) -> Arc<AtomicBool> {
     });
     let pending = Pending::default();
     let signal = pending.clone();
-    cx.on_action(move |action: &RunCommand, _| signal.request(MenuRequest::Command(action.0)));
+    cx.on_action(move |action: &RunCommand, cx| {
+        signal.request(MenuRequest::Command(action.0));
+        reopen_for_menu_request(cx);
+    });
     let signal = pending.clone();
-    cx.on_action(move |action: &RunApp, _| signal.request(MenuRequest::App(action.0.clone())));
+    cx.on_action(move |action: &RunApp, cx| {
+        if cx.has_global::<crate::Launch>() && !main_window_open(cx) {
+            match action.0 {
+                AppAction::Hide => return cx.hide(),
+                AppAction::HideOthers => return cx.hide_other_apps(),
+                AppAction::ShowAll => return cx.unhide_other_apps(),
+                AppAction::CloseWindow => return,
+                _ => {}
+            }
+        }
+        signal.request(MenuRequest::App(action.0.clone()));
+        reopen_for_menu_request(cx);
+    });
     #[cfg(target_os = "macos")]
     cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
     #[cfg(not(target_os = "macos"))]
@@ -540,6 +555,17 @@ pub fn install(cx: &mut App) -> Arc<AtomicBool> {
     update(cx, MenuSnapshot::default());
     crate::quit_shortcut::install(requested.clone(), cx);
     requested
+}
+
+fn reopen_for_menu_request(cx: &mut App) {
+    if !main_window_open(cx) && cx.has_global::<crate::Launch>() {
+        crate::reopen_main_window(cx);
+    }
+}
+
+fn main_window_open(cx: &App) -> bool {
+    cx.try_global::<crate::MainWindow>()
+        .is_some_and(|main| cx.windows().contains(&main.0) && main.1.upgrade().is_some())
 }
 /// Parent calls outside any Engine guard; consumption itself has no effects.
 /// Duplicate requests coalesce, and Quit remains its separate retained signal.

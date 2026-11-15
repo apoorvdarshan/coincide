@@ -918,12 +918,18 @@ pub struct NotificationSettingsPanel {
     _poll: Task<()>,
 }
 impl NotificationSettingsPanel {
-    pub fn new(engine: SharedEngine, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(engine: SharedEngine, cx: &mut Context<Self>) -> Self {
         let (bridge, notice) = match Bridge::start(engine) {
             Ok(b) => (Some(b), None),
             Err(e) => (None, Some(short(e))),
         };
-        let poll = cx.spawn_in(window, async move |this, cx| {
+        Self::from_bridge(bridge, notice, cx)
+    }
+
+    fn from_bridge(bridge: Option<Bridge>, notice: Option<String>, cx: &mut Context<Self>) -> Self {
+        // The notification bridge outlives the main window. Its status poll
+        // must therefore be owned by the app, not a window executor.
+        let poll = cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor()
                     .timer(Duration::from_millis(100))
@@ -1073,6 +1079,7 @@ impl Render for NotificationSettingsPanel {
 mod tests {
     use super::*;
     use crate::notifications::{Backend, Payload};
+    use ::core::prelude::v1::test;
     use coincide_core::platform_host::notifications::{Alert, AlertKind};
     #[::core::prelude::v1::test]
     fn ordinary_exit_preserves_uncertain_native_delivery_and_requires_actual_owners() {
@@ -1200,6 +1207,80 @@ mod tests {
         while !predicate(pump) {
             pump.tick(engine, Some(activity()));
             assert!(std::time::Instant::now() < deadline);
+            thread::yield_now();
+        }
+    }
+    #[gpui_kit::test]
+    fn app_owner_delivers_and_clears_notifications_without_a_window(cx: &mut TestAppContext) {
+        struct AppOwner(Entity<NotificationSettingsPanel>);
+        impl Global for AppOwner {}
+
+        let state = Arc::new(Mutex::new(EngineState {
+            enabled: true,
+            ..Default::default()
+        }));
+        let calls = Arc::new(Mutex::new(vec![]));
+        let backend_calls = calls.clone();
+        let bridge = Bridge::start_with(
+            FakeEngine(state.clone()),
+            move || {
+                NotificationRuntime::spawn(
+                    FakeBackend {
+                        calls: backend_calls,
+                        result: Delivery::Accepted,
+                    },
+                    WINDOW,
+                )
+            },
+            true,
+        )
+        .unwrap();
+        let handle = bridge.handle();
+        cx.update(|cx| {
+            let panel = cx.new(|cx| NotificationSettingsPanel::from_bridge(Some(bridge), None, cx));
+            cx.set_global(AppOwner(panel));
+            assert!(cx.windows().is_empty());
+            assert!(
+                cx.global::<AppOwner>()
+                    .0
+                    .read(cx)
+                    .update_activity(activity())
+            );
+        });
+
+        let event = claim();
+        let thread = event.alert.key.thread;
+        state.lock().unwrap().claims.push_back(event);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while state.lock().unwrap().acks.is_empty() {
+            assert!(
+                Instant::now() < deadline,
+                "background event was not acknowledged"
+            );
+            thread::yield_now();
+        }
+        assert_eq!(
+            calls
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|call| **call == "post")
+                .count(),
+            1
+        );
+        assert!(cx.update(|cx| cx.global::<AppOwner>().0.read(cx).clear_remote_seen(thread)));
+        while !calls.lock().unwrap().contains(&"clear") {
+            assert!(Instant::now() < deadline, "seen event was not cleared");
+            thread::yield_now();
+        }
+
+        cx.update(|cx| drop(cx.remove_global::<AppOwner>()));
+        cx.run_until_parked();
+        while !handle
+            .try_shutdown_status()
+            .is_some_and(|status| status.bridge_joined)
+        {
+            assert!(Instant::now() < deadline, "notification owner did not stop");
             thread::yield_now();
         }
     }

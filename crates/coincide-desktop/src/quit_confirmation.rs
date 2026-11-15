@@ -23,6 +23,13 @@ pub(super) fn reasons(agents: usize, commands: usize) -> Option<String> {
     Some(reasons.join(" "))
 }
 
+fn work_to_stop(engine: &SharedEngine) -> Option<(usize, usize)> {
+    engine
+        .try_lock()
+        .ok()
+        .map(|engine| (engine.running_thread_count(), engine.busy_terminal_count()))
+}
+
 impl Coincide {
     /// A Quit request from the menu, its shortcut or the OS: asks first when
     /// work would stop, then continues with the ordinary quit checks.
@@ -30,11 +37,17 @@ impl Coincide {
         if self.quit_confirmation.is_some() {
             return;
         }
-        let commands = self
-            .engine
-            .try_lock()
-            .map_or(0, |engine| engine.busy_terminal_count());
-        let Some(detail) = reasons(self.running.len(), commands) else {
+        // A reopened window may not have received its first status snapshot.
+        // Use the Engine itself, and retry instead of guessing if it is busy.
+        let (agents, commands) = match work_to_stop(&self.engine) {
+            Some(work) => work,
+            None => {
+                self.quit_requested
+                    .store(true, std::sync::atomic::Ordering::Release);
+                return;
+            }
+        };
+        let Some(detail) = reasons(agents, commands) else {
             self.continue_quit(window, cx);
             return;
         };
@@ -81,7 +94,9 @@ impl Coincide {
 
 #[cfg(test)]
 mod tests {
-    use super::reasons;
+    use super::{reasons, work_to_stop};
+    use coincide_core::{api::Engine, store::Store};
+    use std::sync::{Arc, Mutex};
 
     #[::core::prelude::v1::test]
     fn the_prompt_names_working_agents_and_running_commands() {
@@ -100,5 +115,17 @@ mod tests {
             reasons(0, 2).as_deref(),
             Some("2 commands are still running in terminals. Quitting stops them.")
         );
+    }
+
+    #[::core::prelude::v1::test]
+    fn quit_work_check_retries_while_the_engine_is_busy() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Arc::new(Mutex::new(Engine::new(
+            Store::open(&dir.path().join("state.sqlite")).unwrap(),
+        )));
+        let held = engine.lock().unwrap();
+        assert_eq!(work_to_stop(&engine), None);
+        drop(held);
+        assert_eq!(work_to_stop(&engine), Some((0, 0)));
     }
 }

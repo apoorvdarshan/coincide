@@ -35,6 +35,7 @@ mod app_shell_mount;
 mod approval_banner;
 mod archive_settings;
 mod assets;
+mod background_services;
 mod bot_avatar;
 mod bot_settings;
 mod browser;
@@ -421,7 +422,7 @@ struct Coincide {
     control_owner: Arc<Mutex<control::Server>>,
     quit_runtime: Option<shutdown_runtime::Runtime>,
     quit_runtime_error: Option<String>,
-    native_quit: Option<native_quit::NativeQuit>,
+    native_quit: Option<std::rc::Rc<native_quit::NativeQuit>>,
     native_quit_observed: bool,
     quit_issued: bool,
     command_palette: Entity<command_palette::CommandPalette>,
@@ -1154,18 +1155,15 @@ impl Coincide {
         engine: SharedEngine,
         native_editors: coincide_core::native_ui_edits::NativeUiEditors,
         quit_requested: Arc<std::sync::atomic::AtomicBool>,
+        native_quit: Option<std::rc::Rc<native_quit::NativeQuit>>,
         control_owner: Arc<Mutex<control::Server>>,
+        notification_panel: Entity<notification_settings::NotificationSettingsPanel>,
+        remote_panel: Entity<remote_settings::RemoteSettingsPanel>,
         profile_dir: std::path::PathBuf,
         media_config: coincide_core::legacy_media_service::ServiceConfig,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        #[cfg(target_os = "macos")]
-        let native_quit = Some(
-            native_quit::install().expect("Install native quit custody before accepting input"),
-        );
-        #[cfg(not(target_os = "macos"))]
-        let native_quit = None;
         let (computer_use_mount, computer_use_status) =
             match computer_use_mount::Mount::new(window, cx) {
                 Ok(mount) => (Some(mount), String::new()),
@@ -1196,11 +1194,12 @@ impl Coincide {
                 this.shutdown_computer_use(cx);
                 let media_ready = this.request_media_close(window, cx);
                 cx.notify();
-                drafts_saved
+                let ready = drafts_saved
                     && media_ready
                     && cookies_ready
                     && this.computer_use_shutdown_ready()
-                    && this.appshots.drained()
+                    && this.appshots.drained();
+                ready && this.prepare_background_window_close(cx)
             })
             .unwrap_or(false)
         });
@@ -1229,11 +1228,6 @@ impl Coincide {
             cx.new(|cx| voice_credentials::Panel::new(native_editors.clone(), window, cx));
         let bot_panel =
             cx.new(|cx| bot_settings::BotSettingsPanel::new(engine.clone(), window, cx));
-        let notification_panel = cx.new(|cx| {
-            notification_settings::NotificationSettingsPanel::new(engine.clone(), window, cx)
-        });
-        // Listens only when "Allow Coincide Remote" was left on.
-        let remote_panel = cx.new(|_| remote_settings::RemoteSettingsPanel::new(engine.clone()));
         let usage_history = usage_history_mount::Mount::new(engine.clone(), cx);
         let codex_limits = codex_limits_mount::Mount::new(engine.clone(), cx);
         let settings_search = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
@@ -3804,6 +3798,21 @@ impl Coincide {
             },
         );
     }
+
+    /// The remaining app-owned services must stop claiming a visible thread
+    /// and browser before the last window is released.
+    fn prepare_background_window_close(&self, cx: &App) -> bool {
+        let Ok(mut engine) = self.engine.try_lock() else {
+            return false;
+        };
+        engine.ui_available = false;
+        drop(engine);
+        let _ = self
+            .notification_panel
+            .read(cx)
+            .update_activity(background_services::background_activity());
+        true
+    }
     fn tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.poll_project_defaults(window, cx);
         self.tick_schedule_times(cx);
@@ -3938,6 +3947,7 @@ impl Coincide {
                 && self.selected_thread_reader.closed_and_drained()
                 && self.composer_files.closed_and_drained()
                 && self.composer_suggestions.closed_and_drained()
+                && self.prepare_background_window_close(cx)
             {
                 window.remove_window();
             } else if !drafts_saved {
@@ -7190,19 +7200,32 @@ fn main() -> Result<()> {
         composer_follow_up_mount::init(cx);
         let quit_requested = app_menu::install(cx);
         app_shell::install(cx);
+        #[cfg(target_os = "macos")]
+        let native_quit = Some(std::rc::Rc::new(
+            native_quit::install().expect("Install native quit custody before accepting input"),
+        ));
+        #[cfg(not(target_os = "macos"))]
+        let native_quit = None;
         transcript::init(cx);
         Theme::change(ThemeMode::Dark, None, cx);
+        let notification_panel =
+            cx.new(|cx| notification_settings::NotificationSettingsPanel::new(engine.clone(), cx));
+        let remote_panel = cx.new(|_| remote_settings::RemoteSettingsPanel::new(engine.clone()));
         #[cfg(target_os = "macos")]
         usage_menubar::install(engine.clone(), cx);
         cx.set_global(Launch {
             engine: engine.clone(),
             native_editors,
             quit_requested,
+            native_quit,
             control_owner,
+            notification_panel,
+            remote_panel,
             profile_dir: data.join("browser-profile"),
             media_config,
             saved_frame,
         });
+        background_services::install(cx);
         #[cfg(target_os = "macos")]
         notification_activation::install(engine, cx);
         open_main_window(cx).expect("Unable to open Coincide window");
@@ -7217,7 +7240,10 @@ struct Launch {
     engine: SharedEngine,
     native_editors: coincide_core::native_ui_edits::NativeUiEditors,
     quit_requested: Arc<std::sync::atomic::AtomicBool>,
+    native_quit: Option<std::rc::Rc<native_quit::NativeQuit>>,
     control_owner: Arc<Mutex<control::Server>>,
+    notification_panel: Entity<notification_settings::NotificationSettingsPanel>,
+    remote_panel: Entity<remote_settings::RemoteSettingsPanel>,
     profile_dir: std::path::PathBuf,
     media_config: coincide_core::legacy_media_service::ServiceConfig,
     saved_frame: Option<window_chrome::SavedFrame>,
@@ -7228,6 +7254,10 @@ struct MainWindow(AnyWindowHandle, WeakEntity<Coincide>);
 impl Global for MainWindow {}
 
 fn open_main_window(cx: &mut App) -> Result<()> {
+    open_main_window_with_visibility(cx, true)
+}
+
+fn open_main_window_with_visibility(cx: &mut App, show: bool) -> Result<()> {
     let launch = cx
         .try_global::<Launch>()
         .cloned()
@@ -7235,6 +7265,8 @@ fn open_main_window(cx: &mut App) -> Result<()> {
     let (bounds, display_id) = window_chrome::opening_bounds(launch.saved_frame.as_ref(), cx);
     let (handle, root) = gpui_kit::open_window(
         WindowOptions {
+            show,
+            focus: show,
             window_bounds: Some(bounds),
             display_id,
             window_min_size: Some(size(px(820.), px(520.))),
@@ -7254,7 +7286,10 @@ fn open_main_window(cx: &mut App) -> Result<()> {
                     launch.engine,
                     launch.native_editors,
                     launch.quit_requested,
+                    launch.native_quit,
                     launch.control_owner,
+                    launch.notification_panel,
+                    launch.remote_panel,
                     launch.profile_dir,
                     launch.media_config,
                     window,

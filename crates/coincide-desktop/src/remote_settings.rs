@@ -40,9 +40,13 @@ impl RemoteSettingsPanel {
             .lock()
             .ok()
             .and_then(|engine| engine.store.data_directory().ok());
-        let mut server = directory.map(|directory| {
+        let server = directory.map(|directory| {
             RemoteServer::new(directory, engine.clone(), env!("CARGO_PKG_VERSION"))
         });
+        Self::from_server(server)
+    }
+
+    fn from_server(mut server: Option<RemoteServer>) -> Self {
         if let Some(server) = &mut server {
             server.start_if_enabled();
         }
@@ -577,6 +581,62 @@ impl RemoteSettingsPanel {
                 }
             }))
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod lifetime_tests {
+    use super::*;
+    use ::core::prelude::v1::test;
+    use coincide_core::{
+        api::Engine,
+        remote::{secrets::MemorySecrets, server::Options},
+        store::Store,
+    };
+    use std::net::{IpAddr, Ipv4Addr, TcpStream};
+
+    #[gpui_kit::test]
+    fn app_owner_keeps_remote_listening_without_a_window(cx: &mut TestAppContext) {
+        struct AppOwner(Entity<RemoteSettingsPanel>);
+        impl Global for AppOwner {}
+
+        let temp = tempfile::tempdir().unwrap();
+        let engine = Arc::new(Mutex::new(Engine::new(
+            Store::open(&temp.path().join("state.sqlite")).unwrap(),
+        )));
+        let data = temp.path().join("remote");
+        coincide_core::remote::server::Settings {
+            is_enabled: true,
+            port: Some(0),
+            server_id: "fixture".into(),
+        }
+        .save(&data)
+        .unwrap();
+        let server = RemoteServer::with_options(
+            data,
+            engine,
+            "test",
+            Arc::new(MemorySecrets::default()),
+            Options {
+                bind: IpAddr::V4(Ipv4Addr::LOCALHOST),
+                advertise: false,
+                name: "Test".into(),
+            },
+        );
+        let port = cx.update(|cx| {
+            let panel = cx.new(|_| RemoteSettingsPanel::from_server(Some(server)));
+            let Status::Running { port } = panel.read(cx).snapshot.as_ref().unwrap().status else {
+                panic!("remote server did not start");
+            };
+            cx.set_global(AppOwner(panel));
+            assert!(cx.windows().is_empty());
+            port
+        });
+        assert!(TcpStream::connect((Ipv4Addr::LOCALHOST, port)).is_ok());
+        assert!(cx.update(|cx| cx.global::<AppOwner>().0.read(cx).enabled()));
+        cx.update(|cx| drop(cx.remove_global::<AppOwner>()));
+        cx.run_until_parked();
+        assert!(TcpStream::connect((Ipv4Addr::LOCALHOST, port)).is_err());
     }
 }
 

@@ -23,6 +23,12 @@ presence, and marking a thread seen. Marking a thread seen clears its Mac alerts
 an active phone's visible thread also counts as seen. Requests use the existing
 Engine gates. Disconnected phones do not receive lock-screen clears.
 
+Closing the main window leaves Remote and desktop notifications owned by the
+running application. Phone seen events continue to clear desktop alerts, and
+the Dock or app menu can reopen the window. A normal app quit still disconnects
+phones and stops the Engine; this is not an independent agent-host process and
+does not preserve running turns across app quit, update, or crash.
+
 Remote's older usage view receives actual cached account windows for enabled
 providers, including their reset times. The richer usage dashboard is not yet
 implemented; the phone falls back to its older limits view. Image submissions

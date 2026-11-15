@@ -1,7 +1,7 @@
 //! macOS status item, retained independently of the main window.
 //! The UI receives presentation-only data; provider reads stay owned by Core.
 use crate::{
-    Coincide, MainWindow, call, codex_limits_mount, codex_limits_view::Phase, engine_busy,
+    Coincide, Launch, MainWindow, call, codex_limits_mount, codex_limits_view::Phase, engine_busy,
     reopen_main_window, settings, usage_dashboard::LimitState, usage_dashboard_ui,
     usage_history_mount, usage_menubar_model as model, worker_owner,
 };
@@ -442,7 +442,11 @@ fn tick(cx: &mut App) -> bool {
     let root = cx
         .try_global::<MainWindow>()
         .and_then(|main| main.1.upgrade());
-    let (selected, running, settings, revision, remote_enabled) = root
+    let remote = cx
+        .try_global::<Launch>()
+        .map(|launch| launch.remote_panel.clone());
+    let remote_enabled = remote.as_ref().map(|panel| panel.read(cx).enabled());
+    let (selected, running, settings, revision) = root
         .as_ref()
         .map(|root| {
             let app = root.read(cx);
@@ -458,13 +462,13 @@ fn tick(cx: &mut App) -> bool {
                 running,
                 Some(app.settings.clone()),
                 Some(app.provider_configuration_panel.read(cx).account_revision()),
-                Some(app.remote_panel.read(cx).enabled()),
             )
         })
-        .unwrap_or((None, false, None, None, None));
+        .unwrap_or((None, false, None, None));
     let mut requests = Vec::new();
     let mut changed_settings = Vec::new();
     let usage_changed;
+    let remote_usage;
     {
         let Ok(mut bar) = state.try_borrow_mut() else {
             return true;
@@ -497,6 +501,12 @@ fn tick(cx: &mut App) -> bool {
             revision,
             remote_enabled,
         );
+        remote_usage = bar.remote_usage.clone();
+    }
+    if let Some(panel) = remote
+        && panel.read(cx).enabled()
+    {
+        panel.update(cx, |panel, _| panel.set_usage(remote_usage));
     }
     for settings in changed_settings {
         with_window(cx, move |app, window, cx| {
