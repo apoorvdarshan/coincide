@@ -156,7 +156,7 @@ fn timestamp(value: &Value) -> Option<&str> {
 
 /// Every check once: a rerun, or a check both a push and a pull request
 /// workflow ran, is reported again, so only the newest run of each workflow's
-/// check stays, a running one counting as newest. A name more than one
+/// check stays. A name more than one
 /// workflow uses is shown with its workflow. Failing checks come first.
 pub(super) fn checks(rollup: &Value) -> Vec<Check> {
     struct Entry {
@@ -173,19 +173,21 @@ pub(super) fn checks(rollup: &Value) -> Vec<Check> {
         let status = status(raw);
         let workflow = text(&raw["workflowName"]).unwrap_or_default().to_owned();
         // ISO 8601 times in one format sort as text.
-        let at = if status == CheckStatus::Pending {
-            "9999".to_owned()
-        } else {
-            timestamp(&raw["completedAt"])
-                .or_else(|| timestamp(&raw["startedAt"]))
-                .unwrap_or_default()
-                .to_owned()
-        };
+        // A still-running old attempt must not hide a newer completed rerun.
+        // Start time identifies the attempt; older payloads may only have a
+        // completion time. Missing timestamps retain GitHub's input order.
+        let at = timestamp(&raw["startedAt"])
+            .or_else(|| timestamp(&raw["completedAt"]))
+            .unwrap_or_default()
+            .to_owned();
         let url = text(&raw["detailsUrl"])
             .or_else(|| text(&raw["targetUrl"]))
             .map(str::to_owned);
         let key = format!("{workflow}\0{name}");
-        if newest.get(&key).is_some_and(|kept| kept.at > at) {
+        if newest
+            .get(&key)
+            .is_some_and(|kept| !kept.at.is_empty() && !at.is_empty() && kept.at > at)
+        {
             continue;
         }
         // A later run keeps the place of the first, so the list doesn't
@@ -505,6 +507,23 @@ mod tests {
             CheckStatus::ActionRequired.glyph().label,
             "Awaiting approval"
         );
+    }
+    #[test]
+    fn latest_attempt_wins_even_if_an_older_attempt_is_still_pending() {
+        let old_pending = json!({"name":"build","workflowName":"CI","status":"IN_PROGRESS","startedAt":"2026-11-01T09:00:00Z"});
+        let newer_pass = json!({"name":"build","workflowName":"CI","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-11-01T10:00:00Z","completedAt":"2026-11-01T10:10:00Z"});
+        for rollup in [
+            json!([old_pending, newer_pass]),
+            json!([newer_pass, old_pending]),
+        ] {
+            assert_eq!(checks(&rollup)[0].status, CheckStatus::Success);
+            assert_eq!(checks_state(&rollup), Some(ChecksState::Passing));
+        }
+        let rerun = json!([
+            {"name":"build","workflowName":"CI","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-11-01T09:00:00Z","completedAt":"2026-11-01T09:05:00Z"},
+            {"name":"build","workflowName":"CI","status":"QUEUED","startedAt":"2026-11-01T10:00:00Z"}
+        ]);
+        assert_eq!(checks_state(&rerun), Some(ChecksState::Pending));
     }
     #[test]
     fn latest_reviews_fill_in_a_missing_review_decision() {
