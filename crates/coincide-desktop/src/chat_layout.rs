@@ -118,6 +118,52 @@ pub(super) fn provider_label(provider: &str, label: String) -> AnyElement {
         .into_any_element()
 }
 
+/// Keep the selection chips and the send actions in distinct flex items. When
+/// the conversation narrows, the action group moves to a second line instead
+/// of drawing over the chips; each group can also wrap at very small widths.
+pub(super) fn composer_actions(selection: AnyElement, actions: AnyElement) -> AnyElement {
+    div()
+        .id("composer-actions")
+        .flex()
+        .flex_wrap()
+        .flex_shrink_0()
+        .items_center()
+        .justify_end()
+        .min_w_0()
+        .gap(px(6.))
+        .mt_2()
+        .child(
+            div()
+                .debug_selector(|| "composer-selection-slot".into())
+                .flex_1()
+                .flex_basis(px(190.))
+                .min_w_0()
+                .max_w_full()
+                .child(selection),
+        )
+        .child(
+            div()
+                .debug_selector(|| "composer-trailing-actions".into())
+                .flex_shrink_0()
+                .max_w_full()
+                .child(actions),
+        )
+        .into_any_element()
+}
+
+pub(super) fn composer_selection_controls() -> Div {
+    div()
+        .flex()
+        .flex_wrap()
+        .items_center()
+        .min_w_0()
+        .gap(px(2.))
+}
+
+#[cfg(test)]
+#[path = "composer_actions_ui_tests.rs"]
+mod composer_actions_ui_tests;
+
 /// ComposerTextView reserves two actual wrapped lines and six points of text
 /// inset; ComposerViewController caps the text viewport at 40% of the window.
 pub(super) fn composer_height(rows: usize, line_height: f32, window_height: f32) -> f32 {

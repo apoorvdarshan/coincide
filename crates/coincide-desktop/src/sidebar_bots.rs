@@ -12,6 +12,42 @@ impl Render for BotDrag {
     }
 }
 
+/// The backdrop is an input barrier as well as a visual dimmer. In particular,
+/// wheel events must not reach the conversation behind the sheet.
+pub(super) fn bot_editor_backdrop(
+    panel: Entity<bot_settings::BotSettingsPanel>,
+    cx: &App,
+) -> AnyElement {
+    div()
+        .id("bot-editor-overlay")
+        .absolute()
+        .inset_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .p_4()
+        .bg(rgba(0x00000090))
+        .occlude()
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .child(
+            div()
+                .id("bot-editor-dialog")
+                .role(Role::Dialog)
+                .aria_label("Bot editor")
+                .w(px(560.))
+                .h(px(720.))
+                .max_w_full()
+                .max_h_full()
+                .overflow_hidden()
+                .rounded(px(14.))
+                .border_1()
+                .border_color(cx.theme().border)
+                .bg(cx.theme().background)
+                .child(panel),
+        )
+        .into_any_element()
+}
+
 /// Sidebar previews are short snippets, so show Markdown's readable text
 /// without changing the stored message or the text used by search. Snippets
 /// may end in the middle of a link or emphasis after the cache truncates them.
@@ -246,38 +282,7 @@ impl Coincide {
     }
     pub(super) fn bot_editor_overlay(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let panel = self.bot_editor_panel.as_ref()?;
-        Some(
-            div()
-                .id("bot-editor-overlay")
-                .absolute()
-                .inset_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .p_4()
-                .bg(rgba(0x00000090))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|_, _, _, cx| cx.stop_propagation()),
-                )
-                .child(
-                    div()
-                        .id("bot-editor-dialog")
-                        .role(Role::Dialog)
-                        .aria_label("Bot editor")
-                        .w(px(560.))
-                        .h(px(720.))
-                        .max_w_full()
-                        .max_h_full()
-                        .overflow_hidden()
-                        .rounded(px(14.))
-                        .border_1()
-                        .border_color(cx.theme().border)
-                        .bg(cx.theme().background)
-                        .child(panel.clone()),
-                )
-                .into_any_element(),
-        )
+        Some(bot_editor_backdrop(panel.clone(), cx))
     }
     pub(super) fn sidebar_open_bot(
         &mut self,
