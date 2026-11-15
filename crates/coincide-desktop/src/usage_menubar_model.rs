@@ -321,6 +321,23 @@ fn period(name: &str, totals: &Totals, has_history: bool) -> Value {
         "cost": if totals.has_priced_tokens() { format!("≈ {}",format::cost_of(totals)) } else { "—".into() },
     })
 }
+
+/// Send only the app's presentation colors to AppKit; its system appearance
+/// selects the light or dark palette when the app is set to follow the system.
+fn menu_palette(settings: &Value, dark: bool) -> Value {
+    let (key, fallback) = if dark {
+        ("darkTheme", "carbon")
+    } else {
+        ("lightTheme", "carbon-light")
+    };
+    let id = settings[key].as_str().unwrap_or(fallback);
+    let palette = crate::settings::PALETTES
+        .iter()
+        .find(|p| p.id == id && p.dark == dark)
+        .or_else(|| crate::settings::PALETTES.iter().find(|p| p.id == fallback))
+        .expect("default usage menu palette");
+    json!({"surface": palette.surface, "ink": palette.ink, "accent": palette.accent})
+}
 pub fn snapshot(
     cards: &[Card],
     data: Option<&Data>,
@@ -419,6 +436,8 @@ pub fn snapshot(
         "primaryOptions":options_with_current(cards,false,Some(&primary)),
         "secondaryOptions":options_with_current(cards,true,secondary.as_ref()),
         "refresh":settings["usageRefresh"].as_str().unwrap_or("automatic"), "empty":cards.is_empty(),
+        "appearance":settings["appearance"].as_str().filter(|value| matches!(*value,"dark"|"light")).unwrap_or("system"),
+        "themes":{"dark":menu_palette(settings,true),"light":menu_palette(settings,false)},
     })
 }
 
@@ -429,6 +448,32 @@ mod tests {
     use chrono::{Duration, TimeZone};
     use coincide_core::usage_limits::{Credits, WindowKind};
     use coincide_core::usage_report::{TokenTotals, TurnRecord};
+
+    #[test]
+    fn menu_snapshot_uses_selected_themes_and_safely_falls_back() {
+        let now = Utc::now();
+        let view = snapshot(
+            &[],
+            None,
+            &json!({"appearance":"dark", "darkTheme":"forest", "lightTheme":"sepia"}),
+            None,
+            now,
+        );
+        assert_eq!(view["appearance"], "dark");
+        assert_eq!(view["themes"]["dark"]["surface"], 0x18241D);
+        assert_eq!(view["themes"]["light"]["surface"], 0xFBF6EC);
+
+        let fallback = snapshot(
+            &[],
+            None,
+            &json!({"appearance":"invalid", "darkTheme":"sepia", "lightTheme":"unknown"}),
+            None,
+            now,
+        );
+        assert_eq!(fallback["appearance"], "system");
+        assert_eq!(fallback["themes"]["dark"]["surface"], 0x161616);
+        assert_eq!(fallback["themes"]["light"]["surface"], 0xFFFFFF);
+    }
 
     fn card(provider: &'static str, account: &str, used: f64, at: DateTime<Utc>) -> Card {
         Card {

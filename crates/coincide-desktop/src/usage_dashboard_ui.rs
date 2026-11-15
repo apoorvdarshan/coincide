@@ -276,7 +276,7 @@ impl Coincide {
         }
     }
 
-    /// A quiet, themed card shared by the usage sections.
+    /// A quiet, themed surface shared by the usage sections.
     fn usage_section(
         &self,
         header: Option<AnyElement>,
@@ -287,7 +287,7 @@ impl Coincide {
         div()
             .flex()
             .flex_col()
-            .gap_1()
+            .gap_2()
             .when_some(header, |view, header| {
                 view.child(
                     div()
@@ -302,11 +302,11 @@ impl Coincide {
                 div()
                     .flex()
                     .flex_col()
-                    .gap_3()
-                    .p(px(14.))
+                    .gap(px(14.))
+                    .p(px(16.))
                     .rounded(px(12.))
                     .border_1()
-                    .border_color(self.color(0x29303d))
+                    .border_color(self.color(0x29303d).opacity(0.8))
                     .bg(self.color(0x111722))
                     .children(body),
             )
@@ -319,6 +319,14 @@ impl Coincide {
                         .child(footer),
                 )
             })
+            .into_any_element()
+    }
+
+    fn usage_divider(&self) -> AnyElement {
+        div()
+            .w_full()
+            .h(px(1.))
+            .bg(self.color(0x29303d).opacity(0.8))
             .into_any_element()
     }
 
@@ -377,6 +385,7 @@ impl Coincide {
     ) -> AnyElement {
         div()
             .flex()
+            .flex_wrap()
             .items_center()
             .justify_between()
             .gap_3()
@@ -487,13 +496,14 @@ impl Coincide {
         let muted = self.usage_muted(cx);
         div()
             .flex_1()
-            .min_w(px(125.))
+            .min_w(px(140.))
             .flex()
             .flex_col()
-            .gap(px(4.))
-            .p(px(12.))
-            .rounded(px(9.))
-            .bg(self.color(0x202a3b).opacity(0.48))
+            .gap(px(3.))
+            .pl(px(12.))
+            .py(px(2.))
+            .border_l_1()
+            .border_color(self.color(0x29303d))
             .overflow_hidden()
             .child(div().text_xs().text_color(muted).child(title.to_owned()))
             .child(
@@ -512,12 +522,12 @@ impl Coincide {
             )
             .child(
                 div()
-                    .text_sm()
+                    .text_xs()
                     .text_color(muted)
                     .child(if totals.has_priced_tokens() {
                         format!("≈ {}", format::cost(totals.cost))
                     } else {
-                        "No priced usage".into()
+                        "No cost estimate".into()
                     }),
             )
             .when_some(trend, |view, trend| {
@@ -586,7 +596,7 @@ impl Coincide {
                     .bg(*color),
             );
         }
-        let mut legend = div().flex().flex_wrap().gap_3();
+        let mut legend = div().flex().flex_wrap().gap(px(16.));
         for (name, count, color) in parts {
             legend = legend.child(
                 div()
@@ -641,7 +651,7 @@ impl Coincide {
         div()
             .flex()
             .flex_col()
-            .gap_2()
+            .gap(px(10.))
             .child(
                 div()
                     .flex()
@@ -1164,8 +1174,7 @@ impl Coincide {
                 crate::codex_limits_view::Phase::Loading
             );
 
-        // An introduction and compact filters share one card, leaving the
-        // activity itself visible without scrolling through large settings rows.
+        // Keep the introduction light so the numbers remain the focus.
         let header = div()
             .flex()
             .items_center()
@@ -1190,16 +1199,12 @@ impl Coincide {
                     .flex()
                     .flex_col()
                     .gap(px(2.))
-                    .child(
-                        div()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child("Usage overview"),
-                    )
+                    .child(div().font_weight(FontWeight::SEMIBOLD).child("Your usage"))
                     .child(
                         div()
                             .text_xs()
                             .text_color(muted)
-                            .child(format!("Activity and plan limits on {}", this_computer())),
+                            .child(format!("Plan limits and activity on {}", this_computer())),
                     ),
             )
             .child(
@@ -1298,15 +1303,56 @@ impl Coincide {
                 }
                 menu
             });
+        let mut display_mode = div()
+            .flex()
+            .items_center()
+            .gap(px(2.))
+            .p(px(2.))
+            .rounded(px(7.))
+            .bg(self.color(0x202a3b));
+        for (id, label, value, selected) in [
+            (
+                "usage-display-used",
+                "Used",
+                "used",
+                mode == DisplayMode::Used,
+            ),
+            (
+                "usage-display-remaining",
+                "Left",
+                "remaining",
+                mode == DisplayMode::Remaining,
+            ),
+        ] {
+            display_mode = display_mode.child(
+                Button::new(id)
+                    .ghost()
+                    .compact()
+                    .selected(selected)
+                    .label(label)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.change_setting("usageDisplayMode", json!(value), window, cx);
+                    })),
+            );
+        }
         let filters = div()
             .flex()
             .flex_wrap()
             .items_center()
             .gap_2()
-            .child(div().text_xs().text_color(muted).child("Showing"))
+            .child(div().text_xs().text_color(muted).child("Viewing"))
             .child(providers)
             .child(div().text_xs().text_color(muted).child("for"))
             .child(periods)
+            .child(div().flex_1().min_w(px(8.)))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(div().text_xs().text_color(muted).child("Limits"))
+                    .child(display_mode),
+            )
             .into_any_element();
         let mut introduction = vec![header.into_any_element(), filters];
         if let Some(accounts) = accounts_filter {
@@ -1318,7 +1364,7 @@ impl Coincide {
             div()
                 .flex()
                 .flex_wrap()
-                .gap_2()
+                .gap(px(16.))
                 .child(self.usage_tile(
                     "Today",
                     &report.today,
@@ -1341,6 +1387,7 @@ impl Coincide {
                     cx,
                 ))
                 .into_any_element(),
+            self.usage_divider(),
             self.usage_token_mix(&report.period, &period_name, cx),
         ];
         let current = shown
@@ -1349,6 +1396,7 @@ impl Coincide {
             .collect::<Vec<_>>();
         if let Some((index, window)) = most_constrained(current.iter().map(Option::as_ref)) {
             let card = shown[index];
+            overview.push(self.usage_divider());
             overview.push(
                 div()
                     .flex()
@@ -1425,31 +1473,21 @@ impl Coincide {
             .flex()
             .flex_col()
             .gap_4()
-            .child(self.usage_section(None, introduction, None, cx))
-            .child(self.usage_section(Some(scope_title.into_any_element()), overview, None, cx))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(12.))
+                    .px_1()
+                    .children(introduction),
+            )
+            .child(self.usage_section(
+                Some(self.usage_header_detail("Overview", &scope_title)),
+                overview,
+                None,
+                cx,
+            ))
             .child(self.usage_section(None, vec![chart_header, chart], None, cx));
-
-        if cfg!(target_os = "macos")
-            && enabled.contains(&"opencode")
-            && filter_provider.is_none_or(|provider| provider == "opencode")
-        {
-            content = content.child(self.settings_group(
-                "Browser details",
-                div().flex().flex_col().gap_2()
-                    .child(self.setting_toggle(
-                        "Show OpenCode Zen balance",
-                        "Use the matching sign-in in Coincide or your default Chrome browser. Chrome may need Full Disk Access and Keychain permission.",
-                        "usageBrowserFallbackEnabled",
-                        coincide_core::provider_usage::browser_fallback_enabled(&self.settings),
-                        "usage-browser-fallback",
-                        cx,
-                    ))
-                    .child(Button::new("usage-open-opencode-console")
-                        .label("Open OpenCode in default browser")
-                        .small()
-                        .on_click(|_, _, cx| cx.open_url("https://opencode.ai/console"))),
-            ));
-        }
 
         if !report.models.is_empty() {
             let rows = report
@@ -1526,23 +1564,6 @@ impl Coincide {
         }
 
         // Plan limits, one section per enabled account.
-        #[cfg(target_os = "macos")]
-        {
-            let toggle = self.setting_toggle(
-                "Show usage in the menu bar",
-                "Click the menu-bar item for account limits and usage.",
-                "showsUsageInMenuBar",
-                true,
-                "usage-menubar-enabled",
-                cx,
-            );
-            content = content.child(self.usage_section(
-                Some("Menu Bar".into_any_element()),
-                vec![toggle],
-                None,
-                cx,
-            ));
-        }
         if shown.is_empty() {
             content = content.child(self.usage_section(
                 Some("Plan Limits".into_any_element()),
@@ -1582,6 +1603,7 @@ impl Coincide {
         let mut activity_body = vec![
             div()
                 .flex()
+                .flex_wrap()
                 .gap(px(28.))
                 .child(metric_tile("Turns", format::integer(activity.turns as u64)))
                 .child(metric_tile(
@@ -1608,6 +1630,46 @@ impl Coincide {
             None,
             cx,
         ));
+
+        // Settings stay below the usage and account details.
+        #[cfg(target_os = "macos")]
+        {
+            let toggle = self.setting_toggle(
+                "Show usage in the menu bar",
+                "Click the menu-bar item for account limits and usage.",
+                "showsUsageInMenuBar",
+                true,
+                "usage-menubar-enabled",
+                cx,
+            );
+            content = content.child(self.usage_section(
+                Some("Menu Bar".into_any_element()),
+                vec![toggle],
+                None,
+                cx,
+            ));
+        }
+        if cfg!(target_os = "macos")
+            && enabled.contains(&"opencode")
+            && filter_provider.is_none_or(|provider| provider == "opencode")
+        {
+            content = content.child(self.settings_group(
+                "Browser details",
+                div().flex().flex_col().gap_2()
+                    .child(self.setting_toggle(
+                        "Show OpenCode Zen balance",
+                        "Use the matching sign-in in Coincide or your default Chrome browser. Chrome may need Full Disk Access and Keychain permission.",
+                        "usageBrowserFallbackEnabled",
+                        coincide_core::provider_usage::browser_fallback_enabled(&self.settings),
+                        "usage-browser-fallback",
+                        cx,
+                    ))
+                    .child(Button::new("usage-open-opencode-console")
+                        .label("Open OpenCode in default browser")
+                        .small()
+                        .on_click(|_, _, cx| cx.open_url("https://opencode.ai/console"))),
+            ));
+        }
 
         // Notes.
         let mut notes = div()

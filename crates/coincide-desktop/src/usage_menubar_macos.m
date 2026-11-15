@@ -34,6 +34,54 @@
 - (BOOL)isFlipped { return YES; }
 @end
 
+@interface CoincideUsageBackground : NSView
+@property(nonatomic, strong) NSColor *fillColor;
+@end
+@implementation CoincideUsageBackground
+- (void)drawRect:(NSRect)dirtyRect { (void)dirtyRect; [self.fillColor setFill]; NSRectFill(self.bounds); }
+- (void)viewDidChangeEffectiveAppearance { [super viewDidChangeEffectiveAppearance]; self.needsDisplay = YES; }
+@end
+
+// Draw with semantic colors so the same surfaces follow the system's light
+// and dark appearances, including when the appearance changes while open.
+@interface CoincideUsageSurface : NSStackView
+@property(nonatomic) BOOL interactive;
+@property(nonatomic) BOOL hovered;
+@property(nonatomic, weak) id pressTarget;
+@property(nonatomic) SEL pressAction;
+@property(nonatomic, strong) NSTrackingArea *usageTrackingArea;
+@end
+@implementation CoincideUsageSurface
+- (void)drawRect:(NSRect)dirtyRect {
+    [super drawRect:dirtyRect];
+    CGFloat opacity = self.hovered && self.interactive ? 0.09 : 0.045;
+    [[NSColor.labelColor colorWithAlphaComponent:opacity] setFill];
+    [[NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:9 yRadius:9] fill];
+}
+- (void)updateTrackingAreas {
+    [super updateTrackingAreas];
+    if (self.usageTrackingArea) [self removeTrackingArea:self.usageTrackingArea];
+    self.usageTrackingArea = nil;
+    if (self.interactive) {
+        self.usageTrackingArea = [[NSTrackingArea alloc] initWithRect:NSZeroRect
+            options:(NSTrackingMouseEnteredAndExited | NSTrackingActiveAlways | NSTrackingInVisibleRect)
+            owner:self userInfo:nil];
+        [self addTrackingArea:self.usageTrackingArea];
+    }
+}
+- (void)viewDidChangeEffectiveAppearance { [super viewDidChangeEffectiveAppearance]; self.needsDisplay = YES; }
+- (void)mouseEntered:(NSEvent *)event { (void)event; self.hovered = YES; self.needsDisplay = YES; }
+- (void)mouseExited:(NSEvent *)event { (void)event; self.hovered = NO; self.needsDisplay = YES; }
+- (void)resetCursorRects {
+    [super resetCursorRects];
+    if (self.interactive) [self addCursorRect:self.bounds cursor:NSCursor.pointingHandCursor];
+}
+- (BOOL)accessibilityPerformPress {
+    return self.interactive && self.pressTarget && self.pressAction
+        ? [NSApp sendAction:self.pressAction to:self.pressTarget from:self] : NO;
+}
+@end
+
 static NSColor *UsageProviderColor(NSString *provider) {
     NSDictionary *light = @{@"claude":@0xC2603D,@"codex":@0x0E8A6A,@"cursor":@0x5A5FD6,@"grok":@0x6B7077,@"opencode":@0xB7700C,@"antigravity":@0x2F6BDB};
     NSDictionary *dark = @{@"claude":@0xE08A6B,@"codex":@0x3CC79A,@"cursor":@0x9A9EFF,@"grok":@0xA9AEB4,@"opencode":@0xE9B04E,@"antigravity":@0x6FA3FF};
@@ -88,6 +136,16 @@ int coincide_usage_default_browser_is_chrome(void) {
 }
 static NSArray *UsageArray(id value) { return [value isKindOfClass:NSArray.class] ? value : @[]; }
 static NSDictionary *UsageDict(id value) { return [value isKindOfClass:NSDictionary.class] ? value : @{}; }
+static NSColor *UsageThemeColor(NSDictionary *snapshot, NSString *key, NSColor *fallback, CGFloat alpha) {
+    NSDictionary *themes = UsageDict(snapshot[@"themes"]);
+    return [NSColor colorWithName:nil dynamicProvider:^NSColor *(NSAppearance *appearance) {
+        BOOL dark = [[appearance bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua, NSAppearanceNameDarkAqua]] isEqual:NSAppearanceNameDarkAqua];
+        id value = UsageDict(themes[dark ? @"dark" : @"light"])[key];
+        if (![value isKindOfClass:NSNumber.class]) return [fallback colorWithAlphaComponent:alpha];
+        uint32_t hex = [value unsignedIntValue];
+        return [NSColor colorWithSRGBRed:((hex>>16)&255)/255. green:((hex>>8)&255)/255. blue:(hex&255)/255. alpha:alpha];
+    }];
+}
 static NSTextField *UsageLabel(NSString *text, CGFloat size, NSFontWeight weight, NSColor *color) {
     NSTextField *label = [NSTextField labelWithString:text ?: @""];
     label.font = [NSFont systemFontOfSize:size weight:weight];
@@ -104,6 +162,23 @@ static NSStackView *UsageStack(NSUserInterfaceLayoutOrientation orientation, CGF
     stack.spacing = spacing;
     stack.translatesAutoresizingMaskIntoConstraints = NO;
     return stack;
+}
+static CoincideUsageSurface *UsageSurface(CGFloat spacing) {
+    CoincideUsageSurface *stack = [CoincideUsageSurface new];
+    stack.orientation = NSUserInterfaceLayoutOrientationVertical;
+    stack.alignment = NSLayoutAttributeLeading;
+    stack.distribution = NSStackViewDistributionFill;
+    stack.spacing = spacing;
+    stack.edgeInsets = NSEdgeInsetsMake(9,10,9,10);
+    stack.translatesAutoresizingMaskIntoConstraints = NO;
+    return stack;
+}
+static NSBox *UsageSeparator(CGFloat width) {
+    NSBox *line = [NSBox new];
+    line.boxType = NSBoxSeparator;
+    line.translatesAutoresizingMaskIntoConstraints = NO;
+    [line.widthAnchor constraintEqualToConstant:width].active = YES;
+    return line;
 }
 
 @implementation CoincideUsageStatus
@@ -278,18 +353,19 @@ static NSStackView *UsageStack(NSUserInterfaceLayoutOrientation orientation, CGF
     }
     return popup;
 }
-- (NSStackView *)settingRow:(NSString *)label popup:(NSPopUpButton *)popup {
+- (NSStackView *)settingRow:(NSString *)label popup:(NSPopUpButton *)popup muted:(NSColor *)muted {
     NSStackView *row = UsageStack(NSUserInterfaceLayoutOrientationHorizontal, 8);
-    NSTextField *name = UsageLabel(label, 11, NSFontWeightRegular, NSColor.secondaryLabelColor);
-    [name setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
+    NSTextField *name = UsageLabel(label, 11, NSFontWeightRegular, muted);
+    [name.widthAnchor constraintEqualToConstant:102].active = YES;
     [row addArrangedSubview:name]; [row addArrangedSubview:popup];
-    [popup.widthAnchor constraintGreaterThanOrEqualToConstant:190].active = YES;
+    [popup.widthAnchor constraintEqualToConstant:218].active = YES;
     return row;
 }
 - (void)updatePanel {
+    const CGFloat panelWidth = 356, contentWidth = 328, innerWidth = 308;
     CGFloat previousScroll = self.panel.isVisible ? self.scroll.contentView.bounds.origin.y : 0;
     if (!self.panel) {
-        self.panel = [[CoincideUsagePanel alloc] initWithContentRect:NSMakeRect(0,0,340,500)
+        self.panel = [[CoincideUsagePanel alloc] initWithContentRect:NSMakeRect(0,0,panelWidth,500)
             styleMask:(NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel)
             backing:NSBackingStoreBuffered defer:NO];
         self.panel.floatingPanel = YES;
@@ -302,68 +378,82 @@ static NSStackView *UsageStack(NSUserInterfaceLayoutOrientation orientation, CGF
         __weak CoincideUsageStatus *weakSelf = self;
         self.panel.cancelBlock = ^{ [weakSelf closePanel]; };
     }
-    NSVisualEffectView *background = [NSVisualEffectView new];
-    background.material = NSVisualEffectMaterialPopover;
-    background.blendingMode = NSVisualEffectBlendingModeBehindWindow;
-    background.state = NSVisualEffectStateActive;
+    NSString *appearance = UsageString(self.snapshot[@"appearance"]);
+    self.panel.appearance = [appearance isEqual:@"dark"] ? [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua]
+        : ([appearance isEqual:@"light"] ? [NSAppearance appearanceNamed:NSAppearanceNameAqua] : nil);
+    NSColor *ink = UsageThemeColor(self.snapshot, @"ink", NSColor.labelColor, 1);
+    NSColor *muted = UsageThemeColor(self.snapshot, @"ink", NSColor.secondaryLabelColor, 0.64);
+    CoincideUsageBackground *background = [CoincideUsageBackground new];
+    background.fillColor = UsageThemeColor(self.snapshot, @"surface", NSColor.windowBackgroundColor, 1);
     background.wantsLayer = YES; background.layer.cornerRadius = 12; background.layer.masksToBounds = YES;
-    NSStackView *content = UsageStack(NSUserInterfaceLayoutOrientationVertical, 10);
-    content.edgeInsets = NSEdgeInsetsMake(12,14,12,14);
+    NSStackView *content = UsageStack(NSUserInterfaceLayoutOrientationVertical, 9);
+    content.edgeInsets = NSEdgeInsetsMake(14,14,14,14);
     content.alignment = NSLayoutAttributeLeading;
     [background addSubview:content];
     [NSLayoutConstraint activateConstraints:@[[content.leadingAnchor constraintEqualToAnchor:background.leadingAnchor], [content.trailingAnchor constraintEqualToAnchor:background.trailingAnchor], [content.topAnchor constraintEqualToAnchor:background.topAnchor], [content.bottomAnchor constraintEqualToAnchor:background.bottomAnchor]]];
     NSStackView *header = UsageStack(NSUserInterfaceLayoutOrientationHorizontal, 8);
-    NSTextField *heading = UsageLabel(@"Usage", 15, NSFontWeightSemibold, NSColor.labelColor);
+    NSStackView *heading = UsageStack(NSUserInterfaceLayoutOrientationVertical, 2);
+    [heading addArrangedSubview:UsageLabel(@"Usage", 15, NSFontWeightSemibold, ink)];
+    NSString *updated = UsageString(self.snapshot[@"updated"]);
+    if (updated.length) [heading addArrangedSubview:UsageLabel([@"Updated " stringByAppendingString:updated], 10, NSFontWeightRegular, muted)];
     [header addArrangedSubview:heading];
     NSView *spacer = [NSView new]; [header addArrangedSubview:spacer];
     [spacer setContentHuggingPriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
     NSSegmentedControl *mode = [NSSegmentedControl segmentedControlWithLabels:@[@"Used",@"Left"] trackingMode:NSSegmentSwitchTrackingSelectOne target:self action:@selector(modeChanged:)];
-    mode.controlSize = NSControlSizeSmall; mode.selectedSegmentBezelColor = UsageProviderColor(@"codex");
+    mode.controlSize = NSControlSizeSmall; mode.selectedSegmentBezelColor = UsageThemeColor(self.snapshot, @"accent", UsageProviderColor(@"codex"), 1);
     mode.selectedSegment = [UsageString(self.snapshot[@"mode"]) isEqual:@"remaining"] ? 1 : 0;
     [header addArrangedSubview:mode]; [content addArrangedSubview:header];
-    [header.widthAnchor constraintEqualToConstant:312].active = YES;
-    NSString *updated = UsageString(self.snapshot[@"updated"]);
-    if (updated.length) [content addArrangedSubview:UsageLabel([@"Updated " stringByAppendingString:updated], 10, NSFontWeightRegular, NSColor.secondaryLabelColor)];
-    [content addArrangedSubview:UsageLabel(@"OVERALL", 10, NSFontWeightSemibold, NSColor.secondaryLabelColor)];
+    [header.widthAnchor constraintEqualToConstant:contentWidth].active = YES;
+    CoincideUsageSurface *overview = UsageSurface(7);
+    [overview addArrangedSubview:UsageLabel(@"OVERVIEW", 10, NSFontWeightSemibold, muted)];
     NSStackView *overall = UsageStack(NSUserInterfaceLayoutOrientationHorizontal, 12);
     overall.distribution = NSStackViewDistributionFillEqually;
     for (id raw in UsageArray(self.snapshot[@"periods"])) {
         NSDictionary *p = UsageDict(raw); NSStackView *column = UsageStack(NSUserInterfaceLayoutOrientationVertical, 2);
-        [column addArrangedSubview:UsageLabel(UsageString(p[@"label"]), 10, NSFontWeightRegular, NSColor.secondaryLabelColor)];
-        [column addArrangedSubview:UsageLabel(UsageString(p[@"tokens"]), 13, NSFontWeightMedium, NSColor.labelColor)];
-        [column addArrangedSubview:UsageLabel(UsageString(p[@"cost"]), 10, NSFontWeightRegular, NSColor.secondaryLabelColor)];
+        [column addArrangedSubview:UsageLabel(UsageString(p[@"label"]), 10, NSFontWeightRegular, muted)];
+        [column addArrangedSubview:UsageLabel(UsageString(p[@"tokens"]), 14, NSFontWeightSemibold, ink)];
+        [column addArrangedSubview:UsageLabel(UsageString(p[@"cost"]), 10, NSFontWeightRegular, muted)];
         [overall addArrangedSubview:column];
     }
-    [content addArrangedSubview:overall]; [overall.widthAnchor constraintEqualToConstant:312].active = YES;
+    [overview addArrangedSubview:overall];
+    [overall.widthAnchor constraintEqualToConstant:innerWidth].active = YES;
+    [content addArrangedSubview:overview];
+    [overview.widthAnchor constraintEqualToConstant:contentWidth].active = YES;
+    [content addArrangedSubview:UsageLabel(@"ACCOUNTS", 10, NSFontWeightSemibold, muted)];
     NSScrollView *scroll = [NSScrollView new]; scroll.hasVerticalScroller = YES; scroll.drawsBackground = NO;
     scroll.borderType = NSNoBorder; scroll.translatesAutoresizingMaskIntoConstraints = NO;
-    NSStackView *accountList = UsageStack(NSUserInterfaceLayoutOrientationVertical, 10);
+    NSStackView *accountList = UsageStack(NSUserInterfaceLayoutOrientationVertical, 6);
     accountList.edgeInsets = NSEdgeInsetsMake(2,0,4,0);
     for (id raw in UsageArray(self.snapshot[@"accounts"])) {
-        NSDictionary *account = UsageDict(raw); NSStackView *card = UsageStack(NSUserInterfaceLayoutOrientationVertical, 4);
+        NSDictionary *account = UsageDict(raw); CoincideUsageSurface *card = UsageSurface(4);
+        card.interactive = YES; card.pressTarget = self; card.pressAction = @selector(openUsage:);
         NSStackView *name = UsageStack(NSUserInterfaceLayoutOrientationHorizontal, 6);
         NSString *provider = UsageString(account[@"provider"]);
         NSImage *logo = UsageLogo(provider, self.logos[provider], 15);
         if (logo) { NSImageView *image = [[NSImageView alloc] initWithFrame:NSMakeRect(0,0,15,15)]; image.image = logo; [image.widthAnchor constraintEqualToConstant:15].active=YES; [image.heightAnchor constraintEqualToConstant:15].active=YES; [name addArrangedSubview:image]; }
-        [name addArrangedSubview:UsageLabel(UsageString(account[@"title"]), 12, NSFontWeightSemibold, NSColor.labelColor)];
+        NSTextField *accountTitle = UsageLabel(UsageString(account[@"title"]), 12, NSFontWeightSemibold, ink);
+        [accountTitle setContentCompressionResistancePriority:NSLayoutPriorityDefaultHigh forOrientation:NSLayoutConstraintOrientationHorizontal];
+        [name addArrangedSubview:accountTitle];
         NSString *plan = UsageString(account[@"plan"]);
-        if (plan.length) [name addArrangedSubview:UsageLabel(plan.capitalizedString, 10, NSFontWeightRegular, NSColor.secondaryLabelColor)];
+        if (plan.length) [name addArrangedSubview:UsageLabel(plan.capitalizedString, 10, NSFontWeightRegular, muted)];
         NSString *checked = UsageString(account[@"checked"]);
         if (checked.length) {
             NSView *space = [NSView new];
             [space setContentHuggingPriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
             [name addArrangedSubview:space];
-            [name addArrangedSubview:UsageLabel(checked, 10, NSFontWeightRegular, NSColor.secondaryLabelColor)];
-            [name.widthAnchor constraintEqualToConstant:300].active = YES;
+            NSTextField *checkedLabel = UsageLabel(checked, 10, NSFontWeightRegular, muted);
+            [checkedLabel setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
+            [name addArrangedSubview:checkedLabel];
         }
+        [name.widthAnchor constraintEqualToConstant:innerWidth].active = YES;
         [card addArrangedSubview:name];
         NSArray *rows = UsageArray(account[@"rows"]);
         for (id rawRow in rows) {
             NSDictionary *r = UsageDict(rawRow); NSStackView *row = UsageStack(NSUserInterfaceLayoutOrientationHorizontal, 6);
-            NSTextField *title = UsageLabel(UsageString(r[@"title"]), 11, NSFontWeightRegular, NSColor.secondaryLabelColor);
-            NSTextField *value = UsageLabel(UsageString(r[@"value"]), 11, NSFontWeightMedium, NSColor.labelColor);
+            NSTextField *title = UsageLabel(UsageString(r[@"title"]), 11, NSFontWeightRegular, muted);
+            NSTextField *value = UsageLabel(UsageString(r[@"value"]), 11, NSFontWeightMedium, ink);
             NSView *space = [NSView new]; [row addArrangedSubview:title]; [row addArrangedSubview:space]; [row addArrangedSubview:value];
-            [card addArrangedSubview:row]; [row.widthAnchor constraintEqualToConstant:300].active=YES;
+            [card addArrangedSubview:row]; [row.widthAnchor constraintEqualToConstant:innerWidth].active=YES;
             if ([r[@"fill"] isKindOfClass:NSNumber.class]) {
                 CoincideUsageBar *bar = [CoincideUsageBar new];
                 bar.fill = MAX(0, MIN(1, [r[@"fill"] doubleValue]));
@@ -372,51 +462,70 @@ static NSStackView *UsageStack(NSUserInterfaceLayoutOrientation orientation, CGF
                 [bar setAccessibilityRole:NSAccessibilityProgressIndicatorRole];
                 [bar setAccessibilityLabel:UsageString(r[@"title"])];
                 [bar setAccessibilityValue:@(bar.fill * 100)];
-                [card addArrangedSubview:bar]; [bar.widthAnchor constraintEqualToConstant:300].active=YES;
+                [card addArrangedSubview:bar]; [bar.widthAnchor constraintEqualToConstant:innerWidth].active=YES;
                 [bar.heightAnchor constraintEqualToConstant:10].active=YES;
             }
             NSString *detail=UsageString(r[@"detail"]);
-            if (detail.length) [card addArrangedSubview:UsageLabel(detail,10,NSFontWeightRegular,NSColor.secondaryLabelColor)];
+            if (detail.length) {
+                NSTextField *detailLabel = UsageLabel(detail,10,NSFontWeightRegular,muted);
+                detailLabel.maximumNumberOfLines = 2; detailLabel.lineBreakMode = NSLineBreakByWordWrapping;
+                detailLabel.preferredMaxLayoutWidth = innerWidth;
+                [detailLabel.widthAnchor constraintEqualToConstant:innerWidth].active = YES;
+                [card addArrangedSubview:detailLabel];
+            }
         }
         NSString *placeholder = UsageString(account[@"placeholder"]);
         if (rows.count == 0 && placeholder.length) {
-            NSTextField *message = UsageLabel(placeholder, 10, NSFontWeightRegular, NSColor.secondaryLabelColor);
+            NSTextField *message = UsageLabel(placeholder, 10, NSFontWeightRegular, muted);
             message.maximumNumberOfLines = 2;
             message.lineBreakMode = NSLineBreakByWordWrapping;
-            message.preferredMaxLayoutWidth = 300;
-            [message.widthAnchor constraintEqualToConstant:300].active = YES;
+            message.preferredMaxLayoutWidth = innerWidth;
+            [message.widthAnchor constraintEqualToConstant:innerWidth].active = YES;
             [card addArrangedSubview:message];
         }
         NSString *tracked = UsageString(account[@"tracked"]);
-        if (tracked.length) [card addArrangedSubview:UsageLabel(tracked,10,NSFontWeightRegular,NSColor.secondaryLabelColor)];
+        if (tracked.length) [card addArrangedSubview:UsageLabel(tracked,10,NSFontWeightRegular,muted)];
         NSClickGestureRecognizer *openCard = [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(openUsage:)];
         [card addGestureRecognizer:openCard];
+        [card setAccessibilityElement:YES];
         [card setAccessibilityRole:NSAccessibilityButtonRole];
-        [card setAccessibilityLabel:[NSString stringWithFormat:@"%@ usage", UsageString(account[@"title"])]];
+        NSMutableArray<NSString *> *summary = [NSMutableArray arrayWithObject:UsageString(account[@"title"])];
+        if (plan.length) [summary addObject:plan];
+        for (id rawRow in rows) {
+            NSDictionary *row = UsageDict(rawRow);
+            NSString *title = UsageString(row[@"title"]), *value = UsageString(row[@"value"]);
+            if (title.length || value.length) [summary addObject:[NSString stringWithFormat:@"%@ %@", title, value]];
+        }
+        if (rows.count == 0 && placeholder.length) [summary addObject:placeholder];
+        if (tracked.length) [summary addObject:tracked];
+        [card setAccessibilityLabel:[summary componentsJoinedByString:@", "]];
         [accountList addArrangedSubview:card];
+        [card.widthAnchor constraintEqualToConstant:contentWidth].active = YES;
     }
-    if ([self.snapshot[@"empty"] boolValue]) [accountList addArrangedSubview:UsageLabel(@"No provider is turned on.",11,NSFontWeightRegular,NSColor.secondaryLabelColor)];
+    if ([self.snapshot[@"empty"] boolValue]) [accountList addArrangedSubview:UsageLabel(@"No provider is turned on.",11,NSFontWeightRegular,muted)];
     NSView *document = [CoincideUsageFlippedView new]; document.translatesAutoresizingMaskIntoConstraints = NO;
     [document addSubview:accountList];
-    [NSLayoutConstraint activateConstraints:@[[accountList.leadingAnchor constraintEqualToAnchor:document.leadingAnchor], [accountList.trailingAnchor constraintEqualToAnchor:document.trailingAnchor], [accountList.topAnchor constraintEqualToAnchor:document.topAnchor], [accountList.bottomAnchor constraintEqualToAnchor:document.bottomAnchor], [document.widthAnchor constraintEqualToConstant:312]]];
+    [NSLayoutConstraint activateConstraints:@[[accountList.leadingAnchor constraintEqualToAnchor:document.leadingAnchor], [accountList.trailingAnchor constraintEqualToAnchor:document.trailingAnchor], [accountList.topAnchor constraintEqualToAnchor:document.topAnchor], [accountList.bottomAnchor constraintEqualToAnchor:document.bottomAnchor], [document.widthAnchor constraintEqualToConstant:contentWidth]]];
     scroll.documentView = document; self.scroll = scroll; [content addArrangedSubview:scroll];
-    [scroll.widthAnchor constraintEqualToConstant:312].active=YES;
-    CGFloat desired = MIN(300, MAX(44, accountList.fittingSize.height));
+    [scroll.widthAnchor constraintEqualToConstant:contentWidth].active=YES;
+    CGFloat availableHeight = NSHeight((self.item.button.window.screen ?: NSScreen.mainScreen).visibleFrame) - 8;
+    CGFloat desired = MIN(MAX(44, availableHeight - 340), MIN(280, MAX(44, accountList.fittingSize.height)));
     [scroll.heightAnchor constraintEqualToConstant:desired].active=YES;
+    [content addArrangedSubview:UsageSeparator(contentWidth)];
     NSPopUpButton *primary = [self popup:UsageArray(self.snapshot[@"primaryOptions"]) selected:self.snapshot[@"primary"] key:@"menuBarUsage"];
     NSPopUpButton *secondary = [self popup:UsageArray(self.snapshot[@"secondaryOptions"]) selected:self.snapshot[@"secondary"] key:@"menuBarSecondaryUsage"];
-    [content addArrangedSubview:[self settingRow:@"Menu bar shows" popup:primary]];
-    [content addArrangedSubview:[self settingRow:@"Also show" popup:secondary]];
+    [content addArrangedSubview:[self settingRow:@"Menu bar shows" popup:primary muted:muted]];
+    [content addArrangedSubview:[self settingRow:@"Also show" popup:secondary muted:muted]];
     NSArray *refreshOptions = @[@{@"title":@"Automatically",@"value":@"automatic"},@{@"title":@"Every minute",@"value":@"everyMinute"},@{@"title":@"Every 5 minutes",@"value":@"every5Minutes"},@{@"title":@"Every 15 minutes",@"value":@"every15Minutes"},@{@"title":@"Every 30 minutes",@"value":@"every30Minutes"},@{@"title":@"Every hour",@"value":@"everyHour"},@{@"title":@"Only when opened",@"value":@"manual"}];
-    [content addArrangedSubview:[self settingRow:@"Refresh" popup:[self popup:refreshOptions selected:self.snapshot[@"refresh"] key:@"usageRefresh"]]];
+    [content addArrangedSubview:[self settingRow:@"Refresh" popup:[self popup:refreshOptions selected:self.snapshot[@"refresh"] key:@"usageRefresh"] muted:muted]];
     NSStackView *actions = UsageStack(NSUserInterfaceLayoutOrientationHorizontal, 7);
     NSButton *refresh = [NSButton buttonWithTitle:@"Refresh" target:self action:@selector(refresh:)]; refresh.controlSize=NSControlSizeSmall;
     NSButton *usage = [NSButton buttonWithTitle:@"Usage Settings" target:self action:@selector(openUsage:)]; usage.controlSize=NSControlSizeSmall;
     NSButton *open = [NSButton buttonWithTitle:@"Open Coincide" target:self action:@selector(openApp:)]; open.controlSize=NSControlSizeSmall;
     [actions addArrangedSubview:refresh]; [actions addArrangedSubview:usage]; [actions addArrangedSubview:open];
     [content addArrangedSubview:actions];
-    NSSize fitting = content.fittingSize; CGFloat height=MAX(280,MIN(650,ceil(fitting.height)));
-    [self.panel setContentSize:NSMakeSize(340,height)]; self.panel.contentView=background;
+    NSSize fitting = content.fittingSize; CGFloat height=MAX(280,MIN(availableHeight,ceil(fitting.height)));
+    [self.panel setContentSize:NSMakeSize(panelWidth,height)]; self.panel.contentView=background;
     [background layoutSubtreeIfNeeded];
     CGFloat maxScroll = MAX(0, NSHeight(document.frame) - NSHeight(scroll.contentView.bounds));
     [scroll.contentView scrollToPoint:NSMakePoint(0, MIN(previousScroll, maxScroll))];

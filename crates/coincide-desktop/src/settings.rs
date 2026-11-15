@@ -120,7 +120,7 @@ pub(super) struct Palette {
     raised: u32,
     pub(super) border: u32,
     pub(super) ink: u32,
-    accent: u32,
+    pub(super) accent: u32,
 }
 pub(super) const PALETTES: &[Palette] = &[
     Palette {
