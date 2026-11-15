@@ -305,7 +305,7 @@ impl Session {
     }
     /// Explicit bot-local instruction CONTENT, not a path or an agent-supplied
     /// global setting. Parent must validate rustBotContext before calling.
-    /// Every turn must supply the same validated snapshot, including resume.
+    /// Every turn, including resume, supplies its validated local snapshot.
     pub fn start_with_images_and_instructions(
         provider: Provider,
         launch: Launch,

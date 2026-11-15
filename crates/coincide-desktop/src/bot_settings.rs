@@ -1328,7 +1328,7 @@ impl BotSettingsPanel {
             Ok(Outcome::ConversationCreated(thread_id)) => {
                 // Durable creation is independent of selection generation. Keep all
                 // input entities/baselines untouched; parent opens/focuses this ID.
-                self.notice = "Created an empty conversation from saved bot settings. No message was sent. Editor drafts are retained; later bot edits apply to later new conversations.".into();
+                self.notice = "Created an empty conversation. No message was sent; your editor draft is still here.".into();
                 cx.emit(BotSettingsEvent::ConversationCreated { thread_id });
             }
             Ok(Outcome::Saved(write, bound)) => {
@@ -1374,7 +1374,7 @@ impl BotSettingsPanel {
                 } else {
                     self.bots.push(bound.bot);
                 }
-                self.notice="Saved bot settings. Any edits typed during Save remain in the draft. Existing conversation instruction snapshots stay unchanged.".into();
+                self.notice="Saved bot settings. Instructions and personality update when existing conversations start their next turn. Edits typed during Save remain in the draft.".into();
                 cx.emit(BotSettingsEvent::Saved {
                     bot_id: id,
                     bot: saved_bot,
@@ -1939,7 +1939,7 @@ impl Render for BotSettingsPanel {
         }
         let mut pane=div().id("bot-settings-panel").size_full().flex().flex_col().gap_2().p_3()
             .child("Bots")
-            .child("Save edits this bot locally. New conversation uses saved settings and never sends a message. Global instructions and existing conversation snapshots stay unchanged.")
+            .child("Save edits this bot locally. Instruction and personality changes reach its conversations on their next turn. New conversation never sends a message.")
             .child(div().flex().gap_2()
                 .child(Button::new("bots-refresh").label("Refresh list").disabled(self.busy).on_click(cx.listener(|this,_,_,cx|this.start(Action::List,cx))))
                 .child(Button::new("bots-new").label("New bot").disabled(self.busy||self.baseline.is_none()).on_click(cx.listener(|this,_,window,cx|this.create(window,cx)))))
