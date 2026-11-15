@@ -1334,12 +1334,51 @@ impl BrowserController {
                             .tabs
                             .get_mut(&thread)
                             .and_then(|tabs| tabs.iter_mut().find(|entry| entry.id == tab))
-                        && entry.viewport.is_none()
                         && entry.navigation.load(Ordering::Acquire) == epoch
                     {
                         let view = entry.view.read(cx);
                         let width = f64::from(f32::from(view.bounds().size.width));
-                        changed |= entry.fit.observe(measurement, width, view.zoom());
+                        match entry.fit.update(
+                            &measurement,
+                            width,
+                            view.zoom(),
+                            entry.viewport.is_some(),
+                        ) {
+                            crate::browser_page_fit::Update::Ignore => {}
+                            crate::browser_page_fit::Update::Baseline => {
+                                if view.set_zoom(1.).is_ok() {
+                                    let _ =
+                                        view.raw().evaluate_script(&measurement.command("measure"));
+                                } else {
+                                    // A broken native zoom must not leave the page transparent.
+                                    let _ =
+                                        view.raw().evaluate_script(&measurement.command("reveal"));
+                                }
+                                changed = true;
+                            }
+                            crate::browser_page_fit::Update::Ready {
+                                zoom,
+                                reveal,
+                                changed: fit_changed,
+                            } => {
+                                let zoom_applied = if let Some(zoom) = zoom
+                                    && (view.zoom() - zoom).abs() > 1e-9
+                                {
+                                    view.set_zoom(zoom).is_ok()
+                                } else {
+                                    true
+                                };
+                                if reveal {
+                                    let command = if zoom_applied {
+                                        measurement.reveal_at(width / zoom.unwrap_or(view.zoom()))
+                                    } else {
+                                        measurement.command("reveal")
+                                    };
+                                    let _ = view.raw().evaluate_script(&command);
+                                }
+                                changed |= fit_changed;
+                            }
+                        }
                     }
                 }
                 NativeEvent::TabShortcut { source, command } => {
@@ -1437,8 +1476,11 @@ impl BrowserController {
                         .get_mut(&thread)
                         .and_then(|tabs| tabs.iter_mut().find(|t| t.id == tab))
                     {
+                        // Retain the old document's fit until the new page is
+                        // transparent and measured. Resetting it here visibly zooms
+                        // the old page while navigation is still in progress.
                         if loading {
-                            entry.fit.reset();
+                            entry.fit.navigation_started();
                         }
                         if !loading {
                             self.passkeys.navigated(&thread, &tab, &url);

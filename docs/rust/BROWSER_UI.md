@@ -9,9 +9,16 @@ do not complete from saved history.
 The browser page follows the pane while it is resized. If a document's root is
 wider than the pane, Coincide fits it with native page zoom; responsive pages
 remain at normal zoom. Fitting is bounded to 10% so extremely wide pages can
-still need horizontal scrolling. A navigation resets the fit, and a requested
-fixed testing viewport takes precedence over it. The size probe reports only
-document and viewport widths, and its untrusted IPC input is bounded.
+still need horizontal scrolling. During navigation the previous page retains
+its zoom; the new document is briefly transparent while its initial fit is
+applied, then its own opacity is restored. Page focus stays available during
+loading. A stalled bridge releases the hold after eight seconds. A requested
+fixed testing viewport takes precedence over automatic fitting. The size probe
+reports only document and viewport widths, and its untrusted IPC input is bounded.
+
+The browser uses the native web engine's preferred languages, without a
+Coincide-specific language or region override. Sites can still use a language
+explicitly selected in their own account or settings.
 
 Agent `search` requests become HTTP(S) navigation using the selected search
 provider. Agent navigation does not gain local-file access. A local folder grant
