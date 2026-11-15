@@ -1303,6 +1303,38 @@ impl Coincide {
                 }
                 menu
             });
+        let mut display_mode = div()
+            .flex()
+            .items_center()
+            .gap(px(2.))
+            .p(px(2.))
+            .rounded(px(7.))
+            .bg(self.color(0x202a3b));
+        for (id, label, value, selected) in [
+            (
+                "usage-display-used",
+                "Used",
+                "used",
+                mode == DisplayMode::Used,
+            ),
+            (
+                "usage-display-remaining",
+                "Left",
+                "remaining",
+                mode == DisplayMode::Remaining,
+            ),
+        ] {
+            display_mode = display_mode.child(
+                Button::new(id)
+                    .ghost()
+                    .compact()
+                    .selected(selected)
+                    .label(label)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.change_setting("usageDisplayMode", json!(value), window, cx);
+                    })),
+            );
+        }
         let filters = div()
             .flex()
             .flex_wrap()
@@ -1312,6 +1344,15 @@ impl Coincide {
             .child(providers)
             .child(div().text_xs().text_color(muted).child("for"))
             .child(periods)
+            .child(div().flex_1().min_w(px(8.)))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(div().text_xs().text_color(muted).child("Limits"))
+                    .child(display_mode),
+            )
             .into_any_element();
         let mut introduction = vec![header.into_any_element(), filters];
         if let Some(accounts) = accounts_filter {
