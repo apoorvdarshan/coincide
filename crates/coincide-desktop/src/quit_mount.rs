@@ -119,6 +119,14 @@ impl Coincide {
         cx.quit();
     }
     pub(super) fn poll_global_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.selection_ui.apply_inflight()
+            || self.follow_up_choice_inflight
+            || self.ordinary_sends_inflight > 0
+            || self.restore_composer.is_some()
+        {
+            self.status = "Finishing your composer choice before quitting…".into();
+            return false;
+        }
         // Only committed source may enter the normal draft-flush custody.
         self.close_dictation_preview(cx);
         self.palette_search.shutdown();

@@ -77,7 +77,11 @@ impl Coincide {
         }));
     }
     pub(super) fn continue_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.pending_follow_up.is_some() || !self.pending_follow_up_backlog.is_empty() {
+        if self.pending_follow_up.is_some()
+            || !self.pending_follow_up_backlog.is_empty()
+            || self.ordinary_sends_inflight > 0
+            || self.restore_composer.is_some()
+        {
             // Keep normal admission open until submitted messages are in the
             // durable queue. Freezing it first would strand the buffer.
             self.quit_after_pending_sends = true;

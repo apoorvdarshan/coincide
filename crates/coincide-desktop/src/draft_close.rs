@@ -47,10 +47,18 @@ impl SubmittedDrafts {
         }
     }
 
-    pub(super) fn project(&self, thread: &mut Value) {
+    pub(super) fn projection<'a>(&'a self, thread: &Value) -> Option<&'a str> {
         let id = thread["id"].as_str().unwrap_or("");
-        if let Some(entry) = self.entries.iter().rev().find(|entry| entry.thread == id) {
-            thread["draft"] = json!(entry.successor);
+        self.entries
+            .iter()
+            .rev()
+            .find(|entry| entry.thread == id)
+            .map(|entry| entry.successor.as_str())
+    }
+
+    pub(super) fn project(&self, thread: &mut Value) {
+        if let Some(draft) = self.projection(thread) {
+            thread["draft"] = json!(draft);
         }
     }
 

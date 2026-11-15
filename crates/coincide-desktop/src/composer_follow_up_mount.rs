@@ -13,6 +13,31 @@ pub(super) enum SendRoute {
     Send,
 }
 
+/// A follow-up is bound to composer metadata, not the entire transcript.
+fn follow_up_source(thread: &Value) -> Value {
+    let mut source = serde_json::Map::new();
+    for key in [
+        "id",
+        "draft",
+        "selection",
+        "accessMode",
+        "interactionMode",
+        "projectID",
+        "projectPath",
+        "worktreePath",
+        "botID",
+        "rustBotContext",
+        "rustDraftImages",
+        "draftContext",
+        "followUpBehavior",
+    ] {
+        if let Some(value) = thread.get(key) {
+            source.insert(key.into(), value.clone());
+        }
+    }
+    Value::Object(source)
+}
+
 pub(super) fn send_route(running: bool, importing: bool, changing_selection: bool) -> SendRoute {
     if !running && changing_selection {
         SendRoute::WaitForSelection
@@ -47,6 +72,7 @@ pub(super) struct PendingSend {
     pub selection: Value,
     pub waiting_for_import: bool,
     pub selection_wait: SelectionWait,
+    pub wait_for_stopped_turn: bool,
     pub import_jobs: Vec<u64>,
     pub import_failed: bool,
     pub edited: bool,
@@ -73,6 +99,7 @@ impl PendingSend {
             selection: pending_scope(thread, false),
             waiting_for_import: false,
             selection_wait: SelectionWait::None,
+            wait_for_stopped_turn: false,
             import_jobs: Vec::new(),
             import_failed: false,
             edited: false,
@@ -140,6 +167,15 @@ impl PendingSend {
             && self.selection == pending_scope(thread, self.waiting_for_import)
     }
 }
+
+#[derive(Debug)]
+struct TurnStopping;
+impl std::fmt::Display for TurnStopping {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("The previous turn is stopping")
+    }
+}
+impl std::error::Error for TurnStopping {}
 
 /// If the previous submission is still visible, retain only newly appended
 /// text as the next message. A deliberately retyped identical message remains
@@ -253,11 +289,24 @@ impl Coincide {
         }
     }
     pub(super) fn finish_pending_selection(&mut self, thread_id: &str, success: bool) {
+        if !self
+            .pending_follow_up
+            .iter()
+            .chain(self.pending_follow_up_backlog.iter())
+            .any(|pending| {
+                pending.thread == thread_id && pending.selection_wait == SelectionWait::Waiting
+            })
+        {
+            return;
+        }
         let selected = self
             .selected
             .as_ref()
             .filter(|thread| text(thread, "id") == thread_id && success)
-            .cloned();
+            .map(|thread| {
+                json!({"id":thread["id"],"selection":thread["selection"],
+                "accessMode":thread["accessMode"],"interactionMode":thread["interactionMode"]})
+            });
         for pending in self
             .pending_follow_up
             .iter_mut()
@@ -597,47 +646,123 @@ impl Coincide {
         Some(pane.into_any_element())
     }
     pub(super) fn choose_follow_up(&mut self, behavior: Behavior, cx: &mut Context<Self>) {
-        // Show the choice at once and write it when the engine is free: the
-        // picker used to fail silently while a turn held the lock.
-        let Some(thread) = self.selected.clone() else {
+        let Some(id) = self.selected.as_ref().map(|thread| text(thread, "id")) else {
             return;
         };
-        let id = text(&thread, "id");
         if let Some(thread) = self.selected.as_mut() {
             thread["followUpBehavior"] = json!(behavior.key());
         }
         self.follow_up_picker = false;
-        if !self.flush_pending_drafts() || self.engine.try_lock().is_err() {
-            self.pending_follow_up_choice = Some((id, behavior));
-            cx.notify();
+        self.pending_follow_up_choice = Some((id, behavior));
+        self.start_follow_up_choice(cx);
+        cx.notify();
+    }
+
+    fn start_follow_up_choice(&mut self, cx: &mut Context<Self>) {
+        if self.follow_up_choice_inflight {
             return;
         }
-        let result = (|| -> Result<(Value, Value)> {
-            let mut engine = self.engine.try_lock().map_err(|_| EngineBusy)?;
-            let current = engine.store.thread(&text(&thread, "id"))?;
-            let saved = engine.choose_native_follow_up(&current, behavior)?;
-            let settings = engine
-                .store
-                .document("settings.json")?
-                .unwrap_or_else(|| json!({}));
-            Ok((saved, settings))
-        })();
-        match result {
-            Ok((thread, settings)) => {
-                self.replace_selected_thread(Some(thread));
-                self.settings = settings;
-                self.follow_up_picker = false;
-            }
-            Err(error) => {
-                if engine_busy(&error) {
-                    self.pending_follow_up_choice = Some((id, behavior));
-                } else {
-                    self.show_local_error(&format!("Follow-up choice not saved: {error}"));
-                    self.status = error.to_string();
+        let Some((id, behavior)) = self.pending_follow_up_choice.clone() else {
+            return;
+        };
+        let Some(selection) = self
+            .selected
+            .as_ref()
+            .filter(|thread| text(thread, "id") == id)
+            .map(|thread| thread["selection"].clone())
+        else {
+            self.pending_follow_up_choice = None;
+            return;
+        };
+        self.follow_up_choice_inflight = true;
+        self.buffered_send_lease.set_dirty(true);
+        let engine = self.engine.clone();
+        let worker_id = id.clone();
+        let worker_selection = selection.clone();
+        cx.spawn(async move |this, cx| {
+            let result: Result<(Option<Value>, Result<Value>)> = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut engine = engine
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("Conversation state is unavailable"))?;
+                    let current = engine.store.thread(&worker_id)?;
+                    let previous = current.get("followUpBehavior").cloned();
+                    let saved = (|| -> Result<Value> {
+                        anyhow::ensure!(
+                            current["selection"] == worker_selection,
+                            "Conversation selection changed; choose follow-up behavior again"
+                        );
+                        engine.choose_native_follow_up(&current, behavior)?;
+                        Ok(engine
+                            .store
+                            .document("settings.json")?
+                            .unwrap_or_else(|| json!({})))
+                    })();
+                    Ok((previous, saved))
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.follow_up_choice_inflight = false;
+                if this.pending_follow_up_choice != Some((id.clone(), behavior)) {
+                    this.start_follow_up_choice(cx);
+                    return;
                 }
-            }
-        }
-        cx.notify();
+                this.pending_follow_up_choice = None;
+                match result {
+                    Ok((_, Ok(settings))) => {
+                        if let Some(target) = this.settings.as_object_mut() {
+                            for key in ["followUpBehavior", "existingThreadsFollowUpBehavior"] {
+                                if let Some(value) = settings.get(key) {
+                                    target.insert(key.into(), value.clone());
+                                }
+                            }
+                        }
+                    }
+                    Ok((previous, Err(error))) => {
+                        if let Some(thread) = this
+                            .selected
+                            .as_mut()
+                            .filter(|thread| {
+                                text(thread, "id") == id
+                                    && thread["selection"] == selection
+                                    && thread["followUpBehavior"] == behavior.key()
+                            })
+                            .and_then(Value::as_object_mut)
+                        {
+                            match previous {
+                                Some(value) => {
+                                    thread.insert("followUpBehavior".into(), value);
+                                }
+                                None => {
+                                    thread.remove("followUpBehavior");
+                                }
+                            }
+                        }
+                        if this
+                            .selected
+                            .as_ref()
+                            .is_some_and(|thread| text(thread, "id") == id)
+                        {
+                            this.show_local_error(&format!("Follow-up choice not saved: {error}"));
+                        }
+                        this.status = error.to_string();
+                    }
+                    Err(error) => {
+                        if this
+                            .selected
+                            .as_ref()
+                            .is_some_and(|thread| text(thread, "id") == id)
+                        {
+                            this.show_local_error(&format!("Follow-up choice not saved: {error}"));
+                        }
+                        this.status = error.to_string();
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
     pub(super) fn send_follow_up(
         &mut self,
@@ -650,7 +775,7 @@ impl Coincide {
         }
 
         self.record_composer_draft(cx);
-        let Some(thread) = self.selected.clone() else {
+        let Some(thread) = self.selected.as_ref().map(follow_up_source) else {
             return;
         };
         let id = text(&thread, "id");
@@ -663,7 +788,6 @@ impl Coincide {
         // The Engine validates the saved draft and selection atomically. Keep
         // the visible draft until that exact payload has been saved and admitted.
         // In particular, never retry by replacing text the user typed meanwhile.
-        self.save_pending_draft(&id);
         if self
             .pending_drafts
             .get(&id)
@@ -673,6 +797,11 @@ impl Coincide {
             self.show_local_error("The draft could not be saved. It remains in the composer; retry saving before sending.");
             cx.notify();
             return;
+        }
+        if self.pending_drafts.contains_key(&id) && self.draft_saver.available() {
+            self.draft_saver.record_now(&id, &draft);
+        } else if !self.draft_saver.available() {
+            self.save_pending_draft(&id);
         }
         if self.pending_drafts.contains_key(&id)
             || self
@@ -694,7 +823,12 @@ impl Coincide {
             .engine
             .try_lock()
             .map_err(|_| anyhow::anyhow!(EngineBusy))
-            .and_then(|mut engine| engine.send_native_follow_up(&thread, alternate));
+            .and_then(|mut engine| {
+                if engine.is_thread_stopping(&id) {
+                    anyhow::bail!(TurnStopping);
+                }
+                engine.send_native_follow_up(&thread, alternate)
+            });
         match result {
             Ok(ticket) => {
                 self.pending_follow_up = None;
@@ -717,10 +851,12 @@ impl Coincide {
             }
             Err(error)
                 if engine_busy(&error)
+                    || error.is::<TurnStopping>()
                     || error.to_string().contains("Collect the previous follow-up") =>
             {
                 let mut pending = PendingSend::new(&thread, draft, alternate)
                     .with_behavior(self.captured_follow_up_behavior(&thread));
+                pending.wait_for_stopped_turn = error.is::<TurnStopping>();
                 self.exclude_submitted_images(&mut pending);
                 self.pending_follow_up = Some(pending);
             }
@@ -916,9 +1052,22 @@ fn behavior_help(behavior: Behavior) -> &'static str {
 #[cfg(test)]
 mod send_route_tests {
     use super::{
-        PendingSend, SelectionWait, SendRoute, buffered_text, send_route, separate_buffered_payload,
+        PendingSend, SelectionWait, SendRoute, buffered_text, follow_up_source, send_route,
+        separate_buffered_payload,
     };
     use serde_json::json;
+
+    #[test]
+    fn follow_up_capture_preserves_scope_without_copying_history() {
+        let thread = json!({"id":"t","draft":"hi","selection":{"provider":"codex"},
+            "draftContext":[{"kind":"file","path":"src/main.rs"}],"items":[{"text":"history"}]});
+        let captured = follow_up_source(&thread);
+        assert_eq!(captured["id"], "t");
+        assert_eq!(captured["draft"], "hi");
+        assert_eq!(captured["draftContext"], thread["draftContext"]);
+        assert!(captured.get("items").is_none());
+        assert!(captured.get("rustDraftImages").is_none());
+    }
 
     #[test]
     fn running_turn_routes_to_follow_up_even_while_selection_is_refreshing() {

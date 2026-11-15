@@ -313,16 +313,7 @@ impl Coincide {
                         .accessibility_label("Stop")
                         .tooltip("Stop")
                         .on_click(cx.listener(|this, _, _, cx| {
-                            if let Some(thread) = this.selected.as_ref()
-                                && let Err(error) = call(
-                                    &this.engine,
-                                    "agent.stop",
-                                    json!({"threadId":thread["id"]}),
-                                )
-                            {
-                                this.status = error.to_string();
-                            }
-                            cx.notify();
+                            this.stop_current_turn(cx);
                         })),
                 )
                 .into_any_element(),

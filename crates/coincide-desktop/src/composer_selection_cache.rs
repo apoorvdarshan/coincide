@@ -25,27 +25,20 @@ impl CapabilityCache {
             && (!named_scope(scope) || !self.named.refresh_due())
     }
     pub(super) fn read(&mut self, shared: &SharedEngine, scope: &Scope) -> Read {
-        if named_scope(scope) {
-            let cached = self.authoritative.as_ref() == Some(scope);
-            let result = self.named.read_with(shared, scope, cached, |engine, id| {
-                selection_response(
-                    engine,
-                    "agent.selection.capabilities",
-                    json!({"threadId":id}),
-                )
-            });
-            if matches!(result, Read::Ready(_)) {
-                self.authoritative = Some(scope.clone());
-            }
-            return result;
-        }
-        self.read_with(shared, scope, |engine, id| {
+        // Every provider can have a very large conversation. Capability reads
+        // inspect its saved selection, so never load it on the UI thread.
+        let cached = self.authoritative.as_ref() == Some(scope);
+        let result = self.named.read_with(shared, scope, cached, |engine, id| {
             selection_response(
                 engine,
                 "agent.selection.capabilities",
                 json!({"threadId":id}),
             )
-        })
+        });
+        if matches!(result, Read::Ready(_)) {
+            self.authoritative = Some(scope.clone());
+        }
+        result
     }
     pub(super) fn request_shutdown(&mut self) {
         self.named.request_shutdown();
@@ -53,6 +46,7 @@ impl CapabilityCache {
     pub(super) fn shutdown_status(&mut self) -> crate::worker_owner::ShutdownStatus {
         self.named.shutdown_status()
     }
+    #[cfg(test)]
     fn read_with(
         &mut self,
         shared: &SharedEngine,
@@ -174,6 +168,47 @@ mod tests {
                 json!({"threadId":id}),
             )
         })
+    }
+    #[::core::prelude::v1::test]
+    fn every_provider_loads_capabilities_without_blocking_the_ui_thread() {
+        let (_dir, shared, mut thread, _b) = fixture();
+        let mut cache = CapabilityCache::default();
+        for provider in [
+            "codex",
+            "claude",
+            "cursor",
+            "grok",
+            "opencode",
+            "antigravity",
+        ] {
+            thread["selection"]["provider"] = json!(provider);
+            thread["selection"]["modelID"] = json!("default");
+            thread["selection"]["accountID"] = Value::Null;
+            thread["selection"]["effort"] = Value::Null;
+            thread["selection"]["speed"] = Value::Null;
+            shared.lock().unwrap().store.save(&thread).unwrap();
+            cache.invalidate();
+            let scope = scope(&thread);
+            assert!(matches!(cache.read(&shared, &scope), Read::Pending(_)));
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            loop {
+                match cache.read(&shared, &scope) {
+                    Read::Ready(Ok(value)) => {
+                        assert!(value["providers"].as_array().is_some());
+                        assert!(cache.is_current(&scope));
+                        break;
+                    }
+                    Read::Ready(Err(error)) => panic!("{provider} capability read failed: {error}"),
+                    Read::Pending(_) | Read::Cached => {
+                        assert!(
+                            std::time::Instant::now() < deadline,
+                            "{provider} read did not finish"
+                        );
+                        std::thread::yield_now();
+                    }
+                }
+            }
+        }
     }
     #[::core::prelude::v1::test]
     fn selection_capability_handoff_busy_a_b_a_reads_once_after_owner_ack() {

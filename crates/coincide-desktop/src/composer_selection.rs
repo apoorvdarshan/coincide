@@ -99,6 +99,12 @@ impl SelectionDraft {
         )
     }
 }
+fn selection_view_matches(thread: &Value, id: &str, draft: &SelectionDraft) -> bool {
+    text(thread, "id") == id
+        && thread["selection"] == draft.original
+        && thread["accessMode"] == draft.access
+        && thread["interactionMode"] == draft.interaction
+}
 fn mode_or_default(raw: &Value, default: &str) -> Value {
     if raw.is_null() {
         json!(default)
@@ -494,7 +500,7 @@ fn selection_response(
     ) {
         params["rememberComposerChoice"] = json!(true);
     }
-    let response = engine.dispatch(json!({"method":method,"params":params}));
+    let mut response = engine.dispatch(json!({"method":method,"params":params}));
     if let Some(error) = response.get("error") {
         anyhow::bail!(
             "{}",
@@ -503,7 +509,67 @@ fn selection_response(
                 .unwrap_or("Selection request failed")
         );
     }
-    Ok(response["result"].clone())
+    Ok(response
+        .get_mut("result")
+        .map(Value::take)
+        .unwrap_or(Value::Null))
+}
+
+enum SelectionApply {
+    Applied(Value),
+    Staged,
+}
+
+/// This may read and save a large conversation. Run it on a worker while
+/// keeping validation and the actual write under the same engine lock.
+fn apply_selection_in_engine(
+    engine: &mut coincide_core::api::Engine,
+    id: &str,
+    draft: &SelectionDraft,
+) -> Result<SelectionApply> {
+    let current = engine.store.thread(id)?;
+    let params = draft.params(&current)?;
+    let capabilities = selection_response(
+        engine,
+        "agent.selection.capabilities",
+        json!({"threadId":id}),
+    )?;
+    let running = engine.is_thread_running(id);
+    if let Some(reason) = capability_lock(&capabilities, running)
+        && !automatic_default_replacement_target(draft, &current, &capabilities, running)
+    {
+        anyhow::bail!(reason);
+    }
+    if running {
+        engine.defer_goal_for_staged_selection(&current, draft.has_edits())?;
+        return Ok(SelectionApply::Staged);
+    }
+    let provider = capabilities["providers"]
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| row["provider"] == draft.provider));
+    if let Some(reason) = mode_problem(draft, provider) {
+        anyhow::bail!(reason);
+    }
+    if let Some(reason) = effort_problem(draft, &current, provider) {
+        anyhow::bail!(reason);
+    }
+    if let Some(reason) = speed_problem(draft, &current, provider) {
+        anyhow::bail!(reason);
+    }
+    let saved = selection_response(engine, "agent.select", params)?;
+    let mut projection = serde_json::Map::new();
+    for key in [
+        "id",
+        "selection",
+        "accessMode",
+        "interactionMode",
+        "modelPreferences",
+    ] {
+        if let Some(value) = saved.get(key) {
+            projection.insert(key.into(), value.clone());
+        }
+    }
+    Ok(SelectionApply::Applied(Value::Object(projection)))
 }
 fn command_params(
     thread: &Value,
@@ -871,6 +937,7 @@ pub(super) enum PickerFacet {
 #[derive(Default)]
 pub(super) struct ComposerSelection {
     drafts: HashMap<String, SelectionDraft>,
+    pending_apply: Option<(String, SelectionDraft)>,
     goal_yield_attempts: std::collections::HashSet<String>,
     bound: Option<String>,
     context: Option<(String, Value, bool)>,
@@ -940,6 +1007,9 @@ fn picker_restore_matches(
                 && pending.source.same_content(stored, &pending.source.draft)))
 }
 impl ComposerSelection {
+    pub(super) fn apply_inflight(&self) -> bool {
+        self.pending_apply.is_some()
+    }
     pub(super) fn close_capability_reads(&mut self) {
         self.capability_cache.request_shutdown();
     }
@@ -1063,7 +1133,6 @@ fn catalog_response_matches(value: &Value, request: &CatalogRequest) -> bool {
         )
 }
 /// A selection change made while a turn runs is kept for the next one.
-pub(super) const STAGED_SELECTION: &str = "Selection staged for the next turn";
 
 fn capability_lock(capabilities: &Value, running: bool) -> Option<String> {
     // Swift leaves the composer's controls enabled during a turn: a change made
@@ -1497,7 +1566,15 @@ fn footer_trailing_width(meters: f32, voice: bool, running: bool, primary: f32) 
 
 impl Coincide {
     pub(super) fn selection_change_pending(&self) -> bool {
-        self.selection_ui.pending_native_account.is_some()
+        self.selection_ui
+            .pending_apply
+            .as_ref()
+            .is_some_and(|(id, _)| {
+                self.selected
+                    .as_ref()
+                    .is_some_and(|thread| thread["id"] == *id)
+            })
+            || self.selection_ui.pending_native_account.is_some()
             || self.selection_ui.pending_provider.is_some()
             || self.selection_ui.pending_model.is_some()
             || self
@@ -2512,79 +2589,92 @@ impl Coincide {
         cx.notify();
     }
     fn apply_selection_draft(&mut self, cx: &mut Context<Self>) {
-        let result = (|| -> Result<Value> {
-            let thread = self
-                .selected
-                .as_ref()
-                .context("Select a conversation first")?;
-            let id = text(thread, "id");
-            let draft = self
-                .selection_ui
-                .drafts
-                .get(&id)
-                .context("Selection draft unavailable")?;
-            let mut engine = try_state(&self.engine)?;
-            let current = engine.store.thread(&id)?;
-            let params = draft.params(&current)?;
-            let capabilities = selection_response(
-                &mut engine,
-                "agent.selection.capabilities",
-                json!({"threadId":id}),
-            )?;
-            if let Some(reason) = capability_lock(&capabilities, self.running.contains(&id))
-                && !automatic_default_replacement_target(
-                    draft,
-                    &current,
-                    &capabilities,
-                    self.running.contains(&id),
-                )
-            {
-                anyhow::bail!(reason);
-            }
-            if self.running.contains(&id) {
-                // Queue it: the draft stays as it is and the turn's end applies
-                // it, instead of writing a selection the agent is still using.
-                let staged = draft.has_edits();
-                engine.defer_goal_for_staged_selection(&current, staged)?;
-                self.selection_ui.goal_yield_attempts.remove(&id);
-                anyhow::bail!(STAGED_SELECTION);
-            }
-            let provider = capabilities["providers"]
-                .as_array()
-                .and_then(|rows| rows.iter().find(|row| row["provider"] == draft.provider));
-            if let Some(reason) = mode_problem(draft, provider) {
-                anyhow::bail!(reason);
-            }
-            if let Some(reason) = effort_problem(draft, &current, provider) {
-                anyhow::bail!(reason);
-            }
-            if let Some(reason) = speed_problem(draft, &current, provider) {
-                anyhow::bail!(reason);
-            }
-            selection_response(&mut engine, "agent.select", params)
-        })();
-        match result {
-            Ok(mut thread) => {
-                self.preserve_pending_draft(&mut thread);
-                let id = text(&thread, "id");
-                let mut saved = SelectionDraft::from_thread(&thread);
-                if let Some(previous) = self.selection_ui.drafts.get(&id) {
-                    saved.custom = previous.custom.clone();
-                }
-                self.selection_ui.drafts.insert(id, saved);
-                self.replace_selected_thread(Some(thread));
-                self.selection_ui.context = None;
-                self.status = "Selection saved. Custom model availability is checked by the provider when used.".into();
-            }
-            Err(error) if error.to_string() == STAGED_SELECTION => {
-                self.selection_ui.context = None;
-                self.status = "This change applies when the current turn ends.".into();
-            }
-            Err(error) => {
-                self.selection_ui.context = None;
-                self.status = format!("Selection was not changed: {error}");
-            }
+        if self.selection_ui.pending_apply.is_some() {
+            return;
         }
+        let Some(id) = self.selected.as_ref().map(|thread| text(thread, "id")) else {
+            return;
+        };
+        let Some(draft) = self.selection_ui.drafts.get(&id).cloned() else {
+            self.status = "Selection draft unavailable.".into();
+            cx.notify();
+            return;
+        };
+        self.selection_ui.pending_apply = Some((id.clone(), draft.clone()));
+        self.buffered_send_lease.set_dirty(true);
+        let engine = self.engine.clone();
+        let worker_id = id.clone();
+        let worker_draft = draft.clone();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut engine = engine
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("Conversation state is unavailable"))?;
+                    apply_selection_in_engine(&mut engine, &worker_id, &worker_draft)
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.selection_ui.pending_apply.as_ref() != Some(&(id.clone(), draft.clone())) {
+                    return;
+                }
+                this.selection_ui.pending_apply = None;
+                this.selection_ui.context = None;
+                match result {
+                    Ok(SelectionApply::Applied(saved)) => {
+                        let matches_view = this
+                            .selected
+                            .as_ref()
+                            .is_some_and(|thread| selection_view_matches(thread, &id, &draft));
+                        let matches_draft = this.selection_ui.drafts.get(&id) == Some(&draft);
+                        if matches_draft {
+                            let mut next = SelectionDraft::from_thread(&saved);
+                            next.custom = draft.custom.clone();
+                            this.selection_ui.drafts.insert(id.clone(), next);
+                        }
+                        if matches_view && matches_draft {
+                            this.selected_generation = this.selected_generation.wrapping_add(1);
+                            if let Some(thread) =
+                                this.selected.as_mut().and_then(Value::as_object_mut)
+                            {
+                                for key in [
+                                    "selection",
+                                    "accessMode",
+                                    "interactionMode",
+                                    "modelPreferences",
+                                ] {
+                                    match saved.get(key) {
+                                        Some(value) => {
+                                            thread.insert(key.into(), value.clone());
+                                        }
+                                        None => {
+                                            thread.remove(key);
+                                        }
+                                    }
+                                }
+                            }
+                            this.status = "Selection saved.".into();
+                        }
+                        this.finish_pending_selection(&id, matches_view && matches_draft);
+                    }
+                    Ok(SelectionApply::Staged) => {
+                        this.selection_ui.goal_yield_attempts.remove(&id);
+                        this.status = "This change applies when the current turn ends.".into();
+                        this.finish_pending_selection(&id, true);
+                        if !this.running.contains(&id) {
+                            this.flush_staged_selection(cx);
+                        }
+                    }
+                    Err(error) => {
+                        this.status = format!("Selection was not changed: {error}");
+                        this.finish_pending_selection(&id, false);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
         cx.notify();
     }
     /// Apply the selection the user changed during a turn now that it ended.
@@ -3167,11 +3257,18 @@ impl Coincide {
                     && draft.custom == pending.model
                     && draft.has_edits()
             });
-        if !applied && !staged && self.status.is_empty() {
+        let applying = self
+            .selection_ui
+            .pending_apply
+            .as_ref()
+            .is_some_and(|(thread, _)| thread == &id);
+        if !applied && !staged && !applying && self.status.is_empty() {
             self.status =
                 "Model change could not be applied. Your previous selection was kept.".into();
         }
-        self.finish_pending_selection(&id, applied || staged);
+        if !applying {
+            self.finish_pending_selection(&id, applied || staged);
+        }
     }
 
     /// Chooses a discovered model the way Swift's picker does: one click saves
@@ -3257,7 +3354,12 @@ impl Coincide {
                         && draft.custom == chosen_model
                         && draft.has_edits()
                 });
-        if applied || staged {
+        let applying = self
+            .selection_ui
+            .pending_apply
+            .as_ref()
+            .is_some_and(|(id, _)| id == thread_id);
+        if applied || staged || applying {
             self.selection_ui.expanded = false;
             self.selection_ui.tab_provider = None;
         }
@@ -3291,7 +3393,7 @@ impl Coincide {
         implement_visible: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let Some(thread) = &self.selected else {
+        let Some(thread) = self.selected.as_ref() else {
             return div().into_any_element();
         };
         let draft = self.selection_ui.drafts.get(&text(thread, "id"));
@@ -3312,13 +3414,33 @@ impl Coincide {
             lock.as_deref(),
         );
         let selection = &thread["selection"];
-        let model = if selection["modelID"] == "default" {
+        let proposed = draft.filter(|draft| draft.has_edits());
+        let model = if let Some(draft) = proposed.filter(|draft| {
+            draft.provider != text(selection, "provider")
+                || (if draft.use_custom {
+                    draft.custom.as_str()
+                } else {
+                    "default"
+                }) != selection["modelID"].as_str().unwrap_or("default")
+        }) {
+            if draft.use_custom {
+                draft.custom.clone()
+            } else {
+                "Provider default".into()
+            }
+        } else if selection["modelID"] == "default" {
             "Provider default".to_owned()
         } else {
             reported_picker_model_label(thread, &self.selection_ui.catalog)
                 .unwrap_or_else(|| footer_value(&selection["modelID"], "Choose model"))
         };
-        let effort = if selection["effort"].is_null() {
+        let shown_effort = proposed
+            .map(|draft| &draft.proposed_effort)
+            .unwrap_or(&selection["effort"]);
+        let shown_speed = proposed
+            .map(|draft| &draft.proposed_speed)
+            .unwrap_or(&selection["speed"]);
+        let effort = if shown_effort.is_null() {
             self.selection_ui.capabilities["providers"]
                 .as_array()
                 .into_iter()
@@ -3326,9 +3448,9 @@ impl Coincide {
                 .find(|provider| provider["provider"] == selection["provider"])
                 .and_then(|provider| provider["effort"]["reportedDefault"].as_str())
                 .map(|default| effort_picker_title(&json!(default)))
-                .unwrap_or_else(|| effort_picker_title(&selection["effort"]))
+                .unwrap_or_else(|| effort_picker_title(shown_effort))
         } else {
-            effort_picker_title(&selection["effort"])
+            effort_picker_title(shown_effort)
         };
         let speed = self.selection_ui.capabilities["providers"]
             .as_array()
@@ -3336,20 +3458,24 @@ impl Coincide {
             .flatten()
             .find(|provider| provider["provider"] == selection["provider"])
             .and_then(|provider| provider["speed"]["choices"].as_array())
-            .and_then(|choices| {
-                choices
-                    .iter()
-                    .find(|choice| choice["id"] == selection["speed"])
-            })
+            .and_then(|choices| choices.iter().find(|choice| choice["id"] == *shown_speed))
             .and_then(|choice| choice["name"].as_str())
             .map(str::to_owned)
-            .unwrap_or_else(|| footer_value(&selection["speed"], "Standard"));
-        let access = if thread["accessMode"] == "fullAccess" {
+            .unwrap_or_else(|| footer_value(shown_speed, "Standard"));
+        let access = if proposed
+            .map(|draft| &draft.proposed_access)
+            .unwrap_or(&thread["accessMode"])
+            == "fullAccess"
+        {
             "Full access"
         } else {
             "Ask for approval"
         };
-        let mode = if thread["interactionMode"] == "plan" {
+        let mode = if proposed
+            .map(|draft| &draft.proposed_interaction)
+            .unwrap_or(&thread["interactionMode"])
+            == "plan"
+        {
             "Plan"
         } else {
             "Build"
@@ -3587,7 +3713,7 @@ impl Coincide {
     /// composer, with the agent and model the thread will use.
     pub(super) fn chat_welcome(&self, cx: &mut Context<Self>) -> AnyElement {
         let _ = cx;
-        let Some(thread) = &self.selected else {
+        let Some(thread) = self.selected.as_ref() else {
             return div().into_any_element();
         };
         let project_id = &thread["projectID"];
@@ -3683,8 +3809,8 @@ impl Coincide {
         let tall = detail.is_some();
         Button::new(SharedString::from(id))
             .w_full()
-            .h(px(if tall { 48. } else { 34. }))
-            .rounded(px(8.))
+            .h(px(if tall { 44. } else { 28. }))
+            .rounded(px(7.))
             .ghost()
             .when(selected, |button| button.bg(self.picker_selection_bg()))
             .disabled(disabled)
@@ -4097,15 +4223,16 @@ impl Coincide {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         if self.follow_up_picker {
-            return Some(self.composer_popover_shell(window, 340., self.follow_up_menu(cx), cx));
+            return Some(self.composer_popover_shell(window, 300., self.follow_up_menu(cx), cx));
         }
         if !self.selection_ui.expanded {
             return None;
         }
-        let width = if self.selection_ui.facet == PickerFacet::Model {
-            420.
-        } else {
-            340.
+        let width = match self.selection_ui.facet {
+            PickerFacet::Model => 360.,
+            PickerFacet::Effort => 220.,
+            PickerFacet::Speed => 260.,
+            PickerFacet::Access | PickerFacet::Mode => 300.,
         };
         Some(self.composer_popover_shell(window, width, self.composer_selection_pane(cx), cx))
     }
@@ -4119,7 +4246,7 @@ impl Coincide {
         let width = width
             .min(f32::from(window.viewport_size().width) - 24.)
             .max(160.);
-        let height = (f32::from(window.viewport_size().height) - 24.).clamp(160., 540.);
+        let height = (f32::from(window.viewport_size().height) - 24.).clamp(160., 440.);
         let anchor = self
             .selection_ui
             .popover_anchor
@@ -4187,7 +4314,7 @@ impl Coincide {
         if !self.selection_ui.expanded {
             return div().into_any_element();
         }
-        let Some(thread) = &self.selected else {
+        let Some(thread) = self.selected.as_ref() else {
             return div().into_any_element();
         };
         if named_models::named_thread(thread)
@@ -4246,7 +4373,7 @@ impl Coincide {
         if self.selection_ui.facet != PickerFacet::Model {
             let source_id = text(thread, "id");
             let source_selection = thread["selection"].clone();
-            let mut menu = div().flex().flex_col().gap_1().p_2().child(
+            let mut menu = div().flex().flex_col().gap(px(2.)).p_2().child(
                 div()
                     .px_1()
                     .pb_1()
@@ -4685,6 +4812,22 @@ impl Coincide {
 
 #[cfg(test)]
 mod tests {
+    #[::core::prelude::v1::test]
+    fn delayed_selection_result_cannot_replace_a_newer_conversation_choice() {
+        use super::*;
+        let thread = json!({"id":"t","selection":{"provider":"codex","modelID":"one"},"accessMode":"approval","interactionMode":"build","draft":"kept"});
+        let draft = SelectionDraft::from_thread(&thread);
+        assert!(selection_view_matches(&thread, "t", &draft));
+        for key in ["selection", "accessMode", "interactionMode", "id"] {
+            let mut changed = thread.clone();
+            changed[key] = json!("different");
+            assert!(!selection_view_matches(&changed, "t", &draft));
+        }
+        let mut new_draft = thread.clone();
+        new_draft["draft"] = json!("typed while waiting");
+        assert!(selection_view_matches(&new_draft, "t", &draft));
+    }
+
     #[::core::prelude::v1::test]
     fn background_catalog_updates_preserve_scoped_lists_for_every_provider() {
         use super::*;

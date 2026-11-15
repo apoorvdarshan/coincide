@@ -103,6 +103,7 @@ mod legacy_media_settings;
 mod main_window_poll;
 mod microphone;
 mod microphone_settings;
+mod selected_thread;
 mod thread_folder;
 #[rustfmt::skip]
 mod bot_artwork_data;
@@ -230,11 +231,36 @@ fn try_state<T>(state: &Mutex<T>) -> Result<std::sync::MutexGuard<'_, T>> {
 /// Native callbacks must never wait for a background import holding the engine.
 /// Busy means dispatch did not run, so callers can retain their current state.
 fn call(engine: &SharedEngine, method: &str, params: Value) -> Result<Value> {
-    let response = try_state(engine)?.dispatch(json!({"method":method,"params":params}));
+    let mut response = try_state(engine)?.dispatch(json!({"method":method,"params":params}));
     if let Some(error) = response.get("error") {
         anyhow::bail!("{}", error["message"].as_str().unwrap_or("Command failed"));
     }
-    Ok(response["result"].clone())
+    Ok(response
+        .get_mut("result")
+        .map(Value::take)
+        .unwrap_or(Value::Null))
+}
+/// The worker waits for the engine before dispatching exactly once. An engine
+/// lock conflict is therefore not reported as a failed send.
+fn send_captured_waiting(engine: &SharedEngine, captured: &Value, prompt: &str) -> Result<Value> {
+    let id = text(captured, "id");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let mut owner = engine
+            .lock()
+            .map_err(|_| anyhow::anyhow!("App engine is unavailable"))?;
+        if owner.admissions_frozen() {
+            anyhow::bail!("App is closing; message retained");
+        }
+        if !owner.is_thread_stopping(&id) {
+            return owner.send_captured_native_turn(captured, prompt);
+        }
+        drop(owner);
+        if Instant::now() >= deadline {
+            anyhow::bail!("The previous turn is still stopping; message retained");
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 fn send_error_message(reason: &str) -> String {
     let lower = reason.to_ascii_lowercase();
@@ -600,7 +626,7 @@ struct Coincide {
     project_scripts: project_scripts_ui::State,
     project_picker_open: bool,
     project_path: Entity<InputState>,
-    selected: Option<Value>,
+    selected: selected_thread::SelectedThread,
     selected_generation: u64,
     selected_thread_reader: selected_thread_refresh::Reader,
     pending_native_selection: Option<Option<String>>,
@@ -649,9 +675,11 @@ struct Coincide {
     quit_after_pending_sends: bool,
     /// A Queue/Steer choice made while the engine was busy, written later.
     pending_follow_up_choice: Option<(String, coincide_core::composer_follow_up::Behavior)>,
+    follow_up_choice_inflight: bool,
     /// A just-sent message drawn before the stored thread contains it, with
     /// the item count it was sent from.
     pending_sent: Option<(String, String, usize, u64)>,
+    ordinary_sends_inflight: usize,
     pending_images: composer_pending_images::PendingImages,
     /// Identity for the optimistic row, so a refresh keeps the same element.
     pending_seq: u64,
@@ -1149,7 +1177,7 @@ impl Coincide {
     }
     pub(crate) fn replace_selected_thread(&mut self, thread: Option<Value>) {
         self.selected_generation = self.selected_generation.wrapping_add(1);
-        self.selected = thread;
+        self.selected.replace(thread);
     }
     fn new(
         engine: SharedEngine,
@@ -1180,6 +1208,16 @@ impl Coincide {
                 }
                 if this.instructions_panel.read(cx).has_unsaved_edits(cx) {
                     this.prompt_instruction_close(false, window, cx);
+                    return false;
+                }
+                if this.ordinary_sends_inflight > 0
+                    || this.restore_composer.is_some()
+                    || this.selection_ui.apply_inflight()
+                    || this.follow_up_choice_inflight
+                {
+                    this.status =
+                        "Finishing your message and composer choices before closing…".into();
+                    cx.notify();
                     return false;
                 }
                 // Keep the global drain owner and its recovery controls alive.
@@ -1831,7 +1869,7 @@ impl Coincide {
             project_scripts,
             project_picker_open: false,
             project_path,
-            selected: None,
+            selected: selected_thread::SelectedThread::default(),
             selected_generation: 0,
             selected_thread_reader: Default::default(),
             pending_native_selection: None,
@@ -1879,7 +1917,9 @@ impl Coincide {
             buffered_send_lease: native_editors.editor(),
             quit_after_pending_sends: false,
             pending_follow_up_choice: None,
+            follow_up_choice_inflight: false,
             pending_sent: None,
+            ordinary_sends_inflight: 0,
             pending_images: Default::default(),
             pending_seq: 0,
             dispatch_cache: Default::default(),
@@ -3941,6 +3981,8 @@ impl Coincide {
             self.sync_media_context(cx);
             if drafts_saved
                 && cookies_ready
+                && !self.selection_ui.apply_inflight()
+                && !self.follow_up_choice_inflight
                 && self.media_shutdown_ready(cx)
                 && self.appshots.drained()
                 && self.computer_use_shutdown_ready()
@@ -5234,6 +5276,45 @@ impl Coincide {
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.send_selected(false, window, cx);
     }
+    pub(crate) fn stop_current_turn(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.selected.as_ref().map(|thread| text(thread, "id")) else {
+            return;
+        };
+        let run_id = self.window_chrome.run_id(&id).or_else(|| {
+            self.engine
+                .try_lock()
+                .ok()
+                .and_then(|engine| engine.current_run_id(&id))
+        });
+        let Some(run_id) = run_id else {
+            self.status = "The current turn is still starting. Try Stop again shortly.".into();
+            cx.notify();
+            return;
+        };
+        self.status = "Stopping the current turn…".into();
+        cx.notify();
+        let engine = self.engine.clone();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut engine = engine
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("App engine is unavailable"))?;
+                    engine.request_provider_stop_if_current(&id, run_id)
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(true) => this.status = "Stopping the current turn…".into(),
+                    Ok(false) => {}
+                    Err(error) => this.status = format!("Could not stop the turn: {error}"),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
     fn send_selected(&mut self, alternate: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.send_selected_inner(alternate, window, cx, false);
     }
@@ -5252,9 +5333,11 @@ impl Coincide {
             return;
         }
         if !from_pending
-            && (self.pending_follow_up.is_some() || !self.pending_follow_up_backlog.is_empty())
+            && (self.pending_follow_up.is_some()
+                || !self.pending_follow_up_backlog.is_empty()
+                || self.ordinary_sends_inflight > 0)
         {
-            if let Some(thread) = &self.selected {
+            if let Some(thread) = self.selected.as_ref() {
                 let draft = self.composer.read(cx).value().to_string();
                 if let Some(command) =
                     composer_commands::intercept(thread, &draft, |command| command)
@@ -5272,7 +5355,7 @@ impl Coincide {
             self.implement_plan(window, cx);
             return;
         }
-        if let Some(thread) = &self.selected {
+        if let Some(thread) = self.selected.as_ref() {
             let draft = self.composer.read(cx).value().to_string();
             if let Some(command) = composer_commands::intercept(thread, &draft, |command| command) {
                 let submission = composer_commands::Submission::new(thread, &draft);
@@ -5346,19 +5429,20 @@ impl Coincide {
             let image_send = self.show_pending_send(&id, &sent);
             let engine = self.engine.clone();
             let sent_for_call = sent.clone();
-            let id_for_call = id.clone();
+            let captured_for_call = pending.captured;
+            // API Quit must not close the app while this submitted text is
+            // still owned by a worker or waiting to be restored on failure.
+            self.buffered_send_lease.set_dirty(true);
+            self.ordinary_sends_inflight += 1;
             cx.spawn(async move |this, cx| {
                 let result = cx
                     .background_executor()
                     .spawn(async move {
-                        call(
-                            &engine,
-                            "agent.send",
-                            json!({"threadId":id_for_call,"text":sent_for_call}),
-                        )
+                        send_captured_waiting(&engine, &captured_for_call, &sent_for_call)
                     })
                     .await;
                 let _ = this.update(cx, |this, cx| {
+                    this.ordinary_sends_inflight = this.ordinary_sends_inflight.saturating_sub(1);
                     this.record_composer_draft(cx);
                     match result {
                         Ok(_) => {
@@ -6053,7 +6137,7 @@ impl Coincide {
                 .is_some_and(|thread| self.browser_panels.contains(&text(thread, "id")))
             {
                 self.browser_action(BrowserAction::Hide, None, cx);
-                if let Some(thread) = &self.selected {
+                if let Some(thread) = self.selected.as_ref() {
                     self.browser_panels.remove(&text(thread, "id"));
                 }
                 if let Some(browser) = &mut self.browser {
@@ -6205,7 +6289,6 @@ impl Coincide {
 }
 impl Render for Coincide {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.chat_turns.begin_render();
         // Swift's palette floats about a sixth of the way down the window.
         let palette_top = (f32::from(window.viewport_size().height) * 0.16).max(64.);
         self.sync_context_details();
@@ -6287,12 +6370,18 @@ impl Render for Coincide {
         });
         self.sync_workspace_context(cx);
         self.sync_composer_selection(window, cx);
-        if let Some(thread) = self.selected.as_mut()
-            && let Some(draft) = self.pending_drafts.get(&text(thread, "id"))
+        let projected_draft = self.selected.as_ref().and_then(|thread| {
+            let draft = self
+                .pending_drafts
+                .get(&text(thread, "id"))
+                .map(|draft| draft.text.as_str())
+                .or_else(|| self.submitted_drafts.projection(thread))?;
+            (thread["draft"].as_str() != Some(draft)).then(|| draft.to_owned())
+        });
+        if let Some(draft) = projected_draft
+            && let Some(thread) = self.selected.as_mut()
         {
-            thread["draft"] = json!(draft.text);
-        } else if let Some(thread) = self.selected.as_mut() {
-            self.submitted_drafts.project(thread);
+            thread["draft"] = json!(draft);
         }
         if let Some(v) = self.selected.as_ref() {
             let draft = text(v, "draft");
@@ -6306,21 +6395,15 @@ impl Render for Coincide {
                     .update(cx, |input, cx| input.set_value(draft, window, cx));
             }
         }
-        if let Some((id, behavior)) = self.pending_follow_up_choice.clone()
-            && self
-                .selected
-                .as_ref()
-                .is_some_and(|thread| text(thread, "id") == id)
-            && self.engine.try_lock().is_ok()
-        {
-            self.pending_follow_up_choice = None;
-            self.choose_follow_up(behavior, cx);
-        }
-        if self.pending_follow_up.is_none() {
+        if self.ordinary_sends_inflight == 0 && self.pending_follow_up.is_none() {
             self.pending_follow_up = self.pending_follow_up_backlog.pop_front();
         }
-        if let Some(mut pending) = self.pending_follow_up.take() {
-            if pending.selection_wait == composer_follow_up_mount::SelectionWait::Waiting {
+        if self.ordinary_sends_inflight == 0
+            && let Some(mut pending) = self.pending_follow_up.take()
+        {
+            if pending.wait_for_stopped_turn && self.running.contains(&pending.thread) {
+                self.pending_follow_up = Some(pending);
+            } else if pending.selection_wait == composer_follow_up_mount::SelectionWait::Waiting {
                 self.pending_follow_up = Some(pending);
             } else if pending.selection_wait == composer_follow_up_mount::SelectionWait::Failed {
                 if pending.original_visible {
@@ -6420,10 +6503,21 @@ impl Render for Coincide {
                     && !self.attachment_imports.contains(&pending.thread)
                     && pending.matches(thread, self.composer.read(cx).value().as_ref())
                 {
-                    if let Some(sequence) = pending.image_send {
-                        self.pending_images.finish(sequence);
+                    if self
+                        .pending_drafts
+                        .get(&pending.thread)
+                        .is_some_and(|draft| draft.failed)
+                    {
+                        self.show_local_error("The draft could not be saved. It remains in the composer; retry saving before sending.");
+                        cx.notify();
+                    } else if self.pending_drafts.contains_key(&pending.thread) {
+                        self.pending_follow_up = Some(pending);
+                    } else {
+                        if let Some(sequence) = pending.image_send {
+                            self.pending_images.finish(sequence);
+                        }
+                        self.send_selected_inner(pending.alternate, window, cx, true);
                     }
-                    self.send_selected_inner(pending.alternate, window, cx, true);
                 } else {
                     let clear_original =
                         !pending.edited && self.composer.read(cx).value().as_ref() == pending.draft;
@@ -6573,7 +6667,13 @@ impl Render for Coincide {
                 }
             }
         }
-        if self.pending_follow_up.is_none() && self.pending_follow_up_backlog.is_empty() {
+        if self.pending_follow_up.is_none()
+            && self.pending_follow_up_backlog.is_empty()
+            && self.ordinary_sends_inflight == 0
+            && self.restore_composer.is_none()
+            && !self.selection_ui.apply_inflight()
+            && !self.follow_up_choice_inflight
+        {
             self.buffered_send_lease.set_dirty(false);
             if self.quit_after_pending_sends {
                 self.quit_after_pending_sends = false;
@@ -6587,8 +6687,8 @@ impl Render for Coincide {
                 .as_ref()
                 .is_some_and(|thread| thread["id"] == id)
         {
-            self.restore_composer = None;
             if self.composer.read(cx).value().is_empty() {
+                self.restore_composer = None;
                 self.composer
                     .update(cx, |input, cx| input.set_value(text.clone(), window, cx));
                 if let Some(thread) = self.selected.as_mut() {
@@ -6606,7 +6706,7 @@ impl Render for Coincide {
             }
         }
         if let Some(id) = self.pending_select.clone()
-            && let Some(thread) = &self.selected
+            && let Some(thread) = self.selected.as_ref()
             && text(thread, "id") != id
         {
             self.select(&id, window, cx);
@@ -6655,6 +6755,20 @@ impl Render for Coincide {
                     .as_array()
                     .is_some_and(|items| !items.is_empty())
             });
+        let selected_running = self.selected.as_ref().is_some_and(|thread| {
+            self.running
+                .iter()
+                .any(|id| thread["id"].as_str() == Some(id.as_str()))
+        });
+        self.chat_turns.begin_render(
+            self.selected.revision(),
+            selected_running,
+            self.settings["showReasoning"].as_bool().unwrap_or(true),
+            self.selected
+                .as_ref()
+                .and_then(|thread| thread["id"].as_str())
+                .and_then(|id| self.window_chrome.run_started_at(id)),
+        );
         let transcript = div()
             .on_children_prepainted(self.media_layout_observer(cx))
             .relative()
@@ -7359,6 +7473,44 @@ fn reopen_main_window(cx: &mut App) {
 #[cfg(test)]
 mod liveness_tests {
     use super::*;
+
+    #[::core::prelude::v1::test]
+    fn captured_send_waits_for_a_busy_engine_and_revalidates_before_dispatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&dir.path().join("data.sqlite")).unwrap();
+        let project = store.create_project(dir.path(), Some("fixture")).unwrap();
+        let current = store.new_thread(project["id"].as_str().unwrap()).unwrap();
+        let mut captured = current.clone();
+        captured["selection"]["modelID"] = json!("stale-model");
+        let engine = Arc::new(Mutex::new(Engine::new(store)));
+        let held = engine.lock().unwrap();
+        let worker = engine.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let task = std::thread::spawn(move || {
+            tx.send(send_captured_waiting(&worker, &captured, "hello"))
+                .unwrap();
+        });
+        assert!(matches!(
+            rx.recv_timeout(Duration::from_millis(50)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ));
+        drop(held);
+        let error = rx
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap_err();
+        assert!(error.to_string().contains("context changed"));
+        task.join().unwrap();
+        assert_eq!(
+            engine
+                .lock()
+                .unwrap()
+                .store
+                .thread(&text(&current, "id"))
+                .unwrap(),
+            current
+        );
+    }
 
     #[::core::prelude::v1::test]
     fn native_call_reports_busy_without_dispatching_or_poisoning_engine() {

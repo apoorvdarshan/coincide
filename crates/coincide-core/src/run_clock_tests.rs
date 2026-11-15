@@ -3,6 +3,22 @@ use super::*;
 use std::sync::mpsc;
 use std::time::Duration;
 
+#[test]
+fn duration_is_written_only_to_the_run_opener() {
+    let mut thread = json!({"items":[
+        {"id":"a","kind":"user","text":"first"},
+        {"id":"steer","kind":"user","steered":true},
+        {"id":"b","kind":"user","text":"second"}
+    ], "unknown":{"preserved":true}});
+    record_turn_duration(&mut thread, "a", 42.5);
+    record_turn_duration(&mut thread, "steer", 900.);
+    record_turn_duration(&mut thread, "b", f64::NAN);
+    assert_eq!(thread["items"][0]["rustTurnDuration"], 42.5);
+    assert!(thread["items"][1].get("rustTurnDuration").is_none());
+    assert!(thread["items"][2].get("rustTurnDuration").is_none());
+    assert_eq!(thread["unknown"]["preserved"], true);
+}
+
 fn running(session: Session) -> Running {
     Running {
         configuration: None,

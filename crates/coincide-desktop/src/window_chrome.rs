@@ -207,6 +207,7 @@ pub(super) fn elapsed(seconds: f64) -> String {
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct RunClock {
     started_at: f64,
+    run_id: Option<uuid::Uuid>,
     connecting: bool,
 }
 
@@ -280,11 +281,20 @@ impl State {
                     id.clone(),
                     RunClock {
                         started_at: clock["startedAt"].as_f64()?,
+                        run_id: clock["runId"]
+                            .as_str()
+                            .and_then(|id| uuid::Uuid::parse_str(id).ok()),
                         connecting: clock["connecting"] == true,
                     },
                 ))
             })
             .collect();
+    }
+    pub(super) fn run_id(&self, thread: &str) -> Option<uuid::Uuid> {
+        self.run_clocks.get(thread)?.run_id
+    }
+    pub(super) fn run_started_at(&self, thread: &str) -> Option<f64> {
+        self.run_clocks.get(thread).map(|clock| clock.started_at)
     }
 }
 
@@ -465,6 +475,7 @@ mod tests {
         let clock = |connecting| {
             Some(RunClock {
                 started_at: 100.,
+                run_id: None,
                 connecting,
             })
         };
@@ -512,6 +523,7 @@ mod tests {
             state.run_clocks.get("T"),
             Some(&RunClock {
                 started_at: 5.5,
+                run_id: None,
                 connecting: false
             })
         );

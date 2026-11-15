@@ -171,13 +171,7 @@ impl Coincide {
             .rounded(px(14.))
             .p_0()
             .on_click(cx.listener(|this, _, _, cx| {
-                if let Some(thread) = this.selected.as_ref()
-                    && let Err(error) =
-                        call(&this.engine, "agent.stop", json!({"threadId":thread["id"]}))
-                {
-                    this.status = error.to_string();
-                }
-                cx.notify();
+                this.stop_current_turn(cx);
             }))
     }
     pub(super) fn notice_row(

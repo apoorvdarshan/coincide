@@ -227,9 +227,12 @@ struct Running {
     events: VecDeque<Event>,
     persistence_error: Option<String>,
 }
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct RunClock {
     started_at: f64,
+    started_monotonic: Instant,
+    run_id: Uuid,
+    opener: Option<String>,
     connected: bool,
 }
 pub struct Engine {
@@ -1215,6 +1218,31 @@ impl Engine {
     fn send_turn(&mut self, p: &Value, origin: SendOrigin) -> Result<Value> {
         self.send_turn_if_unchanged(p, &origin, None, false)
     }
+    /// The desktop may wait for the engine on a worker after Send is clicked.
+    /// Recheck the captured execution context before admitting that one send.
+    pub fn send_captured_native_turn(&mut self, captured: &Value, prompt: &str) -> Result<Value> {
+        self.require_admissions()?;
+        let id = required(captured, "id")?;
+        let current = self.store.thread(id)?;
+        for key in [
+            "selection",
+            "accessMode",
+            "interactionMode",
+            "projectID",
+            "projectPath",
+            "worktreePath",
+            "botID",
+            "rustBotContext",
+            "rustDraftImages",
+            "draftContext",
+        ] {
+            ensure!(
+                current[key] == captured[key],
+                "Conversation context changed; message retained"
+            );
+        }
+        self.send_turn(&json!({"threadId":id,"text":prompt}), SendOrigin::Ordinary)
+    }
     /// Remote owns its own submitted text. Validate its captured execution
     /// context under the engine lock without consuming the desktop composer.
     pub(crate) fn send_remote_text(&mut self, expected: &Value, prompt: &str) -> Result<Value> {
@@ -1675,7 +1703,9 @@ impl Engine {
         } else {
             self.prepare_turn_checkpoint(&id, &user_item_id, &cwd)
         };
-        self.insert_running(
+        let turn_opener = (restore_paused_goal.is_none() && !user_item_id.is_empty())
+            .then(|| user_item_id.clone());
+        self.insert_running_for_turn(
             id,
             Running {
                 configuration: provider_configuration::current(),
@@ -1715,11 +1745,16 @@ impl Engine {
                 events: VecDeque::new(),
                 persistence_error: None,
             },
+            turn_opener,
         );
         self.revision += 1;
         Ok(json!({"accepted":true}))
     }
+    #[cfg(test)]
     fn insert_running(&mut self, id: String, run: Running) {
+        self.insert_running_for_turn(id, run, None);
+    }
+    fn insert_running_for_turn(&mut self, id: String, run: Running, opener: Option<String>) {
         self.answered_runs.remove(&id);
         self.composer_commands.begin_run(&id);
         self.provider_workers.push(run.session.worker_completion());
@@ -1727,6 +1762,9 @@ impl Engine {
             id.clone(),
             RunClock {
                 started_at: swift_timestamp(),
+                started_monotonic: Instant::now(),
+                run_id: Uuid::new_v4(),
+                opener,
                 connected: false,
             },
         );
@@ -1735,6 +1773,16 @@ impl Engine {
     /// Current provider turns, independent of whether a desktop window exists.
     pub fn running_thread_count(&self) -> usize {
         self.runs.len()
+    }
+    /// Whether this exact conversation currently owns a provider turn.
+    pub fn is_thread_running(&self, thread_id: &str) -> bool {
+        self.runs.contains_key(thread_id)
+    }
+    pub fn is_thread_stopping(&self, thread_id: &str) -> bool {
+        self.runs.get(thread_id).is_some_and(|run| run.cancelled)
+    }
+    pub fn current_run_id(&self, thread_id: &str) -> Option<Uuid> {
+        self.run_clocks.get(thread_id).map(|clock| clock.run_id)
     }
     /// Each running thread's start (Swift reference seconds) and whether it is
     /// still connecting: its provider has sent nothing since the run began.
@@ -1746,7 +1794,7 @@ impl Engine {
                     let clock = self.run_clocks.get(id)?;
                     Some((
                         id.clone(),
-                        json!({"startedAt":clock.started_at,"connecting":!clock.connected}),
+                        json!({"startedAt":clock.started_at,"runId":clock.run_id.to_string(),"connecting":!clock.connected}),
                     ))
                 })
                 .collect(),
@@ -2910,6 +2958,15 @@ impl Engine {
                 }
             }
             if finished {
+                if let Some(clock) = self.run_clocks.get(&id)
+                    && let Some(opener) = clock.opener.as_deref()
+                {
+                    record_turn_duration(
+                        &mut v,
+                        opener,
+                        clock.started_monotonic.elapsed().as_secs_f64(),
+                    );
+                }
                 self.notification_events.cancel_requests(&id);
                 if !self.runs[&id].cancelled
                     && self.runs[&id].persistence_error.is_none()
@@ -3097,6 +3154,20 @@ fn completed_message_kind(item: &Value, method: &str) -> Option<&'static str> {
         _ => None,
     }
 }
+/// Save only this run's own opener; resumed work must not rewrite another turn.
+fn record_turn_duration(thread: &mut Value, opener: &str, duration: f64) {
+    if !duration.is_finite() || duration < 0. {
+        return;
+    }
+    if let Some(item) = thread["items"].as_array_mut().and_then(|items| {
+        items
+            .iter_mut()
+            .find(|item| item["id"] == opener && item["kind"] == "user" && item["steered"] != true)
+    }) {
+        item["rustTurnDuration"] = json!(duration);
+    }
+}
+
 /// When the provider first reported a tool call finished, for its duration.
 /// Display metadata only, like createdAt; it never settles the call or a turn.
 fn mark_completed(row: &mut Value, method: &str) {
@@ -3125,14 +3196,17 @@ fn append(v: &mut Value, kind: &str, text: &str, external: Option<&str>) {
     v["items"].as_array_mut().expect("validated thread").push(json!({"id":Uuid::new_v4().to_string().to_uppercase(),"kind":kind,"text":text,"provider":provider,"modelID":model,"accountID":account,"createdAt":swift_timestamp(),"externalID":external}));
 }
 pub fn call(engine: &SharedEngine, method: &str, params: Value) -> Result<Value> {
-    let response = engine
+    let mut response = engine
         .lock()
         .map_err(|_| anyhow::anyhow!("Engine lock failed"))?
         .dispatch(json!({"method":method,"params":params}));
     if let Some(error) = response.get("error") {
         bail!("{}", error["message"].as_str().unwrap_or("Command failed"));
     }
-    Ok(response["result"].clone())
+    Ok(response
+        .get_mut("result")
+        .map(Value::take)
+        .unwrap_or(Value::Null))
 }
 #[cfg(test)]
 mod tests {

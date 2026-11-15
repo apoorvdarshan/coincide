@@ -563,7 +563,7 @@ impl GitControls {
 impl Coincide {
     /// Follows the selected thread. Cheap and idempotent: called on every render.
     pub(super) fn sync_git_controls(&mut self, cx: &mut Context<Self>) {
-        let binding = match &self.selected {
+        let binding = match self.selected.as_ref() {
             None => Binding::default(),
             Some(thread) => {
                 let id = text(thread, "id");
