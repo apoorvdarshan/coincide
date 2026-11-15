@@ -29,6 +29,14 @@ pub use stream_fade::TextViewMotion;
 pub use style::*;
 pub use text_view::*;
 
+/// Parse Markdown with the default TextView configuration and return the same
+/// plain text used by selection and range highlights. This needs no UI entity,
+/// so large documents can be indexed away from the window thread.
+pub fn markdown_plain_text(source: &str) -> Result<String, SharedString> {
+    let mut context = node::NodeContext::default();
+    Ok(format::markdown::parse(source, &mut context)?.text())
+}
+
 pub(crate) fn init(cx: &mut App) {
     inline::init(cx);
     state::init(cx);

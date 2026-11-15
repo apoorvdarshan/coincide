@@ -13,13 +13,26 @@ fn query_text(value: &str) -> String {
 }
 /// Lowercase scalar expansion retains original UTF-8 byte boundaries. This is
 /// Unicode lowercase matching, not accent folding, regex, or full case folding.
-fn match_ranges(text: &str, query: &str, limit: usize) -> (Vec<Range<usize>>, bool) {
+pub(super) fn match_ranges(text: &str, query: &str, limit: usize) -> (Vec<Range<usize>>, bool) {
     if query.is_empty() {
         return (Vec::new(), false);
     }
     let needle = query.to_lowercase();
     if needle.is_empty() {
         return (Vec::new(), false);
+    }
+    // ASCII keeps byte offsets when lowercased, so avoid allocating one span
+    // per character for the common case in long transcripts.
+    if text.is_ascii() && needle.is_ascii() {
+        let folded = text.to_ascii_lowercase();
+        let mut matches = Vec::new();
+        for (start, found) in folded.match_indices(&needle) {
+            if matches.len() == limit {
+                return (matches, true);
+            }
+            matches.push(start..start + found.len());
+        }
+        return (matches, false);
     }
     let mut folded = String::new();
     let mut spans = Vec::new();
@@ -51,9 +64,9 @@ fn match_ranges(text: &str, query: &str, limit: usize) -> (Vec<Range<usize>>, bo
     (result, false)
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct Match {
-    item: String,
-    range: Range<usize>,
+pub(super) struct Match {
+    pub(super) item: String,
+    pub(super) range: Range<usize>,
 }
 #[derive(Default)]
 struct Search {
@@ -142,13 +155,14 @@ use std::{
     cell::Cell,
     collections::{HashMap, HashSet},
     rc::Rc,
+    sync::Arc,
     time::Duration,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FindItem {
     pub item_id: String,
-    pub source: String,
+    pub source: Arc<str>,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FindSnapshot {
@@ -177,12 +191,7 @@ fn validate_snapshot(s: &FindSnapshot) -> Result<()> {
         !s.thread_id.is_empty() && s.thread_id.len() <= 512 && !s.thread_id.contains('\0'),
         "Invalid find thread ID"
     );
-    ensure!(
-        s.items.len() <= 2000,
-        "Find supports at most 2000 full messages"
-    );
     let mut ids = HashSet::new();
-    let mut bytes = 0usize;
     for item in &s.items {
         ensure!(
             !item.item_id.is_empty()
@@ -190,17 +199,6 @@ fn validate_snapshot(s: &FindSnapshot) -> Result<()> {
                 && !item.item_id.contains('\0')
                 && ids.insert(&item.item_id),
             "Invalid/duplicate find item ID"
-        );
-        ensure!(
-            item.source.len() <= 2 * 1024 * 1024,
-            "Find message exceeds 2 MiB"
-        );
-        bytes = bytes
-            .saturating_add(item.source.capacity())
-            .saturating_add(item.item_id.capacity());
-        ensure!(
-            bytes <= 16 * 1024 * 1024,
-            "Find full-source snapshot exceeds 16 MiB"
         );
     }
     Ok(())
@@ -264,7 +262,7 @@ impl FindProjection {
 }
 struct NativeItem {
     id: String,
-    source: String,
+    source: Arc<str>,
     state: Entity<TextViewState>,
     rendered: Option<RenderedText>,
     applied: Rc<Cell<bool>>,
@@ -274,6 +272,7 @@ pub struct TranscriptFind {
     thread: Option<String>,
     generation: u64,
     items: Vec<NativeItem>,
+    large: Option<super::transcript_find_large::LargeFind>,
     search: Search,
     input: Entity<InputState>,
     opened: bool,
@@ -324,8 +323,11 @@ impl TranscriptFind {
                     .await;
                 if this
                     .update(cx, |this, cx| {
-                        if this.opened && this.dirty {
-                            this.rescan(false, false, cx);
+                        if this.opened {
+                            this.poll_large(cx);
+                            if this.dirty {
+                                this.rescan(false, false, cx);
+                            }
                         }
                     })
                     .is_err()
@@ -338,6 +340,7 @@ impl TranscriptFind {
             thread: None,
             generation: 0,
             items: Vec::new(),
+            large: None,
             search: Search::default(),
             input,
             opened: false,
@@ -367,17 +370,28 @@ impl TranscriptFind {
                 "Find snapshot generation moved backwards"
             );
             if s.generation == self.generation {
-                ensure!(
+                let same_items = if let Some(large) = &self.large {
+                    s.items == large.items
+                } else {
                     s.items.len() == self.items.len()
                         && s.items
                             .iter()
                             .zip(&self.items)
-                            .all(|(a, b)| a.item_id == b.id && a.source == b.source),
-                    "Find source changed without a new generation"
-                );
+                            .all(|(a, b)| a.item_id == b.id && a.source == b.source)
+                };
+                ensure!(same_items, "Find source changed without a new generation");
                 return Ok(());
             }
         }
+        let same_thread = self.thread.as_deref() == Some(s.thread_id.as_str());
+        let large = (same_thread && self.large.is_some())
+            || s.items.len() > 1024
+            || s.items.iter().map(|item| item.source.len()).sum::<usize>() > 4 * 1024 * 1024;
+        if large {
+            self.install_large(s, same_thread, cx);
+            return Ok(());
+        }
+        self.large = None;
         self.invalidate();
         let same = self.thread.as_deref() == Some(s.thread_id.as_str());
         if !same {
@@ -402,8 +416,8 @@ impl TranscriptFind {
         for item in s.items {
             if let Some(mut native) = old.remove(&item.item_id) {
                 if native.source != item.source {
-                    let appended =
-                        !native.source.is_empty() && item.source.starts_with(&native.source);
+                    let appended = !native.source.is_empty()
+                        && item.source.starts_with(native.source.as_ref());
                     native.state.update(cx, |state, cx| {
                         if !appended {
                             state.clear_selection(cx);
@@ -481,6 +495,7 @@ impl TranscriptFind {
             item.state
                 .update(cx, |state, cx| state.clear_range_highlights(cx));
         }
+        self.large = None;
         if let Some(focus) = self.restore.take() {
             focus.focus(window, cx);
         }
@@ -599,15 +614,178 @@ impl TranscriptFind {
         }
         cx.notify();
     }
+    fn install_large(&mut self, snapshot: FindSnapshot, same: bool, cx: &mut Context<Self>) {
+        self.invalidate();
+        if !same {
+            self.search.matches.clear();
+            self.search.active = None;
+            self.search.truncated = false;
+        }
+        let mut large = if same {
+            if let Some(mut existing) = self.large.take() {
+                existing.replace(snapshot.items);
+                existing
+            } else {
+                super::transcript_find_large::LargeFind::new(snapshot.items)
+            }
+        } else {
+            self.large = None;
+            super::transcript_find_large::LargeFind::new(snapshot.items)
+        };
+        self.items.retain(|item| {
+            let keep = large
+                .source(&item.id)
+                .is_some_and(|source| *source == item.source);
+            if !keep {
+                item.state
+                    .update(cx, |state, cx| state.clear_range_highlights(cx));
+            }
+            keep
+        });
+        self.thread = Some(snapshot.thread_id);
+        self.generation = snapshot.generation;
+        large.start_index(cx);
+        self.large = Some(large);
+        self.dirty = true;
+    }
+    /// Only the selected match gets a native text entity. The complete index is
+    /// plain text off the window thread, so 25,000 messages don't create 25,000
+    /// live Markdown views merely because Find opened.
+    fn large_active_ready(&mut self, cx: &mut Context<Self>) -> (bool, bool) {
+        let Some(selected) = self.search.selected() else {
+            let changed = !self.items.is_empty();
+            self.items.clear();
+            return (true, changed);
+        };
+        let id = selected.item.clone();
+        let Some((source, plain)) = self
+            .large
+            .as_ref()
+            .and_then(|large| Some((large.source(&id)?.clone(), large.plain(&id)?.to_owned())))
+        else {
+            return (false, false);
+        };
+        let replace = self
+            .items
+            .first()
+            .is_none_or(|item| item.id != id || item.source != source);
+        if replace {
+            for item in &self.items {
+                item.state
+                    .update(cx, |state, cx| state.clear_range_highlights(cx));
+            }
+            let state = cx.new(|cx| TextViewState::markdown(&source, cx).selectable(true));
+            let observer = cx.observe(&state, |this, _, cx| {
+                this.dirty = true;
+                cx.notify();
+            });
+            self.items = vec![NativeItem {
+                id,
+                source,
+                state,
+                rendered: None,
+                applied: Rc::new(Cell::new(false)),
+                _observer: observer,
+            }];
+        }
+        let item = &mut self.items[0];
+        let rendered = item.state.read(cx).rendered_text();
+        if rendered.source() != item.source.as_ref() {
+            return (false, false);
+        }
+        if rendered.as_str() != plain {
+            self.error = "This message could not be highlighted. Try searching again.".into();
+            return (false, false);
+        }
+        let changed = item.rendered.as_ref() != Some(&rendered);
+        item.rendered = Some(rendered);
+        (true, changed || replace)
+    }
+    fn publish_large(&mut self, cx: &mut Context<Self>) {
+        if self.large_active_ready(cx).0 {
+            self.publish(cx);
+        } else {
+            cx.notify();
+        }
+    }
+    fn rescan_large(&mut self, force: bool, reset: bool, cx: &mut Context<Self>) {
+        if reset {
+            self.invalidate();
+            self.search.matches.clear();
+            self.search.active = None;
+            self.search.truncated = false;
+            self.per_item.clear();
+            for item in &self.items {
+                item.state
+                    .update(cx, |state, cx| state.clear_range_highlights(cx));
+            }
+            if let Some(large) = &mut self.large {
+                large.cancel_search();
+            }
+            if let Some(thread) = &self.thread {
+                cx.emit(FindEvent::Cleared {
+                    thread_id: thread.clone(),
+                    generation: self.generation,
+                    match_serial: self.serial,
+                });
+            }
+        }
+        if let Some(large) = &mut self.large {
+            large.start_index(cx);
+            if force || reset {
+                large.start_search(&self.search.query, cx);
+            }
+        }
+        let (ready, changed) = self.large_active_ready(cx);
+        if ready && changed && !reset {
+            self.publish(cx);
+        }
+        cx.notify();
+    }
+    fn poll_large(&mut self, cx: &mut Context<Self>) {
+        let Some(large) = &mut self.large else {
+            return;
+        };
+        if large.poll_index() {
+            large.start_index(cx);
+            large.start_search(&self.search.query, cx);
+            cx.notify();
+        }
+        let result = large.poll_search(&self.search.query);
+        if result.is_some() {
+            // If a response streamed during the scan, queue another pass over
+            // the new index while keeping results for unchanged messages usable.
+            large.start_search(&self.search.query, cx);
+        }
+        let error = large.error().unwrap_or_default().to_owned();
+        if self.error != error {
+            self.error = error;
+            cx.notify();
+        }
+        if let Some(result) = result {
+            let previous = self.search.selected().cloned();
+            self.search.matches = result.matches;
+            self.search.truncated = result.truncated;
+            self.search.active = previous
+                .and_then(|old| self.search.matches.iter().position(|m| m == &old))
+                .or_else(|| (!self.search.matches.is_empty()).then_some(0));
+            self.invalidate();
+            self.publish_large(cx);
+        }
+    }
     fn rescan(&mut self, force: bool, reset: bool, cx: &mut Context<Self>) {
         self.dirty = false;
         if !self.opened {
             return;
         }
+        if self.large.is_some() {
+            self.rescan_large(force, reset, cx);
+            return;
+        }
         let mut changed = false;
         for item in &mut self.items {
             let rendered = item.state.read(cx).rendered_text();
-            let ready = (rendered.source() == item.source).then_some(rendered);
+            let ready = (rendered.source() == item.source.as_ref()).then_some(rendered);
             if item.rendered != ready {
                 item.rendered = ready;
                 changed = true;
@@ -645,6 +823,14 @@ impl TranscriptFind {
         }
     }
     fn step(&mut self, next: bool, cx: &mut Context<Self>) {
+        if self.large.is_some() {
+            if self.opened && !self.search.matches.is_empty() {
+                self.search.step(next);
+                self.invalidate();
+                self.publish_large(cx);
+            }
+            return;
+        }
         if !self.opened || self.items.iter().any(|item| item.rendered.is_none()) {
             return;
         }
@@ -661,11 +847,16 @@ impl Render for TranscriptFind {
         if !self.opened {
             return div().into_any_element();
         }
-        let pending = self
-            .items
-            .iter()
-            .filter(|item| item.rendered.is_none())
-            .count();
+        let pending = self.large.as_ref().map_or_else(
+            || {
+                self.items
+                    .iter()
+                    .filter(|item| item.rendered.is_none())
+                    .count()
+            },
+            |large| large.pending(),
+        );
+        let searching = self.large.as_ref().is_some_and(|large| large.searching());
         let count = format!(
             "{} / {}{}{}",
             self.search.active.map_or(0, |i| i + 1),
@@ -677,6 +868,8 @@ impl Render for TranscriptFind {
             },
             if pending > 0 {
                 format!(" · indexing {pending} messages")
+            } else if searching {
+                " · searching…".to_owned()
             } else {
                 String::new()
             }
@@ -707,13 +900,19 @@ impl Render for TranscriptFind {
                     .child(
                         Button::new("find-previous")
                             .label("Previous")
-                            .disabled(self.search.matches.is_empty() || pending > 0)
+                            .disabled(
+                                self.search.matches.is_empty()
+                                    || (self.large.is_none() && pending > 0),
+                            )
                             .on_click(cx.listener(|this, _, _, cx| this.step(false, cx))),
                     )
                     .child(
                         Button::new("find-next")
                             .label("Next")
-                            .disabled(self.search.matches.is_empty() || pending > 0)
+                            .disabled(
+                                self.search.matches.is_empty()
+                                    || (self.large.is_none() && pending > 0),
+                            )
                             .on_click(cx.listener(|this, _, _, cx| this.step(true, cx))),
                     )
                     .child(
@@ -726,6 +925,10 @@ impl Render for TranscriptFind {
             .into_any_element()
     }
 }
+
+#[cfg(test)]
+#[path = "transcript_find_large_ui_tests.rs"]
+mod large_ui_tests;
 
 #[cfg(test)]
 mod tests {
@@ -875,7 +1078,7 @@ mod tests {
         assert!(consume_reveal(&epoch, 10, &next));
     }
     #[::core::prelude::v1::test]
-    fn duplicate_ids_and_source_bounds_are_rejected_without_native_state_work() {
+    fn duplicate_ids_are_rejected_and_long_snapshots_are_accepted() {
         let make = |items| FindSnapshot {
             thread_id: "thread".into(),
             generation: 1,
@@ -884,10 +1087,10 @@ mod tests {
         validate_snapshot(&make(vec![item("a", "**source**"), item("b", "source")])).unwrap();
         assert!(validate_snapshot(&make(vec![item("a", "first"), item("a", "second")])).is_err());
         assert!(
-            validate_snapshot(&make(vec![item("a", &"x".repeat(2 * 1024 * 1024 + 1))])).is_err()
+            validate_snapshot(&make(vec![item("a", &"x".repeat(2 * 1024 * 1024 + 1))])).is_ok()
         );
         let entries = (0..2001).map(|i| item(&i.to_string(), "body")).collect();
-        assert!(validate_snapshot(&make(entries)).is_err());
+        assert!(validate_snapshot(&make(entries)).is_ok());
     }
     #[::core::prelude::v1::test]
     fn global_match_cap_includes_later_messages_without_false_exact_count() {
