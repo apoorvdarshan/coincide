@@ -557,8 +557,17 @@ impl Editor {
     }
 }
 pub enum BotSettingsEvent {
-    Saved { bot_id: String },
-    ConversationCreated { thread_id: String },
+    Saved {
+        bot_id: String,
+        bot: Value,
+        baseline: String,
+        created: bool,
+        close_editor: bool,
+    },
+    ConversationCreated {
+        thread_id: String,
+    },
+    Closed,
 }
 pub struct BotSettingsPanel {
     workers: WorkerOwner,
@@ -573,6 +582,10 @@ pub struct BotSettingsPanel {
     pending_write: bool,
     pending_conversation: bool,
     choosing_folder: bool,
+    /// A sidebar sheet has its own editor and never shares a draft with Settings.
+    standalone: bool,
+    /// A requested new or existing bot, opened after the asynchronous list load.
+    pending_open: Option<Option<String>>,
     notice: String,
     tx: mpsc::Sender<(u64, Result<Outcome>)>,
     rx: mpsc::Receiver<(u64, Result<Outcome>)>,
@@ -601,6 +614,14 @@ impl BotSettingsPanel {
         self.workers.status()
     }
     pub fn new(engine: SharedEngine, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::build(engine, window, cx, true)
+    }
+    fn build(
+        engine: SharedEngine,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        load_list: bool,
+    ) -> Self {
         let (tx, rx) = mpsc::channel();
         let owner_window = window.window_handle();
         let poll = cx.spawn_in(window, async move |this, cx| {
@@ -633,13 +654,76 @@ impl BotSettingsPanel {
             pending_write: false,
             pending_conversation: false,
             choosing_folder: false,
+            standalone: false,
+            pending_open: None,
             notice: String::new(),
             tx,
             rx,
             _poll: poll,
         };
-        panel.start(Action::List, cx);
+        if load_list {
+            panel.start(Action::List, cx);
+        }
         panel
+    }
+    pub(super) fn new_sheet(
+        engine: SharedEngine,
+        bot_id: Option<String>,
+        cached_bots: Vec<Value>,
+        cached_baseline: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut panel = Self::build(engine, window, cx, false);
+        panel.standalone = true;
+        let valid_baseline = cached_baseline.len() == 64
+            && cached_baseline.bytes().all(|byte| byte.is_ascii_hexdigit());
+        let cached_bot = bot_id.as_ref().and_then(|id| {
+            cached_bots
+                .iter()
+                .find(|bot| {
+                    bot["id"].as_str().is_some_and(|stored| {
+                        stored.eq_ignore_ascii_case(id) && uuid::Uuid::parse_str(stored).is_ok()
+                    })
+                })
+                .cloned()
+        });
+        if valid_baseline && (bot_id.is_none() || cached_bot.is_some()) {
+            panel.bots = cached_bots;
+            panel.baseline = Some(cached_baseline.clone());
+            if let (Some(id), Some(bot)) = (bot_id, cached_bot) {
+                panel.selected = Some(id.clone());
+                panel.editors.insert(
+                    id,
+                    Editor::new(
+                        Bound {
+                            bot,
+                            baseline: cached_baseline,
+                            // This is only an editor label; Save compares the baseline
+                            // against the actual document before writing.
+                            origin: "local".into(),
+                        },
+                        None,
+                        window,
+                        cx,
+                    ),
+                );
+            } else {
+                panel.create(window, cx);
+            }
+            if let Some(editor) = panel.selected.as_ref().and_then(|id| panel.editors.get(id)) {
+                editor.name.update(cx, |input, cx| input.focus(window, cx));
+            }
+        } else {
+            panel.pending_open = Some(bot_id);
+            panel.start(Action::List, cx);
+        }
+        panel
+    }
+    pub(super) fn refresh_list(&mut self, cx: &mut Context<Self>) {
+        if !self.busy {
+            self.start(Action::List, cx);
+        }
     }
     fn start(&mut self, action: Action, cx: &mut Context<Self>) {
         if self.busy || !self.workers.can_start() {
@@ -749,14 +833,21 @@ impl BotSettingsPanel {
     }
     /// Swift's Cancel: closes the editor without saving, dropping its draft.
     fn cancel(&mut self, cx: &mut Context<Self>) {
-        let Some(key) = self.selected.take() else {
+        // A write already admitted to the worker must finish before the sheet
+        // closes, so a saved bot can never be silently lost from the sidebar.
+        if self.pending_write || self.choosing_folder {
             return;
-        };
-        if self.pending_key.as_deref() != Some(key.as_str()) {
+        }
+        if let Some(key) = self.selected.take()
+            && self.pending_key.as_deref() != Some(key.as_str())
+        {
             self.editors.remove(&key);
         }
         self.generation = self.generation.wrapping_add(1);
         self.notice = "Closed without saving.".into();
+        if self.standalone {
+            cx.emit(BotSettingsEvent::Closed);
+        }
         cx.notify();
     }
     fn editor_mut(&mut self) -> Option<&mut Editor> {
@@ -856,6 +947,24 @@ impl BotSettingsPanel {
             self.discard_shutdown_results();
             return;
         }
+        if !self.busy
+            && self.baseline.is_some()
+            && self.pending_open.is_some()
+            && self.workers.can_start()
+        {
+            let target = self
+                .pending_open
+                .take()
+                .expect("pending target was checked");
+            if let Some(id) = target {
+                self.select(id, cx);
+            } else {
+                self.create(window, cx);
+                if let Some(editor) = self.editors.get(NEW) {
+                    editor.name.update(cx, |input, cx| input.focus(window, cx));
+                }
+            }
+        }
         let Ok((generation, result)) = self.rx.try_recv() else {
             return;
         };
@@ -885,6 +994,12 @@ impl BotSettingsPanel {
                     self.editors
                         .insert(id, Editor::new(bound, None, window, cx));
                     self.notice = "Edit this bot, then Save.".into();
+                    if self.standalone
+                        && let Some(editor) =
+                            self.selected.as_ref().and_then(|id| self.editors.get(id))
+                    {
+                        editor.name.update(cx, |input, cx| input.focus(window, cx));
+                    }
                 }
             }
             Ok(Outcome::Read(_)) => {
@@ -898,6 +1013,10 @@ impl BotSettingsPanel {
             }
             Ok(Outcome::Saved(write, bound)) => {
                 let id = bound.bot["id"].as_str().unwrap_or_default().to_owned();
+                let created = write.id.is_none();
+                let saved_bot = bound.bot.clone();
+                let saved_baseline = bound.baseline.clone();
+                let mut still_dirty = false;
                 self.baseline = Some(bound.baseline.clone());
                 if let Some(mut editor) = self.editors.remove(&write.key) {
                     // Normalize server-trimmed fields only if no text changed while saving.
@@ -920,6 +1039,7 @@ impl BotSettingsPanel {
                     }
                     editor.bound = bound.clone();
                     editor.blocked = false;
+                    still_dirty = editor.fields(cx) != Fields::from_bot(&bound.bot);
                     self.editors.insert(id.clone(), editor);
                 }
                 if self.selected.as_deref() == Some(write.key.as_str()) {
@@ -935,7 +1055,13 @@ impl BotSettingsPanel {
                     self.bots.push(bound.bot);
                 }
                 self.notice="Saved bot settings. Any edits typed during Save remain in the draft. Existing conversation instruction snapshots stay unchanged.".into();
-                cx.emit(BotSettingsEvent::Saved { bot_id: id });
+                cx.emit(BotSettingsEvent::Saved {
+                    bot_id: id,
+                    bot: saved_bot,
+                    baseline: saved_baseline,
+                    created,
+                    close_editor: self.standalone && !still_dirty,
+                });
             }
             Err(error) => {
                 if was_write && let Some(editor) = key.and_then(|key| self.editors.get_mut(&key)) {
@@ -1173,16 +1299,18 @@ impl BotSettingsPanel {
             .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 this.key(event, window, cx)
             }))
-            .child(
-                div()
-                    .text_lg()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(if new { "New Bot" } else { "Edit Bot" }),
-            )
-            .child(hint(
-                "A bot is an ongoing conversation with its own personality and job. It runs on your agents like any thread.",
-                cx,
-            ))
+            .when(!self.standalone, |view| {
+                view.child(
+                    div()
+                        .text_lg()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(if new { "New Bot" } else { "Edit Bot" }),
+                )
+                .child(hint(
+                    "A bot is an ongoing conversation with its own personality and job. It runs on your agents like any thread.",
+                    cx,
+                ))
+            })
             .child(
                 div()
                     .mt_3()
@@ -1311,38 +1439,176 @@ impl BotSettingsPanel {
                 "Its conversations run here and can work with everything inside.",
                 cx,
             ))
+            .when(!self.standalone, |view| {
+                view.child(
+                    div()
+                        .mt_4()
+                        .flex()
+                        .justify_end()
+                        .gap_2()
+                        .child(
+                            Button::new("bots-cancel")
+                                .label("Cancel")
+                                .on_click(cx.listener(|this, _, _, cx| this.cancel(cx))),
+                        )
+                        .child(
+                            Button::new("bots-save")
+                                .label(if new { "Create Bot" } else { "Save" })
+                                .primary()
+                                .disabled(locked || !dirty || fields.name.trim().is_empty())
+                                .on_click(cx.listener(|this, _, _, cx| this.save(cx))),
+                        ),
+                )
+                .child(hint(
+                    format!(
+                        "{} Saved source: {}.",
+                        if dirty { "Unsaved draft." } else { "Matches saved settings." },
+                        editor.bound.origin
+                    ),
+                    cx,
+                ))
+            })
+            .into_any_element()
+    }
+
+    fn sheet(&self, cx: &mut Context<Self>) -> AnyElement {
+        let editor = self.selected.as_ref().and_then(|id| self.editors.get(id));
+        let new = editor.map_or_else(
+            || self.pending_open.as_ref().is_some_and(Option::is_none),
+            Editor::is_new,
+        );
+        let can_save = editor.is_some_and(|editor| {
+            let fields = editor.fields(cx);
+            !self.busy
+                && !editor.blocked
+                && !fields.name.trim().is_empty()
+                && (editor.is_new() || fields != Fields::from_bot(&editor.bound.bot))
+        });
+        let blocked = editor.is_some_and(|editor| editor.blocked);
+        let (border, muted, danger) = {
+            let theme = cx.theme();
+            (theme.border, theme.muted_foreground, theme.danger)
+        };
+        div()
+            .id("bot-editor-sheet")
+            .size_full()
+            .flex()
+            .flex_col()
+            .capture_key_down(
+                cx.listener(|this, event: &KeyDownEvent, window, cx| this.key(event, window, cx)),
+            )
             .child(
                 div()
-                    .mt_4()
-                    .flex()
-                    .justify_end()
-                    .gap_2()
+                    .flex_shrink_0()
+                    .px_5()
+                    .pt_4()
+                    .pb_3()
+                    .border_b_1()
+                    .border_color(border)
                     .child(
-                        Button::new("bots-cancel")
-                            .label("Cancel")
-                            .on_click(cx.listener(|this, _, _, cx| this.cancel(cx))),
+                        div()
+                            .text_lg()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(if new { "New Bot" } else { "Edit Bot" }),
                     )
                     .child(
-                        Button::new("bots-save")
-                            .label(if new { "Create Bot" } else { "Save" })
+                        div()
+                            .mt_1()
+                            .text_sm()
+                            .text_color(muted)
+                            .child("Give your bot a personality, a job, and a place to work."),
+                    ),
+            )
+            .child(
+                div()
+                    .id("bot-editor-sheet-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .px_5()
+                    .py_3()
+                    .when_some(editor, |body, editor| {
+                        body.child(self.editor_view(editor, cx))
+                    })
+                    .when(editor.is_none(), |body| {
+                        body.child(
+                            div()
+                                .py_4()
+                                .text_sm()
+                                .text_color(muted)
+                                .child(if self.busy {
+                                    "Loading bot…".to_owned()
+                                } else {
+                                    self.notice.clone()
+                                }),
+                        )
+                    })
+                    .when(blocked, |body| {
+                        body.child(
+                            div()
+                                .mt_3()
+                                .text_sm()
+                                .text_color(danger)
+                                .child(self.notice.clone()),
+                        )
+                        .child(
+                            Button::new("bot-sheet-reload")
+                                .label("Reload saved settings")
+                                .disabled(self.busy)
+                                .on_click(cx.listener(|this, _, _, cx| this.reload(cx))),
+                        )
+                    }),
+            )
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .gap_2()
+                    .px_5()
+                    .py_3()
+                    .border_t_1()
+                    .border_color(border)
+                    .child(
+                        Button::new("bot-sheet-cancel")
+                            .label("Cancel")
+                            .disabled(self.pending_write || self.choosing_folder)
+                            .on_click(cx.listener(|this, _, _, cx| this.cancel(cx))),
+                    )
+                    .when(editor.is_none() && !self.busy, |footer| {
+                        footer.child(Button::new("bot-sheet-retry").label("Try again").on_click(
+                            cx.listener(|this, _, _, cx| {
+                                if this.selected.is_some() {
+                                    this.reload(cx);
+                                } else {
+                                    this.start(Action::List, cx);
+                                }
+                            }),
+                        ))
+                    })
+                    .child(
+                        Button::new("bot-sheet-save")
+                            .label(if self.pending_write {
+                                "Saving…"
+                            } else if new {
+                                "Create Bot"
+                            } else {
+                                "Save"
+                            })
                             .primary()
-                            .disabled(locked || !dirty || fields.name.trim().is_empty())
+                            .disabled(!can_save)
                             .on_click(cx.listener(|this, _, _, cx| this.save(cx))),
                     ),
             )
-            .child(hint(
-                format!(
-                    "{} Saved source: {}.",
-                    if dirty { "Unsaved draft." } else { "Matches saved settings." },
-                    editor.bound.origin
-                ),
-                cx,
-            ))
             .into_any_element()
     }
 }
 impl Render for BotSettingsPanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.standalone {
+            return self.sheet(cx);
+        }
         let mut pane=div().id("bot-settings-panel").size_full().flex().flex_col().gap_2().p_3()
             .child("Bots")
             .child("Save edits this bot locally. New conversation uses saved settings and never sends a message. Global instructions and existing conversation snapshots stay unchanged.")
@@ -1425,9 +1691,13 @@ impl Render for BotSettingsPanel {
                     saved.persona.chars().take(1500).collect::<String>()
                 ));
         }
-        pane.child(body)
+        pane.child(body).into_any_element()
     }
 }
+
+#[cfg(test)]
+#[path = "bot_editor_ui_tests.rs"]
+mod sheet_ui_tests;
 
 #[cfg(test)]
 mod tests {

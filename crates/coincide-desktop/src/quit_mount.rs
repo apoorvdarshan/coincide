@@ -193,6 +193,9 @@ impl Coincide {
             .update(cx, |panel, _| panel.request_shutdown());
         self.bot_panel
             .update(cx, |panel, _| panel.request_shutdown());
+        if let Some(panel) = &self.bot_editor_panel {
+            panel.update(cx, |panel, _| panel.request_shutdown());
+        }
         self.workspace_panel
             .update(cx, |panel, _| panel.request_shutdown());
         self.git_controls.request_shutdown();
@@ -277,7 +280,10 @@ impl Coincide {
             .as_mut()
             .is_none_or(|b| b.poll_shutdown().owners_drained() && b.cookie_import_drained());
         let media_ready = media.ready();
-        let workflows_ready = statuses.iter().all(workflow_drained);
+        let workflows_ready = statuses.iter().all(workflow_drained)
+            && self.bot_editor_panel.as_ref().is_none_or(|panel| {
+                workflow_drained(&panel.update(cx, |panel, _| panel.shutdown_status()))
+            });
         let github_ready = workflow_drained(&github.read)
             && github.actions.is_none_or(|s| s.ready())
             && github.writes.is_none_or(|s| s.ready());

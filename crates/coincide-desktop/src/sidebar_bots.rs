@@ -122,6 +122,29 @@ fn bot_folder(bot: &Value, home: Option<&std::path::Path>) -> String {
         None => folder.into(),
     }
 }
+/// A compact label for the folder the user explicitly chose. Home is the
+/// default and does not need a badge on every bot.
+fn bot_folder_name(bot: &Value) -> Option<String> {
+    let path = bot["folder"].as_str()?.trim();
+    if path.is_empty() || path == "~" {
+        return None;
+    }
+    let trimmed = path.trim_end_matches(['/', '\\']);
+    if trimmed.is_empty() {
+        return Some(path.to_owned());
+    }
+    trimmed.rsplit(['/', '\\']).next().map(str::to_owned)
+}
+
+fn folder_badge(bot: &Value, bot_name: &str) -> Option<String> {
+    let folder = bot_folder_name(bot)?;
+    // Many existing bots already include their folder in their chosen name.
+    // Avoid repeating it while still keeping the actual folder in the tooltip.
+    let repeated = bot_name
+        .rsplit_once(" - ")
+        .is_some_and(|(_, suffix)| suffix.trim().eq_ignore_ascii_case(&folder));
+    (!repeated).then_some(folder)
+}
 /// Swift's bot row tooltip: its name, personality, latest conversation, agent
 /// and model, folder and status.
 fn bot_tooltip(
@@ -153,17 +176,98 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_settings_panel(window, cx);
-        self.bots_open = true;
-        self.bot_panel.update(cx, |panel, cx| {
-            if let Some(id) = id {
-                panel.select(id, cx);
-            } else {
-                panel.create(window, cx);
-            }
+        if self.bot_editor_panel.is_some()
+            || self.media.close_requested
+            || self.media.shutdown_requested
+        {
+            return;
+        }
+        let engine = self.engine.clone();
+        let bots = self.sidebar_bots.clone();
+        let baseline = self.sidebar_bot_baseline.clone();
+        let panel = cx.new(|cx| {
+            bot_settings::BotSettingsPanel::new_sheet(engine, id, bots, baseline, window, cx)
         });
-        self.sync_transcription_binding(cx);
+        let subscription = cx.subscribe_in(&panel, window, |this, _, event, window, cx| {
+            match event {
+                bot_settings::BotSettingsEvent::Saved {
+                    bot_id,
+                    bot,
+                    baseline,
+                    created,
+                    close_editor,
+                } => {
+                    this.remember_saved_bot(bot.clone(), baseline.clone());
+                    this.bot_panel
+                        .update(cx, |panel, cx| panel.refresh_list(cx));
+                    if *close_editor {
+                        this.bot_editor_panel = None;
+                        this.bot_editor_subscription = None;
+                        // Swift opens the new bot's first empty conversation.
+                        if *created {
+                            this.sidebar_open_bot(bot_id.clone(), false, window, cx);
+                        }
+                    }
+                }
+                bot_settings::BotSettingsEvent::Closed => {
+                    this.bot_editor_panel = None;
+                    this.bot_editor_subscription = None;
+                }
+                bot_settings::BotSettingsEvent::ConversationCreated { .. } => {}
+            }
+            cx.notify();
+        });
+        self.bot_editor_panel = Some(panel);
+        self.bot_editor_subscription = Some(subscription);
         cx.notify();
+    }
+    pub(super) fn remember_saved_bot(&mut self, bot: Value, baseline: String) {
+        let id = text(&bot, "id");
+        if let Some(saved) = self.sidebar_bots.iter_mut().find(|saved| {
+            saved["id"]
+                .as_str()
+                .is_some_and(|stored| stored.eq_ignore_ascii_case(&id))
+        }) {
+            *saved = bot;
+        } else {
+            self.sidebar_bots.push(bot);
+        }
+        self.sidebar_bot_baseline = baseline;
+    }
+    pub(super) fn bot_editor_overlay(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let panel = self.bot_editor_panel.as_ref()?;
+        Some(
+            div()
+                .id("bot-editor-overlay")
+                .absolute()
+                .inset_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .p_4()
+                .bg(rgba(0x00000090))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|_, _, _, cx| cx.stop_propagation()),
+                )
+                .child(
+                    div()
+                        .id("bot-editor-dialog")
+                        .role(Role::Dialog)
+                        .aria_label("Bot editor")
+                        .w(px(560.))
+                        .h(px(720.))
+                        .max_w_full()
+                        .max_h_full()
+                        .overflow_hidden()
+                        .rounded(px(14.))
+                        .border_1()
+                        .border_color(cx.theme().border)
+                        .bg(cx.theme().background)
+                        .child(panel.clone()),
+                )
+                .into_any_element(),
+        )
     }
     pub(super) fn sidebar_open_bot(
         &mut self,
@@ -257,6 +361,9 @@ impl Coincide {
     fn sidebar_bot_matches(&self, bot: &Value, searching: bool, cx: &Context<Self>) -> bool {
         !searching
             || sidebar_search::terms_match(&text(bot, "name"), &self.search.read(cx).value())
+            || bot_folder_name(bot).is_some_and(|folder| {
+                sidebar_search::terms_match(&folder, &self.search.read(cx).value())
+            })
             || self.threads.iter().any(|thread| {
                 thread
                     .navigation
@@ -315,6 +422,7 @@ impl Coincide {
                 .filter(|name| !name.is_empty())
                 .unwrap_or("Bot")
                 .to_owned();
+            let folder = folder_badge(bot, &name);
             let preview = latest
                 .and_then(|thread| thread.navigation.as_ref()?.preview.clone())
                 .map(|preview| preview_text(&preview))
@@ -378,11 +486,18 @@ impl Coincide {
                 tooltip.push('\n');
                 tooltip.push_str(&active_schedules.join("\n"));
             }
-            let accessibility = [Some(name.as_str()), status, Some(preview.as_str())]
-                .into_iter()
-                .flatten()
-                .collect::<Vec<_>>()
-                .join(", ");
+            let folder_accessibility =
+                bot_folder_name(bot).map(|folder| format!("Folder: {folder}"));
+            let accessibility = [
+                Some(name.as_str()),
+                folder_accessibility.as_deref(),
+                status,
+                Some(preview.as_str()),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(", ");
             let ink = self.color(0xe4e9f2);
             let theme = cx.theme();
             let (danger, success) = (theme.danger, theme.success);
@@ -469,16 +584,32 @@ impl Coincide {
                                                     .gap_1()
                                                     .child(
                                                         div()
+                                                            .flex()
+                                                            .items_center()
+                                                            .gap_1()
                                                             .flex_1()
                                                             .min_w_0()
-                                                            .truncate()
-                                                            .text_size(px(13.))
-                                                            .font_weight(if unseen.is_some() {
-                                                                FontWeight::SEMIBOLD
-                                                            } else {
-                                                                FontWeight::MEDIUM
-                                                            })
-                                                            .child(name),
+                                                            .child(div()
+                                                                .min_w_0()
+                                                                .truncate()
+                                                                .text_size(px(13.))
+                                                                .font_weight(if unseen.is_some() {
+                                                                    FontWeight::SEMIBOLD
+                                                                } else {
+                                                                    FontWeight::MEDIUM
+                                                                })
+                                                                .child(name))
+                                                            .when_some(folder, |row, folder| row.child(
+                                                                div()
+                                                                    .flex()
+                                                                    .items_center()
+                                                                    .gap(px(3.))
+                                                                    .min_w_0()
+                                                                    .max_w(px(105.))
+                                                                    .text_color(ink.opacity(0.58))
+                                                                    .child(Icon::new(IconName::Folder).size(px(11.)))
+                                                                    .child(div().min_w_0().truncate().text_size(px(11.)).child(folder))
+                                                            )),
                                                     )
                                                     .child(
                                                         div()
@@ -723,6 +854,29 @@ mod tests {
         assert_eq!(
             bot_folder(&json!({"folder":"/Users/fixture"}), Some(home)),
             "~"
+        );
+    }
+    #[::core::prelude::v1::test]
+    fn sidebar_folder_labels_follow_the_saved_folder_without_repeating_the_name() {
+        assert_eq!(bot_folder_name(&json!({})), None);
+        assert_eq!(bot_folder_name(&json!({"folder":"~"})), None);
+        assert_eq!(
+            bot_folder_name(&json!({"folder":"/Users/test/My Project/"})).as_deref(),
+            Some("My Project")
+        );
+        assert_eq!(
+            bot_folder_name(&json!({"folder":"C:\\work\\app\\"})).as_deref(),
+            Some("app")
+        );
+        let bot = json!({"folder":"/work/Verceltics"});
+        assert_eq!(
+            folder_badge(&bot, "Croissant").as_deref(),
+            Some("Verceltics")
+        );
+        assert_eq!(folder_badge(&bot, "Croissant - verceltics"), None);
+        assert_eq!(
+            folder_badge(&bot, "Verceltics helper").as_deref(),
+            Some("Verceltics")
         );
     }
     #[::core::prelude::v1::test]
