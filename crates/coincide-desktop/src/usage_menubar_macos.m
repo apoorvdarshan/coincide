@@ -466,6 +466,7 @@ static NSBox *UsageSeparator(CGFloat width) {
         if (tracked.length) [card addArrangedSubview:UsageLabel(tracked,10,NSFontWeightRegular,NSColor.secondaryLabelColor)];
         NSClickGestureRecognizer *openCard = [[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(openUsage:)];
         [card addGestureRecognizer:openCard];
+        [card setAccessibilityElement:YES];
         [card setAccessibilityRole:NSAccessibilityButtonRole];
         [card setAccessibilityLabel:[NSString stringWithFormat:@"%@ usage", UsageString(account[@"title"])]];
         [accountList addArrangedSubview:card];
