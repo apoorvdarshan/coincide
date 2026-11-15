@@ -154,6 +154,7 @@ struct Shared {
     adapter: Adapter,
     seen: Arc<SeenBus>,
     usage: Arc<Mutex<Vec<super::protocol::RemoteUsage>>>,
+    sidebar_revision: Arc<AtomicU64>,
     /// Lets a fixture isolate a request from the background engine poll while
     /// still exercising real TLS sockets and the separate busy-engine path.
     #[cfg(test)]
@@ -186,6 +187,7 @@ impl Shared {
             server_info: &info,
             seen: &self.seen,
             usage: &self.usage,
+            sidebar_revision: &self.sidebar_revision,
         })
     }
 
@@ -237,6 +239,7 @@ pub struct RemoteServer {
     running: Option<(Arc<Shared>, Option<Advertisement>)>,
     seen: Arc<SeenBus>,
     usage: Arc<Mutex<Vec<super::protocol::RemoteUsage>>>,
+    sidebar_revision: Arc<AtomicU64>,
 }
 
 impl RemoteServer {
@@ -267,6 +270,7 @@ impl RemoteServer {
             running: None,
             seen: Arc::new(SeenBus::default()),
             usage: Arc::new(Mutex::new(Vec::new())),
+            sidebar_revision: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -276,6 +280,10 @@ impl RemoteServer {
         if let Ok(mut current) = self.usage.lock() {
             *current = usage;
         }
+    }
+
+    pub fn sidebar_revision(&self) -> u64 {
+        self.sidebar_revision.load(Ordering::Acquire)
     }
 
     /// A Mac selection clears the matching phone notifications too.
@@ -358,6 +366,7 @@ impl RemoteServer {
             adapter: Adapter::new(self.engine.clone(), self.app_version.clone()),
             seen: self.seen.clone(),
             usage: self.usage.clone(),
+            sidebar_revision: self.sidebar_revision.clone(),
             #[cfg(test)]
             watch_gate: Mutex::new(()),
             sessions: Mutex::new(HashMap::new()),

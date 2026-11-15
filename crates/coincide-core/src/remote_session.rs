@@ -16,7 +16,10 @@ use serde_json::{Value, json};
 use std::{
     collections::{HashMap, hash_map::DefaultHasher},
     hash::{Hash, Hasher},
-    sync::Mutex,
+    sync::{
+        Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 use uuid::Uuid;
@@ -39,6 +42,7 @@ pub struct Context<'a> {
     pub server_info: &'a dyn Fn() -> ServerInfo,
     pub seen: &'a SeenBus,
     pub usage: &'a Mutex<Vec<protocol::RemoteUsage>>,
+    pub sidebar_revision: &'a AtomicU64,
 }
 
 /// Coalesced seen events. Each connected phone has its own cursor, and the
@@ -408,6 +412,12 @@ impl Session {
             }
             Request::ThreadAction { thread_id, action } => {
                 adapter.perform(thread_id, &action)?;
+                if matches!(
+                    action,
+                    protocol::ThreadAction::MarkUnread | protocol::ThreadAction::Settle(_)
+                ) {
+                    context.sidebar_revision.fetch_add(1, Ordering::Release);
+                }
                 self.respond(id, "ok", None);
             }
             Request::UsageLimits => {

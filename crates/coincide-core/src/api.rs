@@ -1725,9 +1725,15 @@ impl Engine {
     pub(crate) fn remote_running_provider(&self, id: &str) -> Option<&str> {
         self.runs.get(id).map(|run| run.provider.as_str())
     }
+    /// A Remote settle/archive cannot hide a run or an uncommitted follow-up.
+    pub(crate) fn remote_thread_idle(&self, id: &str) -> bool {
+        !self.runs.contains_key(id)
+            && !self.unsaved_threads.contains_key(id)
+            && !self.native_follow_up.pending_thread(id)
+    }
+
     /// Whether Remote can use its text-steering route for this exact run.
-    /// The provider and configuration that started the run remain authoritative
-    /// even if the user has since changed the conversation's selection.
+    /// The run's provider and configuration remain authoritative.
     pub(crate) fn remote_can_steer(&self, id: &str, thread: &Value) -> bool {
         let Some(run) = self.runs.get(id) else {
             return false;
@@ -3554,3 +3560,7 @@ mod usage_capture_engine_tests;
 #[cfg(test)]
 #[path = "composer_policy_api_tests.rs"]
 mod composer_policy_api_tests;
+
+#[cfg(test)]
+#[path = "remote_marker_tests.rs"]
+mod remote_marker_tests;

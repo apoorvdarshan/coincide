@@ -18,8 +18,8 @@ workers. Address discovery uses bounded child process capture.
 Implemented protocol paths include workspace, transcripts/pagination, live
 item/turn updates, image and text send/queue, Codex image steering, private
 image thumbnails/full previews for managed Rust attachments, approval/question responses, new
-threads, rename/pin/archive/snooze, stop, device presence, and marking a thread
-seen. Marking a thread seen clears its Mac alerts and informs connected phones;
+threads, rename/pin/archive/snooze, unread and settle/unsettle, stop, device
+presence, and marking a thread seen. Marking a thread seen clears its Mac alerts and informs connected phones;
 an active phone's visible thread also counts as seen. Requests use the existing
 Engine gates. Disconnected phones do not receive lock-screen clears.
 
@@ -30,7 +30,7 @@ accept up to 10 images, up to 20 MiB each and 24 MiB total before normalization;
 previews currently cover managed Rust attachments, not every Swift-era or
 assistant media type. Images that cannot be steered are queued.
 
-Remaining behavior gaps include mark-unread and settle/move/delete actions,
+Remaining behavior gaps include move/delete actions,
 steer-queued, dismiss-question, show-thread, and the richer usage dashboard.
 Unsupported commands return errors. Bonjour advertisement is implemented for macOS and Linux; Windows
 uses pairing-code addresses. CloudKit phone alerts are not implemented.

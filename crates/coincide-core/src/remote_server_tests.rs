@@ -521,6 +521,104 @@ fn authenticated_phone_can_preview_only_the_image_referenced_by_its_item() {
 }
 
 #[test]
+fn phone_unread_and_settle_update_sidebar_without_overwriting_other_markers() {
+    let mut fixture = fixture();
+    let other = Uuid::new_v4().to_string().to_uppercase();
+    {
+        let mut engine = fixture.engine.lock().unwrap();
+        engine
+            .store
+            .save_document(
+                "ui-state.json",
+                &json!({
+                    "unseen": {(fixture.thread.to_lowercase()): "failed", (&other): "failed"},
+                    "settledThreads": {(&other): 42.0}, "future": {"keep": true}
+                }),
+            )
+            .unwrap();
+    }
+    fixture.server.set_enabled(true);
+    let (mut phone, _, _) = pair(&mut fixture);
+    let shared = fixture.server.running.as_ref().unwrap().0.clone();
+    let _watch_gate = shared.watch_gate.lock().unwrap();
+    request(
+        &mut phone,
+        "unread",
+        "threadAction",
+        Some(json!({"threadID":fixture.thread,"action":{"action":"markUnread"}})),
+    );
+    assert_eq!(reply(&mut phone, "unread")["type"], "ok");
+    assert_eq!(fixture.server.sidebar_revision(), 1);
+    request(
+        &mut phone,
+        "settle",
+        "threadAction",
+        Some(json!({"threadID":fixture.thread,"action":{"action":"settle","value":true}})),
+    );
+    assert_eq!(reply(&mut phone, "settle")["type"], "ok");
+    assert_eq!(fixture.server.sidebar_revision(), 2);
+    request(&mut phone, "workspace-marked", "workspace", None);
+    let workspace = reply(&mut phone, "workspace-marked");
+    let row = workspace["body"]["threads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == fixture.thread)
+        .unwrap();
+    assert_eq!(row["unseen"], "completed");
+    assert_eq!(row["isSettled"], true);
+    assert_eq!(row["isHidden"], true);
+    let saved = fixture
+        .engine
+        .lock()
+        .unwrap()
+        .store
+        .document("ui-state.json")
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved["future"]["keep"], true);
+    assert_eq!(saved["unseen"][&other], "failed");
+    assert_eq!(saved["settledThreads"][&other], 42.0);
+    assert!(saved["unseen"].get(fixture.thread.to_lowercase()).is_none());
+    // New activity after settling makes the thread visible again.
+    {
+        let mut engine = fixture.engine.lock().unwrap();
+        let mut thread = engine.store.thread(&fixture.thread).unwrap();
+        thread["updatedAt"] =
+            json!(saved["settledThreads"][&fixture.thread].as_f64().unwrap() + 60.0);
+        engine.store.save(&thread).unwrap();
+    }
+    request(&mut phone, "workspace-new-activity", "workspace", None);
+    let active = reply(&mut phone, "workspace-new-activity");
+    let row = active["body"]["threads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == fixture.thread)
+        .unwrap();
+    assert_eq!(row["isSettled"], false);
+    assert_eq!(row["isHidden"], false);
+    request(
+        &mut phone,
+        "unsettle",
+        "threadAction",
+        Some(json!({"threadID":fixture.thread,"action":{"action":"settle","value":false}})),
+    );
+    assert_eq!(reply(&mut phone, "unsettle")["type"], "ok");
+    request(&mut phone, "workspace-unsettled", "workspace", None);
+    let workspace = reply(&mut phone, "workspace-unsettled");
+    let row = workspace["body"]["threads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == fixture.thread)
+        .unwrap();
+    assert_eq!(row["isSettled"], false);
+    assert_eq!(row["isHidden"], false);
+    assert_eq!(fixture.server.sidebar_revision(), 3);
+}
+
+#[test]
 fn pairing_then_hello_drives_the_workspace_and_open_threads() {
     let mut fixture = fixture();
     fixture.server.set_enabled(true);

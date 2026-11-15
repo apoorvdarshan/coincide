@@ -3810,7 +3810,15 @@ impl Coincide {
         self.poll_git_controls(window, cx);
         self.open_target_children
             .retain_mut(|child| matches!(child.try_wait(), Ok(None)));
+        let remote_sidebar_revision = self.remote_panel.read(cx).pending_sidebar_revision();
+        if remote_sidebar_revision.is_some() {
+            self.sidebar_preferences.pending = true;
+        }
         if self.sidebar_preferences.retry(&self.engine) {
+            if let Some(revision) = remote_sidebar_revision {
+                self.remote_panel
+                    .update(cx, |panel, _| panel.acknowledge_sidebar_revision(revision));
+            }
             self.show_archived = self.sidebar_preferences.flag("showsArchivedThreads");
             self.show_snoozed = self.sidebar_preferences.flag("showsSnoozedThreads");
             self.refresh(cx);
