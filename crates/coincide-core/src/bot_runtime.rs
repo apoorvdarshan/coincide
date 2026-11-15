@@ -79,10 +79,7 @@ fn selection(bot: &Value) -> Result<Value> {
         )),
         "Bot selection contains unsupported options"
     );
-    ensure!(
-        matches!(required(selection, "provider")?, "codex" | "claude"),
-        "Bot runtime supports Codex/Claude only"
-    );
+    crate::agent::Provider::from_name(required(selection, "provider")?)?;
     let model = required(selection, "modelID")?;
     ensure!(
         !model.is_empty()
@@ -99,15 +96,14 @@ fn selection(bot: &Value) -> Result<Value> {
     );
     ensure!(
         matches!(bot["accessMode"].as_str(), Some("approval" | "fullAccess"))
-            && bot["interactionMode"] == "build",
-        "Bot runtime requires a saved access mode and Build"
+            && (bot["interactionMode"] == "build"
+                || (bot["interactionMode"] == "plan" && selection["provider"] == "codex")),
+        "Unsupported bot access or interaction mode"
     );
-    // Swift bots may save an effort or speed; a bot conversation always starts
-    // at the provider default. Keep the provider and model, drop the rest.
-    Ok(json!({
-        "provider": required(selection, "provider")?,
-        "modelID": model,
-    }))
+    crate::composer_selection::validate_selection(selection)?;
+    // Preserve the user's saved model options. Execution still requires the
+    // same private model-catalog proof as an ordinary conversation.
+    Ok(selection.clone())
 }
 fn cwd(bot: &Value, home: &Path) -> Result<PathBuf> {
     ensure!(home.is_absolute(), "Home directory is not absolute");
@@ -180,6 +176,74 @@ fn instructions(bot: &Value, name: &str, persona: &str) -> Result<String> {
     Ok(text)
 }
 
+/// Prepare an instruction snapshot for a pre-Rust bot conversation. This is
+/// read-only: the caller must atomically compare the bot and conversation
+/// before granting local authority. Existing thread options and history are
+/// deliberately not replaced with the bot's current defaults.
+pub(crate) fn existing_context(
+    store: &Store,
+    thread: &Value,
+    directory: &Path,
+) -> Result<(Option<Value>, Value)> {
+    ensure!(
+        thread["rustBotContext"].is_null(),
+        "Bot context already exists"
+    );
+    ensure!(
+        !store.is_imported(required(thread, "id")?)?,
+        "Imported conversations remain read-only"
+    );
+    let stored_id = required(thread, "botID")?;
+    let bot_id = Uuid::parse_str(stored_id).context("Invalid bot identity")?;
+    let (source, envelope, baseline) = snapshot(store)?;
+    let bot = envelope["bots"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|bot| bot["id"].as_str().and_then(|id| Uuid::parse_str(id).ok()) == Some(bot_id))
+        .context("This conversation's bot is no longer available")?;
+    let name = required(bot, "name")?.trim();
+    ensure!(
+        !name.is_empty() && name.chars().count() <= 200 && !name.chars().any(char::is_control),
+        "Invalid bot name"
+    );
+    let persona = required(bot, "persona")?;
+    ensure!(
+        persona.chars().count() <= 20_000 && !persona.contains('\0'),
+        "Invalid bot persona"
+    );
+    ensure!(
+        directory.is_absolute() && directory.is_dir(),
+        "Bot folder is unavailable"
+    );
+    let directory = directory.canonicalize()?;
+    let directory = directory.to_str().context("Bot directory is not UTF-8")?;
+    let selection = thread["selection"].clone();
+    crate::composer_selection::validate_selection(&selection)?;
+    let provider = required(&selection, "provider")?;
+    ensure!(
+        crate::composer_selection::default_account(&selection["accountID"]),
+        "Alternate bot accounts are not yet connected"
+    );
+    let instructions = instructions(bot, name, persona)?;
+    Ok((
+        source,
+        json!({"version":1,"botId":stored_id,"sourceBaseline":baseline,
+        "provider":provider,"selection":selection,"accessMode":thread["accessMode"],
+        "cwd":directory,"name":name,"persona":persona,"instructions":instructions}),
+    ))
+}
+
+/// Providers without a standing-instructions channel receive the same context
+/// as a delimited prompt block, matching the Swift bot behavior. It is runtime
+/// context only; the user's stored message is never modified.
+pub(crate) fn inline_instructions(instructions: &str) -> String {
+    let body = instructions.replace("</bot_instructions>", "</bot-instructions>");
+    format!(
+        "<bot_instructions>\nStanding instructions for this whole conversation, set by the user in Coincide. Follow them in every reply. They are context, not a request; the user's message comes after the closing tag.\n\n{body}\n</bot_instructions>\n\n"
+    )
+}
+
 pub fn create(store: &mut Store, params: &Value) -> Result<Value> {
     let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
         .context("Home directory is unavailable")?;
@@ -229,10 +293,11 @@ fn create_with_home(store: &mut Store, params: &Value, home: &Path) -> Result<Va
     let id = Uuid::new_v4().to_string().to_uppercase();
     let now = swift_timestamp();
     let access_mode = required(bot, "accessMode")?.to_owned();
+    let interaction_mode = required(bot, "interactionMode")?.to_owned();
     let context = json!({"version":1,"botId":stored_id,"sourceBaseline":baseline,"provider":provider,"selection":selection.clone(),"accessMode":access_mode.clone(),
         "cwd":cwd,"name":name,"persona":persona,"instructions":instructions});
     let thread = json!({"id":id,"projectID":BOTS_PROJECT_ID,"botID":stored_id,"title":"New conversation",
-        "selection":selection,"worktreePath":cwd,"accessMode":access_mode,"interactionMode":"build",
+        "selection":selection,"worktreePath":cwd,"accessMode":access_mode,"interactionMode":interaction_mode,
         "createdAt":now,"updatedAt":now,"isPinned":false,"isArchived":false,"items":[],"sessions":{},
         "accountSessions":{},"draft":"","rustMessageQueue":[],"rustDraftImages":[],"rustBotContext":context});
     store.create_bot_thread_if_unchanged(source.as_ref(), &thread)?;
@@ -320,7 +385,7 @@ mod tests {
         store.save_document("bots.json", &next).unwrap();
         assert!(create_with_home(&mut store, &stale, &home).is_err());
         for (field, invalid) in [
-            ("provider", json!("grok")),
+            ("provider", json!("unsupported")),
             ("accountID", json!("paid-alternate")),
             ("serviceTier", json!("priority")),
             ("modelID", json!("--flag")),
@@ -331,7 +396,10 @@ mod tests {
             let p = params(&store);
             assert!(create_with_home(&mut store, &p, &home).is_err(), "{field}");
         }
-        for (field, invalid) in [("accessMode", "unknownMode"), ("interactionMode", "plan")] {
+        for (field, invalid) in [
+            ("accessMode", "unknownMode"),
+            ("interactionMode", "unknownMode"),
+        ] {
             let mut next = value.clone();
             next["bots"][0][field] = json!(invalid);
             store.save_document("bots.json", &next).unwrap();
@@ -339,8 +407,8 @@ mod tests {
             assert!(create_with_home(&mut store, &p, &home).is_err());
         }
         assert!(store.summaries("", true).unwrap().is_empty());
-        // A Swift bot may save effort and speed; the conversation it starts
-        // keeps only the provider and model.
+        // A Swift bot's saved options remain selected. Launch must still obtain
+        // the normal model-catalog proof for these choices.
         let mut next = value.clone();
         next["bots"][0]["selection"]["effort"] = json!("xhigh");
         next["bots"][0]["selection"]["speed"] = json!("priority");
@@ -349,7 +417,7 @@ mod tests {
         let created = create_with_home(&mut store, &p, &home).unwrap();
         assert_eq!(
             created["selection"],
-            json!({"provider":"codex","modelID":"default"})
+            json!({"provider":"codex","modelID":"default","effort":"xhigh","speed":"priority"})
         );
         let thread = store.thread(created["threadId"].as_str().unwrap()).unwrap();
         assert_eq!(thread["selection"], created["selection"]);
@@ -363,6 +431,17 @@ mod tests {
         let thread = store.thread(created["threadId"].as_str().unwrap()).unwrap();
         assert_eq!(thread["accessMode"], "fullAccess");
         assert_eq!(thread["rustBotContext"]["accessMode"], "fullAccess");
+
+        let mut next = value.clone();
+        next["bots"][0]["selection"]["modelID"] = json!("fixture-model");
+        next["bots"][0]["interactionMode"] = json!("plan");
+        store.save_document("bots.json", &next).unwrap();
+        let p = params(&store);
+        let created = create_with_home(&mut store, &p, &home).unwrap();
+        assert_eq!(
+            store.thread(created["threadId"].as_str().unwrap()).unwrap()["interactionMode"],
+            "plan"
+        );
     }
     #[test]
     fn helper_compares_envelope_in_transaction_and_rolls_back_cache_failure() {
@@ -485,12 +564,7 @@ mod tests {
             let p = params(&store);
             let result = create_with_home(&mut store, &p, &home).unwrap();
             let thread = store.thread(result["threadId"].as_str().unwrap()).unwrap();
-            // Every default alias becomes the provider default account, and the
-            // conversation starts without a saved effort or speed.
-            let expected = json!({
-                "provider": document["bots"][0]["selection"]["provider"],
-                "modelID": document["bots"][0]["selection"]["modelID"],
-            });
+            let expected = document["bots"][0]["selection"].clone();
             assert_eq!(thread["selection"], expected);
             assert_eq!(thread["rustBotContext"]["selection"], expected);
         }

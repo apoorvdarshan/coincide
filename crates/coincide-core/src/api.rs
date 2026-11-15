@@ -951,8 +951,11 @@ impl Engine {
                 if let Some(id) = p.get("threadId") {
                     let id = id.as_str().context("threadId must be text")?;
                     let thread = self.store.thread(id)?;
-                    result["nativeAccountSelectionAllowed"]=json!(self.native_account_choice_available(&thread));
-                    if codex_profile_models_api::named_thread(&thread) {
+                    let is_bot = !thread["rustBotContext"].is_null() || !thread["botID"].is_null();
+                    let policy_view = if is_bot { self.bot_validation_view(&thread).map(Some) } else { Ok(None) };
+                    let policy_thread = policy_view.as_ref().ok().and_then(Option::as_ref).unwrap_or(&thread);
+                    result["nativeAccountSelectionAllowed"]=json!(!is_bot && self.native_account_choice_available(&thread));
+                    if !is_bot && codex_profile_models_api::named_thread(&thread) {
                         let mut named = self.codex_profile_model_capabilities(&thread);
                         self.apply_provider_preferences(&mut named)?;
                         return Ok(named);
@@ -963,8 +966,8 @@ impl Engine {
                     }
                     let reason = if let Err(error) = self.require_provider_enabled(text(&thread["selection"], "provider").as_str()) {
                         Some(error.to_string())
-                    } else if !thread["rustBotContext"].is_null() {
-                        Some("Bot selection is fixed for this conversation; create a new bot conversation".to_owned())
+                    } else if let Err(error) = &policy_view {
+                        Some(error.to_string())
                     } else if self.store.is_imported(id)? {
                         Some("Fork an imported thread before changing its provider".to_owned())
                     } else if self.runs.contains_key(id) {
@@ -972,9 +975,9 @@ impl Engine {
                     } else if self.unsaved_threads.contains_key(id) {
                         Some("Transcript persistence is recovering; retry after recovery".to_owned())
                     } else {
-                        self.composer_thread_effort_proof(&thread).and_then(|proof| crate::composer_selection::validate_thread_with_proof(&thread,proof.as_ref())).err().map(|error|error.to_string())
+                        self.composer_thread_effort_proof(policy_thread).and_then(|proof| crate::composer_selection::validate_thread_with_proof(policy_thread,proof.as_ref())).err().map(|error|error.to_string())
                     };
-                    if thread["rustBotContext"].is_null() && thread["botID"].is_null() && !self.store.is_imported(id)?
+                    if policy_view.is_ok() && !self.store.is_imported(id)?
                         && let Some(provider) = result["providers"].as_array_mut().and_then(|providers|providers.iter_mut().find(|provider|provider["provider"] == "codex")) {
                         provider["effort"] = self.composer_effort_capability(&thread["selection"]);
                         provider["speed"] = self.composer_speed_capability(&thread["selection"]);
@@ -984,8 +987,7 @@ impl Engine {
                     // provider with effort levels is never left unconnected.
                     let effort_provider = thread["selection"]["provider"].clone();
                     if effort_provider != "codex"
-                        && thread["rustBotContext"].is_null()
-                        && thread["botID"].is_null()
+                        && policy_view.is_ok()
                         && !self.store.is_imported(id)?
                         && let Some((choices, reported)) = self.model_catalog.reported_efforts(&thread["selection"])
                         && let Some(provider) = result["providers"].as_array_mut().and_then(|providers| providers.iter_mut().find(|provider| provider["provider"] == effort_provider))
@@ -996,24 +998,24 @@ impl Engine {
                     }
                     // A repair capability is separate from the locked/proof state.
                     // It permits only removing effort, never sending unproved work.
-                    result["repairClearAvailable"] = json!(!self.admissions_frozen() && thread["rustBotContext"].is_null()
-                        && thread["botID"].is_null() && !self.store.is_imported(id)?
+                    result["repairClearAvailable"] = json!(!self.admissions_frozen() && policy_view.is_ok()
+                        && !self.store.is_imported(id)?
                         && !self.runs.contains_key(id) && !self.unsaved_threads.contains_key(id)
-                        && crate::composer_selection::repair_clear_effort(&json!({"threadId":id,"effort":null}),&thread).is_ok());
-                    result["repairSpeedClearAvailable"] = json!(!self.admissions_frozen() && thread["rustBotContext"].is_null()
-                        && thread["botID"].is_null() && !self.store.is_imported(id)?
+                        && crate::composer_selection::repair_clear_effort(&json!({"threadId":id,"effort":null}),policy_thread).is_ok());
+                    result["repairSpeedClearAvailable"] = json!(!self.admissions_frozen() && policy_view.is_ok()
+                        && !self.store.is_imported(id)?
                         && !self.runs.contains_key(id) && !self.unsaved_threads.contains_key(id)
-                        && crate::composer_selection::repair_clear_speed(&json!({"threadId":id,"speed":null}),&thread).is_ok());
-                    result["repairOptionsClearAvailable"] = json!(!self.admissions_frozen() && thread["rustBotContext"].is_null()
-                        && thread["botID"].is_null() && !self.store.is_imported(id)?
+                        && crate::composer_selection::repair_clear_speed(&json!({"threadId":id,"speed":null}),policy_thread).is_ok());
+                    result["repairOptionsClearAvailable"] = json!(!self.admissions_frozen() && policy_view.is_ok()
+                        && !self.store.is_imported(id)?
                         && !self.runs.contains_key(id) && !self.unsaved_threads.contains_key(id)
-                        && crate::composer_selection::repair_clear_options(&json!({"threadId":id,"effort":null,"speed":null}),&thread).is_ok());
+                        && crate::composer_selection::repair_clear_options(&json!({"threadId":id,"effort":null,"speed":null}),policy_thread).is_ok());
                     result["canReplaceUnprovedAutomaticDefault"] = json!(!self.admissions_frozen()
-                        && thread["rustBotContext"].is_null() && thread["botID"].is_null() && !self.store.is_imported(id)?
+                        && policy_view.is_ok() && !self.store.is_imported(id)?
                         && !self.runs.contains_key(id) && !self.unsaved_threads.contains_key(id)
                         && crate::model_catalog::astra_default_needed(&thread["selection"]) && thread["selection"]["speed"].is_null()
-                        && crate::composer_selection::validate_thread_base(&thread).is_ok()
-                        && self.composer_thread_effort_proof(&thread).is_err());
+                        && crate::composer_selection::validate_thread_base(policy_thread).is_ok()
+                        && self.composer_thread_effort_proof(policy_thread).is_err());
                     result["locked"] = json!(reason.is_some());
                     result["lockReason"] = json!(reason);
                 }
@@ -1030,11 +1032,16 @@ impl Engine {
                 ensure!(!self.unsaved_threads.contains_key(id),"Transcript persistence is recovering; retry after recovery");
                 ensure!(!self.runs.contains_key(id), "Stop the current turn before changing provider");
                 let mut v = self.store.thread(id)?;
-                let source = v.clone();
                 ensure!(!self.store.is_imported(id)?, "Fork an imported thread before changing its provider");
-                ensure!(v["rustBotContext"].is_null() && v["botID"].is_null(),"Bot selection is fixed for this conversation; create a new bot conversation");
+                self.authorize_existing_bot(&mut v)?;
+                let source = v.clone();
+                let mut policy_thread = self.bot_validation_view(&v)?;
+                let is_bot = !v["botID"].is_null();
+                if is_bot && p.get("provider").is_some() {
+                    ensure!(crate::composer_selection::default_account(&p["accountId"]), "Alternate bot accounts are not yet connected");
+                }
                 if p.get("effort").is_some_and(Value::is_null) && p.get("speed").is_some_and(Value::is_null)
-                    && let Ok(selection) = crate::composer_selection::repair_clear_options(p,&v)
+                    && let Ok(selection) = crate::composer_selection::repair_clear_options(p,&policy_thread)
                 {
                     v["selection"] = selection;
                     self.save_composer_choice(&source, &mut v, p)?; self.revision += 1;
@@ -1042,7 +1049,7 @@ impl Engine {
                     return Ok(v);
                 }
                 if p.get("effort").is_some_and(Value::is_null) && !v["selection"]["effort"].is_null()
-                    && let Ok(selection) = crate::composer_selection::repair_clear_effort(p,&v)
+                    && let Ok(selection) = crate::composer_selection::repair_clear_effort(p,&policy_thread)
                 {
                     // This exact one-field repair needs no provider/catalog IO.
                     v["selection"] = selection;
@@ -1051,23 +1058,27 @@ impl Engine {
                     return Ok(v);
                 }
                 if p.get("speed").is_some_and(Value::is_null) && !v["selection"]["speed"].is_null()
-                    && let Ok(selection) = crate::composer_selection::repair_clear_speed(p,&v)
+                    && let Ok(selection) = crate::composer_selection::repair_clear_speed(p,&policy_thread)
                 {
                     v["selection"] = selection;
                     self.save_composer_choice(&source, &mut v, p)?; self.revision += 1;
                     self.finish_staged_goal_selection(id);
                     return Ok(v);
                 }
-                let current_proof = self.composer_current_selection_proof(&v)?;
+                let current_proof = self.composer_current_selection_proof(&policy_thread)?;
                 let target_proof = self.composer_target_effort_proof(p)?;
-                let selection = crate::composer_selection::select_with_proofs(p, &v,current_proof.as_ref(),target_proof.as_ref())?;
+                let selection = crate::composer_selection::select_with_proofs(p, &policy_thread,current_proof.as_ref(),target_proof.as_ref())?;
                 if selection["provider"] == "antigravity" {
                     self.antigravity_selection(&selection)?;
                 }
                 if v["selection"]["provider"] != selection["provider"]
                     || v["selection"]["accountID"] != selection["accountID"] { self.park_named_departure(&v)?; }
+                policy_thread["selection"] = selection.clone();
+                crate::composer_selection::apply_modes_with_proof(p,&mut policy_thread,target_proof.as_ref())?;
                 v["selection"] = selection;
-                crate::composer_selection::apply_modes_with_proof(p,&mut v,target_proof.as_ref())?;
+                for field in ["accessMode", "interactionMode"] {
+                    if p.get(field).is_some() { v[field] = policy_thread[field].clone(); }
+                }
                 self.save_composer_choice(&source, &mut v, p)?; self.revision += 1;
                 self.finish_staged_goal_selection(id);
                 Ok(v)
@@ -1324,7 +1335,7 @@ impl Engine {
             );
             claim.validate(self.thread_bulk_owner, &id, prompt, &v)?;
         }
-        let original = if let SendOrigin::Queued(_) = origin {
+        let mut original = if let SendOrigin::Queued(_) = origin {
             Some(v.clone())
         } else if let Some(expected) = expected_scope {
             ensure!(
@@ -1335,6 +1346,15 @@ impl Engine {
         } else {
             None
         };
+        // Check any captured or queued scope before upgrading an older bot.
+        // The authorization transaction changes only the local context; use
+        // its resulting snapshot for the subsequent compare-and-save.
+        if !v["botID"].is_null() && v["rustBotContext"].is_null() {
+            self.authorize_existing_bot(&mut v)?;
+            if original.is_some() {
+                original = Some(v.clone());
+            }
+        }
         ensure!(
             p.get("context").is_none() && p.get("draftContext").is_none(),
             "Attach references through composer.context.edit before sending"
@@ -1368,10 +1388,11 @@ impl Engine {
             codex_profile.is_none() || !origin.scheduled(),
             "Named Codex profiles are not connected to scheduled dispatch"
         );
+        let bot_policy_view = self.bot_validation_view(&v)?;
         let validation_thread = if codex_profile.is_some() {
             crate::codex_login_profiles::validation_view(&v)
         } else {
-            v.clone()
+            bot_policy_view
         };
         // Named models require their own account/cwd-bound job. Never consult
         // the default-account effort catalog through the validation alias.
@@ -1439,7 +1460,7 @@ impl Engine {
         let cwd = self.working_directory(&v)?;
         ensure!(cwd.is_dir(), "Working directory does not exist");
         let bot_instructions = self.bot_instructions(&v, &cwd)?;
-        let mode_policy = if v["selection"]["provider"] == "codex" && bot_instructions.is_none() {
+        let mode_policy = if v["selection"]["provider"] == "codex" {
             Some(if let Some(policy) = named_policy {
                 policy
             } else {
@@ -1537,8 +1558,7 @@ impl Engine {
         let native_compact = matches!(provider.as_str(), "codex" | "opencode")
             && agent::codex_compact_command(prompt)
             && draft_images.is_empty()
-            && !crate::composer_context::has_context(&context)
-            && bot_instructions.is_none();
+            && !crate::composer_context::has_context(&context);
         ensure!(
             !native_compact || session.is_some(),
             "Start a provider conversation before compacting its context"
@@ -1583,6 +1603,15 @@ impl Engine {
         } else {
             0
         };
+        let inline_bot_context = if !matches!(provider.as_str(), "codex" | "claude")
+            && (session.is_none() || seen == 0)
+        {
+            bot_instructions
+                .as_deref()
+                .map(crate::bot_runtime::inline_instructions)
+        } else {
+            None
+        };
         let (outgoing, handoff_images) = if restore_paused_goal.is_some()
             || codex_goal
                 .as_ref()
@@ -1595,6 +1624,7 @@ impl Engine {
                 seen,
                 &runtime_prompt,
                 &draft_images,
+                inline_bot_context.as_deref(),
             )?
         };
         let images = handoff_images
@@ -1726,7 +1756,11 @@ impl Engine {
                         full_access,
                     },
                     images,
-                    bot_instructions,
+                    if matches!(provider.as_str(), "codex" | "claude") {
+                        bot_instructions
+                    } else {
+                        None
+                    },
                     mode_policy,
                     agent::LaunchOptions {
                         named: named_launch,
@@ -2316,17 +2350,26 @@ impl Engine {
         if let Some(path) = v["worktreePath"].as_str() {
             return Ok(PathBuf::from(path));
         }
-        self.store
-            .projects()?
-            .as_array()
-            .and_then(|projects| {
-                projects
-                    .iter()
-                    .find(|p| p["id"] == v["projectID"])
-                    .and_then(|p| p["path"].as_str())
-                    .map(PathBuf::from)
-            })
-            .context("Choose a project working directory first")
+        if let Some(path) = self.store.projects()?.as_array().and_then(|projects| {
+            projects
+                .iter()
+                .find(|p| p["id"] == v["projectID"])
+                .and_then(|p| p["path"].as_str())
+                .map(PathBuf::from)
+        }) {
+            return Ok(path);
+        }
+        if !v["botID"].is_null()
+            && let Some(path) = v["rustBotContext"]["cwd"].as_str()
+        {
+            return Ok(PathBuf::from(path));
+        }
+        if let Some(bot) = v["botID"].as_str().filter(|id| !id.is_empty())
+            && let Some(path) = self.store.bot_working_directory(bot)?
+        {
+            return Ok(path);
+        }
+        anyhow::bail!("Choose a project working directory first")
     }
     fn poll_workspace_completions(&mut self) {
         self.workspace_pending

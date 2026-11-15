@@ -17,6 +17,7 @@ pub(super) fn build(
     seen: usize,
     prompt: &str,
     draft_images: &[StoredImage],
+    prelude: Option<&str>,
 ) -> Result<(String, Vec<StoredImage>)> {
     ensure!(
         draft_images.len() <= MAX_IMAGES,
@@ -29,11 +30,16 @@ pub(super) fn build(
     ensure!(image_bytes <= MAX_IMAGE_BYTES, "Draft images exceed 20 MiB");
     // Reserve the disclosure even when it turns out not to be needed.
     let reserve = HEADER.len() + OMITTED.len() + CURRENT.len();
+    let prelude = prelude.unwrap_or("");
+    let required = prompt
+        .len()
+        .checked_add(prelude.len())
+        .context("Current message exceeds the handoff limit")?;
     ensure!(
-        prompt.len() <= MAX_TEXT.saturating_sub(reserve),
+        required <= MAX_TEXT.saturating_sub(reserve),
         "Current message exceeds the handoff limit"
     );
-    let mut budget = MAX_TEXT - reserve - prompt.len();
+    let mut budget = MAX_TEXT - reserve - required;
     let mut segments = Vec::new();
     let mut images = Vec::new();
     let mut omitted = false;
@@ -71,6 +77,7 @@ pub(super) fn build(
     segments.reverse();
     images.reverse();
     let mut outgoing = String::new();
+    outgoing.push_str(prelude);
     if !segments.is_empty() || omitted {
         outgoing.push_str(HEADER);
         if omitted {
@@ -111,7 +118,7 @@ mod tests {
             json!({"kind":"user","text":"x".repeat(MAX_TEXT)}),
             json!({"kind":"assistant","text":"recent"}),
         ];
-        let (text, images) = build(&items, 0, "current request", &[]).unwrap();
+        let (text, images) = build(&items, 0, "current request", &[], None).unwrap();
         assert!(text.contains(OMITTED));
         assert!(text.contains("assistant: recent"));
         assert!(text.ends_with("current request"));
@@ -123,10 +130,19 @@ mod tests {
         let items: Vec<_> = (0..25)
             .map(|i| json!({"kind":"user","text":i.to_string(),"rustImages":[image(i)]}))
             .collect();
-        let (text, images) = build(&items, 0, "current", &[image(100)]).unwrap();
+        let (text, images) = build(&items, 0, "current", &[image(100)], None).unwrap();
         assert!(text.contains(OMITTED));
         assert_eq!(images.len(), 20);
         assert_eq!(images.first().unwrap().id, "6");
         assert_eq!(images.last().unwrap().id, "100");
+    }
+
+    #[test]
+    fn bot_context_precedes_history_and_counts_toward_the_size_limit() {
+        let items = vec![json!({"kind":"user","text":"earlier"})];
+        let (text, _) = build(&items, 0, "current", &[], Some("bot context\n\n")).unwrap();
+        assert!(text.starts_with("bot context\n\nEarlier conversation context"));
+        assert!(text.ends_with("Current user request:\ncurrent"));
+        assert!(build(&items, 0, "current", &[], Some(&"x".repeat(MAX_TEXT))).is_err());
     }
 }
