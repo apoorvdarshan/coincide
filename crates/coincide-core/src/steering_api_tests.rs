@@ -151,6 +151,69 @@ fn remote_waits_for_steering_ack_and_never_requeues_unknown_delivery() {
         );
     }
 }
+
+#[test]
+fn remote_image_steering_delivers_only_after_ack_and_preserves_the_desktop_draft() {
+    use crate::remote::{
+        adapter::Adapter,
+        protocol::{Delivery, Image, SendRequest},
+    };
+    use std::{path::Path, sync::mpsc};
+    let (_dir, mut engine, id, mut server) = fixture();
+    let mut thread = engine.store.thread(&id).unwrap();
+    thread["draft"] = json!("separate desktop draft");
+    thread["draftContext"] = json!([{"id":Uuid::new_v4(),"kind":"quote","text":"desktop context"}]);
+    thread["rustDraftImages"] = json!([{"future":"desktop image stays"}]);
+    engine.store.save(&thread).unwrap();
+    let shared = Arc::new(Mutex::new(engine));
+    let adapter = Adapter::new(shared.clone(), "fixture");
+    let runs = adapter.runs().unwrap();
+    assert!(adapter.turn_state(&id, &thread, &runs).unwrap().can_steer);
+    let mut png = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::new_rgba8(2, 2)
+        .write_to(&mut png, image::ImageFormat::Png)
+        .unwrap();
+    let request = SendRequest {
+        thread_id: Uuid::parse_str(&id).unwrap(),
+        text: String::new(),
+        images: vec![Image {
+            name: "phone.png".into(),
+            data: png.into_inner(),
+        }],
+        delivery: Delivery::Automatic,
+    };
+    let (tx, rx) = mpsc::channel();
+    let worker = std::thread::spawn(move || tx.send(adapter.send(&request, &runs)).unwrap());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let sent = loop {
+        if let Some(sent) = server.next_request() {
+            break sent;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "image steering was not submitted"
+        );
+        std::thread::yield_now();
+    };
+    assert!(rx.try_recv().is_err());
+    let input = sent["params"]["input"].as_array().unwrap();
+    assert_eq!(input.len(), 1);
+    assert_eq!(input[0]["type"], "localImage");
+    assert!(Path::new(input[0]["path"].as_str().unwrap()).is_file());
+    assert!(server.response(&json!({"id":sent["id"],"result":{"turnId":"native-turn"}})));
+    assert_eq!(
+        rx.recv_timeout(Duration::from_secs(5)).unwrap().unwrap(),
+        "steered"
+    );
+    worker.join().unwrap();
+    let saved = shared.lock().unwrap().store.thread(&id).unwrap();
+    assert_eq!(saved["draft"], thread["draft"]);
+    assert_eq!(saved["draftContext"], thread["draftContext"]);
+    assert_eq!(saved["rustDraftImages"], thread["rustDraftImages"]);
+    let item = saved["items"].as_array().unwrap().last().unwrap();
+    assert_eq!(item["steered"], true);
+    assert_eq!(item["rustImages"].as_array().unwrap().len(), 1);
+}
 #[test]
 fn strict_identity_options_context_provider_and_frozen_guards_preserve_thread() {
     let (_dir, mut engine, id, _server) = fixture();

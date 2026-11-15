@@ -153,6 +153,7 @@ struct Shared {
     pairing: Mutex<Pairing>,
     adapter: Adapter,
     seen: Arc<SeenBus>,
+    usage: Arc<Mutex<Vec<super::protocol::RemoteUsage>>>,
     /// Lets a fixture isolate a request from the background engine poll while
     /// still exercising real TLS sockets and the separate busy-engine path.
     #[cfg(test)]
@@ -184,6 +185,7 @@ impl Shared {
             pairing: &self.pairing,
             server_info: &info,
             seen: &self.seen,
+            usage: &self.usage,
         })
     }
 
@@ -234,6 +236,7 @@ pub struct RemoteServer {
     storage_error: Option<String>,
     running: Option<(Arc<Shared>, Option<Advertisement>)>,
     seen: Arc<SeenBus>,
+    usage: Arc<Mutex<Vec<super::protocol::RemoteUsage>>>,
 }
 
 impl RemoteServer {
@@ -263,6 +266,15 @@ impl RemoteServer {
             storage_error: None,
             running: None,
             seen: Arc::new(SeenBus::default()),
+            usage: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    /// Publish presentation-only observations produced by the existing
+    /// background usage readers. No account credentials cross this boundary.
+    pub fn set_usage(&self, usage: Vec<super::protocol::RemoteUsage>) {
+        if let Ok(mut current) = self.usage.lock() {
+            *current = usage;
         }
     }
 
@@ -309,6 +321,7 @@ impl RemoteServer {
             self.start();
         } else {
             self.stop();
+            self.set_usage(Vec::new());
         }
     }
 
@@ -344,6 +357,7 @@ impl RemoteServer {
             pairing: Mutex::new(pairing),
             adapter: Adapter::new(self.engine.clone(), self.app_version.clone()),
             seen: self.seen.clone(),
+            usage: self.usage.clone(),
             #[cfg(test)]
             watch_gate: Mutex::new(()),
             sessions: Mutex::new(HashMap::new()),

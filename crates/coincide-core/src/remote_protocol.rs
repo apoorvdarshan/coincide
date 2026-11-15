@@ -268,6 +268,12 @@ pub enum Request {
         before_index: i64,
         limit: i64,
     },
+    Media {
+        thread_id: Uuid,
+        item_id: Uuid,
+        index: usize,
+        full: bool,
+    },
     MarkSeen {
         thread_id: Uuid,
     },
@@ -418,6 +424,18 @@ impl ClientMessage {
                 before_index: integer(fields.get("beforeIndex"))?
                     .ok_or_else(RemoteError::bad_request)?,
                 limit: integer(fields.get("limit"))?.unwrap_or(200),
+            },
+            "media" => Request::Media {
+                thread_id: thread()?,
+                item_id: item()?,
+                index: usize::try_from(
+                    integer(fields.get("index"))?.ok_or_else(RemoteError::bad_request)?,
+                )
+                .map_err(|_| RemoteError::bad_request())?,
+                full: match fields.get("full") {
+                    None | Some(Value::Null) => false,
+                    Some(value) => value.as_bool().ok_or_else(RemoteError::bad_request)?,
+                },
             },
             "markSeen" => Request::MarkSeen {
                 thread_id: thread()?,
@@ -802,6 +820,8 @@ pub struct Item {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attachments: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub media: Option<Vec<Media>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<Vec<String>>,
     pub steered: bool,
     pub is_clipped: bool,
@@ -810,6 +830,49 @@ pub struct Item {
     pub completed_at: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schedule_name: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Media {
+    pub index: usize,
+    pub kind: &'static str,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaData {
+    #[serde(with = "base64_data")]
+    pub data: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+    pub is_full: bool,
+}
+
+/// A provider account's reported plan windows, using the phone's legacy
+/// `usageLimits` response until the richer dashboard is supported.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteUsage {
+    pub provider: String,
+    pub provider_name: String,
+    #[serde(rename = "accountID")]
+    pub account_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_name: Option<String>,
+    pub windows: Vec<RemoteUsageWindow>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checked_at: Option<i64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteUsageWindow {
+    pub id: String,
+    pub label: String,
+    pub used_percent: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resets_at: Option<i64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -959,6 +1022,28 @@ mod tests {
         };
         assert_eq!(send.images[0].data, b"hi");
         assert_eq!(send.delivery, Delivery::Alternate);
+        let item = Uuid::new_v4();
+        let media = decode(json!({"v":1,"id":"preview","type":"media","body":{"threadID":thread,"itemID":item,"index":0}})).unwrap();
+        assert_eq!(
+            media.request,
+            Request::Media {
+                thread_id: Uuid::parse_str(thread).unwrap(),
+                item_id: item,
+                index: 0,
+                full: false
+            }
+        );
+        assert!(decode(json!({"v":1,"id":"bad","type":"media","body":{"threadID":thread,"itemID":item,"index":-1}})).is_err());
+        assert_eq!(
+            serde_json::to_value(MediaData {
+                data: b"hi".to_vec(),
+                width: 2,
+                height: 1,
+                is_full: false
+            })
+            .unwrap(),
+            json!({"data":"aGk=","width":2,"height":1,"isFull":false})
+        );
     }
 
     #[test]

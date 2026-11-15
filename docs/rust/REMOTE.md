@@ -16,21 +16,28 @@ and WebSocket handshakes. Disable/quit interrupts owned sockets before joining
 workers. Address discovery uses bounded child process capture.
 
 Implemented protocol paths include workspace, transcripts/pagination, live
-item/turn updates, text send/queue/steer, approval/question responses, new
+item/turn updates, image and text send/queue, Codex image steering, private
+image thumbnails/full previews for managed Rust attachments, approval/question responses, new
 threads, rename/pin/archive/snooze, stop, device presence, and marking a thread
 seen. Marking a thread seen clears its Mac alerts and informs connected phones;
 an active phone's visible thread also counts as seen. Requests use the existing
 Engine gates. Disconnected phones do not receive lock-screen clears.
 
-Remaining behavior gaps are explicit: remote image upload, usage-limit sharing,
-mark-unread and settle/move/delete actions, steer-queued, dismiss-question,
-and show-thread. Unsupported commands return errors; usage currently returns
-an empty list. Bonjour advertisement is implemented for macOS and Linux; Windows
+Remote's older usage view receives actual cached account windows for enabled
+providers, including their reset times. The richer usage dashboard is not yet
+implemented; the phone falls back to its older limits view. Image submissions
+accept up to 10 images, up to 20 MiB each and 24 MiB total before normalization;
+previews currently cover managed Rust attachments, not every Swift-era or
+assistant media type. Images that cannot be steered are queued.
+
+Remaining behavior gaps include mark-unread and settle/move/delete actions,
+steer-queued, dismiss-question, show-thread, and the richer usage dashboard.
+Unsupported commands return errors. Bonjour advertisement is implemented for macOS and Linux; Windows
 uses pairing-code addresses. CloudKit phone alerts are not implemented.
 
 Validation uses disposable data directories, an in-memory secret store, fixture
 Engine, and pinned-certificate loopback TLS clients. Tests cover pairing,
-authentication, workspace/transcripts, certificate reset, wrong pins, deadlines,
-and socket shutdown. These tests do not establish real iPhone pairing, OS secret
+authentication, workspace/transcripts, image previews, account-limit filtering,
+certificate reset, wrong pins, deadlines, and socket shutdown. These tests do not establish real iPhone pairing, OS secret
 store access, actual LAN/Bonjour/Tailscale reachability, or native settings UI
 acceptance. No personal account, microphone, or permission interaction is needed.

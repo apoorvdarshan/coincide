@@ -232,6 +232,56 @@ fn provider_boundary_fixture_child() {
     failed_send_persistence_never_launches_or_clears(&root.join("failed-save"));
     background_dispatch_keeps_unrelated_draft_context(&root.join("background"));
     remote_dispatch_keeps_unrelated_draft_context(&root.join("remote"));
+    remote_image_dispatch_keeps_unrelated_draft_context(&root.join("remote-image"));
+}
+
+#[cfg(unix)]
+fn remote_image_dispatch_keeps_unrelated_draft_context(root: &Path) {
+    let (mut engine, id) = fixture(root);
+    let mut thread = engine.store.thread(&id).unwrap();
+    thread["draftContext"] = json!([quote(13, "private desktop reference")]);
+    thread["rustDraftImages"] = json!([{"future":"desktop image stays"}]);
+    engine.store.save(&thread).unwrap();
+    let mut png = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::new_rgba8(2, 2)
+        .write_to(&mut png, image::ImageFormat::Png)
+        .unwrap();
+    let image = crate::attachments::ingest_image_bytes(
+        &engine.store.data_directory().unwrap(),
+        &png.into_inner(),
+        "phone.png",
+    )
+    .unwrap();
+    engine
+        .send_remote_submission(&thread, "phone photo", vec![image.clone()])
+        .unwrap();
+    let admitted = engine.store.thread(&id).unwrap();
+    assert_eq!(admitted["draft"], thread["draft"]);
+    assert_eq!(admitted["draftContext"], thread["draftContext"]);
+    assert_eq!(admitted["rustDraftImages"], thread["rustDraftImages"]);
+    let item = admitted["items"].as_array().unwrap().last().unwrap();
+    assert_eq!(item["text"], "phone photo");
+    assert_eq!(item["rustImages"][0]["id"], image.id);
+    wait_done(&mut engine);
+    let wire: Value = serde_json::from_str(
+        fs::read_to_string(root.join("prompts.jsonl"))
+            .unwrap()
+            .lines()
+            .next()
+            .unwrap(),
+    )
+    .unwrap();
+    let blocks = wire.as_array().unwrap();
+    assert!(blocks.iter().any(|block| {
+        block["type"] == "image"
+            && block["source"]["data"]
+                .as_str()
+                .is_some_and(|data| !data.is_empty())
+    }));
+    assert!(blocks.iter().any(|block| block["type"] == "text"
+        && block["text"].as_str().is_some_and(
+            |text| text.ends_with("phone photo") && !text.contains("private desktop reference")
+        )));
 }
 
 #[cfg(unix)]

@@ -64,7 +64,7 @@ impl Engine {
                 "draftContext":null,"rustDraftImages":[]});
             return self.steer_opencode_composer(&expected);
         }
-        self.begin_steering(p, None, None)
+        self.begin_steering(p, None, None, None)
     }
     pub(super) fn steer_owned_queue(
         &mut self,
@@ -75,10 +75,25 @@ impl Engine {
             &json!({"threadId":id,"text":claim.text()}),
             Some(claim),
             None,
+            None,
         )
     }
     pub(super) fn steer_native_composer(&mut self, expected: &Value) -> Result<Value> {
-        self.begin_steering(&json!({"threadId":required(expected,"id")?,"text":expected["draft"].as_str().unwrap_or_default()}), None, Some(expected))
+        self.begin_steering(&json!({"threadId":required(expected,"id")?,"text":expected["draft"].as_str().unwrap_or_default()}), None, Some(expected), None)
+    }
+    /// The paired phone owns this payload; the desktop draft is independent.
+    pub(crate) fn steer_remote_submission(
+        &mut self,
+        expected: &Value,
+        text: &str,
+        images: &[crate::attachments::StoredImage],
+    ) -> Result<Value> {
+        self.begin_steering(
+            &json!({"threadId":required(expected,"id")?,"text":text}),
+            None,
+            None,
+            Some((expected, images)),
+        )
     }
     /// OpenCode takes a steering prompt on its own session, so the message is
     /// delivered and persisted here in one bounded step instead of the Codex
@@ -182,6 +197,7 @@ impl Engine {
         p: &Value,
         queued: Option<&super::queue_dispatch::QueueClaim>,
         composer: Option<&Value>,
+        remote: Option<(&Value, &[crate::attachments::StoredImage])>,
     ) -> Result<Value> {
         self.require_admissions()?;
         let thread = required(p, "threadId")?;
@@ -205,7 +221,10 @@ impl Engine {
         let text = required(p, "text")?;
         ensure!(
             text.len() <= 1024 * 1024
-                && (!text.trim().is_empty() || queued.is_some() || composer.is_some()),
+                && (!text.trim().is_empty()
+                    || queued.is_some()
+                    || composer.is_some()
+                    || remote.is_some()),
             "Steering text must be nonempty and fit within 1 MiB"
         );
         let stored = self.store.thread(thread)?;
@@ -224,7 +243,24 @@ impl Engine {
                 "Composer changed before steering"
             );
         }
-        if queued.is_none() && composer.is_none() {
+        if let Some((expected, _)) = remote {
+            for key in [
+                "selection",
+                "projectID",
+                "projectPath",
+                "worktreePath",
+                "botID",
+                "rustBotContext",
+                "accessMode",
+                "interactionMode",
+            ] {
+                ensure!(
+                    stored[key] == expected[key],
+                    "Conversation context changed; send again after refreshing"
+                );
+            }
+        }
+        if queued.is_none() && composer.is_none() && remote.is_none() {
             for key in ["draftContext", "rustDraftImages"] {
                 ensure!(
                     stored[key].is_null() || stored[key].as_array().is_some_and(Vec::is_empty),
@@ -242,6 +278,8 @@ impl Engine {
         crate::composer_context::validate(&context)?;
         let images: Vec<crate::attachments::StoredImage> = if let Some(claim) = queued {
             claim.images().to_vec()
+        } else if let Some((_, images)) = remote {
+            images.to_vec()
         } else if composer.is_some() && !stored["rustDraftImages"].is_null() {
             serde_json::from_value(stored["rustDraftImages"].clone())
                 .context("Invalid draft images")?

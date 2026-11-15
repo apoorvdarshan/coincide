@@ -34,6 +34,8 @@ struct Bar {
     last_snapshot: Option<Value>,
     last_draw: Option<Instant>,
     cached: HashMap<(String, String), coincide_core::usage_limits::Limits>,
+    remote_enabled: bool,
+    remote_usage: Vec<coincide_core::remote::protocol::RemoteUsage>,
     account_revision: Option<u64>,
     pending_settings: VecDeque<(String, Value)>,
     closed: bool,
@@ -99,6 +101,8 @@ impl Bar {
             last_snapshot: None,
             last_draw: None,
             cached: HashMap::new(),
+            remote_enabled: false,
+            remote_usage: Vec::new(),
             account_revision: None,
             pending_settings: VecDeque::new(),
             closed: false,
@@ -108,6 +112,9 @@ impl Bar {
         self.settings["showsUsageInMenuBar"]
             .as_bool()
             .unwrap_or(true)
+    }
+    fn collecting(&self) -> bool {
+        self.visible() || self.remote_enabled
     }
     fn receive_settings(&mut self, settings: Value, now: Instant) {
         if self.settings != settings {
@@ -131,7 +138,7 @@ impl Bar {
         self.last_settings = Some(now);
     }
     fn refresh(&mut self, cx: &mut App, now: Instant) {
-        if self.closed || !self.visible() {
+        if self.closed || !self.collecting() {
             return;
         }
         self.last_refresh = Some(now);
@@ -158,11 +165,18 @@ impl Bar {
         running: bool,
         settings: Option<Value>,
         account_revision: Option<u64>,
+        remote_enabled: Option<bool>,
     ) -> bool {
         if self.closed {
             return false;
         }
         let now = Instant::now();
+        if let Some(enabled) = remote_enabled {
+            if enabled && !self.remote_enabled && !self.visible() {
+                self.last_refresh = None;
+            }
+            self.remote_enabled = enabled;
+        }
         if let Some(settings) = settings {
             self.receive_settings(settings, now);
         } else if self
@@ -196,7 +210,8 @@ impl Bar {
         }
         self.running = running;
         native::visible(self.visible());
-        if !self.visible() {
+        if !self.collecting() {
+            self.remote_usage.clear();
             return false;
         }
         if self.was_running && !running {
@@ -262,6 +277,7 @@ impl Bar {
                 self.cached.remove(&key);
             }
         }
+        self.remote_usage = usage_dashboard_ui::remote_usage(&cards);
         if changed
             || self
                 .last_draw
@@ -426,7 +442,7 @@ fn tick(cx: &mut App) -> bool {
     let root = cx
         .try_global::<MainWindow>()
         .and_then(|main| main.1.upgrade());
-    let (selected, running, settings, revision) = root
+    let (selected, running, settings, revision, remote_enabled) = root
         .as_ref()
         .map(|root| {
             let app = root.read(cx);
@@ -442,9 +458,10 @@ fn tick(cx: &mut App) -> bool {
                 running,
                 Some(app.settings.clone()),
                 Some(app.provider_configuration_panel.read(cx).account_revision()),
+                Some(app.remote_panel.read(cx).enabled()),
             )
         })
-        .unwrap_or((None, false, None, None));
+        .unwrap_or((None, false, None, None, None));
     let mut requests = Vec::new();
     let mut changed_settings = Vec::new();
     let usage_changed;
@@ -472,7 +489,14 @@ fn tick(cx: &mut App) -> bool {
         } else {
             None
         };
-        usage_changed = bar.tick(cx, selected, running, root_settings, revision);
+        usage_changed = bar.tick(
+            cx,
+            selected,
+            running,
+            root_settings,
+            revision,
+            remote_enabled,
+        );
     }
     for settings in changed_settings {
         with_window(cx, move |app, window, cx| {
@@ -528,7 +552,7 @@ pub fn refresh_for_usage(selected: Option<&Value>, cx: &mut App) -> bool {
     let Ok(mut bar) = state.try_borrow_mut() else {
         return false;
     };
-    if bar.closed || !bar.visible() {
+    if bar.closed || !bar.collecting() {
         return false;
     }
     if let Some(thread) = selected {
@@ -539,6 +563,12 @@ pub fn refresh_for_usage(selected: Option<&Value>, cx: &mut App) -> bool {
     bar.refresh(cx, Instant::now());
     bar.last_draw = None;
     true
+}
+
+pub fn remote_usage(cx: &App) -> Option<Vec<coincide_core::remote::protocol::RemoteUsage>> {
+    let state = cx.try_global::<GlobalBar>()?.0.clone();
+    let bar = state.try_borrow().ok()?;
+    Some(bar.remote_usage.clone())
 }
 
 /// The full Usage page may show the last exact-account observation collected

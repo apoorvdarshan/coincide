@@ -4,9 +4,10 @@
 //! desktop's own controls use. The engine stays the only source of truth; the
 //! adapter keeps only a cache of per-thread fields the sidebar summary needs.
 use super::protocol::{
-    Approval, ApprovalOption, Delivery, ErrorCode, Item, ItemPage, Project, Question,
-    QuestionOption, QuestionSet, QueuedMessage, RemoteError, Script, Selection, SendRequest,
-    ServerInfo, ThemeInfo, ThreadAction, ThreadSummary, Transcript, TurnState, Workspace,
+    Approval, ApprovalOption, Delivery, ErrorCode, Item, ItemPage, Media, MediaData, Project,
+    Question, QuestionOption, QuestionSet, QueuedMessage, RemoteError, Script, Selection,
+    SendRequest, ServerInfo, ThemeInfo, ThreadAction, ThreadSummary, Transcript, TurnState,
+    Workspace,
 };
 use crate::api::SharedEngine;
 use serde_json::{Value, json};
@@ -160,6 +161,19 @@ impl Adapter {
             ));
         }
         Ok(response["result"].clone())
+    }
+
+    pub(super) fn enabled_usage(
+        &self,
+        usage: Vec<super::protocol::RemoteUsage>,
+    ) -> Result<Vec<super::protocol::RemoteUsage>, RemoteError> {
+        let settings = self.call("settings.read", json!({}))?;
+        Ok(usage
+            .into_iter()
+            .filter(|row| {
+                crate::provider_preferences::enabled(&settings, &row.provider).unwrap_or(false)
+            })
+            .collect())
     }
 
     /// The engine's revision, polling it first so runs progress even while no
@@ -688,6 +702,68 @@ impl Adapter {
         })
     }
 
+    /// Read only an image referenced by this exact transcript item. The stored
+    /// attachment validates its managed UUID directory and bytes before use.
+    pub fn media(
+        &self,
+        thread: Uuid,
+        item: Uuid,
+        index: usize,
+        full: bool,
+    ) -> Result<MediaData, RemoteError> {
+        let (_, document) = self.document(thread)?;
+        let selected = referenced_media_item(&document, item).ok_or_else(|| {
+            RemoteError::new(ErrorCode::NotFound, "That preview is no longer available.")
+        })?;
+        let image = stored_item_images(selected)
+            .get(index)
+            .cloned()
+            .ok_or_else(|| {
+                RemoteError::new(ErrorCode::NotFound, "That preview is no longer available.")
+            })?;
+        let root = self.with_engine(|engine| engine.store.data_directory())?;
+        let prepared = image
+            .prepare_in(&root)
+            .map_err(|_| RemoteError::failed("The preview could not be loaded."))?;
+        let result = if full || image.width <= 480 && image.height <= 480 {
+            MediaData {
+                data: prepared.bytes().to_vec(),
+                width: image.width,
+                height: image.height,
+                is_full: full,
+            }
+        } else {
+            let pixels = image::load_from_memory(prepared.bytes())
+                .map_err(|_| RemoteError::failed("The preview could not be loaded."))?
+                .thumbnail(480, 480);
+            let (width, height) = (pixels.width(), pixels.height());
+            let mut data = std::io::Cursor::new(Vec::new());
+            pixels
+                .write_to(&mut data, image::ImageFormat::Png)
+                .map_err(|_| RemoteError::failed("The preview could not be loaded."))?;
+            MediaData {
+                data: data.into_inner(),
+                width,
+                height,
+                is_full: false,
+            }
+        };
+        let (_, latest) = self.document(thread)?;
+        let current = referenced_media_item(&latest, item)
+            .and_then(|item| stored_item_images(item).get(index).cloned())
+            .and_then(|current| serde_json::to_value(current).ok());
+        let still_referenced = current.as_ref().is_some_and(|current| {
+            serde_json::to_value(&image).is_ok_and(|expected| *current == expected)
+        });
+        if !still_referenced {
+            return Err(RemoteError::new(
+                ErrorCode::Conflict,
+                "That preview changed. Reopen the conversation.",
+            ));
+        }
+        Ok(result)
+    }
+
     /// Reads a thread for change tracking: its id, document and summary.
     pub fn snapshot(
         &self,
@@ -811,13 +887,90 @@ impl Adapter {
         f(&mut engine).map_err(|error| RemoteError::failed(error.to_string()))
     }
 
-    fn queue_remote_text(&self, thread: &Value, text: &str) -> Result<(), RemoteError> {
+    fn queue_remote_payload(
+        &self,
+        thread: &Value,
+        text: &str,
+        images: &[crate::attachments::StoredImage],
+    ) -> Result<(), RemoteError> {
         let mut captured = thread.clone();
         captured["draft"] = json!(text);
         captured["draftContext"] = Value::Null;
-        captured["rustDraftImages"] = json!([]);
+        captured["rustDraftImages"] =
+            serde_json::to_value(images).map_err(|e| RemoteError::failed(e.to_string()))?;
         self.with_engine(|engine| engine.queue_captured_native_send(&captured, false))?;
         Ok(())
+    }
+
+    fn import_remote_images(
+        &self,
+        request: &SendRequest,
+        document: &Value,
+    ) -> Result<Vec<crate::attachments::StoredImage>, RemoteError> {
+        if request.images.is_empty() {
+            return Ok(Vec::new());
+        }
+        if request.images.len() > 10
+            || request.images.iter().any(|image| {
+                image.data.is_empty()
+                    || image.data.len() as u64 > crate::attachments::MAX_SOURCE_BYTES
+            })
+            || request
+                .images
+                .iter()
+                .try_fold(0usize, |sum, image| sum.checked_add(image.data.len()))
+                .is_none_or(|bytes| bytes > 24 * 1024 * 1024)
+        {
+            return Err(RemoteError::new(
+                ErrorCode::BadRequest,
+                "Attach at most 10 images, each up to 20 MiB and 24 MiB combined.",
+            ));
+        }
+        let provider = crate::agent::Provider::from_name(
+            document["selection"]["provider"]
+                .as_str()
+                .unwrap_or_default(),
+        )
+        .map_err(|_| RemoteError::failed("The selected provider is unavailable."))?;
+        let root = self.with_engine(|engine| {
+            anyhow::ensure!(!engine.admissions_frozen(), "The computer is closing.");
+            engine.store.data_directory()
+        })?;
+        let names = request
+            .images
+            .iter()
+            .map(|image| {
+                let name = image
+                    .name
+                    .chars()
+                    .filter(|c| !c.is_control())
+                    .take(255)
+                    .collect::<String>();
+                if name.trim().is_empty() {
+                    "Image".to_owned()
+                } else {
+                    name
+                }
+            })
+            .collect::<Vec<_>>();
+        let sources = request
+            .images
+            .iter()
+            .zip(&names)
+            .map(|(image, name)| (image.data.as_slice(), name.as_str()))
+            .collect::<Vec<_>>();
+        crate::attachments::ingest_remote_batch(&root, &sources, |images| {
+            let prepared = images
+                .iter()
+                .map(|image| image.prepare_in(&root))
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            crate::agent::validate_images(&provider, &prepared)
+        })
+        .map_err(|_| {
+            RemoteError::failed(
+                "The images could not be imported. Check their format, size and available storage.",
+            )
+        })
     }
 
     /// Sends as the composer does: while a turn runs it steers or queues per the
@@ -831,14 +984,15 @@ impl Adapter {
                 "The message is empty.",
             ));
         }
-        if !request.images.is_empty() {
-            return Err(RemoteError::new(
-                ErrorCode::NotAllowed,
-                "This computer can’t take images from Coincide Remote yet. Send the text alone, or attach them on the computer.",
-            ));
-        }
+        let images = self.import_remote_images(request, &document)?;
         if !runs.running.contains(&upper(&id)) {
-            self.with_engine(|engine| engine.send_remote_text(&document, &request.text))?;
+            self.with_engine(|engine| {
+                if images.is_empty() {
+                    engine.send_remote_text(&document, &request.text)
+                } else {
+                    engine.send_remote_submission(&document, &request.text, images.clone())
+                }
+            })?;
             return Ok("sent");
         }
         let settings = self.call("settings.read", json!({})).unwrap_or_default();
@@ -863,14 +1017,22 @@ impl Adapter {
                 );
             }
         }
-        if steers && self.can_steer(&id, &document)? {
-            let started = self
-                .call("agent.steer", json!({"threadId":id,"text":request.text}))
-                .map_err(|_| {
-                    RemoteError::failed(
-                        "Steering could not be confirmed. Check the conversation before retrying.",
-                    )
-                })?;
+        if steers
+            && (images.is_empty() || document["selection"]["provider"] == "codex")
+            && self.can_steer(&id, &document)?
+        {
+            let started = if document["selection"]["provider"] == "codex" {
+                self.with_engine(|engine| {
+                    engine.steer_remote_submission(&document, &request.text, &images)
+                })
+            } else {
+                self.call("agent.steer", json!({"threadId":id,"text":request.text}))
+            }
+            .map_err(|_| {
+                RemoteError::failed(
+                    "Steering could not be confirmed. Check the conversation before retrying.",
+                )
+            })?;
             match confirm_steering(
                 started,
                 |operation| {
@@ -888,7 +1050,7 @@ impl Adapter {
                 SteeringReceipt::Rejected => {}
             }
         }
-        self.queue_remote_text(&document, &request.text)?;
+        self.queue_remote_payload(&document, &request.text, &images)?;
         Ok("queued")
     }
 
@@ -1027,6 +1189,28 @@ fn file_name(path: &str) -> String {
     path.rsplit(['/', '\\']).next().unwrap_or(path).to_owned()
 }
 
+fn stored_item_images(item: &Value) -> Vec<crate::attachments::StoredImage> {
+    if !matches!(item["kind"].as_str(), Some("user" | "assistant")) {
+        return Vec::new();
+    }
+    item["rustImages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .take(20)
+        .filter_map(|value| serde_json::from_value(value.clone()).ok())
+        .collect()
+}
+
+fn referenced_media_item(document: &Value, id: Uuid) -> Option<&Value> {
+    let mut matches = document["items"].as_array()?.iter().filter(|value| {
+        Uuid::parse_str(value["id"].as_str().unwrap_or_default()).ok() == Some(id)
+            && matches!(value["kind"].as_str(), Some("user" | "assistant"))
+    });
+    let selected = matches.next()?;
+    matches.next().is_none().then_some(selected)
+}
+
 /// An item as the phone draws it. Approval and question items keep their
 /// provider request as JSON text; they're turned into choices here, waiting
 /// while the request is still pending.
@@ -1132,6 +1316,18 @@ pub fn remote_item(item: &Value, index: usize, pending: &[PendingRequest]) -> It
             }
         }
     }
+    let images = stored_item_images(item);
+    let media = (!images.is_empty()).then(|| {
+        images
+            .iter()
+            .enumerate()
+            .map(|(index, image)| Media {
+                index,
+                kind: "image",
+                label: file_name(&image.original_name).chars().take(300).collect(),
+            })
+            .collect()
+    });
     Item {
         id: upper(item["id"].as_str().unwrap_or_default()),
         index,
@@ -1151,6 +1347,7 @@ pub fn remote_item(item: &Value, index: usize, pending: &[PendingRequest]) -> It
                 .map(file_name)
                 .collect()
         }),
+        media,
         context: item["context"].as_array().map(|list| {
             list.iter()
                 .filter_map(|c| c["summary"].as_str().or(c["title"].as_str()))
@@ -1269,7 +1466,7 @@ mod tests {
         let engine = std::sync::Arc::new(std::sync::Mutex::new(engine));
         let adapter = Adapter::new(engine.clone(), "fixture");
         adapter
-            .queue_remote_text(&thread, "phone follow-up")
+            .queue_remote_payload(&thread, "phone follow-up", &[])
             .unwrap();
         let stored = engine.lock().unwrap().store.thread(&id).unwrap();
         assert_eq!(stored["draft"], thread["draft"]);
@@ -1284,9 +1481,115 @@ mod tests {
         engine.lock().unwrap().store.save(&changed).unwrap();
         assert!(
             adapter
-                .queue_remote_text(&thread, "must not queue")
+                .queue_remote_payload(&thread, "must not queue", &[])
                 .is_err()
         );
         assert_eq!(engine.lock().unwrap().store.thread(&id).unwrap(), changed);
+    }
+
+    #[test]
+    fn remote_images_queue_for_every_provider_without_consuming_desktop_drafts() {
+        use crate::remote::protocol::Image;
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgba8(2, 2)
+            .write_to(&mut png, image::ImageFormat::Png)
+            .unwrap();
+        let png = png.into_inner();
+        for provider in [
+            "claude",
+            "codex",
+            "cursor",
+            "grok",
+            "opencode",
+            "antigravity",
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let mut engine = crate::api::Engine::fixture(
+                crate::store::Store::open(&directory.path().join("state.sqlite")).unwrap(),
+            );
+            let mut thread = engine.store.new_thread(NO_PROJECT).unwrap();
+            thread["selection"]["provider"] = json!(provider);
+            thread["draft"] = json!("desktop draft");
+            thread["draftContext"] =
+                json!([{"id":Uuid::new_v4(),"kind":"quote","text":"desktop reference"}]);
+            thread["rustDraftImages"] = json!([{"future":"desktop image stays"}]);
+            engine.store.save(&thread).unwrap();
+            let id = thread["id"].as_str().unwrap().to_owned();
+            let engine = std::sync::Arc::new(std::sync::Mutex::new(engine));
+            let adapter = Adapter::new(engine.clone(), "fixture");
+            let request = SendRequest {
+                thread_id: Uuid::parse_str(&id).unwrap(),
+                text: String::new(),
+                images: vec![Image {
+                    name: "photo.png".into(),
+                    data: png.clone(),
+                }],
+                delivery: Delivery::Automatic,
+            };
+            let images = adapter.import_remote_images(&request, &thread).unwrap();
+            adapter.queue_remote_payload(&thread, "", &images).unwrap();
+            let saved = engine.lock().unwrap().store.thread(&id).unwrap();
+            assert_eq!(saved["draft"], thread["draft"], "{provider}");
+            assert_eq!(saved["draftContext"], thread["draftContext"], "{provider}");
+            assert_eq!(
+                saved["rustDraftImages"], thread["rustDraftImages"],
+                "{provider}"
+            );
+            let queued = crate::message_queue::read(&saved).unwrap();
+            assert_eq!(queued.len(), 1, "{provider}");
+            assert_eq!(queued[0].images.len(), 1, "{provider}");
+            assert_eq!(queued[0].images[0].id, images[0].id, "{provider}");
+            assert!(queued[0].context.is_null(), "{provider}");
+        }
+    }
+
+    #[test]
+    fn remote_previews_are_bounded_and_only_read_the_exact_item_attachment() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut engine = crate::api::Engine::fixture(
+            crate::store::Store::open(&directory.path().join("state.sqlite")).unwrap(),
+        );
+        let mut thread = engine.store.new_thread(NO_PROJECT).unwrap();
+        let thread_id = Uuid::parse_str(thread["id"].as_str().unwrap()).unwrap();
+        let item_id = Uuid::new_v4();
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgba8(800, 400)
+            .write_to(&mut png, image::ImageFormat::Png)
+            .unwrap();
+        let stored = crate::attachments::ingest_image_bytes(
+            directory.path(),
+            &png.into_inner(),
+            "phone.png",
+        )
+        .unwrap();
+        thread["items"] =
+            json!([{"id":item_id,"kind":"user","text":"photo","rustImages":[stored]}]);
+        engine.store.save(&thread).unwrap();
+        let shared = std::sync::Arc::new(std::sync::Mutex::new(engine));
+        let adapter = Adapter::new(shared.clone(), "fixture");
+        let listed = remote_item(&thread["items"][0], 0, &[]);
+        assert_eq!(listed.media.as_ref().unwrap()[0].label, "phone.png");
+        let small = adapter.media(thread_id, item_id, 0, false).unwrap();
+        assert_eq!(
+            (small.width, small.height, small.is_full),
+            (480, 240, false)
+        );
+        assert!(image::load_from_memory(&small.data).is_ok());
+        let full = adapter.media(thread_id, item_id, 0, true).unwrap();
+        assert_eq!((full.width, full.height, full.is_full), (800, 400, true));
+        assert!(adapter.media(thread_id, Uuid::new_v4(), 0, true).is_err());
+        assert!(adapter.media(thread_id, item_id, 1, true).is_err());
+
+        // Forged metadata cannot turn a preview into an arbitrary file read.
+        let private = directory.path().join("private.txt");
+        std::fs::write(&private, b"private fixture").unwrap();
+        let mut forged = thread.clone();
+        forged["items"][0]["rustImages"][0]["path"] = json!(private);
+        shared.lock().unwrap().store.save(&forged).unwrap();
+        assert!(adapter.media(thread_id, item_id, 0, true).is_err());
+        let duplicate = forged["items"][0].clone();
+        forged["items"].as_array_mut().unwrap().push(duplicate);
+        shared.lock().unwrap().store.save(&forged).unwrap();
+        assert!(adapter.media(thread_id, item_id, 0, true).is_err());
     }
 }

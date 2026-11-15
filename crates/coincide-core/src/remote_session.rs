@@ -38,6 +38,7 @@ pub struct Context<'a> {
     pub pairing: &'a Mutex<Pairing>,
     pub server_info: &'a dyn Fn() -> ServerInfo,
     pub seen: &'a SeenBus,
+    pub usage: &'a Mutex<Vec<protocol::RemoteUsage>>,
 }
 
 /// Coalesced seen events. Each connected phone has its own cursor, and the
@@ -355,6 +356,15 @@ impl Session {
                 let page = adapter.items_before(thread_id, before_index, limit, &runs()?)?;
                 self.respond(id, "items", serde_json::to_value(page).ok());
             }
+            Request::Media {
+                thread_id,
+                item_id,
+                index,
+                full,
+            } => {
+                let media = adapter.media(thread_id, item_id, index, full)?;
+                self.respond(id, "media", serde_json::to_value(media).ok());
+            }
             Request::MarkSeen { thread_id } => {
                 adapter.mark_seen(thread_id)?;
                 context.seen.record(thread_id, true);
@@ -400,10 +410,14 @@ impl Session {
                 adapter.perform(thread_id, &action)?;
                 self.respond(id, "ok", None);
             }
-            // No usage windows are shared with phones yet: an empty list, which the
-            // phone shows as nothing to report.
             Request::UsageLimits => {
-                self.respond(id, "usage", Some(protocol::value_body(Vec::<Value>::new())))
+                let cached = context
+                    .usage
+                    .lock()
+                    .map_err(|_| RemoteError::failed("Usage is temporarily unavailable."))?
+                    .clone();
+                let enabled = adapter.enabled_usage(cached)?;
+                self.respond(id, "usage", Some(protocol::value_body(enabled)))
             }
             Request::Presence(presence) => {
                 let was = self.presence.as_ref();

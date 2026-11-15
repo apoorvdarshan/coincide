@@ -400,6 +400,123 @@ fn off_by_default_and_nothing_is_read_until_enabled() {
 }
 
 #[test]
+fn authenticated_phone_receives_only_enabled_reported_provider_windows() {
+    use super::super::protocol::{RemoteUsage, RemoteUsageWindow};
+    let mut fixture = fixture();
+    call(
+        &fixture.engine,
+        "settings.patch",
+        json!({"patch":{"providers":{
+            "claude":{"isEnabled":true}, "codex":{"isEnabled":true},
+            "cursor":{"isEnabled":true}, "grok":{"isEnabled":true},
+            "opencode":{"isEnabled":true}, "antigravity":{"isEnabled":true}
+        }}}),
+    )
+    .unwrap();
+    fixture.server.set_usage(
+        [
+            "claude",
+            "codex",
+            "cursor",
+            "grok",
+            "opencode",
+            "antigravity",
+            "unknown",
+        ]
+        .iter()
+        .map(|provider| RemoteUsage {
+            provider: (*provider).into(),
+            provider_name: (*provider).into(),
+            account_id: "default".into(),
+            account_name: None,
+            windows: vec![RemoteUsageWindow {
+                id: "weekly".into(),
+                label: "Weekly".into(),
+                used_percent: 37.5,
+                resets_at: Some(1_750_100_000_000),
+            }],
+            checked_at: Some(1_750_000_000_000),
+        })
+        .collect(),
+    );
+    fixture.server.set_enabled(true);
+    let (mut phone, _, _) = pair(&mut fixture);
+    request(&mut phone, "usage-all", "usageLimits", None);
+    let first = reply(&mut phone, "usage-all");
+    assert_eq!(first["type"], "usage");
+    let rows = first["body"]["value"].as_array().unwrap();
+    assert_eq!(rows.len(), 6);
+    assert_eq!(rows[0]["accountID"], "default");
+    assert_eq!(rows[0]["windows"][0]["usedPercent"], 37.5);
+    assert_eq!(rows[0]["windows"][0]["resetsAt"], 1_750_100_000_000_i64);
+    call(
+        &fixture.engine,
+        "settings.patch",
+        json!({"patch":{"providers":{"grok":{"isEnabled":false}}}}),
+    )
+    .unwrap();
+    request(&mut phone, "usage-updated", "usageLimits", None);
+    let next = reply(&mut phone, "usage-updated");
+    let rows = next["body"]["value"].as_array().unwrap();
+    assert_eq!(rows.len(), 5);
+    assert!(rows.iter().all(|row| row["provider"] != "grok"));
+}
+
+#[test]
+fn authenticated_phone_can_preview_only_the_image_referenced_by_its_item() {
+    use base64::Engine as _;
+    let mut fixture = fixture();
+    let item = Uuid::new_v4();
+    let mut png = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::new_rgba8(800, 400)
+        .write_to(&mut png, image::ImageFormat::Png)
+        .unwrap();
+    {
+        let mut engine = fixture.engine.lock().unwrap();
+        let root = engine.store.data_directory().unwrap();
+        let image =
+            crate::attachments::ingest_image_bytes(&root, &png.into_inner(), "photo.png").unwrap();
+        let mut thread = engine.store.thread(&fixture.thread).unwrap();
+        thread["items"] = json!([{"id":item,"kind":"user","text":"photo","rustImages":[image]}]);
+        engine.store.save(&thread).unwrap();
+    }
+    fixture.server.set_enabled(true);
+    let (mut phone, _, _) = pair(&mut fixture);
+    let shared = fixture.server.running.as_ref().unwrap().0.clone();
+    let _watch_gate = shared.watch_gate.lock().unwrap();
+    request(
+        &mut phone,
+        "open-photo",
+        "openThread",
+        Some(json!({"threadID":fixture.thread})),
+    );
+    let opened = reply(&mut phone, "open-photo");
+    assert_eq!(opened["body"]["items"][0]["media"][0]["label"], "photo.png");
+    request(
+        &mut phone,
+        "thumbnail",
+        "media",
+        Some(json!({"threadID":fixture.thread,"itemID":item,"index":0})),
+    );
+    let thumbnail = reply(&mut phone, "thumbnail");
+    assert_eq!(thumbnail["type"], "media");
+    assert_eq!(thumbnail["body"]["width"], 480);
+    assert_eq!(thumbnail["body"]["height"], 240);
+    assert_eq!(thumbnail["body"]["isFull"], false);
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(thumbnail["body"]["data"].as_str().unwrap())
+        .unwrap();
+    assert!(image::load_from_memory(&bytes).is_ok());
+    request(
+        &mut phone,
+        "wrong-item",
+        "media",
+        Some(json!({"threadID":fixture.thread,"itemID":Uuid::new_v4(),"index":0})),
+    );
+    assert_eq!(reply(&mut phone, "wrong-item")["kind"], "error");
+}
+
+#[test]
 fn pairing_then_hello_drives_the_workspace_and_open_threads() {
     let mut fixture = fixture();
     fixture.server.set_enabled(true);
