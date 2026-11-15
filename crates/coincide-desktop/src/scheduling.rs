@@ -399,6 +399,16 @@ impl Coincide {
         }
         self.refresh_schedules(cx);
         self.prepare_schedule_filter();
+        self.remember_current_inspector(cx);
+    }
+    /// Restore the list without reopening an editor or creating a schedule.
+    pub(super) fn restore_conversation_schedules(&mut self, cx: &mut Context<Self>) {
+        self.schedule_editor.all_conversations = false;
+        self.schedule_editor.scope_epoch = self.schedule_editor.scope_epoch.wrapping_add(1);
+        self.schedule_editor.open = false;
+        self.schedules_open = true;
+        self.refresh_schedules(cx);
+        self.prepare_schedule_filter();
     }
     fn schedule_action(
         &mut self,

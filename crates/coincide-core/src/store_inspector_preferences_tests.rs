@@ -37,6 +37,45 @@ fn swift_panel_mapping_follows_each_thread_and_windowwide_exception() {
     assert_eq!(follow(Some(Panel::Diff), None, true), Change::Close);
 }
 #[test]
+fn each_thread_retains_its_own_workspace_and_schedule_panel() {
+    use crate::inspector_preferences::saved;
+    let (_directory, mut store) = fixture();
+    let mut state = json!({"threadPanels":{}, "unrelated":{"preserved":true}});
+    store.save_document(DOCUMENT, &state).unwrap();
+    for panel in [
+        Panel::LocalGit,
+        Panel::ReviewComments,
+        Panel::ConversationSchedules,
+    ] {
+        state = store
+            .remember_native_inspector_panel(Some(&state), A, Some(panel))
+            .unwrap_or_else(|_| {
+                // The first call uses the actual saved baseline as every later
+                // call does, rather than replacing another writer's changes.
+                panic!("failed to save {panel:?}")
+            });
+        assert_eq!(saved(&state, A).unwrap(), Some(panel));
+        assert_eq!(saved(&state, B).unwrap(), None);
+    }
+    state = store
+        .remember_native_inspector_panel(Some(&state), B, Some(Panel::Preview))
+        .unwrap();
+    assert_eq!(
+        saved(&state, A).unwrap(),
+        Some(Panel::ConversationSchedules)
+    );
+    assert_eq!(saved(&state, B).unwrap(), Some(Panel::Preview));
+    state = store
+        .remember_native_inspector_panel(Some(&state), B, None)
+        .unwrap();
+    assert_eq!(
+        saved(&state, A).unwrap(),
+        Some(Panel::ConversationSchedules)
+    );
+    assert_eq!(saved(&state, B).unwrap(), None);
+    assert_eq!(state["unrelated"]["preserved"], true);
+}
+#[test]
 fn legacy_migration_preserves_original_bytes_unknowns_and_all_conversation_content() {
     let (_directory, mut store) = fixture();
     let original=br#"{ "selectedThreadID":"12345678-1234-4234-8234-1234567890AB", "isInspectorOpen":true, "inspectorPanel":"pullRequests", "future":{"keep":[1,2]}, "previewTabs":{"opaque":7} }"#;
