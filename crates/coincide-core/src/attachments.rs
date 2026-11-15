@@ -152,31 +152,124 @@ fn ingest_bytes(
     before_write: impl FnOnce(&StoredImage) -> Result<()>,
     after_original: impl FnOnce(&StoredImage) -> Result<()>,
 ) -> Result<StoredImage> {
-    let root = canonical_data_directory(data_directory)?;
+    canonical_data_directory(data_directory)?;
+    let prepared = prepare_source(source_bytes)?;
+    let (image, mut created) = write_prepared(
+        data_directory,
+        source_bytes,
+        name,
+        &prepared,
+        retain_partial,
+        before_write,
+        after_original,
+    )?;
+    created.keep = true;
+    Ok(image)
+}
+
+struct PreparedSource {
+    original_mime_type: &'static str,
+    bytes: Vec<u8>,
+    mime_type: &'static str,
+    width: u32,
+    height: u32,
+}
+fn prepare_source(source_bytes: &[u8]) -> Result<PreparedSource> {
     ensure!(
-        source_bytes.len() as u64 <= MAX_SOURCE_BYTES,
+        !source_bytes.is_empty() && source_bytes.len() as u64 <= MAX_SOURCE_BYTES,
         "Image exceeds source byte limit"
     );
-    let original_format = supported_format(source_bytes)?;
-    let original_mime_type = mime_for_format(original_format)?;
-    let decoded = decode(source_bytes, true)?;
-    let (bytes, mime_type, width, height) = normalize(decoded)?;
+    let original_mime_type = mime_for_format(supported_format(source_bytes)?)?;
+    let (bytes, mime_type, width, height) = normalize(decode(source_bytes, true)?)?;
+    Ok(PreparedSource {
+        original_mime_type,
+        bytes,
+        mime_type,
+        width,
+        height,
+    })
+}
+
+/// Decode the whole phone submission before writing any files. Each newly
+/// created UUID directory is rolled back if a later import fails.
+pub(crate) fn ingest_remote_batch(
+    data_directory: &Path,
+    sources: &[(&[u8], &str)],
+    validate: impl FnOnce(&[StoredImage]) -> Result<()>,
+) -> Result<Vec<StoredImage>> {
+    canonical_data_directory(data_directory)?;
+    ensure!(
+        sources.len() <= 10,
+        "A Remote message can contain at most 10 images"
+    );
+    let mut prepared = Vec::with_capacity(sources.len());
+    let mut normalized_bytes = 0u64;
+    for (bytes, _) in sources {
+        let source = prepare_source(bytes)?;
+        normalized_bytes = normalized_bytes
+            .checked_add(source.bytes.len() as u64)
+            .context("Image size overflow")?;
+        ensure!(
+            normalized_bytes <= 20 * 1024 * 1024,
+            "Remote images exceed 20 MiB after normalization"
+        );
+        prepared.push(source);
+    }
+    let mut images = Vec::with_capacity(sources.len());
+    let mut owned = Vec::with_capacity(sources.len());
+    for (index, ((bytes, name), prepared)) in sources.iter().zip(&prepared).enumerate() {
+        #[cfg(test)]
+        if REMOTE_BATCH_FAULT.with(|fault| fault.get() == Some(index)) {
+            anyhow::bail!("injected Remote batch write failure");
+        }
+        #[cfg(not(test))]
+        let _ = index;
+        let (image, guard) = write_prepared(
+            data_directory,
+            bytes,
+            name,
+            prepared,
+            false,
+            |_| Ok(()),
+            |_| Ok(()),
+        )?;
+        images.push(image);
+        owned.push(guard);
+    }
+    // Retain ownership until provider validation succeeds as well.
+    validate(&images)?;
+    for guard in &mut owned {
+        guard.keep = true;
+    }
+    Ok(images)
+}
+
+fn write_prepared(
+    data_directory: &Path,
+    source_bytes: &[u8],
+    name: &str,
+    prepared: &PreparedSource,
+    retain_partial: bool,
+    before_write: impl FnOnce(&StoredImage) -> Result<()>,
+    after_original: impl FnOnce(&StoredImage) -> Result<()>,
+) -> Result<(StoredImage, CreatedFiles)> {
+    let root = canonical_data_directory(data_directory)?;
     let attachments = root.join("attachments");
     let id = Uuid::new_v4().to_string();
     let directory = attachments.join(&id);
     let image = StoredImage {
         original_path: directory.join(format!(
             "{id}-original.{}",
-            extension_for_mime(original_mime_type)?
+            extension_for_mime(prepared.original_mime_type)?
         )),
-        path: directory.join(format!("{id}.{}", extension_for_mime(mime_type)?)),
+        path: directory.join(format!("{id}.{}", extension_for_mime(prepared.mime_type)?)),
         id,
         original_name: name.into(),
-        original_mime_type: original_mime_type.into(),
-        mime_type: mime_type.into(),
-        width,
-        height,
-        byte_len: bytes.len() as u64,
+        original_mime_type: prepared.original_mime_type.into(),
+        mime_type: prepared.mime_type.into(),
+        width: prepared.width,
+        height: prepared.height,
+        byte_len: prepared.bytes.len() as u64,
         original_byte_len: source_bytes.len() as u64,
     };
     // No managed directory/file for this identity exists before durable ownership.
@@ -199,9 +292,8 @@ fn ingest_bytes(
         anyhow::bail!("injected copy failure");
     }
     after_original(&image)?;
-    created.write(&image.path, &bytes)?;
-    created.keep = true;
-    Ok(image)
+    created.write(&image.path, &prepared.bytes)?;
+    Ok((image, created))
 }
 
 /// A clipboard-only source owned by one import. Dropping it removes only the
@@ -500,6 +592,8 @@ pub(crate) fn ingest_owned_copy_fault(
 #[cfg(test)]
 thread_local! {static COPY_FAULT:std::cell::Cell<bool>=const {std::cell::Cell::new(false)};}
 #[cfg(test)]
+thread_local! {static REMOTE_BATCH_FAULT:std::cell::Cell<Option<usize>>=const {std::cell::Cell::new(None)};}
+#[cfg(test)]
 pub(crate) fn with_copy_fault<T>(run: impl FnOnce() -> T) -> T {
     struct Reset(bool);
     impl Drop for Reset {
@@ -509,4 +603,77 @@ pub(crate) fn with_copy_fault<T>(run: impl FnOnce() -> T) -> T {
     }
     let _reset = Reset(COPY_FAULT.with(|fault| fault.replace(true)));
     run()
+}
+
+#[cfg(test)]
+mod remote_batch_tests {
+    use super::*;
+    fn png() -> Vec<u8> {
+        let mut bytes = Cursor::new(Vec::new());
+        DynamicImage::new_rgba8(2, 2)
+            .write_to(&mut bytes, ImageFormat::Png)
+            .unwrap();
+        bytes.into_inner()
+    }
+    #[test]
+    fn invalid_later_image_leaves_no_partial_batch_and_valid_images_are_private() {
+        let dir = tempfile::tempdir().unwrap();
+        let good = png();
+        assert!(
+            ingest_remote_batch(
+                dir.path(),
+                &[(good.as_slice(), "first.png"), (b"bad", "bad.png")],
+                |_| Ok(())
+            )
+            .is_err()
+        );
+        assert!(!dir.path().join("attachments").exists());
+        REMOTE_BATCH_FAULT.with(|fault| fault.set(Some(1)));
+        let failed = ingest_remote_batch(
+            dir.path(),
+            &[(good.as_slice(), "one.png"), (good.as_slice(), "two.png")],
+            |_| Ok(()),
+        );
+        REMOTE_BATCH_FAULT.with(|fault| fault.set(None));
+        assert!(failed.is_err());
+        assert_eq!(
+            std::fs::read_dir(dir.path().join("attachments"))
+                .unwrap()
+                .count(),
+            0
+        );
+        assert!(
+            ingest_remote_batch(
+                dir.path(),
+                &[(good.as_slice(), "one.png")],
+                |_| anyhow::bail!("provider rejected the batch"),
+            )
+            .is_err()
+        );
+        assert_eq!(
+            std::fs::read_dir(dir.path().join("attachments"))
+                .unwrap()
+                .count(),
+            0
+        );
+        let images = ingest_remote_batch(
+            dir.path(),
+            &[(good.as_slice(), "one.png"), (good.as_slice(), "two.png")],
+            |_| Ok(()),
+        )
+        .unwrap();
+        assert_ne!(images[0].id, images[1].id);
+        for image in &images {
+            assert!(image.prepare_in(dir.path()).is_ok());
+            assert_eq!(std::fs::read(&image.original_path).unwrap(), good);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                assert_eq!(
+                    std::fs::metadata(&image.path).unwrap().permissions().mode() & 0o777,
+                    0o600
+                );
+            }
+        }
+    }
 }

@@ -73,6 +73,9 @@ impl ImageAttachment {
     pub fn byte_len(&self) -> usize {
         self.bytes.len()
     }
+    pub(crate) fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
 
     pub(super) fn claude_block(&self) -> Value {
         json!({"type":"image","source":{"type":"base64","media_type":self.mime_type,"data":STANDARD.encode(&self.bytes)}})

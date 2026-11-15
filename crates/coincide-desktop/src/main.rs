@@ -4086,6 +4086,29 @@ impl Coincide {
         }
         self.codex_limits.set_context(self.selected.as_ref(), cx);
         self.codex_limits.poll(cx);
+        #[cfg(not(target_os = "macos"))]
+        {
+            let settings = self.settings.clone();
+            let selected = self.selected.clone();
+            if self.remote_panel.update(cx, |panel, _| {
+                panel.usage_refresh_due(&settings, selected.as_ref(), usage_running)
+            }) {
+                self.refresh_usage(cx);
+            }
+        }
+        if self
+            .remote_panel
+            .update(cx, |panel, _| panel.usage_sync_due())
+        {
+            #[cfg(target_os = "macos")]
+            let usage = usage_menubar::remote_usage(cx);
+            #[cfg(not(target_os = "macos"))]
+            let usage = Some(usage_dashboard_ui::remote_usage(&self.usage_cards(cx)));
+            if let Some(usage) = usage {
+                self.remote_panel
+                    .update(cx, |panel, _| panel.set_usage(usage));
+            }
+        }
         self.poll_composer_follow_ups(window, cx);
         self.poll_browser(window, cx);
         self.sync_browser_settings(window, cx);

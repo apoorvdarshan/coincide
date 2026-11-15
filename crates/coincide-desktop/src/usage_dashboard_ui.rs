@@ -94,6 +94,44 @@ impl Card {
     }
 }
 
+/// Keep the phone's observations scoped to the same account as the desktop
+/// card. A missing limit is omitted instead of turning it into a zero balance.
+pub(super) fn remote_usage(cards: &[Card]) -> Vec<coincide_core::remote::protocol::RemoteUsage> {
+    use coincide_core::remote::protocol::{RemoteUsage, RemoteUsageWindow};
+    cards
+        .iter()
+        .filter_map(|card| {
+            let limits = card.limits()?;
+            let windows: Vec<_> = limits
+                .windows
+                .iter()
+                .filter(|window| window.used_percent.is_finite())
+                .map(|window| RemoteUsageWindow {
+                    id: window.id.clone(),
+                    label: window.label.clone(),
+                    used_percent: window.used_percent,
+                    resets_at: window.resets_at.map(|date| date.timestamp_millis()),
+                })
+                .collect();
+            if windows.is_empty() {
+                return None;
+            }
+            let provider = provider_name(card.account.provider);
+            Some(RemoteUsage {
+                provider: card.account.provider.into(),
+                provider_name: provider.into(),
+                account_id: card.account.id.clone(),
+                account_name: (card.shows_name
+                    && !card.account.is_default()
+                    && card.account.name != provider)
+                    .then(|| card.account.name.clone()),
+                windows,
+                checked_at: Some(limits.checked_at.timestamp_millis()),
+            })
+        })
+        .collect()
+}
+
 /// The menu-bar extra and the Usage page share the same account boundaries.
 pub(super) fn cards_for(
     settings: &Value,
@@ -206,7 +244,7 @@ impl Coincide {
     }
 
     /// Every enabled provider's accounts, with their limits as read.
-    fn usage_cards(&self, cx: &App) -> Vec<Card> {
+    pub(super) fn usage_cards(&self, cx: &App) -> Vec<Card> {
         let codex = self.codex_limits.panel.read(cx);
         let cards = cards_for(
             &self.settings,
@@ -1571,8 +1609,10 @@ impl Coincide {
 
 #[cfg(test)]
 mod presentation_tests {
-    use super::{cards_for, chart_ceiling, compact_trend};
-    use crate::usage_dashboard::{Dashboard, LimitState};
+    use super::{Card, cards_for, chart_ceiling, compact_trend, remote_usage};
+    use crate::usage_dashboard::{Account, Dashboard, LimitState};
+    use chrono::{TimeZone, Utc};
+    use coincide_core::usage_limits::{Limits, Window, WindowKind};
     use serde_json::json;
 
     #[test]
@@ -1600,5 +1640,85 @@ mod presentation_tests {
                 .collect::<Vec<_>>(),
             ["codex", "grok"]
         );
+    }
+
+    #[test]
+    fn remote_usage_preserves_all_provider_accounts_and_real_window_dates() {
+        let checked = Utc.timestamp_millis_opt(1_750_000_000_000).unwrap();
+        let reset = Utc.timestamp_millis_opt(1_750_100_000_000).unwrap();
+        let mut cards = Vec::new();
+        for provider in [
+            "claude",
+            "codex",
+            "cursor",
+            "grok",
+            "opencode",
+            "antigravity",
+        ] {
+            let window = Window::new("weekly", WindowKind::Weekly, "Weekly", 37.5)
+                .resetting(Some(reset), None);
+            cards.push(Card {
+                account: Account {
+                    provider,
+                    id: "default".into(),
+                    name: "Default".into(),
+                    api_key: false,
+                    key_variable: None,
+                },
+                shows_name: false,
+                state: LimitState::Ready(Limits::new(vec![window], checked)),
+            });
+        }
+        cards.push(Card {
+            account: Account {
+                provider: "codex",
+                id: "work".into(),
+                name: "Work".into(),
+                api_key: false,
+                key_variable: None,
+            },
+            shows_name: true,
+            state: LimitState::Ready(Limits::new(
+                vec![Window::new("session", WindowKind::Session, "Session", 12.)],
+                checked,
+            )),
+        });
+        cards.push(Card {
+            account: Account {
+                provider: "claude",
+                id: "other".into(),
+                name: "Other".into(),
+                api_key: false,
+                key_variable: None,
+            },
+            shows_name: true,
+            state: LimitState::Unavailable("No reported limit".into()),
+        });
+        let rows = remote_usage(&cards);
+        assert_eq!(rows.len(), 7);
+        assert_eq!(
+            rows.iter()
+                .map(|row| row.provider.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "claude",
+                "codex",
+                "cursor",
+                "grok",
+                "opencode",
+                "antigravity",
+                "codex"
+            ]
+        );
+        assert_eq!(rows[0].windows[0].used_percent, 37.5);
+        assert_eq!(rows[0].windows[0].resets_at, Some(1_750_100_000_000));
+        assert_eq!(rows[0].checked_at, Some(1_750_000_000_000));
+        assert_eq!(rows[0].account_name, None);
+        assert_eq!(rows[6].account_id, "work");
+        assert_eq!(rows[6].account_name.as_deref(), Some("Work"));
+        let wire = serde_json::to_value(&rows[0]).unwrap();
+        assert_eq!(wire["accountID"], "default");
+        assert_eq!(wire["windows"][0]["resetsAt"], 1_750_100_000_000_i64);
+        assert_eq!(wire["checkedAt"], 1_750_000_000_000_i64);
     }
 }

@@ -197,8 +197,8 @@ pub struct ProviderWorkersStatus {
 /// claim; callers cannot select it with JSON or impersonate a scheduled turn.
 enum SendOrigin {
     Ordinary,
-    /// Authenticated Remote text belongs to the phone, not the Mac's draft.
-    Remote,
+    /// Authenticated Remote payload belongs to the phone, not the Mac's draft.
+    Remote(Vec<crate::attachments::StoredImage>),
     Scheduled,
     Queued(Box<queue_dispatch::QueueClaim>),
     /// Resume an exact goal paused by Coincide after the user pauses/removes
@@ -1192,6 +1192,14 @@ impl Engine {
     /// Remote owns its own submitted text. Validate its captured execution
     /// context under the engine lock without consuming the desktop composer.
     pub(crate) fn send_remote_text(&mut self, expected: &Value, prompt: &str) -> Result<Value> {
+        self.send_remote_submission(expected, prompt, Vec::new())
+    }
+    pub(crate) fn send_remote_submission(
+        &mut self,
+        expected: &Value,
+        prompt: &str,
+        images: Vec<crate::attachments::StoredImage>,
+    ) -> Result<Value> {
         let id = required(expected, "id")?;
         let current = self.store.thread(id)?;
         for key in [
@@ -1209,7 +1217,10 @@ impl Engine {
                 "Conversation context changed; send again after refreshing"
             );
         }
-        self.send_turn(&json!({"threadId":id,"text":prompt}), SendOrigin::Remote)
+        self.send_turn(
+            &json!({"threadId":id,"text":prompt}),
+            SendOrigin::Remote(images),
+        )
     }
     fn send_turn_if_unchanged(
         &mut self,
@@ -1274,7 +1285,9 @@ impl Engine {
         // Remote, scheduled and queued turns never consume the unrelated composer.
         let context = match origin {
             SendOrigin::Queued(claim) => claim.context().clone(),
-            SendOrigin::Remote | SendOrigin::Scheduled | SendOrigin::GoalResume(_) => Value::Null,
+            SendOrigin::Remote(_) | SendOrigin::Scheduled | SendOrigin::GoalResume(_) => {
+                Value::Null
+            }
             SendOrigin::Ordinary => v["draftContext"].clone(),
         };
         crate::composer_context::validate(&context)?;
@@ -1338,6 +1351,8 @@ impl Engine {
         let draft_images: Vec<crate::attachments::StoredImage> =
             if let SendOrigin::Queued(claim) = origin {
                 claim.images().to_vec()
+            } else if let SendOrigin::Remote(images) = origin {
+                images.clone()
             } else if !origin.consumes_composer() || v["rustDraftImages"].is_null() {
                 Vec::new()
             } else {
@@ -1735,12 +1750,7 @@ impl Engine {
             return false;
         }
         match run.provider.as_str() {
-            "codex" => {
-                run.session.can_steer()
-                    && ["draftContext", "rustDraftImages"].iter().all(|key| {
-                        thread[*key].is_null() || thread[*key].as_array().is_some_and(Vec::is_empty)
-                    })
-            }
+            "codex" => run.session.can_steer(),
             "opencode" => true,
             // Claude has a native composer follow-up, but Remote's current
             // text-steering route cannot submit it yet.

@@ -22,6 +22,11 @@ pub(super) struct RemoteSettingsPanel {
     countdown: String,
     /// The pairing code's modules, made once per code.
     code: Option<(String, qr::Matrix)>,
+    last_usage_sync: Option<Instant>,
+    #[cfg(not(target_os = "macos"))]
+    last_usage_refresh: Option<Instant>,
+    #[cfg(not(target_os = "macos"))]
+    usage_context: Option<Value>,
 }
 
 fn now_ms() -> f64 {
@@ -50,7 +55,64 @@ impl RemoteSettingsPanel {
             notice: None,
             countdown: String::new(),
             code: None,
+            last_usage_sync: None,
+            #[cfg(not(target_os = "macos"))]
+            last_usage_refresh: None,
+            #[cfg(not(target_os = "macos"))]
+            usage_context: None,
         }
+    }
+
+    pub(super) fn enabled(&self) -> bool {
+        self.server.as_ref().is_some_and(RemoteServer::is_enabled)
+    }
+
+    pub(super) fn usage_sync_due(&mut self) -> bool {
+        if !self.enabled() {
+            self.last_usage_sync = None;
+            return false;
+        }
+        if self
+            .last_usage_sync
+            .is_some_and(|at| at.elapsed() < Duration::from_secs(1))
+        {
+            return false;
+        }
+        self.last_usage_sync = Some(Instant::now());
+        true
+    }
+
+    pub(super) fn set_usage(&self, usage: Vec<coincide_core::remote::protocol::RemoteUsage>) {
+        if let Some(server) = &self.server {
+            server.set_usage(usage);
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub(super) fn usage_refresh_due(
+        &mut self,
+        settings: &Value,
+        selection: Option<&Value>,
+        running: bool,
+    ) -> bool {
+        if !self.enabled() {
+            self.last_usage_refresh = None;
+            self.usage_context = None;
+            return false;
+        }
+        let context = json!({"providers": settings["providers"], "selection": selection.map(|s| &s["selection"])});
+        if self.usage_context.as_ref() != Some(&context) {
+            self.usage_context = Some(context);
+            self.last_usage_refresh = None;
+        }
+        let due = self.last_usage_refresh.is_none_or(|at| {
+            crate::usage_menubar_model::interval(&settings["usageRefresh"], running)
+                .is_some_and(|interval| at.elapsed() >= interval)
+        });
+        if due {
+            self.last_usage_refresh = Some(Instant::now());
+        }
+        due
     }
 
     /// Called from the window's tick: picks up connections, pairings and the
