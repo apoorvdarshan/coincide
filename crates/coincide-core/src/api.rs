@@ -3436,13 +3436,11 @@ mod tests {
             assert_eq!(selected["selection"]["modelID"], "fixture-model");
         }
         let before = engine.store.thread(id.as_str().unwrap()).unwrap();
-        for provider in ["unknown"] {
-            assert!(
-                engine
-                    .execute("agent.select", &json!({"threadId":id,"provider":provider}))
-                    .is_err()
-            );
-        }
+        assert!(
+            engine
+                .execute("agent.select", &json!({"threadId":id,"provider":"unknown"}))
+                .is_err()
+        );
         for model in ["bad\nmodel".to_owned(), "x".repeat(513)] {
             assert!(
                 engine
