@@ -981,6 +981,99 @@ impl Store {
         Ok(())
     }
 
+    /// Authorize a previously saved bot thread without rewriting its history,
+    /// selection, draft or provider sessions. Both source documents and the
+    /// authorization are checked and committed as a single transaction.
+    pub(crate) fn authorize_existing_bot_if_unchanged(
+        &mut self,
+        expected_bots: Option<&Value>,
+        expected_thread: &Value,
+        context: &Value,
+    ) -> Result<Value> {
+        self.connection()?;
+        let id = validate_thread(expected_thread)?.to_owned();
+        ensure!(
+            expected_thread["rustBotContext"].is_null()
+                && expected_thread["botID"].is_string()
+                && context["version"] == 1
+                && context["botId"] == expected_thread["botID"],
+            "Invalid existing bot authorization"
+        );
+        let name = crate::bot_runtime::context_document_name(context)?;
+        let mut updated = expected_thread.clone();
+        updated["rustBotContext"] = context.clone();
+        let tx = self
+            .connection_mut()?
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        ensure_not_deleted(&tx, &id)?;
+        let imported: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM imported_threads WHERE id=?1 COLLATE NOCASE)",
+            [&id],
+            |r| r.get(0),
+        )?;
+        ensure!(!imported, "Imported conversations remain read-only");
+        let current: String =
+            tx.query_row("SELECT document FROM threads WHERE id=?1", [&id], |r| {
+                r.get(0)
+            })?;
+        ensure!(
+            serde_json::from_str::<Value>(&current)? == *expected_thread,
+            "Bot conversation changed; retry after refreshing"
+        );
+        let local: Option<String> = tx
+            .query_row(
+                "SELECT document FROM documents WHERE name='bots.json'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let bots: Option<Value> = if let Some(local) = local {
+            Some(serde_json::from_str(&local)?)
+        } else {
+            let original: Option<Vec<u8>> = tx
+                .query_row(
+                    "SELECT data FROM original_files WHERE path='bots.json'",
+                    [],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            original
+                .as_deref()
+                .map(serde_json::from_slice)
+                .transpose()?
+        };
+        ensure!(
+            bots.as_ref() == expected_bots,
+            "Bot settings changed; retry after refreshing"
+        );
+        let existing: Option<String> = tx
+            .query_row(
+                "SELECT document FROM documents WHERE name=?1",
+                [&name],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if let Some(existing) = existing {
+            ensure!(
+                serde_json::from_str::<Value>(&existing)? == *context,
+                "Bot authorization differs"
+            );
+        } else {
+            tx.execute(
+                "INSERT INTO documents(name,document) VALUES (?1,?2)",
+                params![name, context.to_string()],
+            )?;
+        }
+        tx.execute(
+            "UPDATE threads SET document=?2 WHERE id=?1",
+            params![id, updated.to_string()],
+        )?;
+        cache_thread(&tx, &updated, false)?;
+        tx.commit()?;
+        self.note_selection_scope(&updated);
+        Ok(updated)
+    }
+
     /// Private native service connection: existing schema3 only, no CREATE,
     /// directory creation, migration, journal-mode or schema writes.
     pub fn open_existing_for_legacy_media(path: &Path, expected_data_dir: &Path) -> Result<Self> {

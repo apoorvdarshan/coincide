@@ -66,10 +66,11 @@ fn valid_default_alias_selection_persists_model_identity_and_all_other_fields() 
 }
 
 #[test]
-fn bot_snapshot_selection_is_locked_before_storage_and_capabilities_explain_it() {
-    let (_dir, mut engine, id) = fixture();
+fn untrusted_bot_snapshot_still_locks_selection_before_storage() {
+    let (dir, mut engine, id) = fixture();
     let mut thread = engine.store.thread(&id).unwrap();
     thread["selection"]["accountID"] = json!("default");
+    thread["worktreePath"] = json!(dir.path());
     thread["rustBotContext"] = json!({"selection":thread["selection"],"instructions":"fixture"});
     engine.store.save(&thread).unwrap();
     let revision = engine.revision;
@@ -77,7 +78,7 @@ fn bot_snapshot_selection_is_locked_before_storage_and_capabilities_explain_it()
         .execute("agent.selection.capabilities", &json!({"threadId":id}))
         .unwrap();
     assert_eq!(reply["locked"], true);
-    assert!(reply["lockReason"].as_str().unwrap().contains("fixed"));
+    assert!(reply["lockReason"].as_str().unwrap().contains("snapshot"));
     assert!(
         engine
             .execute(

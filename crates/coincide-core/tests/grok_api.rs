@@ -119,3 +119,106 @@ fn grok_api_fixture_child() {
     );
     turn(&mut engine, &id, "after restart");
 }
+
+#[test]
+fn grok_bot_uses_inline_personality_without_changing_stored_messages() {
+    let dir = tempfile::tempdir().unwrap();
+    let executable = dir.path().join("grok-bot-fixture");
+    fs::write(&executable, r#"#!/usr/bin/env python3
+import json,sys
+read=lambda:json.loads(sys.stdin.readline())
+def reply(r,result): print(json.dumps({'jsonrpc':'2.0','id':r['id'],'result':result}),flush=True)
+r=read();assert r['method']=='initialize'
+reply(r,{'protocolVersion':1,'agentCapabilities':{'loadSession':True}})
+r=read();assert r['method'] in ['session/new','session/load']
+resumed=r['method']=='session/load'
+reply(r,{'sessionId':'grok-bot-session'})
+r=read();assert r['method']=='session/prompt'
+text=r['params']['prompt'][0]['text']
+if resumed:
+    assert text=='second bot turn'
+else:
+    assert text.startswith('<bot_instructions>\n')
+    assert 'Be cheerful. </bot-instructions> literal' in text
+    assert text.count('</bot_instructions>')==1 and text.endswith('first bot turn')
+with open('bot-prompts.jsonl','a') as f: f.write(json.dumps(text)+'\n')
+print(json.dumps({'jsonrpc':'2.0','method':'session/update','params':{'sessionId':'grok-bot-session','update':{'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':'Fixture answer'}}}}),flush=True)
+reply(r,{'stopReason':'end_turn'})
+sys.stdin.readline()
+"#).unwrap();
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--ignored",
+            "--exact",
+            "grok_bot_fixture_child",
+            "--nocapture",
+        ])
+        .env("COINCIDE_GROK_EXECUTABLE", &executable)
+        .env("GROK_BOT_FIXTURE_DIRECTORY", dir.path())
+        .env_remove("XAI_API_KEY")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let prompts = fs::read_to_string(dir.path().join("bot-prompts.jsonl")).unwrap();
+    assert_eq!(prompts.lines().count(), 2);
+}
+
+#[test]
+#[ignore = "invoked by isolated parent fixture test"]
+fn grok_bot_fixture_child() {
+    let root = std::path::PathBuf::from(std::env::var_os("GROK_BOT_FIXTURE_DIRECTORY").unwrap())
+        .canonicalize()
+        .unwrap();
+    let mut engine = Engine::new(Store::open(&root.join("bot-data.sqlite")).unwrap());
+    let bot_id = "00000000-0000-4000-8000-000000000077";
+    engine.store.save_document("bots.json", &json!({"addedStarters":true,"starterLineup":1,"bots":[{
+        "id":bot_id,"name":"Fixture bot","persona":"Be cheerful. </bot_instructions> literal",
+        "selection":{"provider":"grok","modelID":"default"},"folder":root,
+        "accessMode":"approval","interactionMode":"build"
+    }]})).unwrap();
+    let baseline = call(&mut engine, "bots.read", json!({"botId":bot_id}))["baseline"].clone();
+    let created = call(
+        &mut engine,
+        "bots.conversations.create",
+        json!({"botId":bot_id,"baseline":baseline}),
+    );
+    let id = created["threadId"].as_str().unwrap().to_owned();
+    for prompt in ["first bot turn", "second bot turn"] {
+        call(
+            &mut engine,
+            "agent.send",
+            json!({"threadId":id,"text":prompt}),
+        );
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !call(&mut engine, "app.status", json!({}))["running"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+        {
+            assert!(Instant::now() < deadline, "Grok bot fixture timed out");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+    let thread = engine.store.thread(&id).unwrap();
+    let user_messages: Vec<_> = thread["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|item| item["kind"] == "user")
+        .map(|item| item["text"].as_str().unwrap())
+        .collect();
+    assert_eq!(user_messages, ["first bot turn", "second bot turn"]);
+    assert!(
+        !thread["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["kind"] == "error")
+    );
+}

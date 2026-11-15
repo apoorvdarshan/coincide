@@ -65,11 +65,14 @@ impl Engine {
             !self.store.is_imported(id)?,
             "Fork an imported thread before changing its provider"
         );
-        let current = self.store.thread(id)?;
-        ensure!(
-            current["rustBotContext"].is_null() && current["botID"].is_null(),
-            "Bot selection is fixed for this conversation"
-        );
+        let mut current = self.store.thread(id)?;
+        let is_bot = !current["botID"].is_null() || !current["rustBotContext"].is_null();
+        if is_bot {
+            ensure!(
+                crate::composer_selection::default_account(&p["accountId"]),
+                "Alternate bot accounts are not yet connected"
+            );
+        }
         let expected = p["expected"]
             .as_object()
             .context("Expected composer snapshot is required")?;
@@ -88,6 +91,8 @@ impl Engine {
                 .all(|key| p["expected"][*key] == current[*key]),
             "Saved composer changed; command draft retained"
         );
+        self.authorize_existing_bot(&mut current)?;
+        self.bot_validation_view(&current)?;
         ensure!(
             current["selection"]["provider"] != provider
                 || (provider == "codex" && p.get("accountId").is_some())
@@ -128,7 +133,7 @@ impl Engine {
             }
             self.cancel_provider_restore();
         }
-        if provider == "codex" {
+        if provider == "codex" && !is_bot {
             let configuration = crate::codex_login_profiles::configuration(&self.store)?;
             if p.get("accountId").is_some()
                 || p.get("restoreCurrent").is_some()
@@ -149,6 +154,7 @@ impl Engine {
         provider: &str,
     ) -> Result<Value> {
         let id = required(&current, "id")?;
+        let current_policy = self.bot_validation_view(&current)?;
         if current["selection"]["provider"] == "codex"
             && !crate::composer_selection::default_account(&current["selection"]["accountID"])
         {
@@ -162,7 +168,7 @@ impl Engine {
                 provider_configuration::current()
             };
             let _source = provider_configuration::enter(configuration);
-            crate::composer_selection::validate_thread_base(&current)?;
+            crate::composer_selection::validate_thread_base(&current_policy)?;
         }
         let capabilities = crate::composer_selection::capabilities();
         let target = capabilities["providers"]
@@ -212,7 +218,7 @@ impl Engine {
         // Preserve every existing selection/policy guard; this is not a new
         // execution grant and cannot repair or silently clear saved options.
         let mut thread = current.clone();
-        let mut validation = current.clone();
+        let mut validation = current_policy;
         // The source is retained in its provider preference; only target syntax
         // and authority determine whether this atomic replacement is valid.
         validation["selection"] = json!({"provider":provider,"modelID":"default"});
@@ -223,11 +229,17 @@ impl Engine {
             None,
             target_proof.as_ref(),
         )?;
+        validation["selection"] = thread["selection"].clone();
         crate::composer_selection::apply_modes_with_proof(
             &selection,
-            &mut thread,
+            &mut validation,
             target_proof.as_ref(),
         )?;
+        for key in ["accessMode", "interactionMode"] {
+            if selection.get(key).is_some() {
+                thread[key] = validation[key].clone();
+            }
+        }
         remember_source(&mut thread, &current)?;
         self.save_composer_choice(
             &current,

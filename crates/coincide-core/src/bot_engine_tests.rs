@@ -84,18 +84,14 @@ fn snapshot_mismatches_fail_before_transcript_mutation_or_launch() {
     for (field, value) in [
         (
             "selection",
-            json!({"provider":"claude","modelID":"fixture-model","accountID":"default"}),
-        ),
-        (
-            "selection",
-            json!({"provider":"codex","modelID":"changed","accountID":"default"}),
+            json!({"provider":"unknown","modelID":"fixture-model","accountID":"default"}),
         ),
         (
             "selection",
             json!({"provider":"codex","modelID":"fixture-model","accountID":"other"}),
         ),
-        ("accessMode", json!("fullAccess")),
-        ("interactionMode", json!("plan")),
+        ("accessMode", json!("unsupported")),
+        ("interactionMode", json!("unsupported")),
         ("worktreePath", json!(root.parent().unwrap())),
         ("rustBotContext", json!({"version":999})),
         ("botID", json!(Uuid::new_v4().to_string())),
@@ -124,6 +120,171 @@ fn snapshot_mismatches_fail_before_transcript_mutation_or_launch() {
             json!({"threadId":id,"patch":{"rustBotContext":{}}})
         )
         .is_err()
+    );
+}
+
+#[test]
+fn existing_bot_authorization_preserves_thread_and_requires_unchanged_sources() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().canonicalize().unwrap();
+    let engine = setup(&root, "codex", None);
+    let created = create(&engine);
+    let id = created["threadId"].as_str().unwrap();
+    let mut old = engine.lock().unwrap().store.thread(id).unwrap();
+    old.as_object_mut().unwrap().remove("rustBotContext");
+    old.as_object_mut().unwrap().remove("worktreePath");
+    old["draft"] = json!("Keep this draft");
+    old["items"] = json!([{"id":Uuid::new_v4(),"kind":"user","text":"Existing history"}]);
+    old["sessions"] = json!({"codex":"existing-provider-session"});
+    old["selection"]["effort"] = json!("high");
+    old["selection"]["speed"] = json!("fast");
+    engine.lock().unwrap().store.save(&old).unwrap();
+    let mut e = engine.lock().unwrap();
+    let cwd = e.working_directory(&old).unwrap();
+    assert_eq!(cwd, root);
+    let (baseline, context) = crate::bot_runtime::existing_context(&e.store, &old, &cwd).unwrap();
+    let mut changed = old.clone();
+    changed["draft"] = json!("newer draft");
+    e.store.save(&changed).unwrap();
+    assert!(
+        e.store
+            .authorize_existing_bot_if_unchanged(baseline.as_ref(), &old, &context)
+            .is_err()
+    );
+    assert_eq!(e.store.thread(id).unwrap(), changed);
+    e.store.save(&old).unwrap();
+    let mut changed_bots = baseline.clone().unwrap();
+    changed_bots["bots"][0]["persona"] = json!("Changed while preparing");
+    e.store.save_document("bots.json", &changed_bots).unwrap();
+    assert!(
+        e.store
+            .authorize_existing_bot_if_unchanged(baseline.as_ref(), &old, &context)
+            .is_err()
+    );
+    assert_eq!(e.store.thread(id).unwrap(), old);
+    e.store
+        .save_document("bots.json", baseline.as_ref().unwrap())
+        .unwrap();
+    let connection = rusqlite::Connection::open(root.join("data.sqlite")).unwrap();
+    connection.execute_batch("CREATE TRIGGER reject_existing_bot_context BEFORE INSERT ON documents WHEN NEW.name LIKE 'rust-bot-context-%' BEGIN SELECT RAISE(ABORT,'fixture context unavailable'); END;").unwrap();
+    assert!(
+        e.store
+            .authorize_existing_bot_if_unchanged(baseline.as_ref(), &old, &context)
+            .is_err()
+    );
+    assert_eq!(e.store.thread(id).unwrap(), old);
+    connection
+        .execute_batch("DROP TRIGGER reject_existing_bot_context")
+        .unwrap();
+    let updated = e
+        .store
+        .authorize_existing_bot_if_unchanged(baseline.as_ref(), &old, &context)
+        .unwrap();
+    let mut expected = old.clone();
+    expected["rustBotContext"] = context.clone();
+    assert_eq!(updated, expected);
+    assert_eq!(e.store.thread(id).unwrap(), expected);
+    assert!(e.bot_instructions(&updated, &root).unwrap().is_some());
+    assert!(e.bot_validation_view(&updated).unwrap()["botID"].is_null());
+    let repaired = e
+        .execute(
+            "agent.select",
+            &json!({"threadId":id,"effort":null,"speed":null}),
+        )
+        .unwrap();
+    assert!(repaired["selection"]["effort"].is_null());
+    assert!(repaired["selection"]["speed"].is_null());
+    assert_eq!(repaired["id"], old["id"]);
+    assert_eq!(repaired["sessions"], old["sessions"]);
+    assert_eq!(repaired["items"], old["items"]);
+    assert_eq!(repaired["draft"], old["draft"]);
+}
+
+#[test]
+fn authorized_bot_selection_changes_like_a_thread_without_changing_its_identity() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().canonicalize().unwrap();
+    let engine = setup(&root, "codex", None);
+    let created = create(&engine);
+    let id = created["threadId"].as_str().unwrap();
+    let original = engine.lock().unwrap().store.thread(id).unwrap();
+    let updated = call(&engine, "agent.select", json!({"threadId":id,"provider":"codex", "model":"other-model", "accessMode":"fullAccess", "interactionMode":"plan"})).unwrap();
+    assert_eq!(updated["id"], original["id"]);
+    assert_eq!(updated["botID"], original["botID"]);
+    assert_eq!(updated["rustBotContext"], original["rustBotContext"]);
+    assert_eq!(updated["selection"]["modelID"], "other-model");
+    assert_eq!(updated["accessMode"], "fullAccess");
+    assert_eq!(updated["interactionMode"], "plan");
+    assert!(
+        engine
+            .lock()
+            .unwrap()
+            .bot_instructions(&updated, &root)
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        call(
+            &engine,
+            "agent.select",
+            json!({"threadId":id,"provider":"opencode","model":"default","accountId":"other"})
+        )
+        .is_err()
+    );
+    assert_eq!(engine.lock().unwrap().store.thread(id).unwrap(), updated);
+    let build = call(&engine, "agent.select", json!({"threadId":id,"provider":"codex","model":"other-model","accessMode":"fullAccess","interactionMode":"build"})).unwrap();
+    engine
+        .lock()
+        .unwrap()
+        .set_active_thread(Some(id.into()))
+        .unwrap();
+    let expected = [
+        "id",
+        "draft",
+        "selection",
+        "accessMode",
+        "interactionMode",
+        "rustDraftImages",
+        "draftContext",
+    ]
+    .into_iter()
+    .map(|key| (key.to_owned(), build[key].clone()))
+    .collect::<serde_json::Map<_, _>>();
+    let switched = call(
+        &engine,
+        "agent.provider.select",
+        json!({"threadId":id,"provider":"claude","expected":expected}),
+    )
+    .unwrap()["thread"]
+        .clone();
+    assert_eq!(switched["id"], original["id"]);
+    assert_eq!(switched["botID"], original["botID"]);
+    assert_eq!(switched["rustBotContext"], original["rustBotContext"]);
+    assert_eq!(switched["selection"]["provider"], "claude");
+    assert!(
+        engine
+            .lock()
+            .unwrap()
+            .bot_instructions(&switched, &root)
+            .unwrap()
+            .is_some()
+    );
+    let opencode = call(&engine, "agent.select", json!({"threadId":id,"provider":"opencode","model":"default","accessMode":"approval","interactionMode":"build"})).unwrap();
+    assert_eq!(opencode["id"], original["id"]);
+    assert_eq!(opencode["botID"], original["botID"]);
+    assert_eq!(opencode["rustBotContext"], original["rustBotContext"]);
+    let capabilities = call(
+        &engine,
+        "agent.selection.capabilities",
+        json!({"threadId":id}),
+    )
+    .unwrap();
+    assert!(
+        capabilities["providers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|provider| provider["provider"] == "opencode")
     );
 }
 
@@ -224,13 +385,21 @@ def write(v): print(json.dumps(v),flush=True)
 r=read();assert r['method']=='initialize';write({'id':r['id'],'result':{}})
 assert read()['method']=='initialized'
 r=read();p=r['params'];assert p['developerInstructions']==json.load(open('expected.json'))
-assert p['model']=='fixture-model' and p['approvalPolicy']=='untrusted' and p['sandbox']=='read-only'
+wire=json.load(open('expected-wire.json'))
+assert p['model']==wire['model'] and p['approvalPolicy']==wire['approval'] and p['sandbox']==wire['sandbox']
 with open('launches','a') as log:log.write(r['method']+'\n')
 write({'id':r['id'],'result':{'thread':{'id':'fixture-bot-session'}}})
-r=read();assert r['method']=='turn/start';assert 'Current user request' not in r['params']['input'][0]['text'] or 'fork turn' in r['params']['input'][0]['text']
-write({'id':r['id'],'result':{'turn':{'id':'turn'}}})
-write({'method':'item/agentMessage/delta','params':{'itemId':'answer','delta':'Fixture answer'}})
-write({'method':'turn/completed','params':{'threadId':'fixture-bot-session','turn':{'id':'turn','status':'completed'}}})
+r=read()
+if r['method']=='thread/compact/start':
+    write({'id':r['id'],'result':{}})
+    write({'method':'turn/started','params':{'threadId':'fixture-bot-session','turn':{'id':'compact-turn'}}})
+    write({'method':'item/completed','params':{'threadId':'fixture-bot-session','turnId':'compact-turn','item':{'type':'contextCompaction','id':'item'}}})
+    write({'method':'turn/completed','params':{'threadId':'fixture-bot-session','turn':{'id':'compact-turn','status':'completed'}}})
+else:
+    assert r['method']=='turn/start';assert 'Current user request' not in r['params']['input'][0]['text'] or 'fork turn' in r['params']['input'][0]['text'] or 'continue old conversation' in r['params']['input'][0]['text']
+    write({'id':r['id'],'result':{'turn':{'id':'turn'}}})
+    write({'method':'item/agentMessage/delta','params':{'itemId':'answer','delta':'Fixture answer'}})
+    write({'method':'turn/completed','params':{'threadId':'fixture-bot-session','turn':{'id':'turn','status':'completed'}}})
 sys.stdin.readline()
 "#;
 #[cfg(unix)]
@@ -291,6 +460,11 @@ fn shared_engine_bot_new_send_resume_edit_restart_and_native_fork() {
 #[cfg(unix)]
 fn send(engine: &SharedEngine, id: &str, prompt: &str) {
     call(engine, "agent.send", json!({"threadId":id,"text":prompt})).unwrap();
+    wait_for_bot(engine, id);
+}
+
+#[cfg(unix)]
+fn wait_for_bot(engine: &SharedEngine, id: &str) {
     let deadline = Instant::now() + Duration::from_secs(8);
     while !call(engine, "app.status", json!({})).unwrap()["running"]
         .as_array()
@@ -335,7 +509,48 @@ fn bot_provider_fixture_child() {
         serde_json::to_vec(&context["instructions"]).unwrap(),
     )
     .unwrap();
+    std::fs::write(
+        root.join("expected-wire.json"),
+        serde_json::to_vec(
+            &json!({"model":"fixture-model","approval":"untrusted","sandbox":"read-only"}),
+        )
+        .unwrap(),
+    )
+    .unwrap();
     send(&engine, id, "first turn");
+    // Older local bots can resume on the same thread, with the current bot's
+    // instructions, after the first explicit send authorizes their context.
+    let legacy = create(&engine);
+    let legacy_id = legacy["threadId"].as_str().unwrap();
+    let mut saved = engine.lock().unwrap().store.thread(legacy_id).unwrap();
+    saved.as_object_mut().unwrap().remove("rustBotContext");
+    saved.as_object_mut().unwrap().remove("worktreePath");
+    saved["sessions"] = engine.lock().unwrap().store.thread(id).unwrap()["sessions"].clone();
+    append(&mut saved, "user", "old history", None);
+    engine.lock().unwrap().store.save(&saved).unwrap();
+    let mut stale = saved.clone();
+    stale["draft"] = json!("different captured draft");
+    {
+        let mut e = engine.lock().unwrap();
+        let request = json!({"threadId":legacy_id,"text":"continue old conversation"});
+        assert!(
+            e.send_turn_if_unchanged(&request, &SendOrigin::Ordinary, Some(&stale), false)
+                .is_err()
+        );
+        assert_eq!(e.store.thread(legacy_id).unwrap(), saved);
+        e.send_turn_if_unchanged(&request, &SendOrigin::Ordinary, Some(&saved), false)
+            .unwrap();
+    }
+    wait_for_bot(&engine, legacy_id);
+    let continued = engine.lock().unwrap().store.thread(legacy_id).unwrap();
+    assert_eq!(continued["id"], saved["id"]);
+    assert_eq!(continued["botID"], saved["botID"]);
+    assert_eq!(continued["items"][0], saved["items"][0]);
+    assert_eq!(
+        continued["sessions"][&provider]["sessionID"],
+        saved["sessions"][&provider]["sessionID"]
+    );
+    assert!(continued["rustBotContext"].is_object());
     let baseline = call(&engine, "bots.read", json!({"botId":BOT})).unwrap()["baseline"].clone();
     call(&engine,"bots.patch",json!({"botId":BOT,"baseline":baseline,"patch":{"name":"Edited bot","persona":"New instructions must not replace snapshot"}})).unwrap();
     send(&engine, id, "second turn");
@@ -369,10 +584,24 @@ fn bot_provider_fixture_child() {
     assert_eq!(fork["selection"], context["selection"]);
     assert!(fork["sessions"].as_object().unwrap().is_empty());
     send(&engine, fork["id"].as_str().unwrap(), "fork turn");
+    if provider == "codex" {
+        let changed = call(&engine, "agent.select", json!({"threadId":id,"provider":"codex","model":"changed-model","accessMode":"fullAccess","interactionMode":"build"})).unwrap();
+        assert_eq!(changed["rustBotContext"], context);
+        std::fs::write(
+            root.join("expected-wire.json"),
+            serde_json::to_vec(
+                &json!({"model":"changed-model","approval":"never","sandbox":"danger-full-access"}),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        send(&engine, id, "use new thread settings");
+        send(&engine, id, "/compact");
+    }
     let expected = if provider == "codex" {
-        "thread/start\nthread/resume\nthread/resume\nthread/start\n"
+        "thread/start\nthread/resume\nthread/resume\nthread/resume\nthread/start\nthread/resume\nthread/resume\n"
     } else {
-        "--session-id\n--resume\n--resume\n--session-id\n"
+        "--session-id\n--resume\n--resume\n--resume\n--session-id\n"
     };
     assert_eq!(
         std::fs::read_to_string(root.join("launches")).unwrap(),

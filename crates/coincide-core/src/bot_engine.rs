@@ -11,6 +11,47 @@ impl Engine {
         Ok(result)
     }
 
+    /// Make a policy-only view after verifying the bot identity and local
+    /// instruction authority. Never persist this view or accept one from a client.
+    pub(super) fn bot_validation_view(&self, thread: &Value) -> Result<Value> {
+        if thread["botID"].is_null() && thread["rustBotContext"].is_null() {
+            return Ok(thread.clone());
+        }
+        let cwd = self.working_directory(thread)?;
+        if thread["rustBotContext"].is_null() {
+            crate::bot_runtime::existing_context(&self.store, thread, &cwd)?;
+        } else {
+            self.bot_instructions(thread, &cwd)?;
+        }
+        // Policy needs only these fields. Avoid cloning a long bot transcript
+        // on every composer capability refresh.
+        let fields = thread.as_object().context("Invalid bot conversation")?;
+        Ok(Value::Object(
+            ["id", "selection", "accessMode", "interactionMode"]
+                .into_iter()
+                .filter_map(|key| fields.get(key).map(|value| (key.to_owned(), value.clone())))
+                .collect(),
+        ))
+    }
+
+    /// A user-initiated send or selection can attach a snapshot to an older
+    /// conversation. The atomic Store operation preserves its exact thread ID,
+    /// transcript, draft, sessions and settings.
+    pub(super) fn authorize_existing_bot(&mut self, thread: &mut Value) -> Result<()> {
+        if !thread["botID"].is_null() && thread["rustBotContext"].is_null() {
+            let cwd = self.working_directory(thread)?;
+            let (source, context) =
+                crate::bot_runtime::existing_context(&self.store, thread, &cwd)?;
+            *thread = self.store.authorize_existing_bot_if_unchanged(
+                source.as_ref(),
+                thread,
+                &context,
+            )?;
+            self.revision += 1;
+        }
+        Ok(())
+    }
+
     /// Validate on EVERY send, including resume/queue/schedule, before any
     /// transcript/draft mutation. Later bot edits never change this snapshot.
     pub(super) fn bot_instructions(&self, thread: &Value, cwd: &Path) -> Result<Option<String>> {
@@ -41,19 +82,8 @@ impl Engine {
             "Bot identity differs from its instruction snapshot"
         );
         Uuid::parse_str(required(context, "botId")?).context("Invalid bot identity")?;
-        ensure!(
-            matches!(
-                thread["accessMode"].as_str(),
-                Some("approval" | "fullAccess")
-            ) && thread["interactionMode"] == "build"
-                && context["accessMode"] == thread["accessMode"],
-            "Bot conversation requires its saved access mode and Build"
-        );
         let selection = &thread["selection"];
-        ensure!(
-            selection == &context["selection"],
-            "Bot selection differs from its instruction snapshot; create a new bot conversation"
-        );
+        crate::composer_selection::validate_selection(selection)?;
         let fields = selection
             .as_object()
             .context("Invalid bot provider selection")?;
@@ -64,28 +94,11 @@ impl Engine {
             )),
             "Bot selection contains unsupported options"
         );
-        let provider = required(selection, "provider")?;
-        ensure!(
-            matches!(provider, "codex" | "claude") && context["provider"] == provider,
-            "Bot provider differs from its supported instruction snapshot"
-        );
+        required(selection, "provider")?;
         ensure!(
             selection["accountID"].is_null()
                 || matches!(selection["accountID"].as_str(), Some("" | "default")),
-            "Alternate bot accounts are unsupported"
-        );
-        ensure!(
-            selection["effort"].is_null() && selection["speed"].is_null(),
-            "Bot effort/speed is unsupported"
-        );
-        let model = required(selection, "modelID")?;
-        ensure!(
-            !model.is_empty()
-                && model.len() <= 256
-                && model.trim() == model
-                && !model.starts_with('-')
-                && !model.chars().any(char::is_control),
-            "Invalid saved bot model"
+            "Alternate bot accounts are not yet connected"
         );
         let saved_cwd = Path::new(required(context, "cwd")?);
         ensure!(

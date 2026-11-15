@@ -393,8 +393,8 @@ impl Session {
                 .and_then(|()| {
                     if let Some(policy) = &policy {
                         ensure!(
-                            matches!(&provider, Provider::Codex) && instructions.is_none(),
-                            "Mode policy is supported only for ordinary Codex turns"
+                            matches!(&provider, Provider::Codex),
+                            "Mode policy is supported only for Codex turns"
                         );
                         policy.require_codex()?;
                         policy.preflight()?;
