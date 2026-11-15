@@ -3,7 +3,7 @@
 //! set_context on every thread/root change and set_visible as the panel shows
 //! or hides. The selected folder's repository is discovered automatically; a
 //! manual override remains under Choose repository. GitHub reads run in
-//! one background worker, never GPUI render; only the saved filter touches the
+//! background workers, never GPUI render; only the saved filter touches the
 //! Engine here, with try_lock, when the panel opens and when the user picks one.
 //! Check Out in New Thread emits CheckoutOpened for the parent to select.
 use crate::native_menu::AccessibleMenuExt as _;
@@ -475,6 +475,12 @@ pub struct CheckoutOpened {
     pub notice: Option<String>,
 }
 impl EventEmitter<CheckoutOpened> for GitHubReviewPanel {}
+/// A validated check details link, opened in the owning conversation's browser.
+pub struct OpenCheckLink {
+    pub thread: String,
+    pub url: String,
+}
+impl EventEmitter<OpenCheckLink> for GitHubReviewPanel {}
 
 fn discard_completions<T>(receiver: &mpsc::Receiver<T>) -> bool {
     let mut discarded = false;
@@ -523,11 +529,18 @@ pub struct GitHubReviewPanel {
     active: Option<(u64, Request)>,
     busy: bool,
     workers: WorkerOwner,
+    /// Refreshes the visible view without disabling its controls.
+    live_workers: WorkerOwner,
+    live_tx: mpsc::Sender<ReadResult>,
+    live_rx: mpsc::Receiver<ReadResult>,
+    live_attempt: Option<Instant>,
+    live_failed: bool,
     list: Vec<Value>,
     truncated: bool,
     cache: HashMap<Request, CachedList>,
     /// The row arrow keys move to; Return opens it.
     cursor: Option<usize>,
+    expanded_checks: Option<(u64, String)>,
     selected: Option<(u64, String)>,
     detail: Option<Value>,
     detail_loaded_at: Option<Instant>,
@@ -566,6 +579,7 @@ pub struct GitHubReviewPanel {
 impl GitHubReviewPanel {
     pub fn new(engine: SharedEngine, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let (tx, rx) = mpsc::channel();
+        let (live_tx, live_rx) = mpsc::channel();
         let (checkout_tx, checkout_rx) = mpsc::channel();
         let (discovery_tx, discovery_rx) = mpsc::channel();
         let poll = cx.spawn_in(window, async move |this, cx| {
@@ -639,10 +653,16 @@ impl GitHubReviewPanel {
             active: None,
             busy: false,
             workers: WorkerOwner::default(),
+            live_workers: WorkerOwner::default(),
+            live_tx,
+            live_rx,
+            live_attempt: None,
+            live_failed: false,
             list: Vec::new(),
             truncated: false,
             cache: HashMap::new(),
             cursor: None,
+            expanded_checks: None,
             selected: None,
             detail: None,
             detail_loaded_at: None,
@@ -790,6 +810,9 @@ impl GitHubReviewPanel {
             return;
         }
         self.scope = scope;
+        self.live_attempt = None;
+        self.live_failed = false;
+        self.expanded_checks = None;
         self.detected_repository = None;
         self.override_scope = None;
         self.discovery_attempted = false;
@@ -926,6 +949,7 @@ impl GitHubReviewPanel {
         }
         self.state = state.into();
         self.involvement = involvement;
+        self.expanded_checks = None;
         self.filter_loaded = true;
         self.save_filter();
         self.invalidate_actions(cx);
@@ -1136,9 +1160,108 @@ impl GitHubReviewPanel {
         }
         cx.notify();
     }
+    /// Poll GitHub in a separate bounded worker so a slow network cannot block
+    /// opening a row, changing filters, or typing a review. Results are bound
+    /// to the exact visible request and head, and discarded after navigation.
+    fn poll_live(&mut self, cx: &mut Context<Self>) {
+        while let Ok((generation, request, result)) = self.live_rx.try_recv() {
+            if !self.visible
+                || self.busy
+                || self.performing(cx)
+                || !current(generation, &request, self.active.as_ref())
+            {
+                continue;
+            }
+            match result {
+                Ok(payload) => {
+                    self.live_failed = false;
+                    match &request.view {
+                        View::List(_) => {
+                            let cursor_number = self.cursor.and_then(|i| {
+                                self.list.get(i).and_then(|pr| pr["number"].as_u64())
+                            });
+                            self.list = payload["pullRequests"]
+                                .as_array()
+                                .cloned()
+                                .unwrap_or_default();
+                            self.truncated = payload["truncated"] == true;
+                            self.cursor = cursor_number.and_then(|number| {
+                                self.list.iter().position(|pr| pr["number"] == number)
+                            });
+                            if self.expanded_checks.as_ref().is_some_and(|(number, head)| {
+                                !self
+                                    .list
+                                    .iter()
+                                    .any(|pr| pr["number"] == *number && pr["headRefOid"] == *head)
+                            }) {
+                                self.expanded_checks = None;
+                            }
+                            self.cache.insert(
+                                request.clone(),
+                                CachedList {
+                                    at: Instant::now(),
+                                    list: self.list.clone(),
+                                    truncated: self.truncated,
+                                },
+                            );
+                        }
+                        View::Detail { .. } => {
+                            let pr = payload["pullRequest"].clone();
+                            if self.detail.as_ref() != Some(&pr) {
+                                // A changed check/review can invalidate a prepared merge.
+                                self.invalidate_actions(cx);
+                                if !presentation::can_merge(&pr) {
+                                    self.merge_confirm = None;
+                                }
+                                self.detail = Some(pr);
+                                self.sync_action_scope(cx);
+                            }
+                            self.detail_loaded_at = Some(Instant::now());
+                        }
+                    }
+                }
+                Err(error) => {
+                    self.live_failed = true;
+                    if error.to_string().starts_with("head_changed")
+                        && let View::Detail { number, .. } = &request.view
+                    {
+                        self.reopen = Some(*number);
+                        self.selected = None;
+                        self.detail = None;
+                        self.load_list(true, cx);
+                    }
+                }
+            }
+            cx.notify();
+        }
+        if !self.visible
+            || self.busy
+            || self.performing(cx)
+            || self.live_attempt.is_some_and(|at| at.elapsed() < FRESH)
+            || !self.live_workers.can_start()
+        {
+            return;
+        }
+        let Some((generation, request)) = self.active.clone() else {
+            return;
+        };
+        let engine = self.engine.clone();
+        let tx = self.live_tx.clone();
+        if self.live_workers.spawn(move |admission| {
+            let result = fetch_admitted(
+                &mut |method, params| call(&engine, method, params),
+                &request,
+                &admission,
+            );
+            let _ = tx.send((generation, request, result));
+        }) {
+            self.live_attempt = Some(Instant::now());
+        }
+    }
     pub fn request_shutdown(&mut self, cx: &mut Context<Self>) {
         // A running checkout stops its Git process group; it never waits here.
         self.checkout_cancel.store(true, Ordering::Release);
+        self.live_workers.close();
         if self.workers.close() {
             self.generation = self.generation.wrapping_add(1);
             self.active = None;
@@ -1162,6 +1285,7 @@ impl GitHubReviewPanel {
         self.discard_read_results();
     }
     fn discard_read_results(&mut self) {
+        discard_completions(&self.live_rx);
         while self.discovery_rx.try_recv().is_ok() {
             self.busy = false;
         }
@@ -1174,7 +1298,17 @@ impl GitHubReviewPanel {
         if self.workers.closed() {
             self.discard_read_results();
         }
-        let read = self.workers.status();
+        let mut read = self.workers.status();
+        let live = self.live_workers.status();
+        read.closed &= live.closed;
+        read.unjoined += live.unjoined;
+        read.unclassified += live.unclassified;
+        read.returned = read.returned.saturating_add(live.returned);
+        read.panicked = read.panicked.saturating_add(live.panicked);
+        read.pending_pickers += live.pending_pickers;
+        if read.spawn_error.is_none() {
+            read.spawn_error = live.spawn_error;
+        }
         if self.workers.closed() {
             self.discard_read_results();
         }
@@ -1189,10 +1323,12 @@ impl GitHubReviewPanel {
     }
     fn poll(&mut self, cx: &mut Context<Self>) {
         self.workers.poll();
+        self.live_workers.poll();
         if self.workers.closed() {
             self.discard_read_results();
             return;
         }
+        self.poll_live(cx);
         while let Ok((generation, scope, result)) = self.discovery_rx.try_recv() {
             self.busy = false;
             if self.generation != generation || self.scope.as_ref() != Some(&scope) {
@@ -1260,6 +1396,7 @@ impl GitHubReviewPanel {
             cx.notify();
             return;
         }
+        let read_succeeded = result.is_ok();
         match result {
             Ok(payload) => match request.view {
                 View::List(_) => {
@@ -1325,6 +1462,8 @@ impl GitHubReviewPanel {
                 self.banner = Some((format!("{error}. Refresh to retry."), true));
             }
         }
+        self.live_attempt = Some(Instant::now());
+        self.live_failed = !read_succeeded;
         self.sync_action_scope(cx);
         cx.notify();
     }
@@ -1694,6 +1833,19 @@ impl GitHubReviewPanel {
         if self.busy || self.performing(cx) {
             header = header.child(Spinner::new().xsmall().color(muted));
         }
+        if self.live_failed && !self.busy {
+            header = header.child(
+                div()
+                    .id("github-live-stale")
+                    .text_xs()
+                    .text_color(muted)
+                    .tooltip(|window, cx| {
+                        Tooltip::new("Couldn't update automatically. Retry with Refresh.")
+                            .build(window, cx)
+                    })
+                    .child("Update paused"),
+            );
+        }
         if let Some(pr) = &self.detail {
             let url = text(pr, "url");
             header = header.child(
@@ -1735,6 +1887,9 @@ impl GitHubReviewPanel {
         let state = presentation::state(pr);
         let checks =
             presentation::checks_state(&pr["statusCheckRollup"]).map(|state| state.glyph());
+        let check_rows = presentation::checks(&pr["statusCheckRollup"]);
+        let head = text(pr, "headRefOid");
+        let expanded = self.expanded_checks.as_ref() == Some(&(number, head.clone()));
         let review = presentation::review_decision(pr).map(|decision| decision.glyph());
         let meta = presentation::row_meta(pr);
         let title = text(pr, "title");
@@ -1759,11 +1914,63 @@ impl GitHubReviewPanel {
                 .child(excerpt(&title, 180)),
         );
         if let Some(glyph) = checks {
-            first = first.child(glyph_icon(
-                SharedString::from(format!("github-pr-checks-{number}")),
-                glyph,
-                cx,
-            ));
+            let finished = check_rows
+                .iter()
+                .filter(|check| {
+                    !matches!(
+                        check.status,
+                        presentation::CheckStatus::Pending
+                            | presentation::CheckStatus::ActionRequired
+                    )
+                })
+                .count();
+            let count = if check_rows.is_empty() {
+                String::new()
+            } else {
+                format!("{finished}/{}", check_rows.len())
+            };
+            let label = format!(
+                "{}; {} checks. {}",
+                glyph.label,
+                check_rows.len(),
+                if expanded {
+                    "Hide checks"
+                } else {
+                    "Show checks"
+                }
+            );
+            let tooltip = label.clone();
+            first = first.child(
+                div()
+                    .id(SharedString::from(format!("github-pr-checks-{number}")))
+                    .debug_selector(move || format!("github-pr-checks-{number}"))
+                    .role(gpui_kit::Role::Button)
+                    .aria_label(label)
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .px_1p5()
+                    .py_1()
+                    .rounded_md()
+                    .text_xs()
+                    .text_color(tone(glyph.tone, cx))
+                    .cursor_pointer()
+                    .hover(move |style| style.bg(hover))
+                    .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
+                    .child(Icon::new(glyph.icon).xsmall())
+                    .child(count)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
+                        let key = (number, head.clone());
+                        this.expanded_checks = if this.expanded_checks.as_ref() == Some(&key) {
+                            None
+                        } else {
+                            Some(key)
+                        };
+                        cx.notify();
+                    })),
+            );
         }
         if let Some(glyph) = review {
             first = first.child(glyph_icon(
@@ -1772,7 +1979,7 @@ impl GitHubReviewPanel {
                 cx,
             ));
         }
-        div()
+        let row = div()
             .id(SharedString::from(format!("github-pr-{number}")))
             .role(gpui_kit::Role::Button)
             .aria_label(spoken)
@@ -1826,8 +2033,32 @@ impl GitHubReviewPanel {
                 if !this.busy && !this.workers.closed() {
                     this.open_row(index, window, cx);
                 }
-            }))
-            .into_any_element()
+            }));
+        let mut wrapper = div().flex().flex_col().child(row);
+        if expanded {
+            let mut details = div()
+                .flex()
+                .flex_col()
+                .ml(px(29.))
+                .mr_2()
+                .mb_1()
+                .pl_2()
+                .border_l_1()
+                .border_color(cx.theme().border);
+            if check_rows.is_empty() {
+                details = details.child(
+                    div()
+                        .text_xs()
+                        .text_color(muted)
+                        .child("No check details available"),
+                );
+            }
+            for (index, check) in check_rows.iter().enumerate() {
+                details = details.child(self.check_row(number, index, check, cx));
+            }
+            wrapper = wrapper.child(details);
+        }
+        wrapper.into_any_element()
     }
     fn list_body(&self, cx: &mut Context<Self>) -> Div {
         let muted = cx.theme().muted_foreground;
@@ -2296,12 +2527,14 @@ impl GitHubReviewPanel {
         let (muted, hover) = (theme.muted_foreground, theme.list_hover);
         let glyph = check.status.glyph();
         let url = check.url.clone();
+        let thread = self.scope.as_ref().map(|(thread, _)| thread.clone());
         let tooltip = match &url {
             Some(_) => format!("Open {} in the browser", check.name),
             None => check.name.clone(),
         };
         div()
             .id(SharedString::from(format!("github-check-{number}-{index}")))
+            .debug_selector(move || format!("github-check-{number}-{index}"))
             .aria_label(format!("{}, {}", check.name, glyph.label))
             .flex()
             .items_center()
@@ -2334,14 +2567,22 @@ impl GitHubReviewPanel {
                     .child(glyph.label),
             )
             .when_some(url, |row, url| {
-                row.cursor_pointer()
+                row.role(gpui_kit::Role::Button)
+                    .cursor_pointer()
                     .hover(move |style| style.bg(hover))
                     .child(
                         Icon::new(IconName::ArrowUpRight)
                             .xsmall()
                             .text_color(muted.opacity(0.6)),
                     )
-                    .on_click(move |_, _, cx| cx.open_url(&url))
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        if let Some(thread) = &thread {
+                            cx.emit(OpenCheckLink {
+                                thread: thread.clone(),
+                                url: url.clone(),
+                            });
+                        }
+                    }))
             })
             .into_any_element()
     }
@@ -2486,6 +2727,10 @@ impl Render for GitHubReviewPanel {
         .into_any_element()
     }
 }
+
+#[cfg(test)]
+#[path = "github_review_ui_tests.rs"]
+mod native_tests;
 
 #[cfg(test)]
 mod tests {
