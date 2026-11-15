@@ -48,7 +48,9 @@ pub(super) struct State {
     share: f64,
     height: f64,
     drag: Option<Drag>,
-    error: Option<String>,
+    load_pending: bool,
+    pending_share: Option<Option<f64>>,
+    pending_height: Option<f64>,
     applied_placement: Option<Placement>,
 }
 impl Default for State {
@@ -57,7 +59,9 @@ impl Default for State {
             share: 0.5,
             height: 260.,
             drag: None,
-            error: None,
+            load_pending: false,
+            pending_share: None,
+            pending_height: None,
             applied_placement: None,
         }
     }
@@ -71,32 +75,82 @@ impl State {
         changed
     }
     pub(super) fn load(engine: &SharedEngine) -> Self {
-        let result = (|| -> Result<Value> {
-            Ok(try_state(engine)?
-                .store
-                .document("ui-state.json")?
-                .unwrap_or_else(|| json!({})))
-        })();
-        match result.and_then(|value| {
-            valid(&value)?;
-            Ok(value)
-        }) {
-            Ok(value) => Self {
-                share: value["inspectorFraction"]
-                    .as_f64()
-                    .map(fraction)
-                    .unwrap_or(0.5),
-                height: value["terminalHeight"].as_f64().unwrap_or(260.),
-                ..Self::default()
-            },
-            Err(_) => Self {
-                error: Some(
-                    "Saved terminal geometry could not be read; its original values are retained."
-                        .into(),
-                ),
-                ..Self::default()
-            },
+        let mut state = Self {
+            load_pending: true,
+            ..Self::default()
+        };
+        state.retry(engine);
+        state
+    }
+    fn queue_save(&mut self, key: &str, value: f64) {
+        self.load_pending = false;
+        match key {
+            "inspectorFraction" => self.pending_share = Some(Some(value)),
+            "terminalHeight" => self.pending_height = Some(value),
+            _ => unreachable!("geometry keys come from the divider"),
         }
+    }
+    fn queue_reset(&mut self) {
+        self.load_pending = false;
+        self.pending_share = Some(None);
+    }
+    /// A busy engine is temporary. Preserve the live geometry and retry the
+    /// newest value on the next UI tick, without covering whichever panel is open.
+    fn retry(&mut self, engine: &SharedEngine) -> bool {
+        if self.drag.is_some()
+            || (!self.load_pending && self.pending_share.is_none() && self.pending_height.is_none())
+        {
+            return false;
+        }
+        let mut owner = match try_state(engine) {
+            Ok(owner) => owner,
+            Err(error) if engine_busy(&error) => return false,
+            Err(error) => {
+                eprintln!("Panel geometry is unavailable: {error}");
+                self.load_pending = false;
+                self.pending_share = None;
+                self.pending_height = None;
+                return true;
+            }
+        };
+        if owner.admissions_frozen() {
+            return false;
+        }
+        if let Some(value) = self.pending_share.take() {
+            let result = match value {
+                Some(value) => persist(&mut owner.store, "inspectorFraction", value),
+                None => reset_share(&mut owner.store),
+            };
+            if let Err(error) = result {
+                eprintln!("Panel width could not be saved: {error}");
+            }
+        }
+        if let Some(value) = self.pending_height.take()
+            && let Err(error) = persist(&mut owner.store, "terminalHeight", value)
+        {
+            eprintln!("Terminal height could not be saved: {error}");
+        }
+        if self.load_pending {
+            self.load_pending = false;
+            match owner
+                .store
+                .document("ui-state.json")
+                .map(|value| value.unwrap_or_else(|| json!({})))
+                .and_then(|value| {
+                    valid(&value)?;
+                    Ok(value)
+                }) {
+                Ok(value) => {
+                    self.share = value["inspectorFraction"]
+                        .as_f64()
+                        .map(fraction)
+                        .unwrap_or(0.5);
+                    self.height = value["terminalHeight"].as_f64().unwrap_or(260.);
+                }
+                Err(error) => eprintln!("Saved panel geometry could not be read: {error}"),
+            }
+        }
+        true
     }
     fn begin(&mut self, right: bool, pointer: f64, available: f64) {
         if !pointer.is_finite() || !available.is_finite() || available <= 0. {
@@ -449,9 +503,6 @@ impl Coincide {
                 )
                 .child(handle)
                 .child(div().flex_1().min_h_0().min_w_0().child(body))
-                .when_some(self.terminal_layout.error.clone(), |view, error| {
-                    view.child(div().text_xs().child(error))
-                })
                 .into_any_element(),
         )
     }
@@ -461,28 +512,22 @@ impl Coincide {
         }
         self.terminal_layout.drag = None;
         self.terminal_layout.share = 0.5;
-        let result = (|| -> Result<()> {
-            let mut engine = try_state(&self.engine)?;
-            anyhow::ensure!(!engine.admissions_frozen(), "App is closing");
-            reset_share(&mut engine.store)
-        })();
-        self.terminal_layout.error = result.err().map(|_| {
-            "Panel width is reset for this session but could not be saved. Double-click again to retry."
-                .into()
-        });
+        self.terminal_layout.queue_reset();
+        self.poll_terminal_resize(cx);
         cx.notify();
     }
     fn finish_terminal_resize(&mut self, cx: &mut Context<Self>) {
         let Some((key, value)) = self.terminal_layout.finish() else {
             return;
         };
-        let result = (|| -> Result<()> {
-            let mut engine = try_state(&self.engine)?;
-            anyhow::ensure!(!engine.admissions_frozen(), "App is closing");
-            persist(&mut engine.store, key, value)
-        })();
-        self.terminal_layout.error=result.err().map(|_|"Terminal size is kept for this session but could not be saved. Drag again to retry.".into());
+        self.terminal_layout.queue_save(key, value);
+        self.poll_terminal_resize(cx);
         cx.notify();
+    }
+    pub(super) fn poll_terminal_resize(&mut self, cx: &mut Context<Self>) {
+        if self.terminal_layout.retry(&self.engine) {
+            cx.notify();
+        }
     }
     pub(super) fn sync_terminal_resize(&mut self, window: &Window) {
         if self.terminal_layout.drag.as_ref().is_some_and(|drag| {
@@ -550,6 +595,58 @@ mod tests {
         assert!(reset_share(&mut store).is_err());
         assert_eq!(store.document("ui-state.json").unwrap(), Some(malformed));
         drop(store);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[::core::prelude::v1::test]
+    fn busy_engine_retries_the_latest_panel_and_terminal_sizes() {
+        use coincide_core::api::{Engine, SharedEngine};
+        use std::sync::{Arc, Mutex};
+        let root =
+            std::env::temp_dir().join(format!("coincide-panel-retry-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let mut store = coincide_core::store::Store::open(&root.join("state.sqlite")).unwrap();
+        store
+            .save_document(
+                "ui-state.json",
+                &serde_json::json!({"listWidth":288,"future":{"keep":true}}),
+            )
+            .unwrap();
+        let engine: SharedEngine = Arc::new(Mutex::new(Engine::new(store)));
+        let guard = engine.lock().unwrap();
+        let mut state = State::load(&engine);
+        state.queue_save("inspectorFraction", 0.6);
+        state.queue_save("inspectorFraction", 0.7);
+        state.queue_save("terminalHeight", 300.);
+        assert!(!state.retry(&engine), "busy geometry stays queued");
+        drop(guard);
+        assert!(state.retry(&engine));
+        let document = engine
+            .lock()
+            .unwrap()
+            .store
+            .document("ui-state.json")
+            .unwrap()
+            .unwrap();
+        assert_eq!(document["inspectorFraction"], 0.7);
+        assert_eq!(document["terminalHeight"], 300.);
+        assert_eq!(document["listWidth"], 288);
+        assert_eq!(document["future"]["keep"], true);
+        let guard = engine.lock().unwrap();
+        state.queue_reset();
+        assert!(!state.retry(&engine));
+        drop(guard);
+        assert!(state.retry(&engine));
+        assert!(
+            engine
+                .lock()
+                .unwrap()
+                .store
+                .document("ui-state.json")
+                .unwrap()
+                .unwrap()["inspectorFraction"]
+                .is_null()
+        );
+        drop(engine);
         std::fs::remove_dir_all(root).unwrap();
     }
 }
