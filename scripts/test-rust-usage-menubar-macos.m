@@ -81,6 +81,7 @@ int main(void) {
             CoincideUsageSurface *card = (CoincideUsageSurface *)list.arrangedSubviews.firstObject;
             Require(card.isAccessibilityElement && [card.accessibilityRole isEqual:NSAccessibilityButtonRole],
                     @"Account card is missing from the accessibility tree");
+            Require([card.accessibilityLabel containsString:@"77% used"], @"Account card omitted its usage value");
             Require([card accessibilityPerformPress], @"Account card is not accessible as a button");
             Require([NextEvent()[@"action"] isEqual:@"usage"], @"Account card did not open Usage");
             NSSegmentedControl *mode = [NSSegmentedControl segmentedControlWithLabels:@[@"Used", @"Left"] trackingMode:NSSegmentSwitchTrackingSelectOne target:nil action:nil];

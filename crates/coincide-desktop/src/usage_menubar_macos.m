@@ -489,7 +489,16 @@ static NSBox *UsageSeparator(CGFloat width) {
         [card addGestureRecognizer:openCard];
         [card setAccessibilityElement:YES];
         [card setAccessibilityRole:NSAccessibilityButtonRole];
-        [card setAccessibilityLabel:[NSString stringWithFormat:@"%@ usage", UsageString(account[@"title"])]];
+        NSMutableArray<NSString *> *summary = [NSMutableArray arrayWithObject:UsageString(account[@"title"])];
+        if (plan.length) [summary addObject:plan];
+        for (id rawRow in rows) {
+            NSDictionary *row = UsageDict(rawRow);
+            NSString *title = UsageString(row[@"title"]), *value = UsageString(row[@"value"]);
+            if (title.length || value.length) [summary addObject:[NSString stringWithFormat:@"%@ %@", title, value]];
+        }
+        if (rows.count == 0 && placeholder.length) [summary addObject:placeholder];
+        if (tracked.length) [summary addObject:tracked];
+        [card setAccessibilityLabel:[summary componentsJoinedByString:@", "]];
         [accountList addArrangedSubview:card];
         [card.widthAnchor constraintEqualToConstant:contentWidth].active = YES;
     }
