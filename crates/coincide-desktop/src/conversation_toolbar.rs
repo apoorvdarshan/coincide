@@ -330,7 +330,9 @@ impl Coincide {
             chat_inspector::Panel::Workspace => Some(RightPanel::Diff),
             chat_inspector::Panel::Browser => Some(RightPanel::Preview),
             chat_inspector::Panel::Terminal => Some(RightPanel::Terminal),
-            chat_inspector::Panel::ConversationSchedules => Some(RightPanel::Schedules),
+            chat_inspector::Panel::ConversationSchedules | chat_inspector::Panel::Schedules => {
+                Some(RightPanel::Schedules)
+            }
         }
     }
     /// The Git workspace on its diff or its pull requests; the lit one closes.
@@ -368,24 +370,19 @@ impl Coincide {
     }
     /// The Scheduled panel; while the open thread has schedules it opens on them.
     fn toggle_schedules_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let closing_thread_schedule =
-            self.schedules_open && !self.schedule_editor.all_conversations;
         self.settings_open = false;
         self.workspace_open = false;
         self.session_import_open = false;
         let thread = self.selected.as_ref().map(|thread| text(thread, "id"));
         if self.schedules_open {
-            self.close_schedule_surface();
+            self.close_chat_inspector(cx);
         } else if thread.is_some_and(|id| {
             coincide_core::schedule_presentation::thread_tooltip_now(&self.sidebar_schedules, &id)
                 .is_some()
         }) {
             self.open_conversation_schedules(window, cx);
         } else {
-            self.open_global_schedules(cx);
-        }
-        if closing_thread_schedule {
-            self.remember_inspector_choice(None, cx);
+            self.open_global_schedules(window, cx);
         }
         self.sync_transcription_binding(cx);
         cx.notify();

@@ -35,9 +35,6 @@ impl Store {
             .resolve_thread_id(Uuid::parse_str(thread)?)?
             .context("Inspector conversation no longer exists")?;
         let source = expected.cloned().unwrap_or_else(|| json!({}));
-        if panel.is_some_and(Panel::window_wide) {
-            return Ok(source);
-        }
         let next = preferences::updated(&source, &id, panel)?;
         self.save_native_ui_document_if_unchanged(expected, &next, Some(&id))?;
         Ok(next)

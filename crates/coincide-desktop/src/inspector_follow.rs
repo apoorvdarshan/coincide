@@ -51,6 +51,42 @@ impl State {
             None => read_saved_choice(engine, id),
         }
     }
+    /// Keep the newest choice queued while the engine is temporarily busy.
+    /// A successful retry updates the store; a real failure is still reported.
+    fn persist_choice(&mut self, engine: &SharedEngine, id: &str) -> bool {
+        let Some(choice) = self.pending.get(id).copied() else {
+            return false;
+        };
+        let result = (|| -> Result<()> {
+            let mut engine = try_state(engine)?;
+            anyhow::ensure!(
+                !engine.admissions_frozen() && !engine.shutdown,
+                "App is closing"
+            );
+            let source = engine.store.native_inspector_document()?;
+            engine
+                .store
+                .remember_native_inspector_panel(source.as_ref(), id, choice)?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => {
+                self.pending.remove(id);
+                self.failed.remove(id);
+                self.error = None;
+            }
+            Err(error) if engine_busy(&error) => return false,
+            Err(error) => {
+                // Do not silently rebase a failed compare-and-save. A new
+                // explicit choice may retry it against the newer state.
+                self.failed.insert(id.to_owned());
+                self.error = Some(format!(
+                    "Inspector choice is kept for this session; could not save: {error}"
+                ));
+            }
+        }
+        true
+    }
     pub(super) fn clear_loaded_error(&mut self, id: &str, status: &mut String) {
         if !self.failed.contains(id) {
             if self.error.as_ref().is_some_and(|error| error == status) {
@@ -67,6 +103,7 @@ struct RestorePlan {
     local_git: bool,
     review_comments: bool,
     conversation_schedules: bool,
+    schedules: bool,
     preview: bool,
     terminal: bool,
     terminal_placeholder: bool,
@@ -102,6 +139,10 @@ fn restore_plan(
             conversation_schedules: true,
             ..RestorePlan::default()
         },
+        SavedPanel::Schedules => RestorePlan {
+            schedules: true,
+            ..RestorePlan::default()
+        },
         SavedPanel::Preview => RestorePlan {
             preview: true,
             preview_placeholder: !browser_available,
@@ -112,7 +153,7 @@ fn restore_plan(
             terminal_placeholder: !owned_terminal,
             ..RestorePlan::default()
         },
-        SavedPanel::Terminal | SavedPanel::Schedules => return None,
+        SavedPanel::Terminal => return None,
     })
 }
 impl Coincide {
@@ -135,6 +176,7 @@ impl Coincide {
             Some(chat_inspector::Panel::ConversationSchedules) => {
                 Some(SavedPanel::ConversationSchedules)
             }
+            Some(chat_inspector::Panel::Schedules) => Some(SavedPanel::Schedules),
             None => None,
         }
     }
@@ -153,7 +195,7 @@ impl Coincide {
         if self.terminal_on_right() {
             self.terminal_open = false;
         }
-        if self.schedules_open && !self.schedule_editor.all_conversations {
+        if self.schedules_open {
             self.close_schedule_surface();
         }
         self.clear_inspector_placeholders();
@@ -175,13 +217,6 @@ impl Coincide {
             return;
         };
         if self.inspector_follow.bound.as_deref() == Some(id.as_str()) {
-            return;
-        }
-        if self
-            .current_inspector_choice()
-            .is_some_and(SavedPanel::window_wide)
-        {
-            self.inspector_follow.bound = Some(id);
             return;
         }
         let result = self.inspector_follow.choice(&self.engine, &id);
@@ -212,6 +247,9 @@ impl Coincide {
         match change {
             Change::None if saved.is_none() => {
                 self.workspace_open = false;
+                if self.schedules_open {
+                    self.close_schedule_surface();
+                }
                 if self.terminal_on_right() {
                     self.terminal_open = false;
                 }
@@ -224,6 +262,9 @@ impl Coincide {
             }
             Change::Close => {
                 self.workspace_open = false;
+                if self.schedules_open {
+                    self.close_schedule_surface();
+                }
                 if self.terminal_on_right() {
                     self.terminal_open = false;
                 }
@@ -237,6 +278,9 @@ impl Coincide {
     }
     fn apply_saved_inspector(&mut self, panel: SavedPanel, id: &str, cx: &mut Context<Self>) {
         self.workspace_open = false;
+        if self.schedules_open {
+            self.close_schedule_surface();
+        }
         if self.terminal_on_right() {
             self.terminal_open = false;
         }
@@ -258,6 +302,9 @@ impl Coincide {
         if plan.conversation_schedules {
             self.restore_conversation_schedules(cx);
         }
+        if plan.schedules {
+            self.restore_global_schedules(cx);
+        }
         if plan.preview {
             self.browser_panels.insert(id.to_owned());
         }
@@ -276,10 +323,7 @@ impl Coincide {
         choice: Option<SavedPanel>,
         cx: &mut Context<Self>,
     ) {
-        if choice.is_some_and(SavedPanel::window_wide)
-            || self.media.close_requested
-            || self.media.shutdown_requested
-        {
+        if self.media.close_requested || self.media.shutdown_requested {
             return;
         }
         let Some(id) = self.selected.as_ref().map(|thread| text(thread, "id")) else {
@@ -337,52 +381,14 @@ impl Coincide {
         {
             self.inspector_follow.bound = Some(id.clone());
         }
-        if self.inspector_follow.pending.len() >= 32
-            && !self.inspector_follow.pending.contains_key(&id)
-        {
-            self.inspector_follow.error = Some(
-                "Inspector choice is kept for this session; saved preferences are busy.".into(),
-            );
-            return;
-        }
         self.inspector_follow.failed.remove(&id);
         self.inspector_follow.pending.insert(id.clone(), choice);
         self.persist_inspector_choice(&id, cx);
     }
     fn persist_inspector_choice(&mut self, id: &str, cx: &mut Context<Self>) {
-        let Some(choice) = self.inspector_follow.pending.get(id).copied() else {
-            return;
-        };
-        let result = (|| -> Result<()> {
-            let mut engine = try_state(&self.engine)?;
-            anyhow::ensure!(
-                !engine.admissions_frozen() && !engine.shutdown,
-                "App is closing"
-            );
-            let source = engine.store.native_inspector_document()?;
-            engine
-                .store
-                .remember_native_inspector_panel(source.as_ref(), id, choice)?;
-            Ok(())
-        })();
-        match result {
-            Ok(()) => {
-                self.inspector_follow.pending.remove(id);
-                self.inspector_follow.failed.remove(id);
-                self.inspector_follow.error = None;
-            }
-            Err(error) => {
-                // A failed compare-and-save must not silently rebase over a
-                // newer writer. Only an explicit new native choice retries it.
-                if !engine_busy(&error) {
-                    self.inspector_follow.failed.insert(id.to_owned());
-                }
-                self.inspector_follow.error = Some(format!(
-                    "Inspector choice is kept for this session; could not save: {error}"
-                ));
-            }
+        if self.inspector_follow.persist_choice(&self.engine, id) {
+            cx.notify();
         }
-        cx.notify();
     }
     pub(super) fn poll_inspector_follow(&mut self, cx: &mut Context<Self>) {
         if self.media.close_requested || self.media.shutdown_requested {
@@ -462,15 +468,18 @@ mod tests {
         assert!(restore_plan(SavedPanel::Terminal, false, true, true).is_none());
     }
     #[::core::prelude::v1::test]
-    fn saved_panels_never_select_inline_review_or_create_browser_owners_and_schedules_stay_windowwide()
-     {
+    fn saved_panels_do_not_create_browser_owners_and_schedules_restore_as_panels() {
         let preview = restore_plan(SavedPanel::Preview, true, false, false).unwrap();
         assert!(preview.preview && preview.preview_placeholder);
         assert!(!preview.terminal && !preview.workspace);
         let requests = restore_plan(SavedPanel::PullRequests, true, false, true).unwrap();
         assert!(requests.workspace && requests.pull_requests);
         assert!(!requests.preview && !requests.terminal);
-        assert!(restore_plan(SavedPanel::Schedules, true, true, true).is_none());
+        assert!(
+            restore_plan(SavedPanel::Schedules, true, true, true)
+                .unwrap()
+                .schedules
+        );
     }
     #[::core::prelude::v1::test]
     fn remembered_panel_is_isolated_per_thread_even_when_writes_are_pending() {
@@ -525,6 +534,40 @@ mod tests {
         assert_eq!(
             state.choice(&engine, c).unwrap(),
             SavedChoice::Ready(Some(SavedPanel::PullRequests))
+        );
+    }
+
+    #[::core::prelude::v1::test]
+    fn busy_save_is_silent_and_persists_the_choice_after_retry() {
+        use coincide_core::{api::Engine, store::Store};
+        use std::sync::{Arc, Mutex};
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&directory.path().join("state.sqlite")).unwrap();
+        let id = "00000000-0000-4000-8000-000000000001";
+        store
+            .save(&serde_json::json!({"id":id,"title":"Synthetic","items":[]}))
+            .unwrap();
+        let engine = Arc::new(Mutex::new(Engine::new(store)));
+        let mut state = State::default();
+        state.pending.insert(id.into(), Some(SavedPanel::Schedules));
+        let held = engine.lock().unwrap();
+        assert!(!state.persist_choice(&engine, id));
+        assert!(state.error.is_none());
+        assert!(state.pending.contains_key(id));
+        drop(held);
+        assert!(state.persist_choice(&engine, id));
+        assert!(state.pending.is_empty());
+        assert!(state.error.is_none());
+        let document = engine
+            .lock()
+            .unwrap()
+            .store
+            .native_inspector_document()
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            coincide_core::inspector_preferences::saved(&document, id).unwrap(),
+            Some(SavedPanel::Schedules)
         );
     }
 }

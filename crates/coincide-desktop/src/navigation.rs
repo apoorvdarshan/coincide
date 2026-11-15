@@ -1746,15 +1746,15 @@ impl Coincide {
                             ),
                         )
                         // Lit while the Scheduled panel shows; clicking again closes it.
-                        .on_click(cx.listener(|this, _, _, cx| {
+                        .on_click(cx.listener(|this, _, window, cx| {
                             this.thread_bulk.invalidate();
                             if this.schedules_open {
-                                this.close_schedule_surface();
+                                this.close_chat_inspector(cx);
                             } else {
                                 this.hide_inline_settings();
                                 this.workspace_open = false;
                                 this.session_import_open = false;
-                                this.open_global_schedules(cx);
+                                this.open_global_schedules(window, cx);
                             }
                             this.sync_transcription_binding(cx);
                             cx.notify();
