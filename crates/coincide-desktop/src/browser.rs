@@ -1350,7 +1350,7 @@ impl BrowserController {
                                     let _ =
                                         view.raw().evaluate_script(&measurement.command("measure"));
                                 } else {
-                                    // A broken native zoom must not leave the page hidden.
+                                    // A broken native zoom must not leave the page transparent.
                                     let _ =
                                         view.raw().evaluate_script(&measurement.command("reveal"));
                                 }
@@ -1477,7 +1477,7 @@ impl BrowserController {
                         .and_then(|tabs| tabs.iter_mut().find(|t| t.id == tab))
                     {
                         // Retain the old document's fit until the new page is
-                        // hidden and measured. Resetting it here visibly zooms
+                        // transparent and measured. Resetting it here visibly zooms
                         // the old page while navigation is still in progress.
                         if loading {
                             entry.fit.navigation_started();

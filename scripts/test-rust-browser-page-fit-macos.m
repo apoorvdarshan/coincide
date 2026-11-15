@@ -46,18 +46,18 @@
   [self.view evaluateJavaScript:script completionHandler:^(id value, NSError *error) {
     if (error) [self fail:@"revealing the fitted page failed"];
     [NSTimer scheduledTimerWithTimeInterval:0.1 repeats:NO block:^(NSTimer *timer) {
-      NSString *inspect = @"JSON.stringify({first:window.firstVisibility,now:getComputedStyle(document.documentElement).visibility,inner:window.innerWidth,content:document.documentElement.scrollWidth,language:navigator.language,header:window.headerLanguage})";
+      NSString *inspect = @"JSON.stringify({first:window.firstOpacity,focus:window.firstFocus,now:getComputedStyle(document.documentElement).opacity,inner:window.innerWidth,content:document.documentElement.scrollWidth,language:navigator.language,header:window.headerLanguage})";
       [self.view evaluateJavaScript:inspect completionHandler:^(id result, NSError *err) {
         if (err) [self fail:@"inspecting the page failed"];
         NSDictionary *out = [NSJSONSerialization JSONObjectWithData:[(NSString *)result dataUsingEncoding:NSUTF8StringEncoding] options:0 error:nil];
-        if (![out[@"first"] isEqual:@"hidden"] || ![out[@"now"] isEqual:@"visible"])
-          [self fail:[NSString stringWithFormat:@"unexpected visibility on fixture %ld: %@", (long)self.index, out]];
+        if (![out[@"first"] isEqual:@"0"] || ![out[@"now"] isEqual:@"1"] || ![out[@"focus"] isEqual:@"owned"])
+          [self fail:[NSString stringWithFormat:@"unexpected first paint or focus on fixture %ld: %@", (long)self.index, out]];
         if ([out[@"content"] doubleValue] > [out[@"inner"] doubleValue] + 4)
           [self fail:[NSString stringWithFormat:@"fixture %ld remains wider than its viewport", (long)self.index]];
         if (![out[@"language"] isEqual:self.expectedLanguage] ||
             ![out[@"header"] hasPrefix:self.expectedLanguage])
           [self fail:[NSString stringWithFormat:@"WebKit did not follow the preferred language: %@", out]];
-        printf("fixture %ld: hidden first, fitted and visible; language %s\n", (long)self.index, [out[@"language"] UTF8String]);
+        printf("fixture %ld: fitted before display, focus preserved; language %s\n", (long)self.index, [out[@"language"] UTF8String]);
         fflush(stdout);
         ++self.index;
         if (self.index == 3) {

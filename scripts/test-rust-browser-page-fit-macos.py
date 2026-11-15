@@ -24,8 +24,9 @@ class Fixture(BaseHTTPRequestHandler):
         content = "<div>Responsive content</div>" if index == "1" else "<table width='1000'><tr><td>Wide content</td></tr></table>"
         policy = "<meta http-equiv='Content-Security-Policy' content=\"style-src 'none'\">" if index == "2" else ""
         language = json.dumps(self.headers.get("Accept-Language", ""))
-        body = ("<!doctype html><html><head>" + policy + "</head><body><script>"
-                "window.firstVisibility=getComputedStyle(document.documentElement).visibility;"
+        body = ("<!doctype html><html><head>" + policy + "</head><body><input id='owned'><script>"
+                "document.getElementById('owned').focus();window.firstFocus=document.activeElement.id;"
+                "window.firstOpacity=getComputedStyle(document.documentElement).opacity;"
                 "window.headerLanguage=" + language + ";</script>" + content + "</body></html>").encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")

@@ -58,7 +58,7 @@ pub(crate) struct PageFit {
 pub(crate) enum Update {
     Ignore,
     /// A new document inherited the previous page's zoom. Return it to 100%
-    /// while the new document is hidden, then measure its natural width.
+    /// while the new document is transparent, then measure its natural width.
     Baseline,
     Ready {
         zoom: Option<f64>,
@@ -192,8 +192,9 @@ impl Measurement {
 }
 
 // Measure only dimensions, never page text or URLs. Hold the new document's
-// visibility until native zoom has been applied, then restore the page's own
-// inline value. A deadline prevents a broken bridge from leaving a blank page.
+// paint until native zoom has been applied, then restore the page's own
+// opacity. Keeping visibility intact allows autofocus to work during loading.
+// A deadline prevents a broken bridge from leaving a blank page.
 pub(crate) const WIDTH_SCRIPT: &str = r#"
 (() => {
   const post = window.ipc?.postMessage?.bind(window.ipc);
@@ -203,11 +204,11 @@ pub(crate) const WIDTH_SCRIPT: &str = r#"
   const hold = () => {
     if (held || !document.documentElement || location.href === 'about:blank') return;
     root = document.documentElement;
-    oldValue = root.style.getPropertyValue('visibility');
-    oldPriority = root.style.getPropertyPriority('visibility');
-    root.style.setProperty('visibility', 'hidden', 'important');
+    oldValue = root.style.getPropertyValue('opacity');
+    oldPriority = root.style.getPropertyPriority('opacity');
+    root.style.setProperty('opacity', '0', 'important');
     held = true;
-    // Never leave a site hidden when its renderer or native bridge stalls.
+    // Never leave a site transparent when its renderer or native bridge stalls.
     watchdog = setTimeout(() => reveal(token), 8000);
   };
   const reveal = (id, expected) => {
@@ -226,10 +227,10 @@ pub(crate) const WIDTH_SCRIPT: &str = r#"
     clearTimeout(watchdog);
     clearTimeout(revealTimer);
     revealTimer = 0;
-    if (root.style.getPropertyValue('visibility') === 'hidden' &&
-        root.style.getPropertyPriority('visibility') === 'important') {
-      if (oldValue) root.style.setProperty('visibility', oldValue, oldPriority);
-      else root.style.removeProperty('visibility');
+    if (root.style.getPropertyValue('opacity') === '0' &&
+        root.style.getPropertyPriority('opacity') === 'important') {
+      if (oldValue) root.style.setProperty('opacity', oldValue, oldPriority);
+      else root.style.removeProperty('opacity');
     }
     root = null;
   };
