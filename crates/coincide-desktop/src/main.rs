@@ -519,6 +519,8 @@ struct Coincide {
     media: legacy_media_mount::ParentMedia,
     bots_open: bool,
     bot_panel: Entity<bot_settings::BotSettingsPanel>,
+    bot_editor_panel: Option<Entity<bot_settings::BotSettingsPanel>>,
+    bot_editor_subscription: Option<Subscription>,
     notifications_open: bool,
     notification_panel: Entity<notification_settings::NotificationSettingsPanel>,
     remote_panel: Entity<remote_settings::RemoteSettingsPanel>,
@@ -1473,9 +1475,12 @@ impl Coincide {
             cx.subscribe_in(&bot_panel, window, |this, _, event, window, cx| {
                 if this.media.shutdown_requested { return; }
                 match event {
-                    bot_settings::BotSettingsEvent::Saved { bot_id } => {
+                    bot_settings::BotSettingsEvent::Saved { bot_id, bot, baseline, .. } => {
+                        this.remember_saved_bot(bot.clone(), baseline.clone());
                         this.settings_status = format!("Bot {bot_id} saved. Changes apply to new conversations.");
+                        cx.notify();
                     }
+                    bot_settings::BotSettingsEvent::Closed => {}
                     bot_settings::BotSettingsEvent::ConversationCreated { thread_id } => {
                         let thread_id = thread_id.clone();
                         let requested = thread_id.clone();
@@ -1764,6 +1769,8 @@ impl Coincide {
             media,
             bots_open: false,
             bot_panel,
+            bot_editor_panel: None,
+            bot_editor_subscription: None,
             notifications_open: false,
             notification_panel,
             remote_panel,
@@ -7084,6 +7091,10 @@ impl Render for Coincide {
                 cx.listener(|this, event, window, cx| this.voice_modifiers(event, window, cx)),
             )
             .capture_key_down(cx.listener(|this, event, window, cx| {
+                // The bot sheet owns its keyboard input and Escape/Save shortcuts.
+                if this.bot_editor_panel.is_some() {
+                    return;
+                }
                 if !this.voice_key_down(event, window, cx)
                     && !this.escape_dismisses_popover(event, cx)
                     && !this.sidebar_search_shortcut(event, window, cx)
@@ -7121,6 +7132,9 @@ impl Render for Coincide {
             })
             .when_some(self.project_management_overlay(cx), |view, form| {
                 view.child(form)
+            })
+            .when_some(self.bot_editor_overlay(cx), |view, editor| {
+                view.child(editor)
             })
             .when_some(self.git_modal(cx), |view, modal| view.child(modal))
             .when_some(self.schedule_editor_overlay(cx), |view, editor| {

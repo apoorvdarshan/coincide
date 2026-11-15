@@ -261,9 +261,7 @@ impl Coincide {
             AppAction::Hide => cx.hide(),
             AppAction::HideOthers => cx.hide_other_apps(),
             AppAction::ShowAll => cx.unhide_other_apps(),
-            AppAction::NewBot => {
-                self.new_thread_in_project(coincide_core::bot_runtime::BOTS_PROJECT_ID, window, cx)
-            }
+            AppAction::NewBot => self.sidebar_edit_bot(None, window, cx),
             AppAction::NewThreadIn(project) => {
                 if self.projects.iter().any(|p| p["id"] == project) {
                     self.new_thread_in_project(&project, window, cx);
