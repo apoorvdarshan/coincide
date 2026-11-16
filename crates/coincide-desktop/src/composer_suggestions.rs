@@ -595,7 +595,10 @@ impl Coincide {
                 );
                 if items.is_empty()
                     && self.composer_suggestions.command_pending.is_some()
-                    && matches!(live.provider.as_str(), "codex" | "opencode" | "claude")
+                    && matches!(
+                        live.provider.as_str(),
+                        "codex" | "opencode" | "lithos" | "claude"
+                    )
                 {
                     self.composer_suggestions.show(
                         items,
@@ -617,8 +620,10 @@ impl Coincide {
         cx.notify();
     }
     fn start_native_command_discovery(&mut self, live: &Live, opened: bool) {
-        if !matches!(live.provider.as_str(), "codex" | "opencode" | "claude")
-            || self.composer_suggestions.command_pending.is_some()
+        if !matches!(
+            live.provider.as_str(),
+            "codex" | "opencode" | "lithos" | "claude"
+        ) || self.composer_suggestions.command_pending.is_some()
         {
             return;
         }

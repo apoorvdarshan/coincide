@@ -702,16 +702,17 @@ pub fn refresh_provider(params: &Value) -> Result<&str> {
     crate::agent::Provider::from_name(provider)?;
     ensure!(
         crate::composer_selection::default_account(&params["accountId"])
-            || (provider == "opencode"
+            || (matches!(provider, "opencode" | "lithos")
                 && params["threadId"].is_string()
                 && params["accountId"]
                     .as_str()
                     .is_some_and(|id| !id.is_empty() && id.len() <= 128)),
-        "Alternate-account model discovery requires its saved OpenCode conversation"
+        "Alternate-account model discovery requires its saved provider conversation"
     );
     if let Some(thread) = params.get("threadId") {
         ensure!(
-            (provider == "opencode" || crate::acp_registry::registry_id(provider).is_some())
+            (matches!(provider, "opencode" | "lithos")
+                || crate::acp_registry::registry_id(provider).is_some())
                 && thread
                     .as_str()
                     .is_some_and(|id| !id.is_empty() && id.len() <= 128),
@@ -740,7 +741,7 @@ pub fn supported(provider: &str) -> bool {
         && (crate::acp_registry::registry_id(provider).is_some()
             || matches!(
                 provider,
-                "codex" | "claude" | "opencode" | "cursor" | "grok" | "antigravity"
+                "codex" | "claude" | "opencode" | "lithos" | "cursor" | "grok" | "antigravity"
             ))
 }
 
@@ -926,11 +927,17 @@ fn discover_in_workspace(
             &|| !cancelled.load(Ordering::Acquire),
         );
     }
-    if provider == "opencode" {
-        if let Some(cwd) = cwd {
-            return opencode_workspace_models(&executable, cwd, cancelled);
+    if matches!(provider, "opencode" | "lithos") {
+        let mut rows = if let Some(cwd) = cwd {
+            opencode_workspace_models(&executable, cwd, cancelled)?
+        } else {
+            opencode_models(&executable, cancelled)?
+        };
+        if provider == "lithos" {
+            let available = crate::agent::opencode_lithos_model_ids();
+            retain_available_lithos_models(&mut rows, &available);
         }
-        return opencode_models(&executable, cancelled);
+        return Ok(rows);
     }
     // The Antigravity ACP executable is not a model-list CLI. Running it here
     // would inherit the ambient Google login outside the API-key profile.
@@ -954,6 +961,24 @@ fn discover_in_workspace(
         "claude" => claude_models(&mut rpc),
         _ => bail!("Read-only model discovery is unsupported for this provider"),
     }
+}
+
+/// Lithos has its own picker and cannot silently select another OpenCode service.
+pub(crate) fn lithos_model_id(id: &str) -> bool {
+    ["coincide-lithos/", "coincide-lithos-local/"]
+        .iter()
+        .any(|prefix| {
+            id.strip_prefix(prefix)
+                .is_some_and(|model| !model.is_empty())
+        })
+}
+
+pub(crate) fn retain_available_lithos_models(rows: &mut Vec<Value>, available: &[String]) {
+    rows.retain(|row| {
+        row["id"]
+            .as_str()
+            .is_some_and(|id| lithos_model_id(id) && available.iter().any(|model| model == id))
+    });
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -1506,6 +1531,44 @@ impl Rpc for ProcessRpc<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lithos_picker_accepts_only_its_hosted_and_local_model_namespaces() {
+        assert!(lithos_model_id("coincide-lithos/vendor/model"));
+        assert!(lithos_model_id("coincide-lithos-local/model"));
+        for other in [
+            "default",
+            "opencode/model",
+            "coincide-lithos/",
+            "coincide-lithos-evil/model",
+        ] {
+            assert!(!lithos_model_id(other), "{other}");
+        }
+    }
+
+    #[test]
+    fn lithos_picker_only_shows_models_discovered_from_its_service() {
+        let mut rows = vec![
+            json!({"id":"coincide-lithos/real"}),
+            json!({"id":"coincide-lithos/spoofed"}),
+            json!({"id":"coincide-lithos-local/on-device"}),
+            json!({"id":"openai/not-lithos"}),
+        ];
+        retain_available_lithos_models(
+            &mut rows,
+            &[
+                "coincide-lithos/real".into(),
+                "coincide-lithos-local/on-device".into(),
+            ],
+        );
+        assert_eq!(
+            rows,
+            vec![
+                json!({"id":"coincide-lithos/real"}),
+                json!({"id":"coincide-lithos-local/on-device"})
+            ]
+        );
+    }
 
     #[test]
     fn workspace_model_jobs_do_not_cancel_or_leak_into_other_threads() {

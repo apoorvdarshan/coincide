@@ -658,7 +658,7 @@ fn provider_id(provider: &str) -> Result<()> {
     ensure!(
         matches!(
             provider,
-            "codex" | "claude" | "cursor" | "grok" | "opencode" | "antigravity"
+            "codex" | "claude" | "cursor" | "grok" | "opencode" | "lithos" | "antigravity"
         ) || crate::acp_registry::registry_id(provider).is_some(),
         "Unsupported provider"
     );
@@ -1049,9 +1049,11 @@ impl Engine {
     ) -> Result<Option<LaunchConfiguration>> {
         let provider = text(&thread["selection"], "provider");
         if !crate::composer_selection::default_account(&thread["selection"]["accountID"])
-            && (matches!(provider.as_str(), "claude" | "cursor" | "grok" | "opencode")
-                || (matches!(provider.as_str(), "codex" | "antigravity")
-                    && self.routes_native_provider_account(thread)?))
+            && (matches!(
+                provider.as_str(),
+                "claude" | "cursor" | "grok" | "opencode" | "lithos"
+            ) || (matches!(provider.as_str(), "codex" | "antigravity")
+                && self.routes_native_provider_account(thread)?))
         {
             let id = thread["id"]
                 .as_str()
@@ -1426,6 +1428,31 @@ pub(crate) mod tests {
             )
             .unwrap();
         engine.apply_native_provider_configuration(plan).unwrap();
+    }
+    #[test]
+    fn lithos_key_account_is_separate_from_opencode_accounts() {
+        with_native_key_configuration("lithos", |engine, home| {
+            assert_eq!(engine.native_provider_accounts("lithos").unwrap().len(), 1);
+            assert!(
+                engine
+                    .native_provider_accounts("opencode")
+                    .unwrap()
+                    .is_empty()
+            );
+            assert_eq!(
+                native_key_var("lithos", "LITHOSAI_API_KEY").as_deref(),
+                Some(std::ffi::OsStr::new("synthetic-owned-account-key"))
+            );
+            assert!(native_key_var("opencode", "LITHOSAI_API_KEY").is_none());
+            let executable = current().unwrap().approved_executable().unwrap();
+            let mut child = Command::new(executable);
+            apply_to_child(&mut child, false).unwrap();
+            assert!(
+                child
+                    .get_envs()
+                    .any(|(key, value)| key == "XDG_DATA_HOME" && value == Some(home.as_os_str()))
+            );
+        });
     }
     #[test]
     fn derived_runtime_requires_same_provider_source_and_bytes() {

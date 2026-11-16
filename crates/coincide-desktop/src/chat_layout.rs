@@ -9,8 +9,8 @@ pub(super) fn modal_backdrop() -> Div {
 
 // Provider marks stay local and embedded. The monochrome PDFs and their SVG
 // equivalents come from the Swift app's original template assets; Claude and
-// Antigravity retain their original colored artwork.
-pub(super) const PROVIDER_LOGOS: [(&str, &[u8]); 6] = [
+// Antigravity retain their original colored artwork. Lithos uses its official mark.
+pub(super) const PROVIDER_LOGOS: [(&str, &[u8]); 7] = [
     (
         "codex",
         include_bytes!("../assets/providers/logo-codex.pdf"),
@@ -29,6 +29,10 @@ pub(super) const PROVIDER_LOGOS: [(&str, &[u8]); 6] = [
         include_bytes!("../assets/providers/logo-opencode.pdf"),
     ),
     (
+        "lithos",
+        include_bytes!("../assets/providers/logo-lithos.svg"),
+    ),
+    (
         "antigravity",
         include_bytes!("../assets/providers/logo-antigravity.png"),
     ),
@@ -40,6 +44,7 @@ fn provider_template(provider: &str) -> Option<&'static [u8]> {
         "cursor" => include_bytes!("../assets/providers/logo-cursor.svg"),
         "grok" => include_bytes!("../assets/providers/logo-grok.svg"),
         "opencode" => include_bytes!("../assets/providers/logo-opencode.svg"),
+        "lithos" => include_bytes!("../assets/providers/logo-lithos.svg"),
         _ => return None,
     })
 }
@@ -317,7 +322,10 @@ mod tests {
             assert!(names.insert(provider));
             assert!(provider_known(provider), "{provider}");
             if let Some(template) = provider_template(provider) {
-                assert!(bytes.starts_with(b"%PDF"), "{provider}");
+                assert!(
+                    bytes.starts_with(b"%PDF") || bytes.starts_with(b"<?xml"),
+                    "{provider}"
+                );
                 let rendered = renderer.render_single_frame(template, 1.).unwrap();
                 let pixels = rendered.as_bytes(0).unwrap();
                 assert!(pixels.chunks_exact(4).any(|p| p[3] > 0), "{provider}");
@@ -332,7 +340,7 @@ mod tests {
                 );
             }
         }
-        assert_eq!(names.len(), 6);
+        assert_eq!(names.len(), 7);
         assert!(!provider_known("unknown"));
     }
 

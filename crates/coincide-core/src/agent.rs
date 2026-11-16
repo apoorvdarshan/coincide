@@ -61,6 +61,9 @@ pub(crate) fn opencode_workspace_metadata(
 ) -> Result<(Vec<Value>, Option<String>)> {
     opencode::workspace_metadata(executable, cwd, allowed)
 }
+pub(crate) fn opencode_lithos_model_ids() -> Vec<String> {
+    opencode::lithos_model_ids()
+}
 pub(crate) fn acp_model_metadata(
     executable: &std::path::Path,
     cwd: &std::path::Path,
@@ -97,6 +100,8 @@ pub enum Provider {
     Claude,
     Grok,
     OpenCode,
+    /// Lithos model service, using the OpenCode agent transport.
+    Lithos,
     Antigravity {
         profile: Option<PathBuf>,
         source_profile: Option<PathBuf>,
@@ -124,6 +129,7 @@ impl Provider {
             "claude",
             "grok",
             "opencode",
+            "lithos",
             "cursor",
             "antigravity",
         ]
@@ -135,6 +141,7 @@ impl Provider {
             "grok" => Ok(Self::Grok),
             "cursor" => Ok(Self::Cursor { profile: None }),
             "opencode" => Ok(Self::OpenCode),
+            "lithos" => Ok(Self::Lithos),
             "antigravity" => Ok(Self::Antigravity {
                 profile: None,
                 source_profile: None,
@@ -153,6 +160,7 @@ impl Provider {
             Self::Claude => "claude",
             Self::Grok => "grok",
             Self::OpenCode => "opencode",
+            Self::Lithos => "lithos",
             Self::Antigravity { .. } => "antigravity",
             Self::Cursor { .. } => "cursor",
             Self::AcpV1 { .. } => "acp",
@@ -465,7 +473,7 @@ impl Session {
                         claude::run(launch, images, instructions, commands, events_tx)
                     }
                     Provider::Grok => grok::run(launch, images, commands, events_tx),
-                    Provider::OpenCode => opencode::run(
+                    Provider::OpenCode | Provider::Lithos => opencode::run(
                         launch,
                         images,
                         commands,

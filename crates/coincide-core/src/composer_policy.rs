@@ -235,7 +235,7 @@ impl Policy {
     fn validate_effort_proof(&self) -> Result<()> {
         // OpenCode carrying a reasoning variant in its model reference needs no
         // separate proof: the variant is part of the model it was discovered with.
-        if self.provider == "opencode" {
+        if matches!(self.provider.as_str(), "opencode" | "lithos") {
             return Ok(());
         }
         if let Some(proof) = &self.named_proof {

@@ -84,7 +84,7 @@ fn brew_arguments(provider: &str) -> Result<&'static [&'static str]> {
         "claude" => Ok(&["install", "--cask", "claude-code"]),
         "codex" => Ok(&["install", "--cask", "codex"]),
         "cursor" => Ok(&["install", "--cask", "cursor-cli"]),
-        "opencode" => Ok(&["install", "opencode"]),
+        "opencode" | "lithos" => Ok(&["install", "opencode"]),
         _ => anyhow::bail!("Use this provider's setup website"),
     }
 }
@@ -93,11 +93,11 @@ fn installer(provider: &str) -> Result<&'static str> {
         (true, "claude") => Ok("irm https://claude.ai/install.ps1 | iex"),
         (true, "cursor") => Ok("irm 'https://cursor.com/install?win32=true' | iex"),
         (true, "codex") => Ok("npm install -g @openai/codex"),
-        (true, "opencode") => Ok("npm install -g @opencode/cli"),
+        (true, "opencode" | "lithos") => Ok("npm install -g @opencode/cli"),
         (false, "claude") => Ok("curl -fsSL https://claude.ai/install.sh | bash"),
         (false, "codex") => Ok("curl -fsSL https://chatgpt.com/codex/install.sh | sh"),
         (false, "cursor") => Ok("curl https://cursor.com/install -fsS | bash"),
-        (false, "opencode") => Ok("curl -fsSL https://opencode.ai/v2/install | bash"),
+        (false, "opencode" | "lithos") => Ok("curl -fsSL https://opencode.ai/v2/install | bash"),
         _ => anyhow::bail!("Use this provider's setup website"),
     }
 }

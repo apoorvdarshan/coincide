@@ -23,6 +23,7 @@ pub fn key_choices(provider: &str) -> Result<&'static [(&'static str, &'static s
         "cursor" => &[("CURSOR_API_KEY", "Cursor")],
         "grok" => &[("XAI_API_KEY", "xAI")],
         "antigravity" => &[("GEMINI_API_KEY", "Gemini")],
+        "lithos" => &[("LITHOSAI_API_KEY", "Lithos AI")],
         "opencode" => &[
             ("OPENCODE_API_KEY", "OpenCode Zen"),
             ("ANTHROPIC_API_KEY", "Anthropic"),
@@ -432,7 +433,7 @@ fn key_configuration_mode(
     ensure!(
         matches!(
             account.provider.as_str(),
-            "claude" | "cursor" | "grok" | "opencode" | "antigravity" | "codex"
+            "claude" | "cursor" | "grok" | "opencode" | "lithos" | "antigravity" | "codex"
         ),
         "This API-key provider still requires its guarded native runtime enrollment"
     );

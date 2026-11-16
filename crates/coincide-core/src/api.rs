@@ -1052,7 +1052,7 @@ impl Engine {
                     let variable = match provider {
                         "codex" => "COINCIDE_CODEX_EXECUTABLE",
                         "claude" => "COINCIDE_CLAUDE_EXECUTABLE",
-                        "opencode" => "COINCIDE_OPENCODE_EXECUTABLE",
+                        "opencode" | "lithos" => "COINCIDE_OPENCODE_EXECUTABLE",
                         "cursor" => "COINCIDE_CURSOR_EXECUTABLE",
                         "grok" => "COINCIDE_GROK_EXECUTABLE",
                         "antigravity" => "COINCIDE_ANTIGRAVITY_EXECUTABLE",
@@ -1081,7 +1081,7 @@ impl Engine {
                         ensure!(thread["selection"]["provider"] == provider
                             && thread["selection"]["accountID"] == account
                             && provider_configuration::native_account_matches(&thread["selection"]),
-                            "Select this OpenCode account in the conversation before reading its models");
+                            "Select this provider account in the conversation before reading its models");
                     }
                     let cwd = self.working_directory(&thread).or_else(|_| {
                         std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
@@ -1151,7 +1151,7 @@ impl Engine {
                     // offers what its discovered model list reported, so a
                     // provider with effort levels is never left unconnected.
                     let effort_provider = thread["selection"]["provider"].clone();
-                    let workspace_scoped = effort_provider == "opencode" || effort_provider.as_str().is_some_and(|id| crate::acp_registry::registry_id(id).is_some());
+                    let workspace_scoped = effort_provider == "opencode" || effort_provider == "lithos" || effort_provider.as_str().is_some_and(|id| crate::acp_registry::registry_id(id).is_some());
                     let workspace_directory = workspace_scoped.then(|| self.working_directory(&thread).or_else(|_| {
                         std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
                             .map(PathBuf::from).context("Working directory unavailable")
@@ -1527,8 +1527,10 @@ impl Engine {
             // OpenCode handles slash commands through a separate endpoint
             // which does not carry the inline bot context. Leave an edit
             // pending until its next ordinary prompt can actually deliver it.
-            let changed = if v["selection"]["provider"] == "opencode"
-                && prompt.trim_start().starts_with('/')
+            let changed = if matches!(
+                v["selection"]["provider"].as_str(),
+                Some("opencode" | "lithos")
+            ) && prompt.trim_start().starts_with('/')
             {
                 self.authorize_existing_bot(&mut v)?;
                 false
@@ -1661,6 +1663,18 @@ impl Engine {
             None
         };
         let provider = text(&v["selection"], "provider");
+        if provider == "lithos" {
+            let model = v["selection"]["modelID"].as_str().unwrap_or("");
+            ensure!(
+                crate::model_catalog::lithos_model_id(model),
+                "Choose a Lithos model before sending"
+            );
+            ensure!(
+                !model.starts_with("coincide-lithos/")
+                    || !crate::composer_selection::default_account(&v["selection"]["accountID"]),
+                "Add and select a Lithos API key account before using a hosted model"
+            );
+        }
         let mut adapter = Provider::from_name(&provider)?;
         if let Provider::RegisteredAcp { arguments, .. } = &mut adapter {
             *arguments = provider_configuration::current_acp_arguments(&provider)?;
@@ -1757,7 +1771,7 @@ impl Engine {
         // Codex slash controls are client commands, not chat text. Only the
         // exact, attachment-free user command has authority to compact the
         // existing provider session; quoted history is never interpreted.
-        let native_compact = matches!(provider.as_str(), "codex" | "opencode")
+        let native_compact = matches!(provider.as_str(), "codex" | "opencode" | "lithos")
             && agent::codex_compact_command(prompt)
             && draft_images.is_empty()
             && !crate::composer_context::has_context(&context);
@@ -1793,7 +1807,7 @@ impl Engine {
             );
             runtime_prompt.replace_range(..prompt.len(), objective);
         }
-        let opencode_command = (provider == "opencode"
+        let opencode_command = (matches!(provider.as_str(), "opencode" | "lithos")
             && prompt.trim_start().starts_with('/')
             && draft_images.is_empty()
             && !crate::composer_context::has_context(&context))
@@ -1837,7 +1851,7 @@ impl Engine {
         let model = crate::composer_selection::launch_model(&v["selection"])?;
         // OpenCode selects a model's reasoning variant in its model reference;
         // other providers carry effort on their own wire fields.
-        let variant = (provider.as_str() == "opencode")
+        let variant = (matches!(provider.as_str(), "opencode" | "lithos"))
             .then(|| v["selection"]["effort"].as_str().map(str::to_owned))
             .flatten();
         let full_access = v["accessMode"] == "fullAccess";
@@ -1845,7 +1859,7 @@ impl Engine {
             "claude" => "COINCIDE_CLAUDE_EXECUTABLE",
             "codex" => "COINCIDE_CODEX_EXECUTABLE",
             "grok" => "COINCIDE_GROK_EXECUTABLE",
-            "opencode" => "COINCIDE_OPENCODE_EXECUTABLE",
+            "opencode" | "lithos" => "COINCIDE_OPENCODE_EXECUTABLE",
             "cursor" => "COINCIDE_CURSOR_EXECUTABLE",
             "antigravity" => "COINCIDE_ANTIGRAVITY_EXECUTABLE",
             _ if crate::acp_registry::registry_id(&provider).is_some() => "",
@@ -1859,7 +1873,9 @@ impl Engine {
                     .map(PathBuf::from)
             })
             .unwrap_or_else(|| {
-                if provider == "cursor" {
+                if provider == "lithos" {
+                    "opencode".into()
+                } else if provider == "cursor" {
                     "cursor-agent".into()
                 } else {
                     provider.clone().into()
@@ -2080,7 +2096,7 @@ impl Engine {
         }
         match run.provider.as_str() {
             "codex" => run.session.can_steer(),
-            "opencode" => true,
+            "opencode" | "lithos" => true,
             // Claude has a native composer follow-up, but Remote's current
             // text-steering route cannot submit it yet.
             _ => false,
@@ -3595,7 +3611,9 @@ fn ignored_provider_notification(event: &Event) -> bool {
 pub(crate) fn question_dismissal(provider: &str) -> Result<Value> {
     match provider {
         "codex" | "claude" => Ok(json!({"answers":{}})),
-        "cursor" | "grok" | "opencode" | "antigravity" => Ok(json!({"decision":"cancel"})),
+        "cursor" | "grok" | "opencode" | "lithos" | "antigravity" => {
+            Ok(json!({"decision":"cancel"}))
+        }
         _ => bail!("This provider does not support dismissing questions"),
     }
 }

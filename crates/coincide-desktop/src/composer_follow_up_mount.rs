@@ -584,7 +584,7 @@ impl Coincide {
             choice::selected(thread, &self.settings),
             matches!(
                 thread["selection"]["provider"].as_str(),
-                Some("codex" | "opencode" | "claude")
+                Some("codex" | "opencode" | "lithos" | "claude")
             ),
         );
         Button::new("selection-follow-up-disclosure")
@@ -621,7 +621,7 @@ impl Coincide {
             let unsupported = behavior == Behavior::Steer
                 && !matches!(
                     thread["selection"]["provider"].as_str(),
-                    Some("codex" | "opencode" | "claude")
+                    Some("codex" | "opencode" | "lithos" | "claude")
                 );
             menu = menu.child(self.picker_menu_row(
                 format!("follow-up-{}", behavior.key()),
@@ -655,7 +655,7 @@ impl Coincide {
             let unsupported = behavior == Behavior::Steer
                 && !matches!(
                     thread["selection"]["provider"].as_str(),
-                    Some("codex" | "opencode" | "claude")
+                    Some("codex" | "opencode" | "lithos" | "claude")
                 );
             pane = pane.child(
                 Button::new(SharedString::from(format!("follow-up-{}", behavior.key())))

@@ -24,7 +24,7 @@ impl NativeCommandDiscovery {
                 self.profile.as_ref(),
                 &allowed,
             )?,
-            "opencode" => {
+            "opencode" | "lithos" => {
                 crate::agent::opencode_command_metadata(&self.executable, &self.cwd, &allowed)?
             }
             "claude" => {
@@ -52,7 +52,10 @@ impl Engine {
         );
         let thread = self.store.thread(id)?;
         let provider = text(&thread["selection"], "provider");
-        if !matches!(provider.as_str(), "codex" | "opencode" | "claude") {
+        if !matches!(
+            provider.as_str(),
+            "codex" | "opencode" | "lithos" | "claude"
+        ) {
             return Ok(None);
         }
         self.require_provider_enabled(&provider)?;
@@ -66,8 +69,8 @@ impl Engine {
         };
         let executable = if let Some(profile) = &profile {
             profile.executable().to_path_buf()
-        } else if matches!(provider.as_str(), "opencode" | "claude") {
-            let env_name = if provider == "opencode" {
+        } else if matches!(provider.as_str(), "opencode" | "lithos" | "claude") {
+            let env_name = if matches!(provider.as_str(), "opencode" | "lithos") {
                 "COINCIDE_OPENCODE_EXECUTABLE"
             } else {
                 "COINCIDE_CLAUDE_EXECUTABLE"
@@ -82,7 +85,13 @@ impl Engine {
                         .as_str()
                         .map(PathBuf::from)
                 })
-                .unwrap_or_else(|| PathBuf::from(&provider));
+                .unwrap_or_else(|| {
+                    PathBuf::from(if provider == "lithos" {
+                        "opencode"
+                    } else {
+                        &provider
+                    })
+                });
             provider_configuration::current_executable(fallback)
         } else {
             self.composer_codex_executable()?

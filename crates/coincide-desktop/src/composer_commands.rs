@@ -37,6 +37,7 @@ pub(super) fn standalone(text: &str) -> Option<Command> {
         "/cursor" => Some(Command::Provider("cursor")),
         "/grok" => Some(Command::Provider("grok")),
         "/opencode" => Some(Command::Provider("opencode")),
+        "/lithos" => Some(Command::Provider("lithos")),
         "/antigravity" => Some(Command::Provider("antigravity")),
         _ => None,
     }

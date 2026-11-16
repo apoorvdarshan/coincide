@@ -5,7 +5,7 @@ use crate::composer_follow_up::{self as choice, Behavior, Dispatch};
 fn text_steer_timeout(provider: &str) -> Duration {
     // OpenCode can first read the workspace command catalog (up to 11 s)
     // and then await its HTTP acknowledgement (up to 16 s).
-    if provider == "opencode" {
+    if matches!(provider, "opencode" | "lithos") {
         Duration::from_secs(30)
     } else {
         Duration::from_secs(10)
@@ -264,7 +264,10 @@ impl Engine {
         };
         let chosen = choice::effective(
             chosen,
-            matches!(provider.as_str(), "codex" | "claude" | "opencode"),
+            matches!(
+                provider.as_str(),
+                "codex" | "claude" | "opencode" | "lithos"
+            ),
         );
         let has_images = captured["rustDraftImages"]
             .as_array()
@@ -275,17 +278,19 @@ impl Engine {
             && !has_images
             && !has_context
             && agent::codex_goals::parse(command).is_some();
-        let compact_control = matches!(provider.as_str(), "codex" | "opencode")
+        let compact_control = matches!(provider.as_str(), "codex" | "opencode" | "lithos")
             && !has_images
             && !has_context
             && agent::codex_compact_command(command);
         let can_steer = self.runs.get(id).is_some_and(|run| {
-            matches!(provider.as_str(), "codex" | "claude" | "opencode")
-                && current["interactionMode"]
-                    .as_str()
-                    .is_none_or(|mode| mode == "build")
+            matches!(
+                provider.as_str(),
+                "codex" | "claude" | "opencode" | "lithos"
+            ) && current["interactionMode"]
+                .as_str()
+                .is_none_or(|mode| mode == "build")
                 && (provider != "codex" || run.session.can_steer())
-                && !(has_images && matches!(provider.as_str(), "claude" | "opencode"))
+                && !(has_images && matches!(provider.as_str(), "claude" | "opencode" | "lithos"))
         });
         let prior = crate::message_queue::read(&current)?;
         let eligible = chosen != Behavior::Queue
@@ -424,7 +429,7 @@ impl Engine {
             behavior != Behavior::Steer
                 || matches!(
                     expected["selection"]["provider"].as_str(),
-                    Some("codex" | "opencode" | "claude")
+                    Some("codex" | "opencode" | "lithos" | "claude")
                 ),
             "This provider does not support native steering yet"
         );
@@ -441,7 +446,7 @@ impl Engine {
         let run = self.runs.get(required(thread, "id")?);
         let supports = matches!(
             thread["selection"]["provider"].as_str(),
-            Some("codex" | "opencode" | "claude")
+            Some("codex" | "opencode" | "lithos" | "claude")
         );
         let behavior = choice::effective(choice::selected(thread, &settings), supports);
         let ready = run.is_some_and(|run| {
@@ -450,7 +455,7 @@ impl Engine {
                 && thread["interactionMode"]
                     .as_str()
                     .is_none_or(|mode| mode == "build")
-                && (matches!(run.provider.as_str(), "opencode" | "claude")
+                && (matches!(run.provider.as_str(), "opencode" | "lithos" | "claude")
                     || run.session.can_steer())
         });
         let approval = run.is_some_and(|run| {
@@ -471,7 +476,7 @@ impl Engine {
         if run.is_some()
             && matches!(
                 thread["selection"]["provider"].as_str(),
-                Some("codex" | "opencode")
+                Some("codex" | "opencode" | "lithos")
             )
             && agent::codex_compact_command(thread["draft"].as_str().unwrap_or(""))
             && thread["rustDraftImages"]
@@ -630,13 +635,17 @@ impl Engine {
             .store
             .document("settings.json")?
             .unwrap_or_else(|| json!({}));
-        let supports_steering = matches!(run.provider.as_str(), "codex" | "opencode" | "claude");
+        let supports_steering = matches!(
+            run.provider.as_str(),
+            "codex" | "opencode" | "lithos" | "claude"
+        );
         let behavior = choice::effective(choice::selected(&current, &settings), supports_steering);
         let can_steer = supports_steering
             && current["interactionMode"]
                 .as_str()
                 .is_none_or(|mode| mode == "build")
-            && (matches!(run.provider.as_str(), "opencode" | "claude") || run.session.can_steer());
+            && (matches!(run.provider.as_str(), "opencode" | "lithos" | "claude")
+                || run.session.can_steer());
         let approval = run
             .pending
             .values()
@@ -665,7 +674,7 @@ impl Engine {
             // neither steal queued messages nor answer unrelated approvals.
             dispatch = Dispatch::Steer;
         }
-        if matches!(run.provider.as_str(), "codex" | "opencode")
+        if matches!(run.provider.as_str(), "codex" | "opencode" | "lithos")
             && agent::codex_compact_command(&text)
             && images.is_empty()
             && !crate::composer_context::has_context(&context)
@@ -675,7 +684,7 @@ impl Engine {
         // These active-turn channels currently carry text, not image payloads.
         // Preserve images by sending this follow-up after the running turn.
         if dispatch == Dispatch::Steer
-            && matches!(run.provider.as_str(), "opencode" | "claude")
+            && matches!(run.provider.as_str(), "opencode" | "lithos" | "claude")
             && !images.is_empty()
         {
             dispatch = Dispatch::Queue;
@@ -760,11 +769,9 @@ impl Engine {
                         item_id: Uuid::new_v4().to_string(),
                         context,
                     });
-                } else if self
-                    .runs
-                    .get(&id)
-                    .is_some_and(|run| matches!(run.provider.as_str(), "opencode" | "claude"))
-                {
+                } else if self.runs.get(&id).is_some_and(|run| {
+                    matches!(run.provider.as_str(), "opencode" | "lithos" | "claude")
+                }) {
                     let runtime_text = crate::composer_context::prompt(&text, &context)?;
                     let reply = self
                         .runs

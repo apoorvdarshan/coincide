@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 pub(super) fn apply(row: &mut Value, captured_provider: &str, item: &Value) {
     match captured_provider {
         "codex" => apply_codex(row, item),
-        "opencode" => apply_opencode(row, item),
+        "opencode" | "lithos" => apply_opencode(row, item),
         "claude" | "cursor" | "grok" | "antigravity" => apply_tool_status(row, item),
         _ => {}
     }

@@ -7,7 +7,8 @@ mod native_accounts;
 use std::collections::HashMap;
 const ACP_REGISTRY_TAB: &str = "@acp-registry";
 fn workspace_catalog(provider: &str) -> bool {
-    provider == "opencode" || coincide_core::acp_registry::registry_id(provider).is_some()
+    matches!(provider, "opencode" | "lithos")
+        || coincide_core::acp_registry::registry_id(provider).is_some()
 }
 #[path = "composer_selection_cache.rs"]
 mod capability_cache;
@@ -187,8 +188,8 @@ fn effort_choices(
             && capability["supported"] == true
             && capability["provenance"] == "provider_model_list"
             && capability["requiresExplicitModel"] == true)
-            || (draft.provider == "opencode"
-                && provider["provider"] == "opencode"
+            || (matches!(draft.provider.as_str(), "opencode" | "lithos")
+                && provider["provider"] == draft.provider
                 && capability["supported"] == true
                 && capability["provenance"] == "provider_model_list"
                 && capability["requiresExplicitModel"] == true
@@ -3265,7 +3266,7 @@ impl Coincide {
                         self.selection_ui.context = None;
                     }
                     // Reasoning choices for OpenCode are part of the catalog.
-                    if request.provider == "opencode"
+                    if matches!(request.provider.as_str(), "opencode" | "lithos")
                         && self.catalog_request_affects_selection(&request)
                     {
                         self.selection_ui.capability_cache.invalidate();
@@ -3716,6 +3717,8 @@ impl Coincide {
         }) {
             if draft.use_custom {
                 draft.custom.clone()
+            } else if draft.provider == "lithos" {
+                "Choose Lithos model".into()
             } else if coincide_core::acp_registry::registry_id(&draft.provider).is_some() {
                 provider_label(&self.selection_ui.capabilities, &draft.provider)
             } else {
@@ -3723,7 +3726,9 @@ impl Coincide {
             }
         } else if selection["modelID"] == "default" {
             let provider = text(selection, "provider");
-            if coincide_core::acp_registry::registry_id(&provider).is_some() {
+            if provider == "lithos" {
+                "Choose Lithos model".to_owned()
+            } else if coincide_core::acp_registry::registry_id(&provider).is_some() {
                 provider_label(&self.selection_ui.capabilities, &provider)
             } else {
                 "Provider default".to_owned()
@@ -4769,7 +4774,7 @@ impl Coincide {
             && request.account_id == "default"
             && matches!(
                 request.provider.as_str(),
-                "codex" | "claude" | "opencode" | "cursor" | "grok" | "antigravity"
+                "codex" | "claude" | "opencode" | "lithos" | "cursor" | "grok" | "antigravity"
             )
             && let Ok(directory) = coincide_core::control::data_directory()
         {
@@ -5188,6 +5193,33 @@ impl Coincide {
             .flex()
             .flex_col();
         let mut shown = 0usize;
+        if tab_provider == "lithos" && draft.provider != "lithos" {
+            list = list.child(self.picker_menu_row(
+                "picker-use-lithos".into(),
+                "Use Lithos AI".into(),
+                Some("Select an account and model".into()),
+                None,
+                false,
+                model_disabled,
+                move |this, _, cx| {
+                    this.edit_selection_immediately(
+                        |draft| {
+                            draft.provider = "lithos".into();
+                            draft.account = Value::Null;
+                            draft.custom.clear();
+                            draft.use_custom = false;
+                            draft.proposed_effort = Value::Null;
+                            draft.proposed_speed = Value::Null;
+                            draft.proposed_interaction = json!("build");
+                        },
+                        cx,
+                    );
+                    this.selection_ui.expanded = false;
+                },
+                cx,
+            ));
+            shown += 1;
+        }
         if state == "ready" {
             for row in filtered_picker_models(
                 &self.settings,
@@ -5226,6 +5258,9 @@ impl Coincide {
             "ready" if self.selection_ui.favorites_only => {
                 "No favorites yet. Star a model to keep it here.".to_owned()
             }
+            "ready" if tab_provider == "lithos" => {
+                "Select a Lithos API key account or start Lithos Metal locally.".to_owned()
+            }
             "ready" => "No models yet.".to_owned(),
             _ => discovery_reason.to_owned(),
         };
@@ -5241,8 +5276,8 @@ impl Coincide {
         }
         let mut reasoning = div().flex().items_center().gap_1();
         let mut shows_reasoning = false;
-        if tab_provider == "opencode"
-            && draft.provider == "opencode"
+        if matches!(tab_provider.as_str(), "opencode" | "lithos")
+            && draft.provider == tab_provider
             && !draft.has_edits()
             && state == "ready"
             && let Some(row) = catalog["models"].as_array().and_then(|rows| {

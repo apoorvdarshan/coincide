@@ -15,6 +15,7 @@ pub(super) fn provider_name(provider: &str) -> &str {
         "cursor" => "Cursor",
         "grok" => "Grok",
         "opencode" => "OpenCode",
+        "lithos" => "Lithos AI",
         "antigravity" => "Antigravity",
         "" => "Assistant",
         other => other,
@@ -499,6 +500,7 @@ impl Coincide {
             "cursor" => (0x5A5FD6, 0x9A9EFF),
             "grok" => (0x6B7077, 0xA9AEB4),
             "opencode" => (0xB7700C, 0xE9B04E),
+            "lithos" => (0x50555A, 0xCFD2D4),
             "antigravity" => (0x2F6BDB, 0x6FA3FF),
             _ => return self.color(0xe4e9f2),
         };

@@ -87,7 +87,7 @@ pub fn validate_selection(value: &Value) -> Result<()> {
     let effort = &thread["selection"]["effort"];
     ensure!(
         effort.is_null()
-            || (matches!(provider, "codex" | "opencode")
+            || (matches!(provider, "codex" | "opencode" | "lithos")
                 && effort.as_str().is_some_and(|value| !value.is_empty()
                     && value.len() <= 128
                     && value.trim() == value

@@ -19,6 +19,7 @@ pub enum ProviderId {
     Cursor,
     Grok,
     Opencode,
+    Lithos,
     Antigravity,
 }
 
@@ -44,7 +45,7 @@ pub struct ProviderDescriptor {
     pub legacy_model_discovery: &'static str,
 }
 
-pub const PROVIDERS: [ProviderDescriptor; 6] = [
+pub const PROVIDERS: [ProviderDescriptor; 7] = [
     ProviderDescriptor {
         id: ProviderId::Claude,
         display_name: "Claude Code",
@@ -89,6 +90,15 @@ pub const PROVIDERS: [ProviderDescriptor; 6] = [
         legacy_launch: "serve --hostname=127.0.0.1 --port=0 with authenticated local HTTP and SSE",
         legacy_version_discovery: "--version; Swift requires major version 2 or later",
         legacy_model_discovery: "HTTP /api/model plus providers/integrations; Swift fallback catalog",
+    },
+    ProviderDescriptor {
+        id: ProviderId::Lithos,
+        display_name: "Lithos AI",
+        executable_candidates: &["opencode"],
+        transport: TransportKind::OpenCodeHttpSse,
+        legacy_launch: "OpenCode agent runtime with a selected Lithos model",
+        legacy_version_discovery: "OpenCode --version",
+        legacy_model_discovery: "Lithos hosted and local models through the OpenCode catalog",
     },
     ProviderDescriptor {
         id: ProviderId::Antigravity,
