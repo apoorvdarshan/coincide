@@ -4889,6 +4889,7 @@ impl Coincide {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let placeholder_background = self.color(0x111722);
+        let compact = width < 60.;
         let placeholder = |label: &'static str| {
             div()
                 .w(px(width))
@@ -4899,8 +4900,12 @@ impl Coincide {
                 .justify_center()
                 .bg(placeholder_background)
                 .rounded_md()
+                .overflow_hidden()
                 .text_xs()
-                .child(label)
+                .when(compact, |view| {
+                    view.child(Icon::new(gpui_kit::assets::IconName::FileText).size(px(18.)))
+                })
+                .when(!compact, |view| view.child(label))
                 .into_any_element()
         };
         let Ok(stored) = serde_json::from_value::<StoredImage>(metadata.clone()) else {
@@ -5036,11 +5041,22 @@ impl Coincide {
             .flex_shrink_0()
             .object_fit(ObjectFit::Contain)
             .rounded_md()
-            .with_loading(|| div().text_xs().child("Loading image…").into_any_element())
-            .with_fallback(|| {
+            .with_loading(move || {
                 div()
                     .text_xs()
-                    .child("Image unavailable")
+                    .when(compact, |view| {
+                        view.child(Icon::new(gpui_kit::assets::IconName::FileText).size(px(18.)))
+                    })
+                    .when(!compact, |view| view.child("Loading image…"))
+                    .into_any_element()
+            })
+            .with_fallback(move || {
+                div()
+                    .text_xs()
+                    .when(compact, |view| {
+                        view.child(Icon::new(gpui_kit::assets::IconName::FileText).size(px(18.)))
+                    })
+                    .when(!compact, |view| view.child("Image unavailable"))
                     .into_any_element()
             })
             .into_any_element()
@@ -5932,7 +5948,11 @@ impl Coincide {
         let media = self.reply_media(item);
         let media_cards = self.media_cards(&media);
         let pending_send = item["pendingSend"] == true;
-        let context_pane = self.transcript_context_pane(&source_id, &item_id, item, cx);
+        let context_item =
+            coincide_core::composer_context::has_context(&item["context"]).then(|| item.clone());
+        let context_pane = context_item.as_ref().and_then(|snapshot| {
+            self.transcript_context_pane(&source_id, &item_id, snapshot, index, window, cx)
+        });
         // Swift draws a user's attachments as a grid of small thumbnails and an
         // assistant's generated image as a card. One list, two densities.
         let (media_width, media_height) = if kind == "user" {
@@ -7172,7 +7192,7 @@ impl Render for Coincide {
                                                                 .child(format!("{attachment_count} attachment{}", if attachment_count == 1 { "" } else { "s" })))
                                                         })
                                                         .when_some(
-                                                            self.composer_context_pane(cx),
+                                                            self.composer_context_pane(window, cx),
                                                             |view, context| view.child(context),
                                                         )
                                                         .when_some(draft_images, |view, images| {

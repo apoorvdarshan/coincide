@@ -241,7 +241,14 @@ fn picked_paths_reach_provider_and_remain_on_the_message(root: &Path) {
     let (mut engine, id) = fixture(root);
     let file = root.join("notes.txt");
     fs::write(&file, "Selected document text\nmore details").unwrap();
-    let picked_file = crate::composer_context::PickedPath::inspect(&file).unwrap();
+    let mut picked_file = crate::composer_context::PickedPath::inspect(&file).unwrap();
+    let thumbnail = root.join("thumbnail.png");
+    image::DynamicImage::new_rgba8(3, 2)
+        .save(&thumbnail)
+        .unwrap();
+    let image = crate::attachments::ingest_image(root, &thumbnail).unwrap();
+    let private_image_path = image.path.to_string_lossy().to_string();
+    picked_file.preview_image = Some(image);
     let picked_folder = crate::composer_context::PickedPath::inspect(root).unwrap();
     let file_card = engine.attach_picked_path(&id, &picked_file).unwrap();
     let folder_card = engine.attach_picked_path(&id, &picked_folder).unwrap();
@@ -258,6 +265,7 @@ fn picked_paths_reach_provider_and_remain_on_the_message(root: &Path) {
     assert!(wire[0].contains(file.to_str().unwrap()));
     assert!(wire[0].contains(root.to_str().unwrap()));
     assert!(wire[0].contains("Selected document text"));
+    assert!(!wire[0].contains(&private_image_path));
 }
 
 #[cfg(unix)]

@@ -675,12 +675,15 @@ impl Coincide {
                         IncomingImage::Path(path) => {
                             anyhow::ensure!(path.is_absolute(), "Image file path must be absolute");
                             let inspected_path = path.clone();
+                            let preview_root = data_directory.clone();
                             let picked = cx
                                 .background_executor()
                                 .spawn(async move {
-                                    coincide_core::composer_context::PickedPath::inspect(
-                                        &inspected_path,
-                                    )
+                                    let picked =
+                                        coincide_core::composer_context::PickedPath::inspect(
+                                            &inspected_path,
+                                        )?;
+                                    Ok::<_, anyhow::Error>(picked.with_preview_image(&preview_root))
                                 })
                                 .await?;
                             if !picked.is_supported_image() {
