@@ -640,7 +640,10 @@ mod tests {
             report_cache: Default::default(),
         };
         let view = snapshot(&cards, Some(&data), &json!({}), None, now);
-        assert_eq!(view["accounts"].as_array().unwrap().len(), 6);
+        assert_eq!(
+            view["accounts"].as_array().unwrap().len(),
+            usage_report::PROVIDERS.len()
+        );
         assert!(
             view["accounts"]
                 .as_array()
@@ -649,7 +652,10 @@ mod tests {
                 .all(|row| row["rows"].as_array().unwrap().is_empty()
                     && row["placeholder"] == "unavailable")
         );
-        assert_eq!(view["periods"][0]["tokens"], "72");
+        assert_eq!(
+            view["periods"][0]["tokens"],
+            (12 * usage_report::PROVIDERS.len()).to_string()
+        );
         assert!(
             view["readings"]
                 .as_array()

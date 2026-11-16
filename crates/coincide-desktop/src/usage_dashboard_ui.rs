@@ -1773,7 +1773,7 @@ mod presentation_tests {
                 .iter()
                 .map(|card| card.account.provider)
                 .collect::<Vec<_>>(),
-            ["codex", "grok"]
+            ["codex", "grok", "lithos"]
         );
     }
 
