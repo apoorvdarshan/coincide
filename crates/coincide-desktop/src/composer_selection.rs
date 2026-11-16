@@ -941,6 +941,7 @@ pub(super) struct ComposerSelection {
     goal_yield_attempts: std::collections::HashSet<String>,
     bound: Option<String>,
     context: Option<(String, Value, bool)>,
+    displayed_capability_scope: Option<(String, Value)>,
     capability_cache: capability_cache::CapabilityCache,
     capabilities: Value,
     accounts: Value,
@@ -2098,6 +2099,7 @@ impl Coincide {
         }
         let Some((id, selection, running)) = context else {
             self.selection_ui.bound = None;
+            self.selection_ui.displayed_capability_scope = None;
             self.selection_ui.capabilities = Value::Null;
             return;
         };
@@ -2108,6 +2110,7 @@ impl Coincide {
         if native_revision != self.selection_ui.native_revision {
             self.selection_ui.native_revision = native_revision;
             self.selection_ui.capability_cache.invalidate();
+            self.selection_ui.displayed_capability_scope = None;
             self.selection_ui.catalog_attempted.clear();
             self.selection_ui.catalog_attempted_at.clear();
             self.selection_ui.named_catalog_retry_after = None;
@@ -2140,6 +2143,7 @@ impl Coincide {
         self.selection_ui.catalog_attempted_at.clear();
         self.selection_ui.named_catalog_retry_after = None;
         self.selection_ui.capability_cache.invalidate();
+        self.selection_ui.displayed_capability_scope = None;
         self.refresh_selection_capabilities(cx);
     }
     fn refresh_selection_capabilities(&mut self, cx: &mut Context<Self>) {
@@ -2150,6 +2154,7 @@ impl Coincide {
         if native_revision != self.selection_ui.native_revision {
             self.selection_ui.native_revision = native_revision;
             self.selection_ui.capability_cache.invalidate();
+            self.selection_ui.displayed_capability_scope = None;
             self.selection_ui.catalog_attempted.clear();
             self.selection_ui.catalog_attempted_at.clear();
             self.selection_ui.named_catalog_retry_after = None;
@@ -2169,15 +2174,32 @@ impl Coincide {
             .capability_cache
             .read(&self.engine, &scope);
         self.selection_ui.capability_pending = matches!(result, capability_cache::Read::Pending(_));
+        // A transient busy read must not disable this thread's controls when
+        // we already displayed capabilities for the same saved selection.
+        // The engine still validates every applied choice against current state.
+        if matches!(result, capability_cache::Read::Pending(_))
+            && self.selection_ui.displayed_capability_scope.as_ref()
+                == Some(&(scope.0.clone(), scope.1.clone()))
+        {
+            return;
+        }
         let (capabilities, error, read_accounts) = match result {
             capability_cache::Read::Cached => return,
-            capability_cache::Read::Pending(reason) => (
-                capability_cache::closed_capabilities(&scope, reason),
-                reason.into(),
-                false,
-            ),
-            capability_cache::Read::Ready(Ok(capabilities)) => (capabilities, String::new(), true),
+            capability_cache::Read::Pending(reason) => {
+                self.selection_ui.displayed_capability_scope = None;
+                (
+                    capability_cache::closed_capabilities(&scope, reason),
+                    reason.into(),
+                    false,
+                )
+            }
+            capability_cache::Read::Ready(Ok(capabilities)) => {
+                self.selection_ui.displayed_capability_scope =
+                    Some((scope.0.clone(), scope.1.clone()));
+                (capabilities, String::new(), true)
+            }
             capability_cache::Read::Ready(Err(error)) => {
+                self.selection_ui.displayed_capability_scope = None;
                 let reason = format!("Capabilities unavailable: {error}");
                 (
                     capability_cache::closed_capabilities(&scope, &reason),

@@ -29,14 +29,15 @@ impl CapabilityCache {
         // inspect its saved selection, so never load it on the UI thread.
         let cached = self.authoritative.as_ref() == Some(scope);
         let result = self.named.read_with(shared, scope, cached, |engine, id| {
-            selection_response(
-                engine,
-                "agent.selection.capabilities",
-                json!({"threadId":id}),
-            )
+            engine.selection_capabilities_snapshot(id)
         });
-        if matches!(result, Read::Ready(_)) {
-            self.authoritative = Some(scope.clone());
+        match &result {
+            Read::Ready(Ok(_)) => self.authoritative = Some(scope.clone()),
+            // A transient failed read is not an authoritative lock. Let the
+            // reader's normal cadence retry it instead of disabling controls
+            // indefinitely for this thread.
+            Read::Ready(Err(_)) => self.authoritative = None,
+            _ => {}
         }
         result
     }
@@ -62,7 +63,7 @@ impl CapabilityCache {
                 return Read::Pending("Selection is waiting for the conversation owner");
             }
             Err(TryLockError::Poisoned(_)) => {
-                self.authoritative = Some(scope.clone());
+                self.authoritative = None;
                 return Read::Ready(Err(anyhow::anyhow!("Conversation state is unavailable")));
             }
         };
@@ -99,9 +100,9 @@ impl CapabilityCache {
             );
             load(&mut engine, &scope.0)
         })();
-        // Actual responses (including a missing/stale private model proof) are
-        // stable cache entries. Only lock contention/pending handoff may retry.
-        self.authoritative = Some(scope.clone());
+        // An explicit locked capability is a successful response and stays
+        // cached. A failed read can recover without changing conversations.
+        self.authoritative = result.is_ok().then(|| scope.clone());
         Read::Ready(result)
     }
 }
@@ -320,7 +321,7 @@ mod tests {
         assert_eq!(shared.lock().unwrap().active_thread(), a["id"].as_str());
         assert!(matches!(
             actual_read(&mut cache, &shared, &scope(&b), &reads),
-            Read::Cached
+            Read::Ready(Err(_))
         ));
         assert!(matches!(
             actual_read(&mut cache, &shared, &scope(&changed), &reads),
@@ -334,5 +335,24 @@ mod tests {
         ));
         assert_eq!(reads.get(), 1);
         assert_eq!(shared.lock().unwrap().active_thread(), b["id"].as_str());
+    }
+
+    #[::core::prelude::v1::test]
+    fn failed_capability_read_can_recover_for_the_same_selection() {
+        let (_dir, shared, a, _) = fixture();
+        let scope = scope(&a);
+        let mut cache = CapabilityCache::default();
+        assert!(matches!(
+            cache.read_with(&shared, &scope, |_, _| Err(anyhow::anyhow!(
+                "temporary read failure"
+            ))),
+            Read::Ready(Err(_))
+        ));
+        assert!(!cache.is_current(&scope));
+        assert!(matches!(
+            cache.read_with(&shared, &scope, |_, _| Ok(json!({"locked":false}))),
+            Read::Ready(Ok(_))
+        ));
+        assert!(cache.is_current(&scope));
     }
 }

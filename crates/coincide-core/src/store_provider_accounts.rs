@@ -120,6 +120,12 @@ impl Store {
 /// one. The native selector writes its new signed marker in its own transaction.
 pub(super) fn invalidate_changed_selection(db: &Connection, document: &Value) -> Result<()> {
     let id = validate_thread(document)?;
-    db.execute("DELETE FROM metadata WHERE key=?1 AND EXISTS(SELECT 1 FROM threads WHERE id=?2 AND (json_extract(document,'$.selection.provider') IS NOT json_extract(?3,'$.selection.provider') OR json_extract(document,'$.selection.accountID') IS NOT json_extract(?3,'$.selection.accountID')))",params![format!("native-account-selection-v1/{id}"),id,document.to_string()])?;
+    // Only the selection participates in this comparison. Serializing the
+    // complete transcript here duplicated a potentially huge streaming save.
+    let selection = document
+        .get("selection")
+        .unwrap_or(&Value::Null)
+        .to_string();
+    db.execute("DELETE FROM metadata WHERE key=?1 AND EXISTS(SELECT 1 FROM threads WHERE id=?2 AND (json_extract(document,'$.selection.provider') IS NOT json_extract(?3,'$.provider') OR json_extract(document,'$.selection.accountID') IS NOT json_extract(?3,'$.accountID')))",params![format!("native-account-selection-v1/{id}"),id,selection])?;
     Ok(())
 }

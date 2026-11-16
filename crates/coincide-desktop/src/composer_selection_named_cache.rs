@@ -177,9 +177,8 @@ impl Reader {
                         allowed() && !engine.admissions_frozen(),
                         "Capability refresh was superseded"
                     );
-                    let current = engine.store.thread(&target.0)?;
                     anyhow::ensure!(
-                        selection_envelope(&current) == target.1,
+                        engine.saved_selection_envelope(&target.0)? == target.1,
                         "Saved selection changed; reload before refreshing capabilities"
                     );
                     let value = load(&mut engine, &target.0)?;
@@ -192,7 +191,7 @@ impl Reader {
                         "Selected conversation changed during capability refresh"
                     );
                     anyhow::ensure!(
-                        selection_envelope(&engine.store.thread(&target.0)?) == target.1,
+                        engine.saved_selection_envelope(&target.0)? == target.1,
                         "Saved selection changed during capability refresh"
                     );
                     Ok(value)
