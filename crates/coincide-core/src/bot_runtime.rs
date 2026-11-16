@@ -189,6 +189,17 @@ pub(crate) fn existing_context(
         thread["rustBotContext"].is_null(),
         "Bot context already exists"
     );
+    current_context(store, thread, directory)
+}
+
+/// Build the current instructions for an already authorized bot thread. The
+/// caller must validate its existing local authorization and atomically check
+/// the bot document before replacing a context.
+pub(crate) fn current_context(
+    store: &Store,
+    thread: &Value,
+    directory: &Path,
+) -> Result<(Option<Value>, Value)> {
     ensure!(
         !store.is_imported(required(thread, "id")?)?,
         "Imported conversations remain read-only"
