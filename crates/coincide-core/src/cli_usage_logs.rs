@@ -55,6 +55,36 @@ pub struct SessionOwner {
 /// A known session maps to its owner; None records an ambiguous shared ID.
 pub type SessionOwners = HashMap<(String, String), Option<SessionOwner>>;
 
+/// Windows SQLite does not implement SQLITE_FCNTL_HAS_MOVED. Hold the actual
+/// database open without FILE_SHARE_DELETE there, so it cannot be replaced or
+/// renamed while SQLite opens and reads it. Other platforms use their normal
+/// no-follow handle plus SQLite's own moved-file check.
+fn open_usage_database(path: &Path) -> anyhow::Result<fs::File> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ,
+            FILE_SHARE_WRITE,
+        };
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .open(path)?;
+        let metadata = file.metadata()?;
+        anyhow::ensure!(
+            metadata.is_file() && metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT == 0,
+            "Usage store is not a regular file"
+        );
+        Ok(file)
+    }
+    #[cfg(not(windows))]
+    {
+        crate::native_file::open_regular(path, false)
+    }
+}
+
 fn owner(
     owners: &mut SessionOwners,
     provider: &str,
@@ -95,7 +125,7 @@ fn owner(
 /// Read only session/project metadata using a separate read-only connection;
 /// conversation messages and drafts never leave SQLite.
 pub fn session_owners(path: &Path, cancelled: &dyn Fn() -> bool) -> anyhow::Result<SessionOwners> {
-    let held = crate::native_file::open_regular(path, false)?;
+    let held = open_usage_database(path)?;
     let identity = crate::native_file::file_identity(&held)?;
     let db = rusqlite::Connection::open_with_flags(
         path,
@@ -117,10 +147,10 @@ pub fn session_owners(path: &Path, cancelled: &dyn Fn() -> bool) -> anyhow::Resu
                 (&mut moved as *mut std::ffi::c_int).cast(),
             )
         };
-        anyhow::ensure!(
-            code == rusqlite::ffi::SQLITE_OK && moved == 0,
-            "Usage store moved"
-        );
+        let verified = code == rusqlite::ffi::SQLITE_OK && moved == 0;
+        #[cfg(windows)]
+        let verified = verified || code == rusqlite::ffi::SQLITE_NOTFOUND;
+        anyhow::ensure!(verified, "Usage store moved");
         Ok(())
     };
     verify()?;
@@ -155,7 +185,7 @@ pub fn session_owners(path: &Path, cancelled: &dyn Fn() -> bool) -> anyhow::Resu
             }
         } else if let Some(values) = sessions.as_array() {
             anyhow::ensure!(values.len() % 2 == 0, "Invalid saved session metadata");
-            for pair in values.chunks_exact(2) {
+            for pair in values.as_chunks::<2>().0 {
                 if let Some(provider) = pair[0].as_str() {
                     owner(&mut owners, provider, &pair[1], &project, None);
                 }
@@ -997,7 +1027,7 @@ mod tests {
             1
         );
         let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
-        file.write_all(second[second.len() / 2..].as_bytes())
+        file.write_all(&second.as_bytes()[second.len() / 2..])
             .unwrap();
         let next = scanner
             .scan(&sources, &SessionOwners::new(), &|| false)
@@ -1086,6 +1116,19 @@ mod tests {
                 .scan(&sources, &SessionOwners::new(), &|| true)
                 .is_err()
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn database_handle_prevents_replacement_until_the_read_finishes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("usage.sqlite");
+        let moved = dir.path().join("moved.sqlite");
+        fs::write(&path, b"fixture").unwrap();
+        let held = open_usage_database(&path).unwrap();
+        assert!(fs::rename(&path, &moved).is_err());
+        drop(held);
+        fs::rename(&path, &moved).unwrap();
     }
 
     #[cfg(unix)]
