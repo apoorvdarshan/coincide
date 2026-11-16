@@ -62,6 +62,7 @@ mod composer_commands;
 mod composer_context_mount;
 mod composer_context_view;
 mod composer_file_picker;
+mod composer_folder_picker;
 mod composer_follow_up_mount;
 mod composer_history;
 mod composer_pending_images;
@@ -669,6 +670,7 @@ struct Coincide {
     selection_ui: composer_selection::ComposerSelection,
     composer_accessory_scroll: ScrollHandle,
     composer_files: composer_file_picker::Picker,
+    composer_folder: composer_folder_picker::Picker,
     composer_suggestions: composer_suggestions::Suggestions,
     /// The prompt an Up/Down walk is showing, and the text it placed.
     composer_history: Option<composer_history::Recall>,
@@ -1407,6 +1409,7 @@ impl Coincide {
         let github_threads_panel =
             cx.new(|cx| github_threads::GitHubThreadsPanel::new(threads_transport, window, cx));
         let composer_files = composer_file_picker::Picker::new(window, cx);
+        let composer_folder = composer_folder_picker::Picker::new(window, cx);
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
         let rename_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Conversation title"));
@@ -1430,6 +1433,11 @@ impl Coincide {
         let mut composer_sizing = chat_layout::ComposerSizing::default();
         let mut subscriptions = vec![
             cx.subscribe(&composer_files.query,|this,_,event,cx| {if matches!(event,InputEvent::Change) {this.composer_files.invalidate();cx.notify();}}),
+            cx.subscribe(&composer_folder.path, |this, _, event, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.composer_folder_path_changed(cx);
+                }
+            }),
             cx.subscribe(&codex_limits.panel, |this, _, _, cx| {
                 this.codex_limits.set_context(this.selected.as_ref(), cx);
                 this.codex_limits.refresh(cx);
@@ -1968,6 +1976,7 @@ impl Coincide {
             },
             composer_accessory_scroll: ScrollHandle::default(),
             composer_files,
+            composer_folder,
             composer_suggestions: Default::default(),
             composer_history: None,
             attachment_imports: Default::default(),
@@ -7567,6 +7576,18 @@ impl Render for Coincide {
                                                             this.attach_images(window, cx)
                                                         })),
                                                 )
+                                                .child(
+                                                    Button::new("attach-folder")
+                                                        .flex_shrink_0()
+                                                        .icon(gpui_kit::assets::IconName::FolderPlus)
+                                                        .accessibility_label("Attach folder")
+                                                        .tooltip("Attach folder")
+                                                        .compact().ghost()
+                                                        .xsmall().h(px(26.)).rounded(px(7.))
+                                                        .on_click(cx.listener(|this, _, window, cx| {
+                                                            this.open_composer_folder_picker(window, cx)
+                                                        })),
+                                                )
                                                 .child(div().flex_shrink_0().child(self.composer_voice_control(cx)))
                                                 .child(div().flex_shrink_0().child(self.composer_meters(cx)))
                                                 .when(self.running.contains(&selected_id), |view| view.child(self.composer_stop_button(cx)))
@@ -7646,6 +7667,9 @@ impl Render for Coincide {
             })
             .when_some(self.project_management_overlay(cx), |view, form| {
                 view.child(form)
+            })
+            .when_some(self.composer_folder_overlay(cx), |view, picker| {
+                view.child(picker)
             })
             .when_some(self.bot_editor_overlay(cx), |view, editor| {
                 view.child(editor)
