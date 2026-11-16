@@ -33,6 +33,8 @@ pub use appshots_api::{AppshotTicket, PreparedAppshot};
 #[path = "queue_dispatch.rs"]
 mod queue_dispatch;
 
+#[path = "async_question_api.rs"]
+mod async_question_api;
 #[path = "follow_up_api.rs"]
 mod follow_up_api;
 #[path = "handoff_prompt.rs"]
@@ -1696,6 +1698,14 @@ impl Engine {
         } else {
             allowed_session
         };
+        if let SendOrigin::Queued(claim) = origin
+            && let Some(expected) = claim.question_session()
+        {
+            ensure!(
+                session.as_deref() == Some(expected),
+                "The question's original Codex session is unavailable; the answer was retained"
+            );
+        }
         // Codex slash controls are client commands, not chat text. Only the
         // exact, attachment-free user command has authority to compact the
         // existing provider session; quoted history is never interpreted.
@@ -2197,6 +2207,11 @@ impl Engine {
                     }
                     thread["rustMessageQueue"][index]["dismissed"] = json!(true);
                 } else {
+                    if matches!(messages[index].state, State::Pending | State::Failed)
+                        && messages[index].codex_question_session.is_some()
+                    {
+                        crate::async_questions::restore_removed_reply(&mut thread, message_id);
+                    }
                     messages.remove(index);
                     queue::write(&mut thread, &messages)?;
                 }
@@ -2962,12 +2977,14 @@ impl Engine {
                                     .rev()
                                     .find(|item| item["externalID"] == external)
                                 {
-                                    let next = format!(
-                                        "{}{}",
-                                        text(item, "text"),
-                                        p["delta"].as_str().unwrap_or("")
-                                    );
-                                    item["text"] = json!(next);
+                                    if item["rustAsync"] != true {
+                                        let next = format!(
+                                            "{}{}",
+                                            text(item, "text"),
+                                            p["delta"].as_str().unwrap_or("")
+                                        );
+                                        item["text"] = json!(next);
+                                    }
                                 } else {
                                     append(
                                         &mut v,
@@ -3103,7 +3120,9 @@ impl Engine {
                                         .rev()
                                         .find(|it| it["externalID"] == external)
                                     {
-                                        existing["text"] = item["text"].clone();
+                                        if existing["rustAsync"] != true {
+                                            existing["text"] = item["text"].clone();
+                                        }
                                         if kind == "reasoning" {
                                             existing["status"] = json!("completed");
                                         }
@@ -3121,6 +3140,21 @@ impl Engine {
                                                 .last_mut()
                                                 .unwrap()["status"] = json!("completed");
                                         }
+                                    }
+                                    if self.runs[&id].provider == "codex" {
+                                        let native_session = p["threadId"].as_str().unwrap_or("");
+                                        let selection = self.runs[&id]
+                                            .usage_context
+                                            .as_ref()
+                                            .map(|context| context.selection().clone())
+                                            .unwrap_or_else(|| v["selection"].clone());
+                                        crate::async_questions::observe(
+                                            &mut v,
+                                            item,
+                                            native_session,
+                                            &selection,
+                                            transcript_start,
+                                        );
                                     }
                                 } else if item["type"] != "userMessage"
                                     && item["type"] != "agentMessage"

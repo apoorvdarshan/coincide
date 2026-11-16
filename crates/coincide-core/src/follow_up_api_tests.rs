@@ -1986,3 +1986,154 @@ fn queue_and_interrupt_target_only_the_running_worker_for_every_provider() {
         }
     }
 }
+
+#[test]
+fn async_question_steers_the_same_session_without_consuming_the_draft() {
+    let Fixture {
+        _dir,
+        mut engine,
+        id,
+        mut server,
+        release,
+        ..
+    } = fixture();
+    let mut thread = engine.store.thread(&id).unwrap();
+    agent::set_provider_session(&mut thread, "codex", "native-thread");
+    thread["items"] = json!([{"id":Uuid::new_v4().to_string(),"kind":"assistant","text":"Pick","externalID":"question-1"}]);
+    let item = json!({"type":"agentMessage","delivery":"async","id":"question-1",
+        "questions":[{"title":"Pick one","options":["A","B"]}]});
+    assert!(crate::async_questions::observe(
+        &mut thread,
+        &item,
+        "native-thread",
+        &json!({}),
+        0
+    ));
+    let question_id = text(
+        &thread["rustAsyncQuestions"][0]["params"]["questions"][0],
+        "id",
+    );
+    engine.store.save(&thread).unwrap();
+    let ticket = engine
+        .submit_async_question(&id, "question-1", &json!({question_id:{"answers":["B"]}}))
+        .unwrap()
+        .expect("live steer");
+    engine.poll();
+    let request = server.next_request().unwrap();
+    let prompt = request["params"]["input"][0]["text"].as_str().unwrap();
+    assert_eq!(
+        crate::async_questions::display_reply(prompt).as_deref(),
+        Some("B")
+    );
+    assert_eq!(
+        engine.store.thread(&id).unwrap()["draft"],
+        "synthetic redirect"
+    );
+    server.response(&json!({"id":request["id"],"result":{"turnId":"native-turn"}}));
+    for _ in 0..30 {
+        engine.poll();
+        if engine.native_follow_up_status(&ticket).unwrap() != NativeFollowUpStatus::Pending {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(matches!(
+        engine.native_follow_up_status(&ticket).unwrap(),
+        NativeFollowUpStatus::Delivered { .. }
+    ));
+    engine.collect_native_follow_up(ticket).unwrap();
+    assert_eq!(
+        engine.store.thread(&id).unwrap()["draft"],
+        "synthetic redirect"
+    );
+    finish_fake(&mut engine, &id, release);
+}
+
+#[test]
+fn async_question_does_not_dismiss_an_unrelated_approval() {
+    let Fixture {
+        _dir,
+        mut engine,
+        id,
+        release,
+        control,
+        ..
+    } = fixture();
+    let mut thread = engine.store.thread(&id).unwrap();
+    agent::set_provider_session(&mut thread, "codex", "native-thread");
+    thread["items"] = json!([{"id":Uuid::new_v4().to_string(),"kind":"assistant","text":"Pick","externalID":"question-1"}]);
+    let item = json!({"type":"agentMessage","delivery":"async","id":"question-1",
+        "questions":[{"title":"Pick one","options":["A","B"]}]});
+    assert!(crate::async_questions::observe(
+        &mut thread,
+        &item,
+        "native-thread",
+        &json!({}),
+        0
+    ));
+    let question_id = text(
+        &thread["rustAsyncQuestions"][0]["params"]["questions"][0],
+        "id",
+    );
+    engine.store.save(&thread).unwrap();
+    engine.runs.get_mut(&id).unwrap().pending.insert(
+        "approval".into(),
+        json!({"id":1,"method":"item/commandExecution/requestApproval","params":{}}),
+    );
+    assert!(
+        engine
+            .submit_async_question(&id, "question-1", &json!({question_id:{"answers":["B"]}}))
+            .unwrap()
+            .is_none()
+    );
+    assert!(engine.runs[&id].pending.contains_key("approval"));
+    assert!(control.try_recv().is_err());
+    assert_eq!(
+        engine.store.thread(&id).unwrap()["rustMessageQueue"][0]["state"],
+        "pending"
+    );
+    engine.freeze_admissions();
+    finish_fake(&mut engine, &id, release);
+}
+
+#[test]
+fn async_answer_never_steers_a_different_active_native_session() {
+    let Fixture {
+        _dir,
+        mut engine,
+        id,
+        release,
+        control,
+        ..
+    } = fixture();
+    let mut thread = engine.store.thread(&id).unwrap();
+    agent::set_provider_session(&mut thread, "codex", "other-native-thread");
+    thread["items"] = json!([{"id":Uuid::new_v4().to_string(),"kind":"assistant","text":"Pick","externalID":"question-1"}]);
+    let item = json!({"type":"agentMessage","delivery":"async","id":"question-1",
+        "questions":[{"title":"Pick one","options":["A","B"]}]});
+    assert!(crate::async_questions::observe(
+        &mut thread,
+        &item,
+        "other-native-thread",
+        &json!({}),
+        0
+    ));
+    let question_id = text(
+        &thread["rustAsyncQuestions"][0]["params"]["questions"][0],
+        "id",
+    );
+    engine.store.save(&thread).unwrap();
+    assert!(
+        engine
+            .submit_async_question(&id, "question-1", &json!({question_id:{"answers":["B"]}}))
+            .unwrap()
+            .is_none()
+    );
+    assert!(control.try_recv().is_err());
+    assert_eq!(
+        engine.store.thread(&id).unwrap()["rustMessageQueue"][0]["state"],
+        "pending"
+    );
+    engine.freeze_admissions();
+    finish_fake(&mut engine, &id, release);
+}

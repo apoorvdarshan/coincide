@@ -422,6 +422,7 @@ impl Coincide {
             let id = text(message, "id");
             let state = text(message, "state");
             let body = text(message, "text");
+            let body = coincide_core::async_questions::display_reply(&body).unwrap_or(body);
             let preview = body.lines().next().unwrap_or("");
             let images = message["rustImages"].as_array().map_or(0, Vec::len);
             let context = message["context"].as_array().map_or(0, Vec::len);
@@ -435,7 +436,8 @@ impl Coincide {
             let edit_message = (*message).clone();
             let send_message = (*message).clone();
             let expected = source.clone();
-            let editable = matches!(state.as_str(), "pending" | "failed" | "interrupted");
+            let editable = matches!(state.as_str(), "pending" | "failed" | "interrupted")
+                && message["codexQuestionSession"].is_null();
             let can_send = state == "pending";
             pane = pane.child(
                 div()

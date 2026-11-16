@@ -680,6 +680,14 @@ impl Engine {
         {
             dispatch = Dispatch::Queue;
         }
+        if dispatch == Dispatch::Steer
+            && let Some(expected) = queue.as_ref().and_then(|claim| claim.question_session())
+        {
+            ensure!(
+                run.provider == "codex" && run.session.steering_identity()?.0 == expected,
+                "The question's original Codex turn is unavailable; the answer was retained"
+            );
+        }
         let worker = run.session.worker_completion();
         let prefix = if dispatch == Dispatch::Interrupt || (dispatch == Dispatch::Queue && is_queue)
         {

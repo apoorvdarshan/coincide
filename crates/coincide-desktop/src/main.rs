@@ -489,6 +489,7 @@ struct Coincide {
     revision: u64,
     running: Vec<String>,
     pending_requests: Vec<Value>,
+    pending_async_submissions: std::collections::HashSet<(String, String)>,
     follow_up_picker: bool,
     follow_up_anchor: Option<Point<Pixels>>,
     follow_up_deliveries: Vec<composer_follow_up_mount::PendingDelivery>,
@@ -1770,6 +1771,7 @@ impl Coincide {
             revision: 0,
             running: Vec::new(),
             pending_requests: Vec::new(),
+            pending_async_submissions: Default::default(),
             follow_up_picker: false,
             follow_up_anchor: None,
             follow_up_deliveries: Vec::new(),
@@ -4366,7 +4368,7 @@ impl Coincide {
         let Some(thread) = self.selected.as_ref().map(|v| text(v, "id")) else {
             return;
         };
-        let requests = if self.running.contains(&thread) {
+        let mut requests = if self.running.contains(&thread) {
             match call(&self.engine, "agent.pending", json!({"threadId":thread})) {
                 Ok(value) => value.as_array().cloned().unwrap_or_default(),
                 // A busy engine is a retry, not news for the composer line.
@@ -4375,6 +4377,9 @@ impl Coincide {
         } else {
             Vec::new()
         };
+        if let Some(selected) = self.selected.as_ref() {
+            requests.extend(coincide_core::async_questions::pending(selected));
+        }
         // A successful poll clears the transient busy line; otherwise the UI
         // keeps accusing the app of being busy long after the lock is free.
         if self.status.starts_with("Unable to load agent requests:") {
@@ -4397,7 +4402,7 @@ impl Coincide {
                 .flatten()
             {
                 let key = (thread.clone(), request_id.clone(), text(question, "id"));
-                self.pending_inputs.entry(key).or_insert_with(|| {
+                self.pending_inputs.entry(key.clone()).or_insert_with(|| {
                     cx.new(|cx| {
                         let mut input =
                             InputState::new(window, cx).placeholder("Write your answer");
@@ -4407,6 +4412,13 @@ impl Coincide {
                         input
                     })
                 });
+                if request["rustAsync"] == true
+                    && let Some(label) = question["options"][0]["label"].as_str()
+                {
+                    self.pending_choices
+                        .entry(key)
+                        .or_insert_with(|| vec![label.to_owned()]);
+                }
             }
         }
         self.sync_approval_replies(&thread, &requests, window, cx);
@@ -4452,6 +4464,15 @@ impl Coincide {
             }
             answers.insert(id, json!({"answers":values}));
         }
+        if request["rustAsync"] == true {
+            self.finish_async_question(
+                thread,
+                request_id.to_owned(),
+                Some(Value::Object(answers)),
+                cx,
+            );
+            return;
+        }
         self.finish_pending(
             &thread,
             request_id,
@@ -4465,6 +4486,14 @@ impl Coincide {
             return;
         };
         let thread_id = text(thread, "id");
+        if self
+            .pending_requests
+            .iter()
+            .any(|request| request["requestId"] == request_id && request["rustAsync"] == true)
+        {
+            self.finish_async_question(thread_id, request_id.to_owned(), None, cx);
+            return;
+        }
         let Some(item_id) = thread["items"].as_array().and_then(|items| {
             items
                 .iter()
@@ -4507,6 +4536,86 @@ impl Coincide {
         }
         cx.notify();
     }
+    fn finish_async_question(
+        &mut self,
+        thread: String,
+        request_id: String,
+        answers: Option<Value>,
+        cx: &mut Context<Self>,
+    ) {
+        let key = (thread.clone(), request_id.clone());
+        if !self.pending_async_submissions.insert(key.clone()) {
+            return;
+        }
+        self.buffered_send_lease.set_dirty(true);
+        self.ordinary_sends_inflight += 1;
+        let engine = self.engine.clone();
+        let worker_thread = thread.clone();
+        let worker_request = request_id.clone();
+        let submitted = answers.is_some();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut engine = engine
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("App engine is unavailable"))?;
+                    if let Some(answers) = answers {
+                        engine.submit_async_question(&worker_thread, &worker_request, &answers)
+                    } else {
+                        engine.dismiss_async_question(&worker_thread, &worker_request)?;
+                        Ok(None)
+                    }
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.ordinary_sends_inflight = this.ordinary_sends_inflight.saturating_sub(1);
+                this.pending_async_submissions.remove(&key);
+                match result {
+                    Ok(ticket) => {
+                        if let Some(ticket) = ticket {
+                            this.track_queued_delivery(ticket, thread.clone());
+                        }
+                        if this
+                            .selected
+                            .as_ref()
+                            .is_some_and(|selected| selected["id"] == thread)
+                        {
+                            if let Some(selected) = this.selected.composer_metadata_mut()
+                                && let Some(requests) =
+                                    selected["rustAsyncQuestions"].as_array_mut()
+                                && let Some(request) = requests
+                                    .iter_mut()
+                                    .find(|request| request["requestId"] == request_id)
+                            {
+                                request["status"] =
+                                    json!(if submitted { "submitted" } else { "dismissed" });
+                            }
+                            this.pending_requests
+                                .retain(|request| request["requestId"] != request_id);
+                        }
+                        this.pending_inputs
+                            .retain(|(owner, id, _), _| owner != &thread || id != &request_id);
+                        this.pending_choices
+                            .retain(|(owner, id, _), _| owner != &thread || id != &request_id);
+                        this.status = if submitted {
+                            "Answer submitted."
+                        } else {
+                            "Question dismissed."
+                        }
+                        .into();
+                        this.refresh_queue(cx);
+                    }
+                    Err(error) => {
+                        this.status = format!("Answer was not submitted: {error}");
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
     fn pending_pane(&self, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         if self.pending_requests.is_empty() {
             return None;
@@ -4516,17 +4625,20 @@ impl Coincide {
         let banner = self.approval_banner(window, cx);
         // The app's own palette: the card used a blue-grey surface (0x1c2028)
         // and border (0x30353e) that appear nowhere else in the window.
-        let secondary = self.color(0x98a6ba);
-        let tertiary = self.color(0x98a6ba).opacity(0.7);
-        let accent = self.color(0xE9B04E);
-        let surface = self.color(0x181d28);
-        let border = self.color(0x29303d);
+        let secondary = cx.theme().muted_foreground;
+        let tertiary = secondary.opacity(0.7);
+        let accent = cx.theme().foreground;
+        let surface = cx.theme().muted;
+        let border = cx.theme().border;
         let mut cards = Vec::new();
         for request in &self.pending_requests {
             if request["method"] != "item/tool/requestUserInput" {
                 continue;
             }
             let request_id = text(request, "requestId");
+            let submitting = self
+                .pending_async_submissions
+                .contains(&(thread.clone(), request_id.clone()));
             let provider = text(request, "provider");
             let provider = presentation::provider_name(&provider);
             let questions = request["params"]["questions"]
@@ -4604,10 +4716,14 @@ impl Coincide {
                     .is_some_and(|choices| choices.contains(&label));
                 let key = key.clone();
                 let selected_label = label.clone();
+                let accessible_label = label.clone();
                 let option_id =
                     SharedString::from(format!("answer-{request_id}-{step}-{option_index}"));
                 let mut row = div()
-                    .id(option_id)
+                    .id(SharedString::from(format!(
+                        "answer-visual-{request_id}-{step}-{option_index}"
+                    )))
+                    .w_full()
                     .flex()
                     .items_start()
                     .gap_2()
@@ -4618,8 +4734,10 @@ impl Coincide {
                     .when(chosen, |row| row.bg(accent.opacity(0.14)))
                     .when(!chosen, |row| {
                         row.hover(|row| row.bg(self.color(0xe4e9f2).opacity(0.05)))
-                    })
-                    .on_click(cx.listener(move |this, _, window, cx| {
+                    });
+                let owner = cx.entity().downgrade();
+                let choose = move |window: &mut Window, app: &mut App| {
+                    let _ = owner.update(app, |this, cx| {
                         let choices = this.pending_choices.entry(key.clone()).or_default();
                         if multiple {
                             if choices.contains(&selected_label) {
@@ -4634,7 +4752,8 @@ impl Coincide {
                             input.update(cx, |input, cx| input.set_value("", window, cx));
                         }
                         cx.notify();
-                    }));
+                    });
+                };
                 row = row.child(
                     div()
                         .mt(px(2.))
@@ -4652,7 +4771,7 @@ impl Coincide {
                             dot.child(
                                 Icon::new(gpui_kit::assets::IconName::Check)
                                     .xsmall()
-                                    .text_color(self.color(0x11151d)),
+                                    .text_color(cx.theme().background),
                             )
                         }),
                 );
@@ -4667,7 +4786,28 @@ impl Coincide {
                             column.child(div().text_xs().text_color(tertiary).child(description))
                         }),
                 );
-                options = options.child(row);
+                let control = if multiple {
+                    gpui_base::Checkbox::new(option_id)
+                        .w_full()
+                        .checked(chosen)
+                        .disabled(submitting)
+                        .accessibility_label(accessible_label)
+                        .on_change(move |_, _, window, app| choose(window, app))
+                        .child(row)
+                        .into_any_element()
+                } else {
+                    gpui_base::Radio::new(option_id)
+                        .w_full()
+                        .checked(chosen)
+                        .disabled(submitting)
+                        .accessibility_label(accessible_label)
+                        .when(!submitting, |control| {
+                            control.on_click(move |_, window, app| choose(window, app))
+                        })
+                        .child(row)
+                        .into_any_element()
+                };
+                options = options.child(control);
             }
             section = section.child(options);
             if question["allowsFreeText"] != false
@@ -4678,26 +4818,18 @@ impl Coincide {
                         div()
                             .text_xs()
                             .text_color(tertiary)
-                            .child("Or write your own answer; this replaces the selected option."),
+                            .child("Or write your own answer."),
                     )
                     .child(Input::new(input));
             }
             body = body.child(section);
-            let has_choice = self
-                .pending_choices
-                .get(&key)
-                .is_some_and(|choices| !choices.is_empty());
-            let has_text = self
-                .pending_inputs
-                .get(&key)
-                .is_some_and(|input| !input.read(cx).value().trim().is_empty());
-            let answered = has_choice || has_text;
             let mut footer = div().flex().justify_end().gap_1();
             let dismiss_id = request_id.clone();
             footer = footer.child(
                 Button::new(SharedString::from(format!("dismiss-question-{request_id}")))
                     .label("Dismiss")
                     .small()
+                    .disabled(submitting)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.dismiss_pending_question(&dismiss_id, cx)
                     })),
@@ -4718,12 +4850,26 @@ impl Coincide {
             }
             if step + 1 < questions.len() {
                 let request = request_id.clone();
+                let question_key = key.clone();
                 footer = footer.child(
                     Button::new(SharedString::from(format!("next-{request}")))
                         .label("Next")
                         .small()
-                        .disabled(!answered)
+                        .disabled(submitting)
                         .on_click(cx.listener(move |this, _, _, cx| {
+                            let chosen = this
+                                .pending_choices
+                                .get(&question_key)
+                                .is_some_and(|choices| !choices.is_empty());
+                            let written = this
+                                .pending_inputs
+                                .get(&question_key)
+                                .is_some_and(|input| !input.read(cx).value().trim().is_empty());
+                            if !chosen && !written {
+                                this.status = "Answer this question before continuing.".into();
+                                cx.notify();
+                                return;
+                            }
                             let step = this
                                 .pending_question_step
                                 .entry(request.clone())
@@ -4741,6 +4887,7 @@ impl Coincide {
                         } else {
                             "Submit"
                         })
+                        .disabled(submitting)
                         .on_click(cx.listener(move |this, _, _, cx| this.answer_pending(&id, cx))),
                 );
             }
@@ -5890,6 +6037,11 @@ impl Coincide {
             return self.turn_decorated(index, div().into_any_element(), None, cx);
         }
         let body = text(item, "text");
+        let body = if kind == "user" {
+            coincide_core::async_questions::display_reply(&body).unwrap_or(body)
+        } else {
+            body
+        };
         // The active find target uses the existing expanded native body so a
         // later-line match remains visible. Clearing Find remounts the compact row.
         if kind == "notice" && !find_revealed {

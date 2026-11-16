@@ -95,6 +95,59 @@ fn deliver(send: &mpsc::Sender<Event>, ready: &mpsc::Receiver<()>, event: Event)
 }
 
 #[test]
+fn codex_async_question_metadata_survives_the_actual_provider_event_path() {
+    let (_directory, mut engine, id, send, ready) = fixture();
+    deliver(
+        &send,
+        &ready,
+        Event::Frame(json!({"method":"item/agentMessage/delta",
+        "params":{"itemId":"question-1","delta":"Fallback text"}})),
+    );
+    engine.poll();
+    deliver(
+        &send,
+        &ready,
+        Event::Frame(json!({"method":"item/completed","params":{
+            "threadId":"native-thread","item":{"type":"agentMessage","id":"question-1",
+            "text":"Fallback text","delivery":"async","questions":[{"title":"Choose","options":["A","B"]}]}
+        }})),
+    );
+    engine.poll();
+    let saved = engine.store.thread(&id).unwrap();
+    assert_eq!(crate::async_questions::pending(&saved).len(), 1);
+    assert_eq!(saved["items"][0]["kind"], "question");
+    assert_eq!(
+        saved["rustAsyncQuestions"][0]["nativeSession"],
+        "native-thread"
+    );
+    let original_question = saved["items"][0]["text"].clone();
+    deliver(
+        &send,
+        &ready,
+        Event::Frame(json!({"method":"item/completed","params":{
+            "threadId":"native-thread","item":{"type":"agentMessage","id":"question-1",
+            "text":"Fallback text","delivery":"async","questions":[{"title":"Choose","options":["A","B"]}]}
+        }})),
+    );
+    deliver(
+        &send,
+        &ready,
+        Event::Frame(json!({"method":"item/agentMessage/delta",
+        "params":{"itemId":"question-1","delta":"late replay"}})),
+    );
+    engine.poll();
+    let replayed = engine.store.thread(&id).unwrap();
+    assert_eq!(crate::async_questions::pending(&replayed).len(), 1);
+    assert_eq!(replayed["items"][0]["text"], original_question);
+    deliver(&send, &ready, Event::Finished);
+    engine.poll();
+    assert_eq!(
+        crate::async_questions::pending(&engine.store.thread(&id).unwrap()).len(),
+        1
+    );
+}
+
+#[test]
 fn desktop_snapshots_leave_provider_events_for_the_background_poller() {
     let (_directory, mut engine, id, send, ready) = fixture();
     deliver(&send, &ready, Event::Finished);

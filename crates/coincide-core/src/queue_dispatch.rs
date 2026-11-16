@@ -2,6 +2,16 @@
 //! pending row becomes durably dispatching. No JSON field constructs this type.
 use super::*;
 use crate::message_queue::{self as queue, State};
+fn validate_question_session(message: &queue::Message, thread: &Value) -> Result<()> {
+    if let Some(session) = &message.codex_question_session {
+        ensure!(
+            thread["selection"]["provider"] == "codex"
+                && agent::provider_session(thread, "codex").as_deref() == Some(session),
+            "The question belongs to a different Codex session; the answer was retained"
+        );
+    }
+    Ok(())
+}
 pub(super) struct QueueClaim {
     owner: Uuid,
     thread: String,
@@ -21,6 +31,9 @@ impl QueueClaim {
     }
     pub(super) fn id(&self) -> &str {
         &self.message.id
+    }
+    pub(super) fn question_session(&self) -> Option<&str> {
+        self.message.codex_question_session.as_deref()
     }
     pub(super) fn validate(
         &self,
@@ -43,6 +56,7 @@ impl QueueClaim {
         let actual = matches
             .next()
             .context("Queued dispatch claim disappeared")?;
+        validate_question_session(actual, thread)?;
         ensure!(
             matches.next().is_none()
                 && actual.state == State::Dispatching
@@ -244,6 +258,7 @@ impl Engine {
             messages[index].selection == source["selection"],
             "Provider selection changed; remove and requeue this message"
         );
+        validate_question_session(&messages[index], &source)?;
         let mut target = source.clone();
         let row = target["rustMessageQueue"]
             .as_array_mut()
@@ -358,6 +373,7 @@ impl Engine {
             .enumerate()
             .filter(|(_, message)| message.id == id_message);
         let (index, message) = matches.next().context("Queued message disappeared")?;
+        validate_question_session(message, &source)?;
         ensure!(
             matches.next().is_none()
                 && message.state == State::Pending

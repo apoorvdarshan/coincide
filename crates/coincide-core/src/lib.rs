@@ -3,6 +3,7 @@ pub mod store;
 
 pub mod agent;
 pub mod api;
+pub mod async_questions;
 pub mod attachments;
 pub mod browser_protocol;
 pub mod control;
