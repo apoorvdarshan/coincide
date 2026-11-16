@@ -13,6 +13,153 @@ fn selected_option<'a>(options: &'a [Value], kind: &str) -> Option<&'a Value> {
         .find(|option| option["kind"] == kind && option["optionId"].is_string())
 }
 
+fn model_option(result: &Value) -> Option<&Value> {
+    let options = result["configOptions"].as_array()?;
+    options
+        .iter()
+        .find(|option| option["id"] == "model" && option["type"] == "select")
+        .or_else(|| {
+            options.iter().find(|option| {
+                option["category"] == "model"
+                    && option["type"] == "select"
+                    && option["id"].is_string()
+            })
+        })
+}
+fn option_has_value(option: &Value, target: &str) -> bool {
+    option["options"].as_array().is_some_and(|options| {
+        options.iter().any(|row| {
+            row["value"] == target
+                || row["options"]
+                    .as_array()
+                    .is_some_and(|group| group.iter().any(|item| item["value"] == target))
+        })
+    })
+}
+fn model_entries(result: &Value) -> Vec<Value> {
+    let mut rows = vec![
+        json!({"id":"default","displayName":"Provider default", "reportedEfforts":[],
+        "reportedDefaultEffort":null,"reportedSpeeds":[],"supportsImages":null}),
+    ];
+    let mut add = |value: &Value, id_key: &str| {
+        let Some(id) = value[id_key].as_str().filter(|id| *id != "default") else {
+            return;
+        };
+        if crate::composer_selection::validate_model(id).is_err()
+            || rows.iter().any(|row| row["id"] == id)
+        {
+            return;
+        }
+        let name = value["name"]
+            .as_str()
+            .or_else(|| value["label"].as_str())
+            .unwrap_or(id);
+        if name.len() > 512 || name.chars().any(char::is_control) {
+            return;
+        }
+        rows.push(json!({"id":id,"displayName":name,"reportedEfforts":[],
+            "reportedDefaultEffort":null,"reportedSpeeds":[],"supportsImages":null}));
+    };
+    if let Some(option) = model_option(result) {
+        for item in option["options"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .take(1000)
+        {
+            if let Some(group) = item["options"].as_array() {
+                for item in group.iter().take(1000) {
+                    add(item, "value");
+                }
+            } else {
+                add(item, "value");
+            }
+        }
+    }
+    for item in result["models"]["availableModels"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .take(1000)
+    {
+        add(item, "modelId");
+    }
+    rows.truncate(1000);
+    rows
+}
+
+/// Start a bounded ACP session solely to read its advertised model options.
+/// No prompt, permission, filesystem or terminal action is sent.
+pub(super) fn model_catalog(
+    executable: &std::path::Path,
+    cwd: &std::path::Path,
+    arguments: &[String],
+    is_fx: bool,
+    cancelled: &impl Fn() -> bool,
+) -> Result<Vec<Value>> {
+    let launch = Launch {
+        executable: executable.into(),
+        cwd: cwd.into(),
+        session: None,
+        prompt: String::new(),
+        model: None,
+        variant: None,
+        full_access: false,
+    };
+    let mut transport = CatalogTransport::spawn(&launch, arguments, &[], &[], None)?;
+    let deadline = Instant::now() + Duration::from_secs(15);
+    transport.write(rpc(
+        1,
+        "initialize",
+        json!({"protocolVersion":1,
+        "clientCapabilities":{"fs":{"readTextFile":false,"writeTextFile":false},"terminal":false},
+        "clientInfo":{"name":"Coincide","version":env!("CARGO_PKG_VERSION")}}),
+    ))?;
+    let mut stage = 1;
+    loop {
+        ensure!(
+            cancelled() && Instant::now() < deadline,
+            "ACP model discovery timed out or was cancelled"
+        );
+        let Some(frame) = transport.next()? else {
+            continue;
+        };
+        if frame.get("id").is_some() && frame.get("method").is_some() {
+            bail!("ACP requested an interactive action during model discovery");
+        }
+        if frame["id"].as_u64() != Some(stage) {
+            continue;
+        }
+        ensure!(
+            frame.get("error").is_none(),
+            "ACP model discovery was rejected; check the agent sign-in"
+        );
+        let result = frame
+            .get("result")
+            .context("ACP model discovery response missing")?;
+        if stage == 1 {
+            ensure!(
+                result["protocolVersion"] == 1,
+                "ACP agent does not support protocol version 1"
+            );
+            let mut params = json!({"cwd":cwd,"mcpServers":[]});
+            if is_fx {
+                params["_meta"] = json!({"fx":{"profileMcpServers":true}});
+            }
+            transport.write(rpc(2, "session/new", params))?;
+            stage = 2;
+        } else {
+            ensure!(
+                result["sessionId"]
+                    .as_str()
+                    .is_some_and(|id| !id.is_empty()),
+                "ACP session ID missing"
+            );
+            return Ok(model_entries(result));
+        }
+    }
+}
+
 // These updates are produced by the live prompt, after session/replay checks.
 // Command catalogs and other session metadata do not acknowledge a prompt.
 pub(super) fn prompt_activity(update: &Value) -> bool {
@@ -125,6 +272,12 @@ enum PendingRequest {
     Permission(Value),
     Questions(Vec<grok::Question>),
 }
+#[derive(Clone, Copy)]
+enum Flavor {
+    Standard,
+    Grok,
+    Registered { fx: bool },
+}
 
 pub(super) fn run_grok(
     launch: Launch,
@@ -132,7 +285,14 @@ pub(super) fn run_grok(
     commands: Receiver<Control>,
     events: &Sender<Event>,
 ) -> Result<()> {
-    run_flavored(launch, grok::arguments(), images, commands, events, true)
+    run_flavored(
+        launch,
+        grok::arguments(),
+        images,
+        commands,
+        events,
+        Flavor::Grok,
+    )
 }
 
 pub(super) fn run(
@@ -142,7 +302,32 @@ pub(super) fn run(
     commands: Receiver<Control>,
     events: &Sender<Event>,
 ) -> Result<()> {
-    run_flavored(launch, arguments, images, commands, events, false)
+    run_flavored(
+        launch,
+        arguments,
+        images,
+        commands,
+        events,
+        Flavor::Standard,
+    )
+}
+
+pub(super) fn run_registered(
+    launch: Launch,
+    arguments: Vec<String>,
+    images: Vec<ImageAttachment>,
+    commands: Receiver<Control>,
+    events: &Sender<Event>,
+    is_fx: bool,
+) -> Result<()> {
+    run_flavored(
+        launch,
+        arguments,
+        images,
+        commands,
+        events,
+        Flavor::Registered { fx: is_fx },
+    )
 }
 
 fn run_flavored(
@@ -151,8 +336,11 @@ fn run_flavored(
     images: Vec<ImageAttachment>,
     commands: Receiver<Control>,
     events: &Sender<Event>,
-    is_grok: bool,
+    flavor: Flavor,
 ) -> Result<()> {
+    let is_grok = matches!(flavor, Flavor::Grok);
+    let persist_only_resumable = matches!(flavor, Flavor::Registered { .. });
+    let is_fx = matches!(flavor, Flavor::Registered { fx: true });
     let has_images = !images.is_empty();
     let mut prompt = Some(images::acp_content(&launch.prompt, &images));
     drop(images);
@@ -170,6 +358,8 @@ fn run_flavored(
     let mut auth_method = None;
     let mut authentication_attempted = false;
     let mut session_request = None;
+    let mut model_config = None::<String>;
+    let mut initial_fx_session = None::<Value>;
     let prompt_id = uuid::Uuid::new_v4().to_string();
     let mut mapper = Mapper::default();
     let mut accepted = false;
@@ -395,6 +585,14 @@ fn run_flavored(
                     result["protocolVersion"].as_u64() == Some(1),
                     "This adapter requires ACP protocol version 1"
                 );
+                let can_resume = result["agentCapabilities"]["loadSession"] == true;
+                if persist_only_resumable {
+                    event(
+                        events,
+                        "provider/acpSessionPersistence",
+                        json!({"canResume":can_resume}),
+                    )?;
+                }
                 ensure!(
                     !has_images
                         || is_grok
@@ -406,11 +604,11 @@ fn run_flavored(
                         grok::authentication_method(result, grok::configured_authentication());
                 }
                 let mut params = json!({"cwd":launch.cwd,"mcpServers":[]});
+                if is_fx {
+                    params["_meta"] = json!({"fx":{"profileMcpServers":true}});
+                }
                 let method = if let Some(id) = &launch.session {
-                    ensure!(
-                        result["agentCapabilities"]["loadSession"] == true,
-                        "ACP server cannot resume this stored session"
-                    );
+                    ensure!(can_resume, "ACP server cannot resume this stored session");
                     params["sessionId"] = json!(id);
                     "session/load"
                 } else {
@@ -421,44 +619,97 @@ fn run_flavored(
                 session_request = Some(request);
                 stage = 2;
             }
-            2 => {
-                let id = match &launch.session {
-                    Some(previous) => {
-                        if let Some(returned) = result["sessionId"].as_str() {
-                            ensure!(
-                                returned == previous,
-                                "ACP returned a different session than requested"
-                            );
+            2 | 6 => {
+                let id = if stage == 6 {
+                    ensure!(
+                        result["configOptions"]
+                            .as_array()
+                            .is_some_and(|options| options
+                                .iter()
+                                .any(|option| option["id"] == "mode"
+                                    && option["currentValue"] == "ask")),
+                        "fx did not confirm supervised mode; no prompt was sent"
+                    );
+                    session_id.clone().context("fx session ID missing")?
+                } else {
+                    match &launch.session {
+                        Some(previous) => {
+                            if let Some(returned) = result["sessionId"].as_str() {
+                                ensure!(
+                                    returned == previous,
+                                    "ACP returned a different session than requested"
+                                );
+                            }
+                            previous.clone()
                         }
-                        previous.clone()
+                        None => result["sessionId"]
+                            .as_str()
+                            .filter(|id| !id.is_empty())
+                            .context("ACP returned no session ID")?
+                            .to_owned(),
                     }
-                    None => result["sessionId"]
-                        .as_str()
-                        .filter(|id| !id.is_empty())
-                        .context("ACP returned no session ID")?
-                        .to_owned(),
                 };
-                events.send(Event::Session(id.clone()))?;
-                session_id = Some(id.clone());
+                if stage == 2 {
+                    events.send(Event::Session(id.clone()))?;
+                    session_id = Some(id.clone());
+                    if is_fx {
+                        let mode = result["configOptions"]
+                            .as_array()
+                            .and_then(|options| {
+                                options.iter().find(|option| {
+                                    option["id"] == "mode" && option["type"] == "select"
+                                })
+                            })
+                            .context("fx did not report a supervised mode; no prompt was sent")?;
+                        ensure!(
+                            option_has_value(mode, "ask"),
+                            "fx did not offer supervised mode; no prompt was sent"
+                        );
+                        initial_fx_session = Some(result.clone());
+                        transport.write(&rpc(
+                            6,
+                            "session/set_config_option",
+                            json!({"sessionId":id,"configId":"mode","value":"ask"}),
+                        ))?;
+                        stage = 6;
+                        continue;
+                    }
+                }
+                let model_result = if stage == 6 && model_option(result).is_none() {
+                    initial_fx_session
+                        .as_ref()
+                        .context("fx session options missing")?
+                } else {
+                    result
+                };
                 if let Some(model) = launch
                     .model
                     .as_ref()
                     .filter(|model| !is_grok || !matches!(model.as_str(), "default" | "grok-build"))
                 {
-                    let available = result["models"]["availableModels"].as_array();
+                    let options = model_entries(model_result);
                     ensure!(
-                        is_grok
-                            || available.is_some_and(|models| models
-                                .iter()
-                                .any(|m| m["modelId"] == *model)),
+                        is_grok || options.iter().any(|row| row["id"] == *model),
                         "ACP server did not advertise the requested model"
                     );
-                    if result["models"]["currentModelId"] != *model {
-                        transport.write(&rpc(
-                            3,
-                            "session/set_model",
-                            json!({"sessionId":id,"modelId":model}),
-                        ))?;
+                    let option = model_option(model_result);
+                    let current = option
+                        .and_then(|option| option["currentValue"].as_str())
+                        .or_else(|| model_result["models"]["currentModelId"].as_str());
+                    if current != Some(model) {
+                        let (method, params) = if let Some(option) = option {
+                            let config_id = option["id"]
+                                .as_str()
+                                .context("ACP model option ID missing")?;
+                            model_config = Some(config_id.to_owned());
+                            (
+                                "session/set_config_option",
+                                json!({"sessionId":id,"configId":config_id,"value":model}),
+                            )
+                        } else {
+                            ("session/set_model", json!({"sessionId":id,"modelId":model}))
+                        };
+                        transport.write(&rpc(3, method, params))?;
                         stage = 3;
                         continue;
                     }
@@ -476,6 +727,17 @@ fn run_flavored(
                 stage = 4;
             }
             3 => {
+                if let Some(config_id) = model_config.take() {
+                    ensure!(
+                        result["configOptions"]
+                            .as_array()
+                            .is_some_and(|options| options
+                                .iter()
+                                .any(|option| option["id"] == config_id
+                                    && option["currentValue"].as_str() == launch.model.as_deref())),
+                        "ACP agent did not confirm the selected model; no prompt was sent"
+                    );
+                }
                 transport.write(&rpc(
                     4,
                     "session/prompt",

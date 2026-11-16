@@ -5,6 +5,10 @@ use super::*;
 #[path = "composer_native_accounts.rs"]
 mod native_accounts;
 use std::collections::HashMap;
+const ACP_REGISTRY_TAB: &str = "@acp-registry";
+fn workspace_catalog(provider: &str) -> bool {
+    provider == "opencode" || coincide_core::acp_registry::registry_id(provider).is_some()
+}
 #[path = "composer_selection_cache.rs"]
 mod capability_cache;
 #[path = "codex_profile_models.rs"]
@@ -956,6 +960,7 @@ pub(super) struct ComposerSelection {
     /// Last observed lists are scoped to the provider, account and, for named
     /// profiles, the conversation. They are display data, never live proof.
     catalogs: HashMap<(String, String, Option<String>), Value>,
+    catalog_workspaces: HashMap<String, Value>,
     catalog_request: Option<CatalogRequest>,
     catalog_last_poll: Option<Instant>,
     /// Disk cache is display-only; each app session still needs a live read.
@@ -980,8 +985,54 @@ pub(super) struct ComposerSelection {
     favorites_only: bool,
     /// The agent tab the picker lists; nil while searching across every agent.
     tab_provider: Option<String>,
+    acp_custom_open: bool,
     /// Where the footer chip was clicked, in window coordinates.
     popover_anchor: Option<Point<Pixels>>,
+}
+impl ComposerSelection {
+    fn observe_workspace(&mut self, id: &str, workspace: Value) {
+        let changed = self
+            .catalog_workspaces
+            .get(id)
+            .is_some_and(|previous| previous != &workspace);
+        if self.catalog_workspaces.len() >= 256
+            && !self.catalog_workspaces.contains_key(id)
+            && let Some(old) = self.catalog_workspaces.keys().next().cloned()
+        {
+            self.catalog_workspaces.remove(&old);
+            self.catalogs.retain(|(provider, _, thread), _| {
+                !(workspace_catalog(provider) && thread.as_deref() == Some(old.as_str()))
+            });
+        }
+        self.catalog_workspaces.insert(id.to_owned(), workspace);
+        if !changed {
+            return;
+        }
+        self.catalogs.retain(|(provider, _, thread), _| {
+            !(workspace_catalog(provider) && thread.as_deref() == Some(id))
+        });
+        if self.catalog["threadId"] == id
+            && self.catalog["provider"]
+                .as_str()
+                .is_some_and(workspace_catalog)
+        {
+            self.catalog = Value::Null;
+        }
+        if self.catalog_request.as_ref().is_some_and(|request| {
+            request.thread_id.as_deref() == Some(id) && workspace_catalog(&request.provider)
+        }) {
+            self.catalog_request = None;
+            self.catalog_last_poll = None;
+            self.pending_model = None;
+        }
+        self.catalog_attempted
+            .retain(|(provider, _)| !workspace_catalog(provider));
+        self.catalog_attempted_at
+            .retain(|(provider, _), _| !workspace_catalog(provider));
+        self.catalog_failed
+            .retain(|(provider, _)| !workspace_catalog(provider));
+        self.capability_cache.invalidate();
+    }
 }
 #[derive(Clone)]
 struct PickerRestore {
@@ -1090,7 +1141,9 @@ fn pending_model_in_catalog(pending: &PendingPickerModel, catalog: &Value) -> bo
     catalog["state"] == "ready"
         && catalog["requestId"] == pending.request.request_id
         && catalog_scope_matches(catalog, &pending.request)
-        && (pending.request.thread_id.is_none() || catalog["authenticationChecked"] == true)
+        && (pending.request.provider != "codex"
+            || pending.request.thread_id.is_none()
+            || catalog["authenticationChecked"] == true)
         && catalog["models"]
             .as_array()
             .is_some_and(|rows| rows.iter().any(|row| row["id"] == pending.model))
@@ -1246,6 +1299,14 @@ fn picker_view_scope(thread: &Value) -> Value {
         "interactionMode":thread.get("interactionMode"),"interactionPresent":thread.get("interactionMode").is_some(),
         "projectID":thread["projectID"],"worktreePath":thread["worktreePath"]})
 }
+fn workspace_view_context(thread: &Value, projects: &[Value]) -> Value {
+    let path = projects
+        .iter()
+        .find(|project| project["id"] == thread["projectID"])
+        .map(|project| project["path"].clone())
+        .unwrap_or(Value::Null);
+    json!({"projectID":thread["projectID"],"projectPath":path,"worktreePath":thread["worktreePath"]})
+}
 fn model_marked(settings: &Value, key: &str, provider: &str, model: &str) -> bool {
     settings[key].as_array().is_some_and(|rows| {
         rows.iter()
@@ -1323,6 +1384,15 @@ fn reported_picker_model_label(thread: &Value, catalog: &Value) -> Option<String
         .as_str()
         .filter(|name| !name.is_empty())
         .map(|_| footer_value(&row["displayName"], ""))
+}
+fn provider_label(capabilities: &Value, provider: &str) -> String {
+    capabilities["providers"]
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| row["provider"] == provider))
+        .and_then(|row| row["displayName"].as_str())
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| models_settings::provider_display_name(provider))
 }
 pub(super) fn effort_picker_title(value: &Value) -> String {
     let raw = footer_value(value, "Auto");
@@ -1489,7 +1559,11 @@ fn next_background_catalog(
 ) -> Option<String> {
     providers
         .iter()
-        .filter(|row| row["enabled"] != false && row["modelDiscovery"]["supported"] == true)
+        .filter(|row| {
+            row["enabled"] != false
+                && row["modelDiscovery"]["supported"] == true
+                && row["modelDiscovery"]["background"] != false
+        })
         .filter_map(|row| {
             let provider = row["provider"].as_str()?;
             let target = picker_account(draft, provider);
@@ -2151,6 +2225,11 @@ impl Coincide {
             }
         }
         self.observe_saved_profile_once(cx);
+        if let Some(thread) = self.selected.as_ref() {
+            let id = text(thread, "id");
+            self.selection_ui
+                .observe_workspace(&id, workspace_view_context(thread, &self.projects));
+        }
         let context = self.selected.as_ref().map(|thread| {
             let id = text(thread, "id");
             let running = self.running.contains(&id);
@@ -2840,20 +2919,21 @@ impl Coincide {
             self.selection_ui.catalog_failed.contains(&key),
             Instant::now(),
         );
+        let named_codex = provider == "codex" && scoped_thread.is_some();
         if catalog_scope_matches(catalog, &scope)
             && matches!(catalog["state"].as_str(), Some("failed" | "unsupported"))
-            && scoped_thread.is_none()
+            && !named_codex
             && !due
         {
             return;
         }
         if catalog["state"] == "ready" && catalog_scope_matches(catalog, &scope) {
-            if scoped_thread.is_some()
+            if named_codex
                 && self.selection_ui.capabilities["namedModels"]["accountCatalogReady"] == true
             {
                 return;
             }
-            if scoped_thread.is_none() && !due {
+            if !named_codex && !due {
                 return;
             }
         }
@@ -2864,7 +2944,7 @@ impl Coincide {
         {
             return;
         }
-        if let Some(thread) = scoped_thread.as_deref()
+        if let Some(thread) = scoped_thread.as_deref().filter(|_| named_codex)
             && self
                 .selection_ui
                 .named_catalog_retry_after
@@ -2875,7 +2955,7 @@ impl Coincide {
         {
             return;
         }
-        if scoped_thread.is_some() {
+        if named_codex {
             if let Some(thread) = self.selected.as_ref()
                 && named_models::named_thread(thread)
                 && self.selection_ui.capabilities["namedModels"]["refreshAllowed"] == true
@@ -2915,10 +2995,11 @@ impl Coincide {
         let account_id = default_account_id(&target_account)
             .unwrap_or("default")
             .to_owned();
+        let scoped_thread = workspace_catalog(&tab_provider).then(|| text(thread, "id"));
         if let Some(pending) = self.selection_ui.catalog_request.as_ref() {
             if pending.provider == tab_provider
                 && pending.account_id == account_id
-                && pending.thread_id.is_none()
+                && pending.thread_id == scoped_thread
             {
                 return;
             }
@@ -2946,22 +3027,23 @@ impl Coincide {
             request_id: String::new(),
             provider: provider.clone(),
             account_id: account_id.clone(),
-            thread_id: None,
+            thread_id: scoped_thread.clone(),
         };
         if self.catalog_request_visible(&scope)
             && !(self.selection_ui.catalog["state"] == "ready"
                 && catalog_scope_matches(&self.selection_ui.catalog, &scope))
-            && let Some(cached) = self.cached_catalog(&provider, &target_account, None)
+            && let Some(cached) =
+                self.cached_catalog(&provider, &target_account, scoped_thread.as_deref())
         {
             self.selection_ui.catalog = cached;
         }
         let response = (|| -> Result<Value> {
             let mut engine = try_state(&self.engine)?;
-            selection_response(
-                &mut engine,
-                "agent.models.refresh",
-                json!({"provider":provider,"accountId":target_account}),
-            )
+            let mut params = json!({"provider":provider,"accountId":target_account});
+            if let Some(id) = &scoped_thread {
+                params["threadId"] = json!(id);
+            }
+            selection_response(&mut engine, "agent.models.refresh", params)
         })();
         match response {
             Ok(value) => {
@@ -2975,13 +3057,13 @@ impl Coincide {
                     request_id: text(&value, "requestId"),
                     provider,
                     account_id,
-                    thread_id: None,
+                    thread_id: scoped_thread.clone(),
                 };
                 if request.request_id.is_empty() || !catalog_response_matches(&value, &request) {
                     self.selection_ui
                         .catalog_failed
                         .insert((request.provider.clone(), request.account_id.clone()));
-                    let failed = json!({"provider":request.provider,"accountID":request.account_id,"state":"failed","error":"Invalid catalog refresh response"});
+                    let failed = json!({"provider":request.provider,"accountID":request.account_id,"threadId":request.thread_id,"state":"failed","error":"Invalid catalog refresh response"});
                     if should_replace_catalog(
                         &self.selection_ui.catalog,
                         &failed,
@@ -3038,7 +3120,7 @@ impl Coincide {
                 self.selection_ui
                     .catalog_failed
                     .insert((provider.clone(), account_id.clone()));
-                let failed = json!({"provider":provider,"accountID":account_id,"state":"failed","error":format!("Catalog refresh failed: {error}")});
+                let failed = json!({"provider":provider,"accountID":account_id,"threadId":scoped_thread,"state":"failed","error":format!("Catalog refresh failed: {error}")});
                 if should_replace_catalog(
                     &self.selection_ui.catalog,
                     &failed,
@@ -3081,8 +3163,9 @@ impl Coincide {
         let saved_provider = draft.provider.clone();
         let saved_account = picker_account(draft, &saved_provider);
         let account_id = default_account_id(&saved_account).unwrap_or("default");
-        let scoped_thread =
-            (saved_provider == "codex" && account_id != "default").then_some(id.clone());
+        let scoped_thread = ((saved_provider == "codex" && account_id != "default")
+            || workspace_catalog(&saved_provider))
+        .then_some(id.clone());
         let scope = CatalogRequest {
             request_id: String::new(),
             provider: saved_provider.clone(),
@@ -3127,7 +3210,9 @@ impl Coincide {
             return;
         }
         self.selection_ui.catalog_last_poll = Some(Instant::now());
-        let (method, params) = if let Some(thread) = &request.thread_id {
+        let (method, params) = if request.provider == "codex"
+            && let Some(thread) = &request.thread_id
+        {
             (
                 "providers.codex.profiles.models.status",
                 json!({"requestId":request.request_id,"threadId":thread,"accountId":request.account_id}),
@@ -3469,6 +3554,25 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if workspace_catalog(provider)
+            && let Some(thread) = self
+                .selected
+                .as_ref()
+                .filter(|thread| thread["id"] == thread_id)
+        {
+            let workspace = workspace_view_context(thread, &self.projects);
+            if self
+                .selection_ui
+                .catalog_workspaces
+                .get(thread_id)
+                .is_some_and(|previous| previous != &workspace)
+            {
+                self.selection_ui.observe_workspace(thread_id, workspace);
+                self.ensure_picker_catalog(cx);
+                cx.notify();
+                return;
+            }
+        }
         if self.defer_picker_model(thread_id, provider, model, request_id, cx) {
             return;
         }
@@ -3504,6 +3608,7 @@ impl Coincide {
             || catalog["requestId"].as_str() != Some(request_id)
             || catalog["provider"].as_str() != Some(provider)
             || catalog["accountID"].as_str() != default_account_id(&target_account)
+            || (workspace_catalog(provider) && catalog["threadId"].as_str() != Some(thread_id))
             || !catalog["models"]
                 .as_array()
                 .is_some_and(|rows| rows.iter().any(|row| row["id"] == model))
@@ -3611,11 +3716,18 @@ impl Coincide {
         }) {
             if draft.use_custom {
                 draft.custom.clone()
+            } else if coincide_core::acp_registry::registry_id(&draft.provider).is_some() {
+                provider_label(&self.selection_ui.capabilities, &draft.provider)
             } else {
                 "Provider default".into()
             }
         } else if selection["modelID"] == "default" {
-            "Provider default".to_owned()
+            let provider = text(selection, "provider");
+            if coincide_core::acp_registry::registry_id(&provider).is_some() {
+                provider_label(&self.selection_ui.capabilities, &provider)
+            } else {
+                "Provider default".to_owned()
+            }
         } else {
             reported_picker_model_label(thread, &self.selection_ui.catalog)
                 .unwrap_or_else(|| footer_value(&selection["modelID"], "Choose model"))
@@ -3920,18 +4032,13 @@ impl Coincide {
             "What should we build?".to_owned()
         };
         let provider = text(&thread["selection"], "provider");
+        let provider_name = provider_label(&self.selection_ui.capabilities, &provider);
         let model = reported_picker_model_label(thread, &self.selection_ui.catalog)
             .unwrap_or_else(|| text(&thread["selection"], "modelID"));
         let using = if model.is_empty() || model == "default" {
-            format!(
-                "Using {}",
-                models_settings::provider_display_name(&provider)
-            )
+            format!("Using {}", provider_name)
         } else {
-            format!(
-                "Using {} · {model}",
-                models_settings::provider_display_name(&provider)
-            )
+            format!("Using {} · {model}", provider_name)
         };
         div()
             .flex()
@@ -4192,6 +4299,11 @@ impl Coincide {
             .into_iter()
             .flatten()
             .filter(|provider| provider["enabled"] != false)
+            .filter(|provider| {
+                provider["provider"]
+                    .as_str()
+                    .is_none_or(|id| coincide_core::acp_registry::registry_id(id).is_none())
+            })
         {
             let id = text(provider, "provider");
             let label = text(provider, "displayName");
@@ -4232,7 +4344,278 @@ impl Coincide {
                     })),
             );
         }
+        let active_registry =
+            shown == ACP_REGISTRY_TAB || coincide_core::acp_registry::registry_id(&shown).is_some();
+        tabs = tabs.child(
+            Button::new("picker-tab-more-agents")
+                .label("Agents")
+                .compact()
+                .ghost()
+                .h(px(30.))
+                .rounded(px(7.))
+                .when(active_registry && !favorites, |button| {
+                    button.bg(self.picker_selection_bg())
+                })
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.selection_ui.tab_provider = Some(ACP_REGISTRY_TAB.into());
+                    this.selection_ui.favorites_only = false;
+                    this.selection_ui.facet = PickerFacet::Model;
+                    if let Ok(mut engine) = try_state(&this.engine) {
+                        let _ = engine.refresh_native_acp_registry();
+                    }
+                    cx.notify();
+                })),
+        );
         tabs.into_any_element()
+    }
+
+    fn choose_registry_agent(&mut self, id: String, cx: &mut Context<Self>) {
+        let Some(source) = self
+            .selected
+            .as_ref()
+            .map(|thread| (text(thread, "id"), thread["selection"].clone()))
+        else {
+            return;
+        };
+        let engine = self.engine.clone();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut engine = engine
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("Conversation state is unavailable"))?;
+                    engine.add_native_registry_agent(&id)
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.finish_acp_choice(source, result, cx);
+            });
+        })
+        .detach();
+    }
+
+    fn finish_acp_choice(
+        &mut self,
+        source: (String, Value),
+        result: Result<String>,
+        cx: &mut Context<Self>,
+    ) {
+        match result {
+            Ok(provider) => {
+                self.selection_ui.capability_cache.invalidate();
+                self.selection_ui.displayed_capability_scope = None;
+                if self.selected.as_ref().is_some_and(|thread| {
+                    thread["id"] == source.0 && thread["selection"] == source.1
+                }) {
+                    if source.1["provider"] == provider {
+                        self.selection_ui.tab_provider = Some(provider);
+                        self.refresh_selection_capabilities(cx);
+                        self.ensure_picker_catalog(cx);
+                    } else {
+                        self.edit_selection_immediately(
+                            |draft| {
+                                draft.provider = provider.clone();
+                                draft.account = Value::Null;
+                                draft.custom.clear();
+                                draft.use_custom = false;
+                                draft.proposed_effort = Value::Null;
+                                draft.proposed_speed = Value::Null;
+                                draft.proposed_interaction = json!("build");
+                            },
+                            cx,
+                        );
+                        self.selection_ui.expanded = false;
+                        self.selection_ui.tab_provider = None;
+                    }
+                }
+            }
+            Err(error) => self.status = format!("Agent could not be added: {error}"),
+        }
+        cx.notify();
+    }
+
+    fn choose_custom_acp_agent(&mut self, cx: &mut Context<Self>) {
+        let Some(source) = self
+            .selected
+            .as_ref()
+            .map(|thread| (text(thread, "id"), thread["selection"].clone()))
+        else {
+            return;
+        };
+        let name = self.custom_acp_name.read(cx).value().trim().to_owned();
+        let executable = coincide_core::acp_registry::resolve_executable(
+            self.custom_acp_executable.read(cx).value().trim(),
+        );
+        let args = self.custom_acp_arguments.read(cx).value().to_string();
+        let arguments = match shell_words::split(&args) {
+            Ok(args) if !name.is_empty() && executable.is_some() => args,
+            _ => {
+                self.status =
+                    "Enter a name, an installed command or executable path, and valid arguments."
+                        .into();
+                cx.notify();
+                return;
+            }
+        };
+        let agent = coincide_core::acp_registry::Agent {
+            id: format!("custom-{}", uuid::Uuid::new_v4().simple()),
+            name,
+            website: None,
+            executable,
+            arguments,
+            environment: Default::default(),
+        };
+        let engine = self.engine.clone();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut engine = engine
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("Conversation state is unavailable"))?;
+                    engine.register_native_acp_agent(&agent)?;
+                    coincide_core::acp_registry::provider_id(&agent.id)
+                        .context("Invalid custom agent")
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.selection_ui.acp_custom_open = false;
+                this.finish_acp_choice(source, result, cx);
+            });
+        })
+        .detach();
+    }
+
+    fn composer_acp_registry(&self, providers: AnyElement, cx: &mut Context<Self>) -> AnyElement {
+        let view = try_state(&self.engine)
+            .map(|mut engine| engine.native_acp_registry_view())
+            .unwrap_or(Value::Null);
+        let query = self.model_picker_search.read(cx).value().to_lowercase();
+        let mut rows = view["agents"].as_array().cloned().unwrap_or_default();
+        for registered in view["registered"].as_array().into_iter().flatten() {
+            let Some(id) = registered["provider"]
+                .as_str()
+                .and_then(coincide_core::acp_registry::registry_id)
+            else {
+                continue;
+            };
+            if let Some(row) = rows.iter_mut().find(|row| row["id"] == id) {
+                if row["executable"].is_null() {
+                    row["executable"] = json!("registered");
+                }
+            } else {
+                rows.push(
+                    json!({"id":id,"name":registered["displayName"],"executable":"registered"}),
+                );
+            }
+        }
+        rows.sort_by_key(|row| {
+            (
+                row["executable"].is_null(),
+                text(row, "name").to_lowercase(),
+            )
+        });
+        let mut list = div()
+            .id("selection-acp-agents")
+            .max_h(px(264.))
+            .overflow_y_scroll()
+            .flex()
+            .flex_col();
+        let mut count = 0usize;
+        for agent in rows
+            .into_iter()
+            .filter(|row| query.is_empty() || text(row, "name").to_lowercase().contains(&query))
+            .take(200)
+        {
+            let id = text(&agent, "id");
+            let name = text(&agent, "name");
+            let installed = agent["executable"].as_str().is_some();
+            count += 1;
+            list = list.child(
+                self.picker_menu_row(
+                    format!("acp-registry-{id}"),
+                    name,
+                    Some(
+                        if installed {
+                            "Installed"
+                        } else {
+                            "Install and sign in to use"
+                        }
+                        .into(),
+                    ),
+                    None,
+                    false,
+                    !installed,
+                    move |this, _, cx| this.choose_registry_agent(id.clone(), cx),
+                    cx,
+                ),
+            );
+        }
+        if count == 0 {
+            list = list.child(
+                div()
+                    .px_2()
+                    .py_3()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(if view["loading"] == true {
+                        "Loading agents…"
+                    } else {
+                        "No agents found."
+                    }),
+            );
+        }
+        let custom = if self.selection_ui.acp_custom_open {
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(Input::new(&self.custom_acp_name))
+                .child(Input::new(&self.custom_acp_executable))
+                .child(Input::new(&self.custom_acp_arguments))
+                .child(
+                    Button::new("acp-custom-add")
+                        .label("Add agent")
+                        .compact()
+                        .on_click(cx.listener(|this, _, _, cx| this.choose_custom_acp_agent(cx))),
+                )
+        } else {
+            div().child(
+                Button::new("acp-custom-open")
+                    .label("Add custom ACP agent…")
+                    .compact()
+                    .ghost()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.selection_ui.acp_custom_open = true;
+                        cx.notify();
+                    })),
+            )
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_2()
+            .child(providers)
+            .child(self.model_picker_filter_bar(cx))
+            .when(view["error"].is_string(), |panel| {
+                panel.child(
+                    Button::new("acp-registry-retry")
+                        .label("Refresh agents")
+                        .compact()
+                        .ghost()
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            if let Ok(mut engine) = try_state(&this.engine) {
+                                let _ = engine.refresh_native_acp_registry();
+                            }
+                            cx.notify();
+                        })),
+                )
+            })
+            .child(list)
+            .child(custom)
+            .into_any_element()
     }
     fn composer_codex_accounts(&self, thread: &Value, cx: &mut Context<Self>) -> AnyElement {
         if thread["selection"]["provider"] != "codex" {
@@ -4310,7 +4693,9 @@ impl Coincide {
         };
         let account = picker_account(draft, provider);
         let account = default_account_id(&account)?.to_owned();
-        let scoped_thread = (provider == "codex" && account != "default").then_some(id);
+        let scoped_thread = ((provider == "codex" && account != "default")
+            || workspace_catalog(provider))
+        .then_some(id);
         Some((provider.clone(), account, scoped_thread))
     }
 
@@ -4561,6 +4946,11 @@ impl Coincide {
             )) == Some("default");
         let model_disabled = disabled && !replacement_context && !cached_click_can_wait;
         let providers = self.composer_provider_tabs(thread, cx);
+        if self.selection_ui.facet == PickerFacet::Model
+            && self.selection_ui.tab_provider.as_deref() == Some(ACP_REGISTRY_TAB)
+        {
+            return self.composer_acp_registry(providers, cx);
+        }
         let provider = self.selection_ui.capabilities["providers"]
             .as_array()
             .and_then(|rows| rows.iter().find(|row| row["provider"] == draft.provider));
@@ -5568,6 +5958,40 @@ mod tests {
         catalog["threadId"] = json!("A");
         catalog["state"] = json!("loading");
         assert_eq!(reported_picker_model_label(&thread, &catalog), None);
+    }
+    #[::core::prelude::v1::test]
+    fn changing_worktree_discards_only_that_threads_workspace_catalog() {
+        let mut state = ComposerSelection::default();
+        state.observe_workspace("A", json!({"projectPath":"/one","worktreePath":null}));
+        state.catalogs.insert(
+            ("opencode".into(), "default".into(), Some("A".into())),
+            json!({"models":[{"id":"old"}]}),
+        );
+        state.catalogs.insert(
+            ("opencode".into(), "default".into(), Some("B".into())),
+            json!({"models":[{"id":"other"}]}),
+        );
+        state.catalog = json!({"provider":"opencode","threadId":"A","state":"ready"});
+        state.catalog_request = Some(CatalogRequest {
+            request_id: "old".into(),
+            provider: "opencode".into(),
+            account_id: "default".into(),
+            thread_id: Some("A".into()),
+        });
+        state.observe_workspace("A", json!({"projectPath":"/two","worktreePath":null}));
+        assert!(
+            state
+                .catalogs
+                .get(&("opencode".into(), "default".into(), Some("A".into())))
+                .is_none()
+        );
+        assert!(
+            state
+                .catalogs
+                .get(&("opencode".into(), "default".into(), Some("B".into())))
+                .is_some()
+        );
+        assert!(state.catalog.is_null() && state.catalog_request.is_none());
     }
     #[::core::prelude::v1::test]
     fn picker_catalog_accounts_follow_the_target_provider() {

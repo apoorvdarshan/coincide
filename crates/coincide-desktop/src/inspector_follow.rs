@@ -9,6 +9,9 @@ pub(super) struct State {
     /// The last presentation for each visited thread, including a closed one.
     /// This lets switching stay immediate even while the store is busy.
     choices: std::collections::BTreeMap<String, Option<SavedPanel>>,
+    /// Snapshot loaded before the selected conversation is presented. Local
+    /// edits in `choices` always take precedence over this display-only cache.
+    document: Option<Value>,
     deferred_browser_hides: std::collections::BTreeSet<String>,
     pending: std::collections::BTreeMap<String, Option<SavedPanel>>,
     failed: std::collections::BTreeSet<String>,
@@ -36,6 +39,17 @@ pub(super) fn read_saved_choice(engine: &SharedEngine, id: &str) -> Result<Saved
     preferences::saved(&document, id).map(SavedChoice::Ready)
 }
 impl State {
+    pub(super) fn load(engine: &SharedEngine) -> Self {
+        let document = try_state(engine)
+            .ok()
+            .and_then(|engine| engine.store.native_inspector_document().ok())
+            .map(|document| document.unwrap_or_else(|| json!({})))
+            .filter(|document| preferences::validate(document).is_ok());
+        Self {
+            document,
+            ..Self::default()
+        }
+    }
     fn remembered(&self, id: &str) -> Option<Option<SavedPanel>> {
         self.pending
             .get(id)
@@ -48,8 +62,28 @@ impl State {
         }
         match self.remembered(id) {
             Some(choice) => Ok(SavedChoice::Ready(choice)),
+            None if self.document.is_some() => {
+                preferences::saved(self.document.as_ref().unwrap(), id).map(SavedChoice::Ready)
+            }
             None => read_saved_choice(engine, id),
         }
+    }
+    /// Resolve the destination before changing the visible conversation. A
+    /// temporarily busy store keeps the previous layout on screen until the
+    /// target panel and thread can be presented together.
+    pub(super) fn prepare_destination(&mut self, engine: &SharedEngine, id: &str) -> Result<bool> {
+        match self.choice(engine, id)? {
+            SavedChoice::Deferred => Ok(false),
+            SavedChoice::Ready(choice) => {
+                self.choices.insert(id.to_owned(), choice);
+                Ok(true)
+            }
+        }
+    }
+    /// A damaged saved preference must not make the conversation inaccessible.
+    /// Keep the fallback in memory; do not overwrite the saved document.
+    pub(super) fn fallback_destination(&mut self, id: &str) {
+        self.choices.insert(id.to_owned(), None);
     }
     /// Keep the newest choice queued while the engine is temporarily busy.
     /// A successful retry updates the store; a real failure is still reported.
@@ -57,20 +91,22 @@ impl State {
         let Some(choice) = self.pending.get(id).copied() else {
             return false;
         };
-        let result = (|| -> Result<()> {
+        let result = (|| -> Result<Value> {
             let mut engine = try_state(engine)?;
             anyhow::ensure!(
                 !engine.admissions_frozen() && !engine.shutdown,
                 "App is closing"
             );
             let source = engine.store.native_inspector_document()?;
-            engine
-                .store
-                .remember_native_inspector_panel(source.as_ref(), id, choice)?;
-            Ok(())
+            let saved =
+                engine
+                    .store
+                    .remember_native_inspector_panel(source.as_ref(), id, choice)?;
+            Ok(saved)
         })();
         match result {
-            Ok(()) => {
+            Ok(document) => {
+                self.document = Some(document);
                 self.pending.remove(id);
                 self.failed.remove(id);
                 self.error = None;
@@ -536,6 +572,78 @@ mod tests {
         assert_eq!(
             state.choice(&engine, c).unwrap(),
             SavedChoice::Ready(Some(SavedPanel::PullRequests))
+        );
+    }
+
+    #[::core::prelude::v1::test]
+    fn saved_destination_is_ready_before_switch_even_while_store_is_busy() {
+        use super::SavedChoice;
+        use coincide_core::{api::Engine, store::Store};
+        use std::sync::{Arc, Mutex};
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&directory.path().join("state.sqlite")).unwrap();
+        let open = "00000000-0000-4000-8000-000000000001";
+        let closed = "00000000-0000-4000-8000-000000000002";
+        store
+            .save_document(
+                "ui-state.json",
+                &serde_json::json!({"threadPanels":{(open):"pullRequests"}}),
+            )
+            .unwrap();
+        let engine = Arc::new(Mutex::new(Engine::new(store)));
+        let mut cached = State::load(&engine);
+        let mut cold = State::default();
+        let held = engine.lock().unwrap();
+        assert!(cached.prepare_destination(&engine, open).unwrap());
+        assert!(cached.prepare_destination(&engine, closed).unwrap());
+        assert_eq!(
+            cached.choice(&engine, open).unwrap(),
+            SavedChoice::Ready(Some(SavedPanel::PullRequests))
+        );
+        assert_eq!(
+            cached.choice(&engine, closed).unwrap(),
+            SavedChoice::Ready(None)
+        );
+        assert!(!cold.prepare_destination(&engine, open).unwrap());
+        cached
+            .pending
+            .insert(open.into(), Some(SavedPanel::Preview));
+        assert_eq!(
+            cached.choice(&engine, open).unwrap(),
+            SavedChoice::Ready(Some(SavedPanel::Preview))
+        );
+        drop(held);
+        assert!(cold.prepare_destination(&engine, open).unwrap());
+        assert_eq!(
+            cold.choice(&engine, open).unwrap(),
+            SavedChoice::Ready(Some(SavedPanel::PullRequests))
+        );
+    }
+
+    #[::core::prelude::v1::test]
+    fn malformed_panel_preferences_do_not_block_switching_or_overwrite_the_document() {
+        use super::SavedChoice;
+        use coincide_core::{api::Engine, store::Store};
+        use std::sync::{Arc, Mutex};
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&directory.path().join("state.sqlite")).unwrap();
+        let invalid = serde_json::json!({"threadPanels":false,"other":"keep"});
+        store.save_document("ui-state.json", &invalid).unwrap();
+        let engine = Arc::new(Mutex::new(Engine::new(store)));
+        let mut state = State::load(&engine);
+        let id = "00000000-0000-4000-8000-000000000001";
+        assert!(state.prepare_destination(&engine, id).is_err());
+        state.fallback_destination(id);
+        assert_eq!(state.choice(&engine, id).unwrap(), SavedChoice::Ready(None));
+        assert_eq!(
+            engine
+                .lock()
+                .unwrap()
+                .store
+                .native_inspector_document()
+                .unwrap()
+                .unwrap(),
+            invalid
         );
     }
 

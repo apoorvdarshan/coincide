@@ -13,6 +13,8 @@ use std::{
 mod forms;
 #[path = "provider_opencode_http.rs"]
 mod http;
+#[path = "provider_opencode_lithos.rs"]
+mod lithos;
 use http::{Http, segment};
 pub(super) fn command_metadata(
     executable: &std::path::Path,
@@ -190,6 +192,13 @@ pub(super) fn installation_metadata(
 ) -> Result<(Vec<Value>, Option<String>)> {
     metadata::read(executable, allowed)
 }
+pub(super) fn workspace_metadata(
+    executable: &std::path::Path,
+    cwd: &std::path::Path,
+    allowed: &impl Fn() -> bool,
+) -> Result<(Vec<Value>, Option<String>)> {
+    metadata::read_workspace(executable, cwd, allowed)
+}
 
 struct Server {
     child: OwnedChild,
@@ -212,6 +221,13 @@ impl Server {
             .stderr(Stdio::piped());
         crate::provider_configuration::apply_to_child(&mut command, false)?;
         isolate_environment(&mut command);
+        if let Some(key) =
+            crate::provider_configuration::native_key_var("opencode", "LITHOSAI_API_KEY")
+        {
+            lithos::configure(&mut command, &key, launch.prompt.is_empty())?;
+        }
+        // Local discovery is optional and cannot block other providers.
+        let _ = lithos::configure_local(&mut command);
         command
             .env_remove("OPENCODE_SERVER_PASSWORD")
             .env("OPENCODE_PASSWORD", &password);

@@ -50,6 +50,140 @@ fn receive(session: &Session) -> Event {
         .expect("fixture timed out")
 }
 
+#[test]
+fn registered_acp_switches_an_advertised_config_model_before_prompting() {
+    let source = r#"
+assert sys.argv[1:] == ['--acp']
+r=read(); assert r['method']=='initialize'
+write({'id':r['id'],'result':{'protocolVersion':1,'agentCapabilities':{'loadSession':True}}})
+r=read(); assert r['method']=='session/new'
+write({'id':r['id'],'result':{'sessionId':'example','configOptions':[{'id':'model-choice','category':'model','type':'select','currentValue':'one','options':[{'value':'one','name':'One'},{'group':'Other','options':[{'value':'two','name':'Two'}]}]}]}})
+r=read(); assert r['method']=='session/set_config_option'
+assert r['params']['configId']=='model-choice' and r['params']['value']=='two'
+write({'id':r['id'],'result':{'configOptions':[{'id':'model-choice','category':'model','type':'select','currentValue':'two','options':[]}]}})
+r=read(); assert r['method']=='session/prompt'
+write({'method':'session/update','params':{'sessionId':'example','update':{'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':'Hello'}}}})
+write({'id':r['id'],'result':{'stopReason':'end_turn'}})
+"#;
+    let (_directory, session) = fixture(
+        source,
+        Provider::RegisteredAcp {
+            id: "acp-fixture".into(),
+            arguments: vec!["--acp".into()],
+        },
+        None,
+        Some("two"),
+    );
+    let mut saw_session = false;
+    let mut saw_text = false;
+    loop {
+        match receive(&session) {
+            Event::Session(id) => saw_session = id == "example",
+            Event::Frame(frame) if frame["method"] == "item/agentMessage/delta" => {
+                saw_text |= frame["params"]["delta"] == "Hello"
+            }
+            Event::Finished => break,
+            Event::Failed(error) => panic!("ACP fixture failed: {error}"),
+            _ => {}
+        }
+    }
+    assert!(saw_session && saw_text);
+}
+
+#[test]
+fn registered_acp_refuses_unconfirmed_model_without_sending_prompt() {
+    let source = r#"
+r=read();write({'id':r['id'],'result':{'protocolVersion':1,'agentCapabilities':{}}})
+r=read();write({'id':r['id'],'result':{'sessionId':'example','configOptions':[{'id':'model','category':'model','type':'select','currentValue':'one','options':[{'value':'two','name':'Two'}]}]}})
+r=read();assert r['method']=='session/set_config_option'
+write({'id':r['id'],'result':{'configOptions':[{'id':'model','category':'model','type':'select','currentValue':'one','options':[]}]}})
+if sys.stdin.readline(): open('unexpected-prompt','w').write('sent')
+"#;
+    let (directory, session) = fixture(
+        source,
+        Provider::RegisteredAcp {
+            id: "acp-fixture".into(),
+            arguments: vec![],
+        },
+        None,
+        Some("two"),
+    );
+    loop {
+        match receive(&session) {
+            Event::Failed(error) => {
+                assert!(error.contains("did not confirm"));
+                break;
+            }
+            Event::Finished => panic!("unconfirmed model was accepted"),
+            _ => {}
+        }
+    }
+    assert!(!directory.path().join("unexpected-prompt").exists());
+}
+
+#[test]
+fn fx_loads_profile_mcp_and_confirms_supervised_mode_before_prompting() {
+    let source = r#"
+assert sys.argv[1:] == ['acp']
+r=read();assert r['method']=='initialize'
+write({'id':r['id'],'result':{'protocolVersion':1,'agentCapabilities':{}}})
+r=read();assert r['method']=='session/new' and r['params']['_meta']['fx']['profileMcpServers']==True
+write({'id':r['id'],'result':{'sessionId':'fx-session','configOptions':[{'id':'mode','type':'select','currentValue':'ask','options':[{'value':'ask','name':'Ask'},{'value':'auto','name':'Auto'}]}]}})
+r=read();assert r['method']=='session/set_config_option' and r['params']['configId']=='mode' and r['params']['value']=='ask'
+write({'id':r['id'],'result':{'configOptions':[{'id':'mode','type':'select','currentValue':'ask','options':[]}]}})
+r=read();assert r['method']=='session/prompt'
+write({'method':'session/update','params':{'sessionId':'fx-session','update':{'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':'ok'}}}})
+write({'id':r['id'],'result':{'stopReason':'end_turn'}})
+"#;
+    let (_directory, session) = fixture(
+        source,
+        Provider::RegisteredAcp {
+            id: "acp-fx".into(),
+            arguments: vec!["acp".into()],
+        },
+        None,
+        None,
+    );
+    loop {
+        match receive(&session) {
+            Event::Finished => break,
+            Event::Failed(error) => panic!("fx fixture failed: {error}"),
+            _ => {}
+        }
+    }
+}
+
+#[test]
+fn fx_never_prompts_when_supervised_mode_is_not_confirmed() {
+    let source = r#"
+r=read();write({'id':r['id'],'result':{'protocolVersion':1,'agentCapabilities':{}}})
+r=read();write({'id':r['id'],'result':{'sessionId':'fx-session','configOptions':[{'id':'mode','type':'select','currentValue':'ask','options':[{'value':'ask','name':'Ask'}]}]}})
+r=read();assert r['method']=='session/set_config_option'
+write({'id':r['id'],'result':{'configOptions':[{'id':'mode','type':'select','currentValue':'auto','options':[]}]}})
+if sys.stdin.readline(): open('unexpected-prompt','w').write('sent')
+"#;
+    let (directory, session) = fixture(
+        source,
+        Provider::RegisteredAcp {
+            id: "acp-fx".into(),
+            arguments: vec!["acp".into()],
+        },
+        None,
+        None,
+    );
+    loop {
+        match receive(&session) {
+            Event::Failed(error) => {
+                assert!(error.contains("supervised mode"));
+                break;
+            }
+            Event::Finished => panic!("unconfirmed fx mode was accepted"),
+            _ => {}
+        }
+    }
+    assert!(!directory.path().join("unexpected-prompt").exists());
+}
+
 const HUNG_INPUT_FIXTURE: &str = r#"
 open('pid','w').write(str(os.getpid()))
 if sys.argv[1:] == ['app-server']:

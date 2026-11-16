@@ -678,7 +678,7 @@ impl Store {
     /// holding the engine lock. Preserve the complete queue and JSON types.
     pub(crate) fn thread_selection_snapshot(&self, id: &str) -> Result<Value> {
         let document: String = self.connection()?.query_row(
-            "SELECT json_object('id', document -> '$.id', 'selection', document -> '$.selection', 'accessMode', document -> '$.accessMode', 'interactionMode', document -> '$.interactionMode', 'botID', document -> '$.botID', 'rustBotContext', document -> '$.rustBotContext', 'rustMessageQueue', document -> '$.rustMessageQueue') FROM threads WHERE id=?1",
+            "SELECT json_object('id', document -> '$.id', 'selection', document -> '$.selection', 'accessMode', document -> '$.accessMode', 'interactionMode', document -> '$.interactionMode', 'botID', document -> '$.botID', 'rustBotContext', document -> '$.rustBotContext', 'projectID', document -> '$.projectID', 'worktreePath', document -> '$.worktreePath', 'rustMessageQueue', document -> '$.rustMessageQueue') FROM threads WHERE id=?1",
             [id],
             |row| row.get(0),
         )?;

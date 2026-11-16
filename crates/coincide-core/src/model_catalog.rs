@@ -97,6 +97,8 @@ pub struct ModelCatalog {
     claude_limits: claude_limits::Owner,
     named_limits: profile_limits::Owner,
     jobs: HashMap<String, Job>,
+    workspace_stamps: HashMap<String, crate::provider_configuration::Stamp>,
+    workspace_directories: HashMap<String, PathBuf>,
     default_restore: HashMap<String, DefaultBinding>,
     order: VecDeque<String>,
     workers: HashMap<String, Worker>,
@@ -112,6 +114,8 @@ impl Default for ModelCatalog {
             claude_limits: claude_limits::Owner::default(),
             named_limits: profile_limits::Owner::default(),
             jobs: HashMap::new(),
+            workspace_stamps: HashMap::new(),
+            workspace_directories: HashMap::new(),
             default_restore: HashMap::new(),
             order: VecDeque::new(),
             workers: HashMap::new(),
@@ -253,13 +257,25 @@ impl ModelCatalog {
     /// `executable` is selected by the host from trusted configuration/discovery,
     /// never accepted from a request, model response, or conversation document.
     pub fn refresh(&mut self, provider: &str, executable: Option<PathBuf>) -> Result<Value> {
+        self.refresh_workspace(provider, executable, None)
+    }
+    pub(crate) fn refresh_workspace(
+        &mut self,
+        provider: &str,
+        executable: Option<PathBuf>,
+        workspace: Option<(String, PathBuf, String)>,
+    ) -> Result<Value> {
         let provider_owned = provider.to_owned();
+        let workspace_scope = workspace
+            .as_ref()
+            .map(|(id, path, account)| (id.clone(), account.clone(), path.clone()));
+        let cwd = workspace.map(|(_, path, _)| path);
         let binding = executable
             .as_deref()
             .and_then(|path| EffortExecutable::read(path).ok());
-        self.refresh_bound(provider, binding, move |cancelled| {
+        self.refresh_scoped_inner(provider, binding, None, workspace_scope, RefreshReuse::Loading, move |cancelled| {
             executable.context("Provider executable is unavailable; configure or discover its installation first")
-                .and_then(|path| discover(&provider_owned, path, DEADLINE, cancelled))
+                .and_then(|path| discover_in_workspace(&provider_owned, path, cwd.as_deref(), DEADLINE, cancelled))
                 .map_err(|error| error.to_string())
         })
     }
@@ -296,9 +312,23 @@ impl ModelCatalog {
         reuse: RefreshReuse,
         work: impl FnOnce(&AtomicBool) -> Result<Vec<Value>, String> + Send + 'static,
     ) -> Result<Value> {
+        self.refresh_scoped_inner(provider, binding, named, None, reuse, work)
+    }
+    fn refresh_scoped_inner(
+        &mut self,
+        provider: &str,
+        binding: Option<EffortExecutable>,
+        named: Option<NamedBinding>,
+        workspace_scope: Option<(String, String, PathBuf)>,
+        reuse: RefreshReuse,
+        work: impl FnOnce(&AtomicBool) -> Result<Vec<Value>, String> + Send + 'static,
+    ) -> Result<Value> {
         ensure!(!self.shutdown.closed, "Model catalog is shutting down");
         crate::agent::Provider::from_name(provider)?;
         self.poll();
+        let workspace_stamp = workspace_scope
+            .as_ref()
+            .and_then(|_| crate::provider_configuration::current_stamp());
         if reuse != RefreshReuse::Never
             && let Some(job) = self
                 .order
@@ -308,9 +338,28 @@ impl ModelCatalog {
                 .find(|job| {
                     job.response["provider"] == provider
                         && profile::same_scope(job.named.as_ref(), named.as_ref())
+                        && (named.is_some()
+                            || (job.response["threadId"].as_str()
+                                == workspace_scope
+                                    .as_ref()
+                                    .map(|(thread, _, _)| thread.as_str())
+                                && job.response["accountID"].as_str()
+                                    == Some(
+                                        workspace_scope
+                                            .as_ref()
+                                            .map_or("default", |(_, account, _)| account.as_str()),
+                                    )))
                 })
             && job.named == named
             && job.binding == binding
+            && job.response["requestId"]
+                .as_str()
+                .and_then(|id| self.workspace_directories.get(id))
+                == workspace_scope.as_ref().map(|(_, _, directory)| directory)
+            && job.response["requestId"]
+                .as_str()
+                .and_then(|id| self.workspace_stamps.get(id))
+                == workspace_stamp.as_ref()
             && !job.cancelled.load(Ordering::Acquire)
             && (job.response["state"] == "loading"
                 || (reuse == RefreshReuse::AuthenticatedReadyOrLoading
@@ -335,6 +384,8 @@ impl ModelCatalog {
                 .eviction_index()
                 .context("Too many pending model catalog reads")?;
             let id = self.order.remove(index).unwrap();
+            self.workspace_stamps.remove(&id);
+            self.workspace_directories.remove(&id);
             if let Some(job) = self.jobs.remove(&id) {
                 job.cancelled.store(true, Ordering::Release);
             }
@@ -344,6 +395,17 @@ impl ModelCatalog {
         for job in self.jobs.values().filter(|job| {
             job.response["provider"] == provider
                 && profile::same_scope(job.named.as_ref(), named.as_ref())
+                && (named.is_some()
+                    || (job.response["threadId"].as_str()
+                        == workspace_scope
+                            .as_ref()
+                            .map(|(thread, _, _)| thread.as_str())
+                        && job.response["accountID"].as_str()
+                            == Some(
+                                workspace_scope
+                                    .as_ref()
+                                    .map_or("default", |(_, account, _)| account.as_str()),
+                            )))
         }) {
             job.cancelled.store(true, Ordering::Release);
         }
@@ -354,6 +416,10 @@ impl ModelCatalog {
         if let Some(named) = &named {
             response["accountID"] = json!(named.account());
             response["threadId"] = json!(named.thread());
+        }
+        if let Some((thread, account, _)) = &workspace_scope {
+            response["threadId"] = json!(thread);
+            response["accountID"] = json!(account);
         }
         if !supported {
             response["error"] =
@@ -369,6 +435,12 @@ impl ModelCatalog {
                 cancelled: cancelled.clone(),
             },
         );
+        if let Some(stamp) = workspace_stamp {
+            self.workspace_stamps.insert(id.clone(), stamp);
+        }
+        if let Some((_, _, directory)) = workspace_scope {
+            self.workspace_directories.insert(id.clone(), directory);
+        }
         self.order.push_back(id.clone());
         if supported {
             let tx = self.tx.clone();
@@ -435,19 +507,52 @@ impl ModelCatalog {
     }
     /// Reasoning variants for the saved default-account selection, from the
     /// latest ready catalog. Display metadata only; no proof or authority.
+    #[cfg(test)]
     pub(crate) fn reported_efforts(
         &self,
         selection: &Value,
+    ) -> Option<(Vec<String>, Option<String>)> {
+        self.reported_efforts_for_thread(selection, None, None)
+    }
+    pub(crate) fn reported_efforts_for_thread(
+        &self,
+        selection: &Value,
+        thread_id: Option<&str>,
+        directory: Option<&std::path::Path>,
     ) -> Option<(Vec<String>, Option<String>)> {
         let provider = selection["provider"].as_str()?;
         let model = selection["modelID"]
             .as_str()
             .filter(|model| *model != "default")?;
-        let job = self.jobs.values().find(|job| {
-            job.named.is_none()
-                && job.response["provider"] == provider
-                && job.response["state"] == "ready"
-        })?;
+        let stamp = thread_id.and_then(|_| crate::provider_configuration::current_stamp());
+        let job = self
+            .order
+            .iter()
+            .rev()
+            .filter_map(|id| self.jobs.get(id))
+            .find(|job| {
+                job.named.is_none()
+                    && job.response["provider"] == provider
+                    && job.response["state"] == "ready"
+                    && job.response["threadId"].as_str() == thread_id
+                    && job.response["requestId"]
+                        .as_str()
+                        .and_then(|id| self.workspace_stamps.get(id))
+                        == stamp.as_ref()
+                    && job.response["requestId"]
+                        .as_str()
+                        .and_then(|id| self.workspace_directories.get(id))
+                        .map(PathBuf::as_path)
+                        == directory
+                    && !job.cancelled.load(Ordering::Acquire)
+                    && job.response["accountID"].as_str()
+                        == Some(
+                            selection["accountID"]
+                                .as_str()
+                                .filter(|id| !id.is_empty())
+                                .unwrap_or("default"),
+                        )
+            })?;
         let row = job.response["models"]
             .as_array()?
             .iter()
@@ -483,6 +588,7 @@ impl ModelCatalog {
             // Codex keeps its own proof-bound restore; a saved list is never it.
             if provider == "codex"
                 || job.named.is_some()
+                || !job.response["threadId"].is_null()
                 || job.response["state"] != "ready"
                 || providers.contains_key(provider)
             {
@@ -513,6 +619,7 @@ impl ModelCatalog {
                 continue;
             };
             if job.named.is_some()
+                || !job.response["threadId"].is_null()
                 || job.response["accountID"] != "default"
                 || job.response["state"] != "ready"
                 || providers.contains_key(provider)
@@ -578,7 +685,7 @@ impl ModelCatalog {
     }
 }
 
-/// Strict public request contract; only the existing default account may be read.
+/// Nondefault reads additionally require engine-validated native account authority.
 pub fn refresh_provider(params: &Value) -> Result<&str> {
     let fields = params
         .as_object()
@@ -586,17 +693,31 @@ pub fn refresh_provider(params: &Value) -> Result<&str> {
     ensure!(
         fields
             .keys()
-            .all(|key| matches!(key.as_str(), "provider" | "accountId")),
+            .all(|key| matches!(key.as_str(), "provider" | "accountId" | "threadId")),
         "Unsupported model refresh option"
-    );
-    ensure!(
-        crate::composer_selection::default_account(&params["accountId"]),
-        "Alternate-account model discovery is unsupported"
     );
     let provider = params["provider"]
         .as_str()
         .context("Provider must be text")?;
     crate::agent::Provider::from_name(provider)?;
+    ensure!(
+        crate::composer_selection::default_account(&params["accountId"])
+            || (provider == "opencode"
+                && params["threadId"].is_string()
+                && params["accountId"]
+                    .as_str()
+                    .is_some_and(|id| !id.is_empty() && id.len() <= 128)),
+        "Alternate-account model discovery requires its saved OpenCode conversation"
+    );
+    if let Some(thread) = params.get("threadId") {
+        ensure!(
+            (provider == "opencode" || crate::acp_registry::registry_id(provider).is_some())
+                && thread
+                    .as_str()
+                    .is_some_and(|id| !id.is_empty() && id.len() <= 128),
+            "Workspace model discovery requires an existing conversation"
+        );
+    }
     Ok(provider)
 }
 pub fn status_id(params: &Value) -> Result<&str> {
@@ -616,10 +737,11 @@ pub fn status_id(params: &Value) -> Result<&str> {
 
 pub fn supported(provider: &str) -> bool {
     cfg!(any(unix, windows))
-        && matches!(
-            provider,
-            "codex" | "claude" | "opencode" | "cursor" | "grok" | "antigravity"
-        )
+        && (crate::acp_registry::registry_id(provider).is_some()
+            || matches!(
+                provider,
+                "codex" | "claude" | "opencode" | "cursor" | "grok" | "antigravity"
+            ))
 }
 
 fn text_field<'a>(entry: &'a Value, field: &str, limit: usize) -> Result<Option<&'a str>> {
@@ -768,18 +890,46 @@ fn codex_model_pages(rpc: &mut impl Rpc) -> Result<Vec<Value>> {
     bail!("Model catalog exceeds 16 pages")
 }
 
-#[cfg(not(any(unix, windows)))]
+#[cfg(all(test, not(any(unix, windows))))]
 fn discover(_: &str, _: PathBuf, _: Duration, _: &AtomicBool) -> Result<Vec<Value>> {
     bail!("Bounded model discovery is unsupported on this platform")
 }
-#[cfg(any(unix, windows))]
+#[cfg(all(test, any(unix, windows)))]
 fn discover(
     provider: &str,
     executable: PathBuf,
     timeout: Duration,
     cancelled: &AtomicBool,
 ) -> Result<Vec<Value>> {
+    discover_in_workspace(provider, executable, None, timeout, cancelled)
+}
+#[cfg(any(unix, windows))]
+fn discover_in_workspace(
+    provider: &str,
+    executable: PathBuf,
+    cwd: Option<&std::path::Path>,
+    timeout: Duration,
+    cancelled: &AtomicBool,
+) -> Result<Vec<Value>> {
+    if crate::acp_registry::registry_id(provider).is_some() {
+        let arguments = crate::provider_configuration::current_acp_arguments(provider)?;
+        let home =
+            std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from);
+        let cwd = cwd
+            .or(home.as_deref())
+            .context("Working directory unavailable for ACP model discovery")?;
+        return crate::agent::acp_model_metadata(
+            &executable,
+            cwd,
+            &arguments,
+            provider == "acp-fx",
+            &|| !cancelled.load(Ordering::Acquire),
+        );
+    }
     if provider == "opencode" {
+        if let Some(cwd) = cwd {
+            return opencode_workspace_models(&executable, cwd, cancelled);
+        }
         return opencode_models(&executable, cancelled);
     }
     // The Antigravity ACP executable is not a model-list CLI. Running it here
@@ -804,6 +954,17 @@ fn discover(
         "claude" => claude_models(&mut rpc),
         _ => bail!("Read-only model discovery is unsupported for this provider"),
     }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn discover_in_workspace(
+    _: &str,
+    _: PathBuf,
+    _: Option<&std::path::Path>,
+    _: Duration,
+    _: &AtomicBool,
+) -> Result<Vec<Value>> {
+    bail!("Bounded model discovery is unsupported on this platform")
 }
 
 /// Cursor and Grok list models through their own CLIs (or a built-in fallback).
@@ -950,6 +1111,21 @@ fn opencode_models(executable: &std::path::Path, cancelled: &AtomicBool) -> Resu
     let (rows, _account) = crate::agent::opencode_installation_metadata(executable, &|| {
         !cancelled.load(Ordering::Acquire)
     })?;
+    normalize_opencode_models(rows)
+}
+#[cfg(any(unix, windows))]
+fn opencode_workspace_models(
+    executable: &std::path::Path,
+    cwd: &std::path::Path,
+    cancelled: &AtomicBool,
+) -> Result<Vec<Value>> {
+    let (rows, _account) = crate::agent::opencode_workspace_metadata(executable, cwd, &|| {
+        !cancelled.load(Ordering::Acquire)
+    })?;
+    normalize_opencode_models(rows)
+}
+#[cfg(any(unix, windows))]
+fn normalize_opencode_models(rows: Vec<Value>) -> Result<Vec<Value>> {
     ensure!(
         rows.len() <= MAX_MODELS,
         "Model catalog exceeds 1000 entries"
@@ -1330,6 +1506,128 @@ impl Rpc for ProcessRpc<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workspace_model_jobs_do_not_cancel_or_leak_into_other_threads() {
+        let mut catalog = ModelCatalog::default();
+        let first = catalog
+            .refresh_scoped_inner(
+                "opencode",
+                None,
+                None,
+                Some(("thread-a".into(), "default".into(), "/fixture/a".into())),
+                RefreshReuse::Loading,
+                |_| Ok(vec![json!({"id":"a/model"})]),
+            )
+            .unwrap();
+        let second = catalog
+            .refresh_scoped_inner(
+                "opencode",
+                None,
+                None,
+                Some(("thread-b".into(), "default".into(), "/fixture/b".into())),
+                RefreshReuse::Loading,
+                |_| Ok(vec![json!({"id":"b/model"})]),
+            )
+            .unwrap();
+        assert_ne!(first["requestId"], second["requestId"]);
+        assert!(
+            !catalog.jobs[first["requestId"].as_str().unwrap()]
+                .cancelled
+                .load(Ordering::Acquire)
+        );
+        let until = Instant::now() + Duration::from_secs(5);
+        while !catalog.workers.is_empty() && Instant::now() < until {
+            catalog.poll();
+            std::thread::yield_now();
+        }
+        assert_eq!(
+            catalog
+                .status(first["requestId"].as_str().unwrap())
+                .unwrap()["models"][0]["id"],
+            "a/model"
+        );
+        assert_eq!(
+            catalog
+                .status(second["requestId"].as_str().unwrap())
+                .unwrap()["models"][0]["id"],
+            "b/model"
+        );
+        assert!(catalog.saved_document()["providers"]["opencode"].is_null());
+        assert!(catalog.remote_default_models()["providers"]["opencode"].is_null());
+    }
+
+    #[test]
+    fn workspace_model_jobs_keep_accounts_separate_in_the_same_thread() {
+        let mut catalog = ModelCatalog::default();
+        let read = |account: &str, model: &'static str, catalog: &mut ModelCatalog| {
+            catalog
+                .refresh_scoped_inner(
+                    "opencode",
+                    None,
+                    None,
+                    Some(("thread-a".into(), account.into(), "/fixture/a".into())),
+                    RefreshReuse::Loading,
+                    move |_| Ok(vec![json!({"id":model})]),
+                )
+                .unwrap()
+        };
+        let first = read("account-a", "private/a", &mut catalog);
+        let second = read("account-b", "private/b", &mut catalog);
+        assert_ne!(first["requestId"], second["requestId"]);
+        assert_eq!(first["accountID"], "account-a");
+        assert_eq!(second["accountID"], "account-b");
+        assert!(
+            !catalog.jobs[first["requestId"].as_str().unwrap()]
+                .cancelled
+                .load(Ordering::Acquire)
+        );
+        let until = Instant::now() + Duration::from_secs(5);
+        while !catalog.workers.is_empty() && Instant::now() < until {
+            catalog.poll();
+            std::thread::yield_now();
+        }
+        assert_eq!(
+            catalog
+                .status(first["requestId"].as_str().unwrap())
+                .unwrap()["models"][0]["id"],
+            "private/a"
+        );
+        assert_eq!(
+            catalog
+                .status(second["requestId"].as_str().unwrap())
+                .unwrap()["models"][0]["id"],
+            "private/b"
+        );
+    }
+    #[test]
+    fn changing_worktree_never_reuses_the_prior_model_job() {
+        let mut catalog = ModelCatalog::default();
+        let make = |directory: &str, catalog: &mut ModelCatalog| {
+            catalog
+                .refresh_scoped_inner(
+                    "opencode",
+                    None,
+                    None,
+                    Some(("thread-a".into(), "default".into(), directory.into())),
+                    RefreshReuse::Loading,
+                    |_| Ok(vec![json!({"id":"fixture"})]),
+                )
+                .unwrap()
+        };
+        let first = make("/fixture/old", &mut catalog);
+        let second = make("/fixture/new", &mut catalog);
+        assert_ne!(first["requestId"], second["requestId"]);
+        assert!(
+            catalog.jobs[first["requestId"].as_str().unwrap()]
+                .cancelled
+                .load(Ordering::Acquire)
+        );
+        assert_eq!(
+            catalog.workspace_directories[second["requestId"].as_str().unwrap()],
+            PathBuf::from("/fixture/new")
+        );
+    }
 
     #[test]
     fn background_refresh_evicts_revoked_results_before_live_codex_proof() {

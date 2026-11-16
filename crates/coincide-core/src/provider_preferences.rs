@@ -5,13 +5,14 @@ use serde_json::{Value, json};
 
 pub fn enabled(settings: &Value, provider: &str) -> Result<bool> {
     ensure!(
-        crate::provider_catalog::provider_catalog()
-            .iter()
-            .any(|entry| serde_json::to_value(entry.id)
-                .ok()
-                .as_ref()
-                .and_then(Value::as_str)
-                == Some(provider)),
+        crate::acp_registry::registry_id(provider).is_some()
+            || crate::provider_catalog::provider_catalog().iter().any(
+                |entry| serde_json::to_value(entry.id)
+                    .ok()
+                    .as_ref()
+                    .and_then(Value::as_str)
+                    == Some(provider)
+            ),
         "Unknown provider"
     );
     let entries = &settings["providers"];
@@ -49,6 +50,10 @@ pub fn enabled(settings: &Value, provider: &str) -> Result<bool> {
 
 impl crate::api::Engine {
     pub(super) fn require_provider_enabled(&self, provider: &str) -> Result<()> {
+        if crate::acp_registry::registry_id(provider).is_some() {
+            self.provider_launch_configuration(provider)?
+                .context("Add this ACP agent in Coincide first")?;
+        }
         let settings = self
             .store
             .document("settings.json")?
