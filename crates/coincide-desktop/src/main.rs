@@ -7256,8 +7256,8 @@ impl Render for Coincide {
                                                         .tooltip(if importing_images { "Adding attachments…" } else { "Attach files or folders" })
                                                         .compact().ghost()
                                                         .xsmall().h(px(26.)).rounded(px(7.))
-                                                        .on_click(cx.listener(|this, _, _, cx| {
-                                                            this.attach_images(cx)
+                                                        .on_click(cx.listener(|this, _, window, cx| {
+                                                            this.attach_images(window, cx)
                                                         })),
                                                 )
                                                 .child(div().flex_shrink_0().child(self.composer_voice_control(cx)))

@@ -9,6 +9,31 @@ enum IncomingImage {
 struct ImportedReference {
     card: Value,
 }
+
+#[derive(Clone, Copy)]
+enum AttachmentPickerKind {
+    Mixed,
+    Files,
+    Folders,
+}
+impl AttachmentPickerKind {
+    fn options(self) -> PathPromptOptions {
+        PathPromptOptions {
+            files: matches!(self, Self::Mixed | Self::Files),
+            directories: matches!(self, Self::Mixed | Self::Folders),
+            multiple: true,
+            prompt: Some("Attach".into()),
+        }
+    }
+
+    fn from_choice(choice: usize) -> Option<Self> {
+        match choice {
+            0 => Some(Self::Files),
+            1 => Some(Self::Folders),
+            _ => None,
+        }
+    }
+}
 pub(super) fn path_looks_like_image(path: &std::path::Path) -> bool {
     path.extension()
         .and_then(|value| value.to_str())
@@ -30,6 +55,17 @@ pub(super) enum ImportPreview {
 mod tests {
     use super::*;
     use crate::composer_follow_up_mount::PendingSend;
+
+    #[::core::prelude::v1::test]
+    fn native_picker_choices_cover_platforms_without_mixed_selection() {
+        let mixed = AttachmentPickerKind::Mixed.options();
+        assert!(mixed.files && mixed.directories && mixed.multiple);
+        let files = AttachmentPickerKind::from_choice(0).unwrap().options();
+        assert!(files.files && !files.directories && files.multiple);
+        let folders = AttachmentPickerKind::from_choice(1).unwrap().options();
+        assert!(!folders.files && folders.directories && folders.multiple);
+        assert!(AttachmentPickerKind::from_choice(2).is_none());
+    }
 
     #[::core::prelude::v1::test]
     fn mixed_selected_items_have_independent_previews_and_cancellation() {
@@ -405,16 +441,47 @@ impl Coincide {
         Some((id, job))
     }
 
-    pub(super) fn attach_images(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn attach_images(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some((thread, job)) = self.reserve_image_import(cx) else {
             return;
         };
-        let picker = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: true,
-            multiple: true,
-            prompt: Some("Attach files or folders".into()),
-        });
+        if cx.can_select_mixed_files_and_dirs() {
+            self.pick_attachment_paths(thread, job, AttachmentPickerKind::Mixed, cx);
+            return;
+        }
+        // Windows and Linux native pickers cannot select files and folders in
+        // the same dialog, so offer each kind without hiding either one.
+        let choice = window.prompt(
+            PromptLevel::Info,
+            "Attach files or folders",
+            None,
+            &["Files", "Folders", "Cancel"],
+            cx,
+        );
+        cx.spawn(async move |this, cx| {
+            let kind = choice
+                .await
+                .ok()
+                .and_then(AttachmentPickerKind::from_choice);
+            let _ = this.update(cx, |this, cx| {
+                if let Some(kind) = kind {
+                    this.pick_attachment_paths(thread, job, kind, cx);
+                } else {
+                    this.finish_image_import(job, &thread, Vec::new(), None, cx);
+                }
+            });
+        })
+        .detach();
+    }
+
+    fn pick_attachment_paths(
+        &mut self,
+        thread: String,
+        job: u64,
+        kind: AttachmentPickerKind,
+        cx: &mut Context<Self>,
+    ) {
+        let picker = cx.prompt_for_paths(kind.options());
         self.status = "Choose files or folders to attach.".into();
         cx.notify();
         cx.spawn(async move |this, cx| {
