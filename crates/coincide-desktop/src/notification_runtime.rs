@@ -3,8 +3,10 @@
 use crate::notifications::{Backend, DesktopNotifications, Permission, Settings};
 use anyhow::{Context, Result, bail};
 use coincide_core::platform_host::notifications::{
-    Alert, Delivery, DesktopActivity, Dispatch, Dispatcher, Environment, EventKey,
+    Alert, AlertDelivery, Delivery, DesktopActivity, Dispatch, Dispatcher, Environment, EventKey,
+    Route,
 };
+use coincide_core::remote::server::{AlertHandle, LIVE_PRESENCE_LIFETIME};
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
@@ -13,6 +15,32 @@ use std::sync::{
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 use uuid::Uuid;
+
+trait RemoteDelivery: Send {
+    fn presences(&self) -> Vec<coincide_core::remote::Presence>;
+    fn deliver(&self, device: &str, alert: &Alert, previews: bool, now: u64) -> Delivery;
+    fn set_enabled(&self, _enabled: bool) {}
+}
+impl RemoteDelivery for AlertHandle {
+    fn presences(&self) -> Vec<coincide_core::remote::Presence> {
+        AlertHandle::presences(self)
+    }
+    fn deliver(&self, device: &str, alert: &Alert, previews: bool, now: u64) -> Delivery {
+        AlertHandle::deliver(self, device, alert, previews, now)
+    }
+    fn set_enabled(&self, enabled: bool) {
+        AlertHandle::set_enabled(self, enabled);
+    }
+}
+
+struct RemoteAvailability<'a>(Option<&'a dyn RemoteDelivery>);
+impl Drop for RemoteAvailability<'_> {
+    fn drop(&mut self) {
+        if let Some(remote) = self.0 {
+            remote.set_enabled(false);
+        }
+    }
+}
 
 pub enum Command {
     Configure(Settings),
@@ -146,26 +174,29 @@ pub struct NotificationRuntime {
     worker: Option<JoinHandle<WorkerExit>>,
 }
 impl NotificationRuntime {
-    pub fn spawn_native() -> Result<Self> {
+    pub fn spawn_native(remote: Option<AlertHandle>) -> Result<Self> {
         #[cfg(all(target_os = "macos", feature = "native-notifications"))]
         {
-            Self::spawn(
+            Self::spawn_with_remote(
                 crate::notification_activity::Native(crate::notifications::macos::NativeBackend),
                 32,
+                remote.map(|handle| Box::new(handle) as Box<dyn RemoteDelivery>),
             )
         }
         #[cfg(all(target_os = "linux", feature = "native-notifications"))]
         {
-            Self::spawn(
+            Self::spawn_with_remote(
                 crate::notification_activity::Native(crate::notifications::linux::backend()),
                 32,
+                remote.map(|handle| Box::new(handle) as Box<dyn RemoteDelivery>),
             )
         }
         #[cfg(all(windows, feature = "native-notifications"))]
         {
-            Self::spawn(
+            Self::spawn_with_remote(
                 crate::notification_activity::Native(crate::notifications::windows::NativeBackend),
                 32,
+                remote.map(|handle| Box::new(handle) as Box<dyn RemoteDelivery>),
             )
         }
         #[cfg(not(all(
@@ -173,12 +204,23 @@ impl NotificationRuntime {
             feature = "native-notifications"
         )))]
         {
-            Self::spawn(crate::notifications::UnsupportedBackend, 32)
+            Self::spawn_with_remote(
+                crate::notifications::UnsupportedBackend,
+                32,
+                remote.map(|handle| Box::new(handle) as Box<dyn RemoteDelivery>),
+            )
         }
     }
     /// Backend constructors must be effect-free. Worker startup never calls the
     /// backend; even status/clear/request commands require prior Configure.
     pub fn spawn<B: Backend + Send + 'static>(backend: B, capacity: usize) -> Result<Self> {
+        Self::spawn_with_remote(backend, capacity, None)
+    }
+    fn spawn_with_remote<B: Backend + Send + 'static>(
+        backend: B,
+        capacity: usize,
+        remote: Option<Box<dyn RemoteDelivery>>,
+    ) -> Result<Self> {
         if !(1..=256).contains(&capacity) {
             bail!("notification channel capacity must be 1..=256");
         }
@@ -193,7 +235,7 @@ impl NotificationRuntime {
         let worker_handle = handle.clone();
         let worker = thread::Builder::new()
             .name("coincide-notifications".into())
-            .spawn(move || run(backend, worker_handle, commands, receipts_tx))
+            .spawn(move || run(backend, worker_handle, commands, receipts_tx, remote))
             .context("start notification worker")?;
         Ok(Self {
             handle,
@@ -257,7 +299,9 @@ fn run<B: Backend>(
     handle: Handle,
     commands: Receiver<Queued>,
     receipts: SyncSender<Receipt>,
+    remote: Option<Box<dyn RemoteDelivery>>,
 ) -> WorkerExit {
+    let _remote_availability = RemoteAvailability(remote.as_deref());
     let mut adapter = DesktopNotifications::new(backend);
     let mut dispatcher = Dispatcher::new(4096);
     let mut status = Status::default();
@@ -308,7 +352,13 @@ fn run<B: Backend>(
             _ => None,
         };
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            process(&mut adapter, &mut dispatcher, &mut status, queued.command)
+            process(
+                &mut adapter,
+                remote.as_deref(),
+                &mut dispatcher,
+                &mut status,
+                queued.command,
+            )
         }));
         let backend_panicked = result.is_err();
         let outcome = match result {
@@ -355,6 +405,7 @@ fn run<B: Backend>(
 }
 fn process<B: Backend>(
     adapter: &mut DesktopNotifications<B>,
+    remote: Option<&dyn RemoteDelivery>,
     dispatcher: &mut Dispatcher,
     status: &mut Status,
     command: Command,
@@ -363,6 +414,9 @@ fn process<B: Backend>(
         Command::Configure(settings) => {
             status.configured = true;
             status.enabled = settings.enabled;
+            if let Some(remote) = remote {
+                remote.set_enabled(settings.enabled);
+            }
             adapter.set_settings(settings);
             Outcome::Configured
         }
@@ -377,18 +431,32 @@ fn process<B: Backend>(
             } else {
                 desktop
             };
+            let now = if remote.is_some() {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs()
+            } else {
+                now
+            };
+            let presences = remote.map(RemoteDelivery::presences).unwrap_or_default();
+            let mut sink = RouteSink {
+                desktop: adapter,
+                remote,
+                now,
+            };
             let result = dispatcher.dispatch(
                 &alert,
                 &Environment {
                     enabled: status.configured && status.enabled,
                     desktop,
-                    devices: &[],
+                    devices: &presences,
                     push_targets: &[],
                     push_available: false,
-                    presence_lifetime: 0,
+                    presence_lifetime: LIVE_PRESENCE_LIFETIME,
                     now,
                 },
-                adapter,
+                &mut sink,
             );
             let (ack, reason) = match result {
                 Dispatch::Attempted { result, .. } => (Ack::Delivered(result), Reason::Attempted),
@@ -430,6 +498,25 @@ fn process<B: Backend>(
     }
 }
 
+struct RouteSink<'a, B> {
+    desktop: &'a mut DesktopNotifications<B>,
+    remote: Option<&'a dyn RemoteDelivery>,
+    now: u64,
+}
+impl<B: Backend> AlertDelivery for RouteSink<'_, B> {
+    fn deliver(&mut self, route: &Route, alert: &Alert) -> Delivery {
+        match route {
+            Route::Device(device) => self.remote.map_or(Delivery::Unavailable, |remote| {
+                remote.deliver(device, alert, self.desktop.includes_preview(), self.now)
+            }),
+            _ => self.desktop.deliver(route, alert),
+        }
+    }
+    fn clear_thread(&mut self, thread: Uuid) {
+        self.desktop.clear_thread(thread);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -443,6 +530,29 @@ mod tests {
     struct Fake {
         state: Arc<Mutex<State>>,
         result: Delivery,
+    }
+    struct FakePhone {
+        open_thread: Option<Uuid>,
+        result: Delivery,
+        calls: Arc<Mutex<Vec<(String, bool)>>>,
+    }
+    impl RemoteDelivery for FakePhone {
+        fn presences(&self) -> Vec<coincide_core::remote::Presence> {
+            vec![coincide_core::remote::Presence {
+                device_id: "fixture-phone".into(),
+                active: true,
+                open_thread: self.open_thread,
+                received_at: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+                idle_seconds: 1,
+            }]
+        }
+        fn deliver(&self, device: &str, _: &Alert, previews: bool, _: u64) -> Delivery {
+            self.calls.lock().unwrap().push((device.into(), previews));
+            self.result
+        }
     }
     impl Backend for Fake {
         fn permission(&mut self) -> Result<Permission> {
@@ -503,6 +613,104 @@ mod tests {
             now: 1000,
         }
     }
+
+    #[test]
+    fn routes_to_active_phone_suppresses_seen_thread_and_falls_back_when_unavailable() {
+        let desktop_calls = Arc::new(Mutex::new(State::default()));
+        let phone_calls = Arc::new(Mutex::new(Vec::new()));
+        let mut adapter = DesktopNotifications::new(Fake {
+            state: desktop_calls.clone(),
+            result: Delivery::Accepted,
+        });
+        adapter.set_settings(Settings {
+            enabled: true,
+            include_preview: false,
+        });
+        let mut status = Status {
+            configured: true,
+            enabled: true,
+            ..Status::default()
+        };
+        let mut dispatcher = Dispatcher::new(16);
+        let remote = FakePhone {
+            open_thread: None,
+            result: Delivery::Accepted,
+            calls: phone_calls.clone(),
+        };
+        let away = |key: EventKey| Command::Dispatch {
+            claim_id: Uuid::new_v4(),
+            alert: alert(key),
+            desktop: DesktopActivity {
+                app_active: false,
+                visible_thread: None,
+                idle_seconds: 121,
+                locked: false,
+                display_asleep: false,
+            },
+            now: 1,
+        };
+        let result = process(
+            &mut adapter,
+            Some(&remote),
+            &mut dispatcher,
+            &mut status,
+            away(key()),
+        );
+        assert!(matches!(
+            result,
+            Outcome::Notification {
+                ack: Ack::Delivered(Delivery::Accepted),
+                ..
+            }
+        ));
+        assert_eq!(
+            *phone_calls.lock().unwrap(),
+            vec![("fixture-phone".into(), false)]
+        );
+        assert!(desktop_calls.lock().unwrap().calls.is_empty());
+
+        let seen = key();
+        let visible = FakePhone {
+            open_thread: Some(seen.thread),
+            ..remote
+        };
+        let result = process(
+            &mut adapter,
+            Some(&visible),
+            &mut dispatcher,
+            &mut status,
+            away(seen),
+        );
+        assert!(matches!(
+            result,
+            Outcome::Notification {
+                ack: Ack::Suppressed,
+                ..
+            }
+        ));
+        assert_eq!(phone_calls.lock().unwrap().len(), 1);
+
+        let unavailable = FakePhone {
+            open_thread: None,
+            result: Delivery::Unavailable,
+            ..visible
+        };
+        let result = process(
+            &mut adapter,
+            Some(&unavailable),
+            &mut dispatcher,
+            &mut status,
+            away(key()),
+        );
+        assert!(matches!(
+            result,
+            Outcome::Notification {
+                ack: Ack::Delivered(Delivery::Accepted),
+                ..
+            }
+        ));
+        assert_eq!(desktop_calls.lock().unwrap().calls, ["status", "post"]);
+    }
     fn setup(result: Delivery, capacity: usize) -> (NotificationRuntime, Arc<Mutex<State>>) {
         let state = Arc::new(Mutex::new(State::default()));
         (
@@ -516,6 +724,42 @@ mod tests {
             .unwrap(),
             state,
         )
+    }
+    #[test]
+    fn notification_availability_follows_worker_configuration_and_shutdown() {
+        struct Availability(Arc<AtomicBool>);
+        impl RemoteDelivery for Availability {
+            fn presences(&self) -> Vec<coincide_core::remote::Presence> {
+                Vec::new()
+            }
+            fn deliver(&self, _: &str, _: &Alert, _: bool, _: u64) -> Delivery {
+                Delivery::Unavailable
+            }
+            fn set_enabled(&self, enabled: bool) {
+                self.0.store(enabled, Ordering::Release);
+            }
+        }
+        let enabled = Arc::new(AtomicBool::new(false));
+        let mut runtime = NotificationRuntime::spawn_with_remote(
+            Fake {
+                state: Arc::new(Mutex::new(State::default())),
+                result: Delivery::Unavailable,
+            },
+            8,
+            Some(Box::new(Availability(enabled.clone()))),
+        )
+        .unwrap();
+        send(
+            &runtime.handle(),
+            Command::Configure(Settings {
+                enabled: true,
+                include_preview: false,
+            }),
+        );
+        assert!(matches!(receipt(&runtime).outcome, Outcome::Configured));
+        assert!(enabled.load(Ordering::Acquire));
+        runtime.shutdown().unwrap();
+        assert!(!enabled.load(Ordering::Acquire));
     }
     #[test]
     fn synchronous_native_return_does_not_claim_certain_delivery_or_pending_callbacks() {

@@ -140,6 +140,9 @@ impl<B: Backend> DesktopNotifications<B> {
     pub fn permission_status(&self) -> Permission {
         self.permission
     }
+    pub fn includes_preview(&self) -> bool {
+        self.settings.include_preview
+    }
     pub fn last_error(&self) -> Option<&str> {
         self.error.as_deref()
     }

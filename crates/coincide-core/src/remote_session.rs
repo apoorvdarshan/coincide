@@ -117,6 +117,8 @@ pub struct Session {
     last_server: Option<Value>,
     /// What the phone last said about itself.
     pub presence: Option<Presence>,
+    /// Host time, never a timestamp supplied by the phone.
+    presence_received_at: Option<u64>,
     /// The device that just paired on this connection, for Settings to show.
     pub paired: Option<Device>,
     seen_generation: u64,
@@ -166,6 +168,7 @@ impl Session {
             last_workspace: None,
             last_server: None,
             presence: None,
+            presence_received_at: None,
             paired: None,
             seen_generation: 0,
             pending_presence_seen: None,
@@ -187,6 +190,29 @@ impl Session {
             State::Authenticated(id) => Some(id),
             _ => None,
         }
+    }
+
+    /// An authenticated phone's last reported presence, on the Mac's clock.
+    pub(super) fn live_presence(&self) -> Option<crate::remote::Presence> {
+        let device_id = self.device_id()?.to_owned();
+        let presence = self.presence.as_ref()?;
+        Some(crate::remote::Presence {
+            device_id,
+            active: presence.state == "active",
+            open_thread: presence.open_thread_id,
+            received_at: self.presence_received_at?,
+            idle_seconds: presence.idle_seconds.clamp(0., 365. * 24. * 60. * 60.) as u64,
+        })
+    }
+
+    /// Queuing is at most once for this connection. The socket may disconnect
+    /// after acceptance, so this is not proof the phone displayed an alert.
+    pub(super) fn enqueue_live_alert(&mut self, message: Value) -> bool {
+        if self.device_id().is_none() || self.outbox.len() >= 256 {
+            return false;
+        }
+        self.send(protocol::event("notify", Some(message)));
+        true
     }
 
     pub fn is_closed(&self) -> bool {
@@ -449,6 +475,7 @@ impl Session {
                     self.pending_presence_seen
                 };
                 self.presence = Some(presence);
+                self.presence_received_at = Some((super::pairing::now_ms() / 1000.) as u64);
                 self.respond(id, "ok", None);
             }
             // Only the computer's own command-line tool may open threads in its window.
