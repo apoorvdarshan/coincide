@@ -12,3 +12,5 @@ marks identify their respective owners and do not imply endorsement. New
 registry entries can load their official icons from the registry source.
 The DeepSeek Harness mark comes from the official DeepSeek Harness repository
 under its MIT license, retained beside that icon as `LICENSE-deepseek`.
+The fx mark comes from T3 Code's fx provider glyph, also under the MIT license
+retained alongside it as `LICENSE-t3code`.
