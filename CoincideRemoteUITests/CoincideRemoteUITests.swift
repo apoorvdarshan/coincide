@@ -47,6 +47,15 @@ final class CoincideRemoteUITests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testWorkspaceRecoversAutomaticallyWhenTheMacIsInitiallyBusy() {
+        let app = launch("-CoincideRemoteTab", "projects", "-CoincideRemoteDemoWorkspaceBusy")
+        XCTAssertTrue(
+            element(app, containing: "iPhone image previews in threads").waitForExistence(timeout: timeout),
+            "The phone did not retry its initial workspace request")
+        XCTAssertFalse(app.staticTexts["No Projects"].exists)
+    }
+
     // MARK: Pairing
 
     /// Before any Mac is paired, the app opens on the Connect screen: scan or paste the Mac's code, or see the plans.

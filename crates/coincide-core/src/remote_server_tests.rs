@@ -220,6 +220,40 @@ fn pair(fixture: &mut Fixture) -> (Client, String, String) {
 }
 
 #[test]
+fn paired_phone_can_retry_initial_workspace_after_a_busy_mac() {
+    let mut fixture = fixture();
+    fixture.server.set_enabled(true);
+    let (mut phone, _, _) = pair(&mut fixture);
+    let shared = fixture.server.running.as_ref().unwrap().0.clone();
+    let _watch_gate = shared.watch_gate.lock().unwrap();
+
+    let held = fixture.engine.lock().unwrap();
+    request(&mut phone, "first", "workspace", None);
+    let busy = reply(&mut phone, "first");
+    assert_eq!(busy["kind"], "error");
+    assert_eq!(busy["error"]["code"], "failed");
+    drop(held);
+
+    request(&mut phone, "retry", "workspace", None);
+    let workspace = reply(&mut phone, "retry");
+    assert_eq!(workspace["type"], "workspace");
+    assert!(
+        workspace["body"]["projects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["name"] == "Fixture")
+    );
+    assert!(
+        workspace["body"]["threads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t["id"] == fixture.thread)
+    );
+}
+
+#[test]
 fn paired_phone_can_list_and_open_bot_conversations_without_navigating_the_mac() {
     let mut fixture = fixture();
     let bot = Uuid::new_v4().to_string().to_uppercase();
