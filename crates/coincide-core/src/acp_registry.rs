@@ -312,7 +312,11 @@ mod tests {
     #[test]
     fn parses_updated_registry_and_only_finds_installed_commands() {
         let root = tempfile::tempdir().unwrap();
-        let binary = root.path().join("copilot");
+        let binary = root.path().join(if cfg!(windows) {
+            "copilot.exe"
+        } else {
+            "copilot"
+        });
         std::fs::write(&binary, b"fixture").unwrap();
         #[cfg(unix)]
         {

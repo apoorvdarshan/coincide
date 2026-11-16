@@ -6,6 +6,8 @@ to add it; use that agent's normal sign-in and configuration first. Coincide
 does not download or install a registry entry on its own. You can also add a
 local ACP command with its executable name or absolute path and literal
 arguments. For DeepSeek Harness, use `dsh` with `--profile acp`.
+On Windows, automatic discovery finds native `.exe` and `.com` commands;
+package-manager `.cmd` launchers are not automatically discovered.
 
 Agents and their model services are separate: an ACP agent supplies its own
 models, tools, permissions and credentials. Coincide uses ACP v1 and displays
