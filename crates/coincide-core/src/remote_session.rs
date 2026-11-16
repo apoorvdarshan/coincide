@@ -364,8 +364,7 @@ impl Session {
                 self.respond(id, "workspace", Some(workspace));
             }
             Request::OpenThread { thread_id, limit } => {
-                let runs = runs()?;
-                let (transcript, document) = adapter.transcript(thread_id, limit, &runs)?;
+                let (transcript, document, runs) = adapter.open_transcript(thread_id, limit)?;
                 self.open.insert(
                     thread_id,
                     Mirror {

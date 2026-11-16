@@ -321,13 +321,24 @@ fn paired_phone_can_list_and_open_bot_conversations_without_navigating_the_mac()
             .iter()
             .any(|row| row["id"] == thread)
     );
+    // Opening the resulting chat must also survive an ordinary desktop save.
+    let engine = fixture.engine.clone();
+    let (ready, wait_until_locked) = std::sync::mpsc::channel();
+    let busy = std::thread::spawn(move || {
+        let _held = engine.lock().unwrap();
+        ready.send(()).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(150));
+    });
+    wait_until_locked.recv().unwrap();
     request(
         &mut phone,
         "open-bot",
         "openThread",
         Some(json!({"threadID":thread,"limit":20})),
     );
-    assert_eq!(reply(&mut phone, "open-bot")["type"], "transcript");
+    let opened = reply(&mut phone, "open-bot");
+    busy.join().unwrap();
+    assert_eq!(opened["type"], "transcript", "{opened}");
     assert!(fixture.engine.lock().unwrap().requested_open.is_none());
     {
         let mut engine = fixture.engine.lock().unwrap();

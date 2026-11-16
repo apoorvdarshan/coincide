@@ -41,6 +41,26 @@ pub(crate) fn astra_default_needed(selection: &Value) -> bool {
         && selection["effort"].is_null()
         && selection["modelID"].as_str().is_some_and(astra_model)
 }
+
+/// State of the latest default-account Codex discovery for the current
+/// executable. A saved display list is never execution authority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CodexCatalogState {
+    Missing,
+    Loading,
+    Ready,
+    Failed,
+}
+impl CodexCatalogState {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Missing => "missing",
+            Self::Loading => "loading",
+            Self::Ready => "ready",
+            Self::Failed => "failed",
+        }
+    }
+}
 /// Private admitted model options. The historical name is retained internally;
 /// both effort and speed are bound, never caller-supplied proof metadata.
 #[derive(Clone, Debug)]
@@ -94,6 +114,29 @@ impl CodexEffortProof {
     }
 }
 impl ModelCatalog {
+    pub(crate) fn codex_catalog_state(&self, executable: &Path) -> CodexCatalogState {
+        let Some(job) = self
+            .order
+            .iter()
+            .rev()
+            .filter_map(|id| self.jobs.get(id))
+            .find(|job| job.named.is_none() && job.response["provider"] == "codex")
+        else {
+            return CodexCatalogState::Missing;
+        };
+        let Ok(binding) = EffortExecutable::read(executable) else {
+            return CodexCatalogState::Missing;
+        };
+        if job.cancelled.load(Ordering::Acquire) || job.binding.as_ref() != Some(&binding) {
+            return CodexCatalogState::Missing;
+        }
+        match job.response["state"].as_str() {
+            Some("loading") => CodexCatalogState::Loading,
+            Some("ready") => CodexCatalogState::Ready,
+            _ => CodexCatalogState::Failed,
+        }
+    }
+
     fn effort_model(&self, selection: &Value, executable: &Path) -> Result<(&Job, &Value)> {
         ensure!(!self.shutdown.closed, "Model catalog is shutting down");
         ensure!(
@@ -114,19 +157,19 @@ impl ModelCatalog {
             .rev()
             .filter_map(|id| self.jobs.get(id))
             .find(|job| job.named.is_none() && job.response["provider"] == "codex")
-            .context("Refresh the Codex model catalog before choosing effort/speed")?;
+            .context("Codex model options are temporarily unavailable")?;
         ensure!(
             job.response["state"] == "ready" && !job.cancelled.load(Ordering::Acquire),
-            "Latest Codex catalog is not ready; previous choices are not authoritative"
+            "Codex model options are temporarily unavailable"
         );
         ensure!(
             job.binding.as_ref() == Some(&EffortExecutable::read(executable)?),
-            "Catalog belongs to another or changed provider executable"
+            "Codex changed; model options are being updated"
         );
         let reported = job.response["models"]
             .as_array()
             .and_then(|models| models.iter().find(|entry| entry["id"] == model))
-            .context("Model was not reported by the latest Codex catalog")?;
+            .context("This model is not available from Codex")?;
         Ok((job, reported))
     }
     pub(crate) fn codex_effort_proof(

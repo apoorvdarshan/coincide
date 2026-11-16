@@ -296,6 +296,7 @@ pub struct Engine {
     workspace_tx: std::sync::mpsc::SyncSender<(String, Value)>,
     workspace_rx: std::sync::mpsc::Receiver<(String, Value)>,
     provider_discovery: Option<Value>,
+    provider_discovery_pending: bool,
     schedule_initialized: bool,
     schedule_recovery_pending: bool,
     schedule_last_poll: Instant,
@@ -305,6 +306,8 @@ pub struct Engine {
     pending_usage: HashMap<String, agent::usage_capture::Record>,
     steering_operations: HashMap<String, steering_api::Operation>,
     enabled_queues: HashSet<String>,
+    queue_catalog_retry_after: Option<Instant>,
+    queue_catalog_poll_after: HashMap<String, Instant>,
     goal_selection_waiting: HashSet<String>,
     native_follow_up: follow_up_api::State,
     turn_results: thread_activity_api::TurnResults,
@@ -349,10 +352,21 @@ impl Engine {
             "Transcript persistence is recovering; retry after recovery"
         );
         let thread = self.store.thread_queue_snapshot(id)?;
+        let messages = crate::message_queue::read(&thread)?;
+        // Older queue failures can remain in saved metadata after the last
+        // message completed or was removed. They are no longer actionable.
+        let error = if messages
+            .iter()
+            .any(|message| message.state != crate::message_queue::State::Completed)
+        {
+            thread["rustQueueError"].clone()
+        } else {
+            Value::Null
+        };
         Ok(json!({
-            "messages": crate::message_queue::read(&thread)?,
+            "messages": messages,
             "rawQueue": thread["rustMessageQueue"],
-            "error": thread["rustQueueError"],
+            "error": error,
             "enabled": self.enabled_queues.contains(id)
         }))
     }
@@ -513,6 +527,7 @@ impl Engine {
             workspace_tx,
             workspace_rx,
             provider_discovery: None,
+            provider_discovery_pending: discover,
             schedule_initialized: false,
             schedule_recovery_pending: false,
             schedule_last_poll: Instant::now() - Duration::from_secs(2),
@@ -522,6 +537,8 @@ impl Engine {
             pending_usage: HashMap::new(),
             steering_operations: HashMap::new(),
             enabled_queues: HashSet::new(),
+            queue_catalog_retry_after: None,
+            queue_catalog_poll_after: HashMap::new(),
             goal_selection_waiting: HashSet::new(),
             native_follow_up: follow_up_api::State::default(),
             turn_results: Default::default(),
@@ -1048,6 +1065,12 @@ impl Engine {
                     })
                 } else { None };
                 let executable=executable.map(provider_configuration::current_executable).or_else(||provider_configuration::current().and_then(|configuration|configuration.approved_executable()));
+                ensure!(
+                    !crate::model_catalog::supported(provider)
+                        || executable.is_some()
+                        || !self.provider_discovery_pending,
+                    "Provider discovery is still in progress"
+                );
                 let result = self.model_catalog.refresh(provider, executable)?;
                 self.revision += 1;
                 Ok(result)
@@ -2279,6 +2302,8 @@ impl Engine {
         if self.admissions_frozen() {
             return;
         }
+        self.queue_catalog_poll_after
+            .retain(|id, _| self.enabled_queues.contains(id));
         let ids: Vec<_> = self.enabled_queues.iter().cloned().collect();
         for id in ids {
             if self.runs.contains_key(&id)
@@ -2289,13 +2314,25 @@ impl Engine {
                 continue;
             }
             if self
-                .store
-                .thread(&id)
-                .ok()
-                .is_some_and(|thread| self.named_resume.waiting_for_join(&thread))
+                .queue_catalog_poll_after
+                .get(&id)
+                .is_some_and(|until| Instant::now() < *until)
             {
                 continue;
             }
+            if let Ok(thread) = self.store.thread(&id) {
+                if self.named_resume.waiting_for_join(&thread) {
+                    continue;
+                }
+                if self.queue_waits_for_codex_catalog(&thread) {
+                    // Do not repeatedly decode a long transcript while the
+                    // asynchronous model-list worker is running.
+                    self.queue_catalog_poll_after
+                        .insert(id.clone(), Instant::now() + Duration::from_secs(1));
+                    continue;
+                }
+            }
+            self.queue_catalog_poll_after.remove(&id);
             let launched = (|| -> Result<bool> {
                 let Some(claim) = self.claim_next_queue_turn(&id)? else {
                     return Ok(false);
@@ -2510,6 +2547,7 @@ impl Engine {
             let is_attachment = self.attachment_operations.remove(&id);
             if id == "provider-discovery" {
                 self.provider_discovery = Some(result);
+                self.provider_discovery_pending = false;
                 self.revision += 1;
                 continue;
             }
@@ -3662,6 +3700,38 @@ mod tests {
                 .execute("agent.queue.list", &json!({"threadId":id}))
                 .is_err()
         );
+    }
+    #[test]
+    fn completed_or_removed_queue_does_not_expose_an_old_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = Engine::fixture(Store::open(&dir.path().join("queue.sqlite")).unwrap());
+        let mut thread = engine.store.new_thread("").unwrap();
+        let id = text(&thread, "id");
+        crate::message_queue::add(&mut thread, "saved message").unwrap();
+        thread["rustQueueError"] = json!("old catalog failure");
+        engine.store.save(&thread).unwrap();
+        assert_eq!(
+            engine.native_queue_read(&id).unwrap()["error"],
+            "old catalog failure"
+        );
+        for state in ["failed", "interrupted", "dispatching"] {
+            thread["rustMessageQueue"][0]["state"] = json!(state);
+            engine.store.save(&thread).unwrap();
+            assert_eq!(
+                engine.native_queue_read(&id).unwrap()["error"],
+                "old catalog failure"
+            );
+        }
+        thread["rustMessageQueue"][0]["state"] = json!("completed");
+        engine.store.save(&thread).unwrap();
+        assert!(engine.native_queue_read(&id).unwrap()["error"].is_null());
+        assert_eq!(
+            engine.store.thread(&id).unwrap()["rustQueueError"],
+            "old catalog failure"
+        );
+        thread["rustMessageQueue"] = json!([]);
+        engine.store.save(&thread).unwrap();
+        assert!(engine.native_queue_read(&id).unwrap()["error"].is_null());
     }
     #[test]
     fn provider_selection_matches_runtime_support_and_rejects_invalid_models() {

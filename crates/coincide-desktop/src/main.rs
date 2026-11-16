@@ -255,7 +255,15 @@ fn send_captured_waiting(engine: &SharedEngine, captured: &Value, prompt: &str) 
             anyhow::bail!("App is closing; message retained");
         }
         if !owner.is_thread_stopping(&id) {
-            return owner.send_captured_native_turn(captured, prompt);
+            if !owner.native_send_waits_for_codex_catalog(captured) {
+                return owner.send_captured_native_turn(captured, prompt);
+            }
+            drop(owner);
+            if Instant::now() >= deadline {
+                anyhow::bail!("Codex is unavailable. Your message is still in the composer.");
+            }
+            std::thread::sleep(Duration::from_millis(250));
+            continue;
         }
         drop(owner);
         if Instant::now() >= deadline {
@@ -266,7 +274,10 @@ fn send_captured_waiting(engine: &SharedEngine, captured: &Value, prompt: &str) 
 }
 fn send_error_message(reason: &str) -> String {
     let lower = reason.to_ascii_lowercase();
-    if lower.contains("catalog") || lower.contains("model proof") {
+    if lower.contains("catalog")
+        || lower.contains("model proof")
+        || lower.contains("model options are temporarily unavailable")
+    {
         "The selected model or its options are unavailable. Choose a model and try again.".into()
     } else {
         format!("Message not sent: {reason}")

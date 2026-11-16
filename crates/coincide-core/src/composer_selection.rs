@@ -13,8 +13,8 @@ pub fn capabilities() -> Value {
             "modelDiscovery":{"supported":crate::model_catalog::supported(id.as_str().unwrap_or("")),
                 "reason":if crate::model_catalog::supported(id.as_str().unwrap_or("")) {Value::Null} else {json!("Read-only model discovery is not implemented for this provider/platform")}},
             "steering":{"supported":id=="codex","textOnly":true,"requiresActiveTurn":true,"requiresBuildMode":true,"reason":if id=="codex" {Value::Null}else{json!("Active-turn steering is implemented only for Codex")}},
-            "effort":{"supported":false,"reason":if id=="codex" {"Choose an explicit Codex model and refresh its catalog for supported effort choices."}else{"Reasoning effort is not connected for this provider."}},
-            "speed":{"supported":false,"reason":if id=="codex" {"Choose an explicit Codex model and refresh its catalog for supported speed choices."}else{"Speed is not connected for this provider."}},
+            "effort":{"supported":false,"reason":if id=="codex" {"Choose a Codex model to view its reasoning options."}else{"Reasoning effort is not connected for this provider."}},
+            "speed":{"supported":false,"reason":if id=="codex" {"Choose a Codex model to view its speed options."}else{"Speed is not connected for this provider."}},
             "accessModes":json!(["approval","fullAccess"]),"interactionModes":if id=="codex"{json!(["build","plan"])}else{json!(["build"])},
             "modesOrdinaryThreadsOnly":id=="codex",
             "planModelRequirement":if id=="codex"{json!("explicit_model_required")}else{Value::Null}})
