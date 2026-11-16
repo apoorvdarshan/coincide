@@ -154,9 +154,9 @@ impl Coincide {
             let content = div().flex_1().min_w_0().child(title).child(
                 div()
                     .px_2()
-                    .truncate()
+                    .line_clamp(2)
                     .text_xs()
-                    .text_color(self.color(0xe4e9f2).opacity(0.6))
+                    .text_color(cx.theme().muted_foreground)
                     .child(card.preview),
             );
             let mut row = div()
@@ -164,10 +164,12 @@ impl Coincide {
                 .gap_2()
                 .items_center()
                 .min_w_0()
-                .when(card.is_file, |row| row.w(px(190.)))
+                .when(card.is_file, |row| row.w(px(220.)).max_w_full())
                 .when(!card.is_file, |row| row.w_full())
-                .rounded_md()
-                .bg(self.color(0x202735))
+                .rounded(px(8.))
+                .bg(cx.theme().muted)
+                .border_1()
+                .border_color(cx.theme().border)
                 .px_1()
                 .py_1()
                 .child(content);
@@ -199,9 +201,10 @@ impl Coincide {
         if raw.as_array().is_some_and(|rows| rows.len() > 1) {
             pane = pane.child(
                 Button::new("clear-composer-context")
-                    .label("Remove all")
+                    .label("Clear references")
                     .ghost()
-                    .compact()
+                    .xsmall()
+                    .text_color(cx.theme().muted_foreground)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.edit_context(&source, Edit::Clear, cx)
                     })),
@@ -258,8 +261,10 @@ impl Coincide {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .rounded_md()
-                    .bg(self.color(0x202735))
+                    .rounded(px(8.))
+                    .bg(cx.theme().muted)
+                    .border_1()
+                    .border_color(cx.theme().border)
                     .px_1()
                     .py_1()
                     .child(pill)
@@ -267,7 +272,7 @@ impl Coincide {
                         div()
                             .truncate()
                             .text_xs()
-                            .text_color(self.color(0xe4e9f2).opacity(0.6))
+                            .text_color(cx.theme().muted_foreground)
                             .child(card.preview),
                     ),
             );

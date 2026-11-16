@@ -5182,7 +5182,9 @@ impl Coincide {
                                 .w_full()
                                 .h_full()
                                 .rounded_md()
-                                .bg(self.color(0x202735))
+                                .bg(cx.theme().muted)
+                                .border_1()
+                                .border_color(cx.theme().border)
                                 .flex()
                                 .flex_col()
                                 .items_center()
@@ -6169,7 +6171,7 @@ impl Coincide {
                 view.child(
                     div()
                         .text_xs()
-                        .text_color(self.color(0xe4e9f2).opacity(0.6))
+                        .text_color(cx.theme().muted_foreground)
                         .child(format!(
                             "{attachment_count} attachment{}",
                             if attachment_count == 1 { "" } else { "s" }
@@ -7166,7 +7168,7 @@ impl Render for Coincide {
                                                         .flex_shrink_1()
                                                         .overflow_y_scroll()
                                                         .when(attachment_count > 0, |view| {
-                                                            view.child(div().mb_2().text_xs().text_color(self.color(0xe4e9f2).opacity(0.65))
+                                                            view.child(div().mb_2().text_xs().text_color(cx.theme().muted_foreground)
                                                                 .child(format!("{attachment_count} attachment{}", if attachment_count == 1 { "" } else { "s" })))
                                                         })
                                                         .when_some(
