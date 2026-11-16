@@ -1697,8 +1697,10 @@ impl Coincide {
                 .child(self.settings_group("Appearance", appearance))
                 .child(self.settings_group("Display & text", display))
                 .child(self.settings_group("Workspace", workspace));
-        } else {
+        } else if matches(S::Appearance, "") {
             content = content.child(appearance).child(display).child(workspace);
+        } else if matches(S::Conversation, "") {
+            content = content.child(display);
         }
         let mut conversation = div().w_full().min_w_0().flex().flex_col();
         conversation = choice_rows(
