@@ -7,7 +7,7 @@
 use super::*;
 use gpui_kit::assets::IconName;
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// Swift's `Date` reference (2001-01-01) as Unix seconds.
 const REFERENCE_UNIX: f64 = 978_307_200.0;
@@ -154,7 +154,7 @@ impl Turns<'_> {
         let terminal = range.clone().rev().find(|&i| {
             self.items[i]["kind"] == "assistant" && visible(&self.items[i], self.show_reasoning)
         });
-        let (hidden, headers, groups) = self.turn_plan(opener, range);
+        let (hidden, headers, groups) = self.turn_plan(opener, range, self.running_opener());
         RowPlan {
             hidden: hidden.contains(&index),
             terminal_reply: terminal == Some(index),
@@ -230,6 +230,7 @@ impl Turns<'_> {
         &self,
         opener: Option<usize>,
         range: std::ops::Range<usize>,
+        running_opener: Option<usize>,
     ) -> (
         HashSet<usize>,
         Vec<(usize, Header)>,
@@ -278,7 +279,7 @@ impl Turns<'_> {
         }
         let mut headers = Vec::new();
         if let Some(opener) = opener
-            && Some(opener) == self.running_opener()
+            && Some(opener) == running_opener
         {
             let started_at = self
                 .running_started_at
@@ -474,6 +475,26 @@ pub(super) fn elapsed(interval: f64) -> String {
     format!("{hours}h {:02}m", minutes % 60)
 }
 
+/// A whole turn shares one layout. Materialize a row only when the virtual
+/// list requests it, rather than allocating a RowPlan for every hidden item.
+struct CachedTurnPlan {
+    range: std::ops::Range<usize>,
+    terminal: Option<usize>,
+    hidden: HashSet<usize>,
+    headers: HashMap<usize, Header>,
+    groups: HashMap<usize, GroupPlan>,
+}
+impl CachedTurnPlan {
+    fn row(&self, index: usize) -> RowPlan {
+        RowPlan {
+            hidden: self.hidden.contains(&index),
+            terminal_reply: self.terminal == Some(index),
+            header: self.headers.get(&index).cloned(),
+            group: self.groups.get(&index).cloned(),
+        }
+    }
+}
+
 /// Opened headers, per conversation like Swift's expansion memory, the live
 /// clock last drawn (the running header redraws once a second), and the runs
 /// whose provider has not answered yet.
@@ -482,13 +503,68 @@ pub(super) struct State {
     expanded: HashSet<(String, String)>,
     // Reuse turn plans while the selected transcript and display options are
     // unchanged, including during continuous trackpad or mouse scrolling.
-    plans: std::cell::RefCell<HashMap<usize, RowPlan>>,
+    plans: std::cell::RefCell<BTreeMap<usize, CachedTurnPlan>>,
     plan_context: std::cell::Cell<Option<(u64, bool, bool, Option<u64>)>>,
+    opener_cache: std::cell::Cell<Option<(u64, bool, Option<usize>)>>,
     tick: Option<(String, String)>,
     pub starting: HashSet<String>,
 }
 
 impl State {
+    pub(super) fn running_opener(
+        &self,
+        revision: u64,
+        items: &[Value],
+        running: bool,
+    ) -> Option<usize> {
+        if let Some((cached_revision, cached_running, opener)) = self.opener_cache.get()
+            && (cached_revision, cached_running) == (revision, running)
+        {
+            return opener;
+        }
+        let opener = running_opener(items, running);
+        self.opener_cache.set(Some((revision, running, opener)));
+        opener
+    }
+
+    fn plan(&self, turns: &Turns<'_>, index: usize) -> RowPlan {
+        if index >= turns.items.len() {
+            return RowPlan::default();
+        }
+        if let Some(row) = self
+            .plans
+            .borrow()
+            .range(..=index)
+            .next_back()
+            .and_then(|(_, plan)| plan.range.contains(&index).then(|| plan.row(index)))
+        {
+            return row;
+        }
+        let (opener, range) = turns.turn(index);
+        let terminal = range.clone().rev().find(|&i| {
+            turns.items[i]["kind"] == "assistant" && visible(&turns.items[i], turns.show_reasoning)
+        });
+        let active_opener = self.plan_context.get().map_or_else(
+            || turns.running_opener(),
+            |(revision, _, _, _)| self.running_opener(revision, turns.items, turns.running),
+        );
+        let (hidden, headers, groups) = turns.turn_plan(opener, range.clone(), active_opener);
+        let mut indexed_headers = HashMap::new();
+        for (anchor, header) in headers {
+            indexed_headers.entry(anchor).or_insert(header);
+        }
+        let plan = CachedTurnPlan {
+            range: range.clone(),
+            terminal,
+            hidden,
+            headers: indexed_headers,
+            groups,
+        };
+        let row = plan.row(index);
+        self.plans.borrow_mut().insert(range.start, plan);
+        row
+    }
+
     pub(super) fn begin_render(
         &self,
         revision: u64,
@@ -538,36 +614,8 @@ impl super::Coincide {
     }
 
     pub(super) fn turn_plan(&self, index: usize) -> RowPlan {
-        if let Some(plan) = self.chat_turns.plans.borrow().get(&index) {
-            return plan.clone();
-        }
-        self.selected_turns(|turns, _| {
-            if index >= turns.items.len() {
-                return RowPlan::default();
-            }
-            let (opener, range) = turns.turn(index);
-            let terminal = range.clone().rev().find(|&i| {
-                turns.items[i]["kind"] == "assistant"
-                    && visible(&turns.items[i], turns.show_reasoning)
-            });
-            let (hidden, headers, groups) = turns.turn_plan(opener, range.clone());
-            let mut plans = self.chat_turns.plans.borrow_mut();
-            for i in range {
-                plans.insert(
-                    i,
-                    RowPlan {
-                        hidden: hidden.contains(&i),
-                        terminal_reply: terminal == Some(i),
-                        header: headers
-                            .iter()
-                            .find_map(|(anchor, header)| (*anchor == i).then(|| header.clone())),
-                        group: groups.get(&i).cloned(),
-                    },
-                );
-            }
-            plans.get(&index).cloned().unwrap_or_default()
-        })
-        .unwrap_or_default()
+        self.selected_turns(|turns, _| self.chat_turns.plan(turns, index))
+            .unwrap_or_default()
     }
 
     /// The live line below the selected thread's last row, with the agent it names.
@@ -892,21 +940,98 @@ mod tests {
     #[::core::prelude::v1::test]
     fn a_cached_layout_survives_scroll_frames_but_not_edits_or_expansion() {
         let mut state = State::default();
+        let items = [item("u", "user", 1.), item("a", "assistant", 2.)];
+        let expanded = |_: &str| false;
+        let turns = Turns {
+            items: &items,
+            recorded_durations: None,
+            running: false,
+            running_started_at: None,
+            show_reasoning: true,
+            expanded: &expanded,
+        };
         state.begin_render(1, false, true, None);
-        state.plans.borrow_mut().insert(
-            7,
-            RowPlan {
-                hidden: true,
-                ..Default::default()
-            },
-        );
+        assert_eq!(state.plan(&turns, 1), turns.plan(1));
         state.begin_render(1, false, true, None);
-        assert!(state.plans.borrow().contains_key(&7));
+        assert_eq!(state.plans.borrow().len(), 1);
         state.begin_render(2, false, true, None);
         assert!(state.plans.borrow().is_empty());
-        state.plans.borrow_mut().insert(7, RowPlan::default());
+        state.plan(&turns, 0);
         state.toggle("thread", "anchor");
         assert!(state.plans.borrow().is_empty());
+    }
+
+    #[::core::prelude::v1::test]
+    fn long_turns_keep_one_cached_layout_and_preserve_each_row() {
+        let mut items = vec![item("u", "user", 1.)];
+        items.extend((0..5000).map(|index| item(&format!("tool-{index}"), "tool", 2.)));
+        items.push(item("answer", "assistant", 3.));
+        items.push(item("next", "user", 4.));
+        items.push(item("next-answer", "assistant", 5.));
+        let expanded = |_: &str| false;
+        let turns = Turns {
+            items: &items,
+            recorded_durations: None,
+            running: false,
+            running_started_at: None,
+            show_reasoning: true,
+            expanded: &expanded,
+        };
+        let state = State::default();
+        state.begin_render(1, false, true, None);
+        for index in [0, 1, 2500, 5000, 5001, 5002, 5003] {
+            assert_eq!(state.plan(&turns, index), turns.plan(index), "row {index}");
+        }
+        assert_eq!(state.plans.borrow().len(), 2);
+    }
+
+    #[::core::prelude::v1::test]
+    fn cached_rows_match_turn_layout_for_steers_expansion_and_reasoning() {
+        let mut steer = item("steer", "user", 5.);
+        steer["steered"] = json!(true);
+        let items = [
+            item("first", "user", 1.),
+            item("tool", "tool", 2.),
+            item("reason", "reasoning", 3.),
+            item("interim", "assistant", 4.),
+            steer,
+            item("tool2", "tool", 6.),
+            item("answer", "assistant", 7.),
+            item("second", "user", 8.),
+            item("failure", "error", 9.),
+            item("reply", "assistant", 10.),
+        ];
+        for running in [false, true] {
+            for show_reasoning in [false, true] {
+                for open in [false, true] {
+                    let expanded = |_: &str| open;
+                    let turns = Turns {
+                        items: &items,
+                        recorded_durations: None,
+                        running,
+                        running_started_at: Some(10.),
+                        show_reasoning,
+                        expanded: &expanded,
+                    };
+                    let state = State::default();
+                    state.begin_render(1, running, show_reasoning, Some(10.));
+                    for index in 0..items.len() {
+                        assert_eq!(state.plan(&turns, index), turns.plan(index), "row {index}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[::core::prelude::v1::test]
+    fn running_opener_follows_transcript_and_running_changes() {
+        let mut items = vec![item("first", "user", 1.), item("work", "tool", 2.)];
+        let state = State::default();
+        assert_eq!(state.running_opener(1, &items, true), Some(0));
+        assert_eq!(state.running_opener(1, &items, false), None);
+        items.push(item("next", "user", 3.));
+        assert_eq!(state.running_opener(2, &items, true), Some(2));
+        assert_eq!(state.running_opener(2, &items, false), None);
     }
 
     #[::core::prelude::v1::test]

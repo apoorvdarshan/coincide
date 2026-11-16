@@ -232,7 +232,8 @@ fn try_state<T>(state: &Mutex<T>) -> Result<std::sync::MutexGuard<'_, T>> {
 /// Native callbacks must never wait for a background import holding the engine.
 /// Busy means dispatch did not run, so callers can retain their current state.
 fn call(engine: &SharedEngine, method: &str, params: Value) -> Result<Value> {
-    let mut response = try_state(engine)?.dispatch(json!({"method":method,"params":params}));
+    let mut response =
+        try_state(engine)?.dispatch_desktop(json!({"method":method,"params":params}));
     if let Some(error) = response.get("error") {
         anyhow::bail!("{}", error["message"].as_str().unwrap_or("Command failed"));
     }
@@ -1990,7 +1991,7 @@ impl Coincide {
             let mut engine = try_state(&self.engine)?;
             let requested = engine.requested_open.clone();
             let remembered = engine.store.native_last_selected_thread()?;
-            let response = engine.dispatch(json!({"method":"threads.list","params":{}}));
+            let response = engine.dispatch_desktop(json!({"method":"threads.list","params":{}}));
             if let Some(error) = response.get("error") {
                 anyhow::bail!(
                     "{}",
@@ -6866,7 +6867,11 @@ impl Render for Coincide {
         let running_start = self.selected.as_ref().and_then(|thread| {
             let id = thread["id"].as_str()?;
             let items = thread["items"].as_array()?;
-            chat_turns::running_opener(items, self.running.iter().any(|running| running == id))
+            self.chat_turns.running_opener(
+                self.selected.transcript_revision(),
+                items,
+                self.running.iter().any(|running| running == id),
+            )
         });
         // Ask where the list is, not whether it is following: the follow flag
         // only re-engages in a fully measured layout, so rows that are still
