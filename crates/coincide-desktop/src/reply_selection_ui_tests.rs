@@ -2,9 +2,13 @@
 //! Coincide constructor, native host, clipboard fallback, agent or user files.
 use super::{TextViewState, focused_reply_projection, managed_markdown};
 use gpui_kit::{
-    App, AppContext, Context, Entity, Focusable, IntoElement, ParentElement, Render, Styled,
-    TestAppContext, VisualTestContext, Window, component::input::TextareaState, div, px,
+    App, AppContext, Context, Entity, Focusable, InteractiveElement, IntoElement, Modifiers,
+    MouseButton, ParentElement, Render, Styled, TestAppContext, VisualTestContext, Window,
+    component::input::TextareaState,
+    component::menu::{ContextMenuExt as _, PopupMenuItem},
+    div, point, px,
 };
+use std::{cell::RefCell, rc::Rc};
 const CHILD: &str = "COINCIDE_HEADLESS_REPLY_SELECTION_CHILD";
 const SOURCE: &str = "one **bold** café 👩🏽‍💻\n\nrepeat and `repeat`";
 const ITEM: &str = "12345678-1234-1234-1234-123456789ABC";
@@ -13,14 +17,16 @@ struct Harness {
     input: Entity<TextareaState>,
     thread: String,
     item: String,
+    menu_reply: Rc<RefCell<Option<String>>>,
 }
 impl Render for Harness {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .w(px(560.))
-            .h(px(300.))
-            .flex()
-            .flex_col()
+        let expected_thread = self.thread.clone();
+        let expected_item = self.item.clone();
+        let reply = self.menu_reply.clone();
+        let message = div()
+            .id("reply-selection-menu-test")
+            .w_full()
             .child(managed_markdown(
                 &self.thread,
                 &self.item,
@@ -28,6 +34,27 @@ impl Render for Harness {
                 window,
                 cx,
             ))
+            .context_menu(move |menu, window, cx| {
+                let selection = focused_reply_projection(window, cx).filter(|selection| {
+                    selection.thread == expected_thread && selection.item == expected_item
+                });
+                let reply = reply.clone();
+                menu.item(PopupMenuItem::new("Reply to selection").on_click(
+                    move |_, window, cx| {
+                        if let Some(selection) = &selection
+                            && selection.current_in_menu(window, cx)
+                        {
+                            *reply.borrow_mut() = Some(selection.selected_text().to_owned());
+                        }
+                    },
+                ))
+            });
+        div()
+            .w(px(560.))
+            .h(px(300.))
+            .flex()
+            .flex_col()
+            .child(message)
             .child(gpui_kit::component::input::Textarea::new(&self.input).h(px(80.)))
     }
 }
@@ -43,6 +70,7 @@ fn setup(cx: &mut TestAppContext) -> (Entity<Harness>, &mut VisualTestContext) {
         input: cx.new(|cx| TextareaState::new(window, cx)),
         thread: "thread-one".into(),
         item: ITEM.into(),
+        menu_reply: Rc::new(RefCell::new(None)),
     });
     vcx.update(|window, cx| {
         window.activate_window();
@@ -56,6 +84,29 @@ fn setup(cx: &mut TestAppContext) -> (Entity<Harness>, &mut VisualTestContext) {
     vcx.run_until_parked();
     vcx.update(draw);
     (view, vcx)
+}
+
+#[gpui_kit::test]
+#[ignore = "private-child wrapper only"]
+fn headless_reply_menu_keeps_selection_after_popup_clears_it(cx: &mut TestAppContext) {
+    let (view, vcx) = setup(cx);
+    let press = point(px(20.), px(12.));
+    vcx.simulate_mouse_down(press, MouseButton::Right, Modifiers::default());
+    vcx.simulate_mouse_up(press, MouseButton::Right, Modifiers::default());
+    vcx.run_until_parked();
+    vcx.update(draw);
+    // Native popup interaction can clear the selected text before activation.
+    vcx.update(|window, cx| {
+        let state = view.read(cx).state.clone();
+        state.update(cx, |state, cx| state.clear_selection(cx));
+        draw(window, cx);
+    });
+    let item = point(press.x + px(30.), press.y + px(17.));
+    vcx.simulate_mouse_move(item, None, Modifiers::default());
+    vcx.simulate_click(item, Modifiers::default());
+    vcx.run_until_parked();
+    let reply = view.read_with(vcx, |view, _| view.menu_reply.borrow().clone());
+    assert!(reply.is_some_and(|text| text.contains("one bold café 👩🏽‍💻")));
 }
 #[gpui_kit::test]
 #[ignore = "private-child wrapper only"]
@@ -180,8 +231,8 @@ fn actual_native_reply_selection_in_private_child() {
         root.display()
     );
     assert!(
-        stdout.contains("2 passed"),
-        "both actual native selection cases must run\n{stdout}\n{stderr}"
+        stdout.contains("3 passed"),
+        "all actual native selection cases must run\n{stdout}\n{stderr}"
     );
     fs::remove_dir_all(root).unwrap();
 }

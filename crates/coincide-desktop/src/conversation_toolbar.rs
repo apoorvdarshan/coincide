@@ -56,6 +56,59 @@ fn bot_heading(selected: Option<&Value>, bots: &[Value]) -> Option<(String, Stri
     Some((name.to_owned(), text(selected, "title")))
 }
 
+/// Align the mark to the whole title block, whether a subtitle is present or not.
+fn heading_content(
+    title: String,
+    subtitle: Option<String>,
+    mark: Option<AnyElement>,
+    subtitle_color: Rgba,
+) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .w_full()
+        .min_w_0()
+        .when_some(mark, |row, mark| {
+            row.child(
+                div()
+                    .debug_selector(|| "conversation-heading-mark".into())
+                    .flex_shrink_0()
+                    .child(mark),
+            )
+        })
+        .child(
+            div()
+                .debug_selector(|| "conversation-heading-text".into())
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .justify_center()
+                .gap(px(1.))
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_size(px(14.))
+                        .line_height(px(16.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(title),
+                )
+                .when_some(subtitle, |column, subtitle| {
+                    column.child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_size(px(11.))
+                            .line_height(px(14.))
+                            .text_color(subtitle_color)
+                            .child(subtitle),
+                    )
+                }),
+        )
+}
+
 /// The panels that open in the inspector column, as Swift's `InspectorPanelButtons`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RightPanel {
@@ -97,6 +150,29 @@ impl Coincide {
             .as_ref()
             .map(|subtitle| format!("{title}\n{subtitle}"))
             .unwrap_or_else(|| title.clone());
+        let mark = if bot.is_some() {
+            Some(
+                div()
+                    .size(px(18.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(IconName::Bot)
+                    .into_any_element(),
+            )
+        } else {
+            provider_mark.map(|mark| {
+                div()
+                    .size(px(28.))
+                    .rounded(px(9.))
+                    .bg(self.color(0x202a3b))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(mark)
+                    .into_any_element()
+            })
+        };
         let heading = div()
             .id("conversation-header-context")
             .role(Role::Label)
@@ -105,9 +181,7 @@ impl Coincide {
             .flex_1()
             .min_w_0()
             .flex()
-            .flex_col()
-            .justify_center()
-            .gap(px(1.))
+            .items_center()
             .py(px(2.))
             .when(cfg!(target_os = "macos"), |heading| {
                 heading.on_mouse_down(MouseButton::Left, |event, window, _| {
@@ -118,56 +192,12 @@ impl Coincide {
                     }
                 })
             })
-            .when(bot.is_some(), |heading| {
-                heading.pl(px(26.)).relative().child(
-                    div()
-                        .absolute()
-                        .left_0()
-                        .top(px(8.))
-                        .size(px(18.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(IconName::Bot),
-                )
-            })
-            .when(bot.is_none(), |heading| {
-                heading.when_some(provider_mark, |heading, mark| {
-                    heading.pl(px(36.)).relative().child(
-                        div()
-                            .absolute()
-                            .left_0()
-                            .top(px(4.))
-                            .size(px(28.))
-                            .rounded(px(9.))
-                            .bg(self.color(0x202a3b))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(mark),
-                    )
-                })
-            })
-            .child(
-                div()
-                    .min_w_0()
-                    .truncate()
-                    .text_size(px(14.))
-                    .line_height(px(16.))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(title),
-            )
-            .when_some(subtitle, |heading, subtitle| {
-                heading.child(
-                    div()
-                        .min_w_0()
-                        .truncate()
-                        .text_size(px(11.))
-                        .line_height(px(14.))
-                        .text_color(self.color(0xe4e9f2).opacity(0.65))
-                        .child(subtitle),
-                )
-            });
+            .child(heading_content(
+                title,
+                subtitle,
+                mark,
+                self.color(0xe4e9f2).opacity(0.65),
+            ));
         div()
             .id("conversation-toolbar")
             .flex()
@@ -522,6 +552,10 @@ impl Coincide {
             .into_any_element()
     }
 }
+
+#[cfg(test)]
+#[path = "conversation_heading_ui_tests.rs"]
+mod heading_ui_tests;
 
 #[cfg(test)]
 mod tests {
