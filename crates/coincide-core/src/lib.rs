@@ -28,6 +28,7 @@ pub mod thread_history;
 mod browser_usage_chrome;
 pub mod cli_session_discovery;
 pub mod cli_session_import;
+pub mod cli_usage_logs;
 pub mod credentials;
 pub mod dictation;
 pub mod git_actions;

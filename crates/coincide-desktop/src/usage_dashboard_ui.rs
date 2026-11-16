@@ -10,7 +10,7 @@ use coincide_core::{
     provider_catalog::ProviderId,
     usage_limits::{DisplayMode, Limits, most_constrained, warning_text},
     usage_presentation::{self as format, Level, Row},
-    usage_report::{self as report, Event, PROVIDERS, Report, Totals},
+    usage_report::{self as report, PROVIDERS, Report, Totals},
 };
 use gpui_kit::component::menu::PopupMenuItem;
 
@@ -963,7 +963,7 @@ impl Coincide {
         &self,
         card: &Card,
         report: &Report,
-        events: &[Event],
+        tracked: Option<&Report>,
         period_name: &str,
         mode: DisplayMode,
         cx: &App,
@@ -972,14 +972,6 @@ impl Coincide {
         let muted = self.usage_muted(cx);
         let provider = card.account.provider;
         let mut body = Vec::new();
-        let tracked = card.account.shows_tracked().then(|| {
-            let own = events
-                .iter()
-                .filter(|e| e.provider == provider && e.account_id == card.account.id)
-                .cloned()
-                .collect::<Vec<_>>();
-            Report::make(&own, 30, now, &Local)
-        });
         match &card.state {
             LimitState::Ready(limits) if limits.has_rows() => {
                 let limits = limits.current(now);
@@ -1106,25 +1098,27 @@ impl Coincide {
             .as_ref()
             .map(|data| data.records.as_slice())
             .unwrap_or_default();
-        let all_events = report::events(records, &[])
-            .into_iter()
-            .filter(|event| enabled.contains(&event.provider.as_str()))
-            .collect::<Vec<_>>();
+        let includes_other_sessions = self.settings["usageIncludesOtherSessions"]
+            .as_bool()
+            .unwrap_or(true);
         let filter_provider = dashboard
             .provider
             .filter(|provider| enabled.contains(provider));
         let filter_account = filter_provider.and(dashboard.account.clone());
-        let events = all_events
-            .iter()
-            .filter(|event| {
-                filter_provider.is_none_or(|provider| event.provider == provider)
-                    && filter_account
-                        .as_deref()
-                        .is_none_or(|account| event.account_id == account)
+        let report = dashboard
+            .data
+            .as_ref()
+            .map(|data| {
+                data.report(
+                    includes_other_sessions,
+                    &enabled,
+                    filter_provider,
+                    filter_account.as_deref(),
+                    dashboard.days,
+                    now,
+                )
             })
-            .cloned()
-            .collect::<Vec<_>>();
-        let report = Report::make(&events, dashboard.days, now, &Local);
+            .unwrap_or_default();
         let shown = cards
             .iter()
             .filter(|card| {
@@ -1573,9 +1567,25 @@ impl Coincide {
             ));
         }
         for card in &shown {
+            let tracked = card.account.shows_tracked().then(|| {
+                dashboard
+                    .data
+                    .as_ref()
+                    .map(|data| {
+                        data.report(
+                            includes_other_sessions,
+                            &enabled,
+                            Some(card.account.provider),
+                            Some(&card.account.id),
+                            30,
+                            now,
+                        )
+                    })
+                    .unwrap_or_default()
+            });
             content = content.child(self.usage_section(
                 Some(self.usage_account_header(card, cx)),
-                self.usage_account_body(card, &report, &all_events, &period_name, mode, cx),
+                self.usage_account_body(card, &report, tracked.as_deref(), &period_name, mode, cx),
                 None,
                 cx,
             ));
@@ -1627,6 +1637,21 @@ impl Coincide {
         content = content.child(self.usage_section(
             Some(self.usage_header_detail("Activity in Coincide", &period_name)),
             activity_body,
+            None,
+            cx,
+        ));
+
+        let cli_toggle = self.setting_toggle(
+            "Include other CLI sessions",
+            "Count Claude Code and Codex sessions from this computer alongside Coincide's activity.",
+            "usageIncludesOtherSessions",
+            true,
+            "usage-include-cli-sessions",
+            cx,
+        );
+        content = content.child(self.usage_section(
+            Some("Local usage".into_any_element()),
+            vec![cli_toggle],
             None,
             cx,
         ));
@@ -1688,10 +1713,18 @@ impl Coincide {
                 format::tokens(report.period.unpriced_tokens)
             ));
         }
-        notes = notes.child(format!(
-            "Only Coincide turns with reported usage are counted. Claude Code and Codex logs on {} aren’t read.",
-            this_computer()
-        ));
+        let logs = dashboard.data.as_ref().and_then(|data| data.logs.as_ref());
+        notes = notes.child(match logs {
+            Some(logs) if !logs.incomplete_providers.is_empty() => format!(
+                "Some CLI logs couldn’t be read completely. Saved Coincide usage is shown for {}.",
+                logs.incomplete_providers.join(" and ")
+            ),
+            Some(logs) if !logs.complete_providers.is_empty() =>
+                "Claude Code and Codex usage is read locally where logs are available. Other agents use reported Coincide turns. Nothing is uploaded.".into(),
+            _ if self.usage_history.cli_error.is_some() =>
+                "Local CLI usage is unavailable; saved Coincide usage is shown.".into(),
+            _ => format!("Coincide turns with reported usage are counted. CLI logs on {} have not been read yet.", this_computer()),
+        });
         if let Some(skipped) = dashboard
             .data
             .as_ref()
