@@ -1129,6 +1129,37 @@ mod tests {
         assert!(list["pullRequests"][0]["body"].is_null());
     }
     #[cfg(unix)]
+    fn run_fake_cli_test_in_isolated_process(name: &str) -> bool {
+        const CHILD: &str = "COINCIDE_GH_FAKE_CLI_TEST_CHILD";
+        if std::env::var(CHILD).as_deref() == Ok(name) {
+            return false;
+        }
+        // Other tests spawn processes concurrently. On Unix, a child can
+        // briefly inherit the writable fixture descriptor between fork and
+        // exec, making an immediate execution fail with ETXTBSY. Create and
+        // run these scripts in a single-test process with a private HOME.
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        std::fs::create_dir(&home).unwrap();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", name, "--nocapture", "--test-threads=1"])
+            .env_clear()
+            .env(CHILD, name)
+            .env("HOME", &home)
+            .env("TMPDIR", root.path())
+            .env("PATH", "/usr/bin:/bin")
+            .current_dir(root.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success() && String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+            "isolated GitHub fixture failed:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        true
+    }
+    #[cfg(unix)]
     fn fake(script: &str) -> (tempfile::TempDir, GhRunner) {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
@@ -1152,6 +1183,11 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn fake_cli_fixed_argv_service_ownership_and_one_shot_results() {
+        if run_fake_cli_test_in_isolated_process(
+            "github_api::tests::fake_cli_fixed_argv_service_ownership_and_one_shot_results",
+        ) {
+            return;
+        }
         let response = serde_json::to_string(&vec![pr()]).unwrap();
         let script = format!(
             "test \"$1\" = pr && test \"$2\" = list && test \"$3\" = --state && test \"$4\" = open && test \"$9\" = --repo && test \"${{10}}\" = github.com/owner/project || exit 5\nprintf '%s' '{response}'"
@@ -1181,6 +1217,11 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn fake_cli_timeout_output_limit_and_private_stderr() {
+        if run_fake_cli_test_in_isolated_process(
+            "github_api::tests::fake_cli_timeout_output_limit_and_private_stderr",
+        ) {
+            return;
+        }
         let cancelled = AtomicBool::new(false);
         // Use only shell builtins so concurrent PATH changes cannot turn the
         // intended timeout into an unrelated missing-executable failure.
@@ -1217,6 +1258,11 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn pending_bounds_root_replacement_and_detail_head_change() {
+        if run_fake_cli_test_in_isolated_process(
+            "github_api::tests::pending_bounds_root_replacement_and_detail_head_change",
+        ) {
+            return;
+        }
         let (dir, runner) = fake("sleep 1; printf '[]'");
         let root = dir.path().canonicalize().unwrap();
         let mut service = GithubService::new(runner);
@@ -1263,6 +1309,11 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn availability_asks_gh_auth_status_last_and_remembers_a_sign_in() {
+        if run_fake_cli_test_in_isolated_process(
+            "github_api::tests::availability_asks_gh_auth_status_last_and_remembers_a_sign_in",
+        ) {
+            return;
+        }
         let (dir, runner) = fake("printf '%s\\n' \"$@\" >> argv.txt\ntest -f signed-in");
         let root = dir.path().canonicalize().unwrap();
         let mut service = GithubService::new(runner);
@@ -1353,6 +1404,11 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn result_rejects_replaced_root_and_expired_retained_operations() {
+        if run_fake_cli_test_in_isolated_process(
+            "github_api::tests::result_rejects_replaced_root_and_expired_retained_operations",
+        ) {
+            return;
+        }
         let (dir, runner) = fake("printf '[]'");
         let root = dir.path().join("project");
         std::fs::create_dir(&root).unwrap();

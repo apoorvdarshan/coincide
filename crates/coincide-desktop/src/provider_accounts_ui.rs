@@ -1523,6 +1523,46 @@ mod tests {
     }
     #[::core::prelude::v1::test]
     fn codex_method_picker_keeps_row_identity_and_does_not_save_or_enroll_a_key() {
+        const CHILD: &str = "COINCIDE_CODEX_METHOD_PICKER_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            // Keep the synthetic account's exclusive file lease out of other
+            // tests' concurrent process launches and their inherited handles.
+            let root = tempfile::tempdir().unwrap();
+            let home = root.path().join("home");
+            std::fs::create_dir(&home).unwrap();
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "provider_configuration_ui::accounts::tests::codex_method_picker_keeps_row_identity_and_does_not_save_or_enroll_a_key",
+                    "--nocapture",
+                    "--test-threads=1",
+                ])
+                .env_clear()
+                .env(CHILD, "1")
+                .env("HOME", &home)
+                .env("USERPROFILE", &home)
+                .env("TMPDIR", root.path())
+                .env("TMP", root.path())
+                .env("TEMP", root.path())
+                .env("PATH", "/usr/bin:/bin")
+                .current_dir(root.path());
+            #[cfg(windows)]
+            for key in ["SystemRoot", "WINDIR"] {
+                if let Some(value) = std::env::var_os(key) {
+                    command.env(key, value);
+                }
+            }
+            let output = command.output().unwrap();
+            assert!(
+                output.status.success()
+                    && String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+                "isolated account-method test failed:\n{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
         let (_root, engine) = fixture();
         let legacy = rows(
             execute(
