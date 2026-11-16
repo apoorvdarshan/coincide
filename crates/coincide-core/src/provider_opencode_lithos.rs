@@ -124,7 +124,7 @@ fn overlay(existing: Option<&OsStr>, models: &[String]) -> Result<String> {
         .map(|id| {
             (
                 id.clone(),
-                json!({"name":id,"capabilities":{"input":["text"],"output":["text"]}}),
+                json!({"name":id,"capabilities":{"tools":true,"input":["text"],"output":["text"]}}),
             )
         })
         .collect::<serde_json::Map<_, _>>();
@@ -308,6 +308,10 @@ mod tests {
         assert_eq!(
             config["providers"]["coincide-lithos"]["models"]["future/model"]["name"],
             "future/model"
+        );
+        assert_eq!(
+            config["providers"]["coincide-lithos"]["models"]["future/model"]["capabilities"]["tools"],
+            true
         );
         assert!(!config.to_string().contains("Bearer "));
     }

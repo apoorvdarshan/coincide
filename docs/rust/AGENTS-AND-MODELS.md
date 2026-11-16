@@ -31,6 +31,8 @@ settings, select **Lithos AI** as its key service, and save the key there. Selec
 that account in the conversation; Coincide reads the models available to that
 key and exposes them in OpenCode's picker. Keys remain in the native secret
 store and are sent to Lithos in an authorization header, never in a URL.
+OpenCode assumes tool support for these models; actual capabilities depend on
+the model offered by Lithos.
 
 If an unauthenticated Lithos Metal server is running on `127.0.0.1:8000`,
 Coincide discovers the `lithos-metal` models it reports and exposes them to
