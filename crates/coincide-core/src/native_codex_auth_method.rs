@@ -123,7 +123,7 @@ impl Engine {
         // Rotate only after the transaction has checked every CAS. Keep the old
         // bounded nonsecret bytes for recovery if a later write/commit fails.
         use std::io::{Seek, SeekFrom};
-        let mut file = &*plan._exclusive._lease;
+        let mut file = &plan._exclusive._lease.0;
         let length = file.metadata()?.len();
         ensure!(length <= 64, "Invalid Codex account owner generation");
         let mut old = vec![0; length as usize];

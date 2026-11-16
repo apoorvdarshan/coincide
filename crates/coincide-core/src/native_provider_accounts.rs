@@ -110,11 +110,34 @@ pub(super) struct Account {
     home_identity: crate::private_fs::Identity,
     guard_identity: crate::private_fs::Identity,
 }
+/// All clones share the lease; only the last owner releases it.
+struct LoginLease(File);
+impl Drop for LoginLease {
+    fn drop(&mut self) {
+        #[cfg(windows)]
+        {
+            let _ = self.0.unlock();
+        }
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd;
+            // Another thread can fork while this descriptor is open. Explicit
+            // unlock prevents the inherited description retaining the lease
+            // after the final in-process owner is gone.
+            // SAFETY: this owned file remains open for the duration of Drop.
+            while unsafe { libc::flock(self.0.as_raw_fd(), libc::LOCK_UN) } != 0 {
+                if std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted {
+                    break;
+                }
+            }
+        }
+    }
+}
 #[derive(Clone)]
 pub(super) struct LoginHome {
     account: Account,
     root: PathBuf,
-    _lease: Arc<File>,
+    _lease: Arc<LoginLease>,
     base_environment: BTreeMap<String, String>,
     captured_auth: Value,
     metadata_only: bool,
@@ -301,6 +324,7 @@ impl LoginHome {
                 .try_lock_shared()
                 .context("Native account setup or removal is busy")?;
         }
+        let lease = Arc::new(LoginLease(lease));
         let mut base_environment = BTreeMap::new();
         for key in [
             "PATH",
@@ -336,7 +360,7 @@ impl LoginHome {
         let mut captured = Self {
             account,
             root: root.into(),
-            _lease: Arc::new(lease),
+            _lease: lease,
             base_environment,
             captured_auth: Value::Null,
             metadata_only: metadata,
@@ -1140,6 +1164,38 @@ pub fn native_account_key_choices(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn native_account_lease_releases_after_last_owner_even_with_an_inherited_handle() {
+        for exclusive in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path().join("owner");
+            let file = open_file(&path, true).unwrap();
+            if exclusive {
+                file.try_lock().unwrap();
+            } else {
+                file.try_lock_shared().unwrap();
+            }
+            // A duplicate shares the same open-file description as a fork.
+            let inherited = file.try_clone().unwrap();
+            let lease = Arc::new(LoginLease(file));
+            let retained = lease.clone();
+            let other = open_file(&path, false).unwrap();
+            drop(lease);
+            assert!(
+                other.try_lock().is_err(),
+                "a live clone must retain the lease"
+            );
+            drop(retained);
+            other
+                .try_lock()
+                .expect("the last owner must unlock even if a duplicate remains open");
+            other.unlock().unwrap();
+            drop(inherited);
+        }
+    }
+
     fn fixture(provider: &str) -> (tempfile::TempDir, Engine, PathBuf) {
         let (root, mut engine, binary) = super::super::tests::fixture();
         super::super::tests::save(&mut engine, provider, &binary, "fixture-only");
