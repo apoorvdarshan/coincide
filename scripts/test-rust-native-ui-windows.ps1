@@ -118,8 +118,13 @@ public static class NativeUiSmoke {
                 if(longest >= (right-left)*65/100){if(y>lastEdgeRow+2)edges.Add(y);lastEdgeRow=y;}
             }
         }
-        if(edges.Count!=2 || edges[1]-edges[0]<60)throw new Exception("Expected exactly one rendered native composer border pair");
-        int top=edges[0],bottom=edges[1];var point=new Point((left+right)/2,top+24);
+        // The composer can also have one separator between the text field and
+        // its controls. Keep the outer edges as the click bounds; the later
+        // persisted-draft assertion still verifies the click hit the editor.
+        if(edges.Count<2 || edges.Count>3)throw new Exception("Expected one rendered native composer outline");
+        int top=edges[0],bottom=edges[edges.Count-1];
+        if(bottom-top<60 || (edges.Count==3 && (edges[1]-top<20 || bottom-edges[1]<20)))throw new Exception("Invalid rendered native composer outline");
+        var point=new Point((left+right)/2,top+24);
         if(!ClientToScreen(window,ref point) || !SetCursorPos(point.X,point.Y))throw new Exception("Cannot target observed native composer");
         Send(window,process,new[]{new Input{type=0,data=new Union{mouse=new Mouse{flags=2}}},new Input{type=0,data=new Union{mouse=new Mouse{flags=4}}}});
         return new[]{left,top,right,bottom};

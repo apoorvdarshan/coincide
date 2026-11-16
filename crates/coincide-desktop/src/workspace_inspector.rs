@@ -52,10 +52,10 @@ impl Coincide {
             .flex()
             .items_center()
             .justify_between()
-            .h(px(38.))
+            .h(px(44.))
             .px_3()
             .gap_2()
-            .bg(self.color(0x111722))
+            .bg(self.color(0x151922))
             .border_b_1()
             .border_color(self.color(0x29303d))
             .child(

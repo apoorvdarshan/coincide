@@ -4183,6 +4183,7 @@ impl Coincide {
         self.poll_app_shell(window, cx);
         self.poll_appshots(window, cx);
         self.poll_computer_use(cx);
+        self.poll_agent_discovery(cx);
         self.sync_composer_selection(window, cx);
         self.poll_selection_catalog(cx);
         self.sync_palette(window, cx);
@@ -6447,7 +6448,10 @@ impl Coincide {
                 card.max_w(px((presentation::CONTENT_WIDTH
                     - presentation::RAIL_GUTTER)
                     * 0.75))
-                    .bg(self.color(0xe4e9f2).opacity(0.06))
+                    .rounded(px(16.))
+                    .bg(self.color(0x181d28))
+                    .border_1()
+                    .border_color(self.color(0x29303d).opacity(0.65))
                     .my_0()
             })
             .when(kind == "assistant", |card| {
@@ -7333,6 +7337,8 @@ impl Render for Coincide {
                 .into_any_element()
         } else if self.settings_in_main_window() {
             self.settings_surface(cx)
+        } else if self.selected.is_none() && !self.schedules_open {
+            self.empty_workspace_welcome(cx)
         } else {
             transcript.into_any_element()
         };
@@ -7438,7 +7444,7 @@ impl Render for Coincide {
                                         .flex_col()
                                         .max_w(px(presentation::CONTENT_WIDTH))
                                         .p_3()
-                                        .rounded(px(22.))
+                                        .rounded(px(18.))
                                         .bg(self.color(0x181d28))
                                         .border_1()
                                         .border_color(self.color(0x29303d))
@@ -7533,7 +7539,9 @@ impl Render for Coincide {
                                                 )
                                         })
                                         .child(
-                                            chat_layout::composer_actions(
+                                            div().mt_2().pt_2().border_t_1()
+                                            .border_color(self.color(0x29303d).opacity(0.7))
+                                            .child(chat_layout::composer_actions(
                                                 self.composer_selection_footer(window, implement_button.is_some(), cx),
                                                 div()
                                                 .flex()
@@ -7580,7 +7588,7 @@ impl Render for Coincide {
                                                 ))
                                                 .when_some(implement_button, |view, button| view.child(button))
                                                 .into_any_element(),
-                                            )
+                                            ))
                                         )
                                 )
                                 .when_some(self.branch_toolbar(cx), |view, toolbar| view.child(toolbar)),

@@ -153,6 +153,32 @@ impl Engine {
                 })
                 .transpose()?
         };
+        if defaults.is_none()
+            && !fields.contains_key("selection")
+            && self.provider_discovery.is_some()
+        {
+            let settings = self
+                .store
+                .document("settings.json")?
+                .unwrap_or_else(|| json!({}));
+            let installed = self
+                .provider_discovery
+                .as_ref()
+                .and_then(|report| report["providers"].as_array());
+            // Retain user-defined defaults. Otherwise prefer an installed,
+            // enabled coding agent; Lithos needs separate model-service setup.
+            if let Some(provider) = ["codex", "claude", "opencode", "cursor", "grok"]
+                .into_iter()
+                .find(|id| {
+                    installed.is_some_and(|rows| {
+                        rows.iter()
+                            .any(|row| row["provider"] == *id && row["state"] == "found")
+                    }) && crate::provider_preferences::enabled(&settings, id).unwrap_or(false)
+                })
+            {
+                thread["selection"] = json!({"provider":provider,"modelID":"default"});
+            }
+        }
         if let Some(defaults) = defaults {
             for key in ["selection", "accessMode", "interactionMode"] {
                 thread[key] = defaults[key].clone();

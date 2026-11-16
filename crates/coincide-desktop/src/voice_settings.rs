@@ -510,8 +510,15 @@ impl Coincide {
                                 .id("dictation-native-level")
                                 .w(px(64.))
                                 .h(px(8.))
-                                .bg(rgb(0x303946))
-                                .child(div().w(px(level * 64.)).h_full().bg(rgb(0x5caf7d))),
+                                .rounded_full()
+                                .bg(self.color(0x29303d))
+                                .child(
+                                    div()
+                                        .w(px(level * 64.))
+                                        .h_full()
+                                        .rounded_full()
+                                        .bg(self.color(0x98b1d4)),
+                                ),
                         )
                     },
                 )

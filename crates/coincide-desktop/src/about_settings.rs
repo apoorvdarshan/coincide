@@ -150,6 +150,7 @@ impl Coincide {
             }));
         }
         let license_open = self.general_settings.t3_license_open;
+        let acp_license_open = self.general_settings.acp_registry_license_open;
         let acknowledgements = vec![
             div().p_2().child("Coincide ports the design and behavior of T3 Code, the open-source agent app by T3 Tools Inc., used under the MIT License.").into_any_element(),
             self.about_link("t3code", gpui_kit::assets::IconName::GitBranch, 0x5856d6, "T3 Code", "github.com/pingdotgg/t3code", "https://github.com/pingdotgg/t3code".into(), None, cx),
@@ -165,6 +166,19 @@ impl Coincide {
                 }))
                 .into_any_element(),
             div().when(license_open, |view| view.p_2().text_xs().font_family("monospace").text_color(self.color(0x98a6ba).opacity(0.8)).child(T3_CODE_LICENSE)).into_any_element(),
+            div().p_2().child("The offline agent catalog includes metadata from the ACP Registry, under the Apache License 2.0.").into_any_element(),
+            Button::new("about-acp-registry-license")
+                .ghost().w_full()
+                .child(div().w_full().flex().items_center().gap_2()
+                    .child(Icon::new(if acp_license_open { gpui_kit::assets::IconName::ChevronDown } else { gpui_kit::assets::IconName::ChevronRight }).xsmall())
+                    .child("ACP Registry License"))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.general_settings.acp_registry_license_open = !this.general_settings.acp_registry_license_open;
+                    cx.notify();
+                })).into_any_element(),
+            div().when(acp_license_open, |view| view.p_2().text_xs().font_family("monospace")
+                .text_color(self.color(0x98a6ba).opacity(0.8))
+                .child(include_str!("../../coincide-core/third_party/acp-registry/LICENSE"))).into_any_element(),
             div().p_2().child("The Rust desktop interface uses GPUI Kit, GPUI and GPUI WebView under the Apache-2.0 License.").into_any_element(),
             self.about_link("gpui-kit", gpui_kit::assets::IconName::Boxes, 0x8e8e93, "GPUI Kit", "crates.io/crates/gpui-kit", "https://crates.io/crates/gpui-kit".into(), None, cx),
             self.about_link("notices", gpui_kit::assets::IconName::FileText, 0x8e8e93, "License and third-party notices", "THIRD_PARTY_NOTICES.md", "https://github.com/apoorvdarshan/coincide/blob/main/THIRD_PARTY_NOTICES.md".into(), None, cx),

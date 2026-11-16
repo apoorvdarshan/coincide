@@ -9,6 +9,13 @@ use settings::SettingsSection as Section;
 pub(super) struct State {
     width: Option<f32>,
     drag: Option<(f32, f32)>,
+    pub(super) agent_view: Value,
+    last_agent_read: Option<Instant>,
+    last_agent_scan: Option<Instant>,
+    agent_read_pending: bool,
+    agent_add_pending: bool,
+    show_more_agents: bool,
+    show_custom_agent: bool,
 }
 impl State {
     pub(super) fn cancel_drag(&mut self) {
@@ -52,55 +59,106 @@ pub(super) fn provider_key(provider: ProviderId) -> &'static str {
     }
 }
 
-fn section_icon(section: Section) -> (gpui_kit::assets::IconName, u32) {
+fn section_icon(section: Section) -> gpui_kit::assets::IconName {
     use gpui_kit::assets::IconName as I;
     match section {
-        Section::General => (I::Settings, 0x737780),
-        Section::Models => (I::Boxes, 0x8b5ac7),
-        Section::Usage => (I::ChartColumn, 0x278349),
-        Section::Instructions => (I::BookOpen, 0x238b91),
-        Section::Archive => (I::Archive, 0x936b48),
-        Section::Keyboard => (I::Keyboard, 0x53575d),
-        Section::Voice => (I::Mic, 0xc74444),
-        Section::Browser => (I::Globe, 0x1c8caa),
-        Section::ComputerUse => (I::Monitor, 0x347cc4),
-        Section::Appshots => (I::Camera, 0x386dc2),
-        Section::Media => (I::GalleryVerticalEnd, 0xb77927),
-        Section::Accounts => (I::LayoutDashboard, 0x5d64bb),
-        Section::Provider(_) => (I::Cpu, 0x717782),
-        Section::About => (I::Info, 0x347cc4),
-        _ => (I::Settings2, 0x737780),
+        Section::General => I::Settings,
+        Section::Models => I::Boxes,
+        Section::Usage => I::ChartColumn,
+        Section::Instructions => I::BookOpen,
+        Section::Archive => I::Archive,
+        Section::Keyboard => I::Keyboard,
+        Section::Voice => I::Mic,
+        Section::Browser => I::Globe,
+        Section::ComputerUse => I::Monitor,
+        Section::Appshots => I::Camera,
+        Section::Media => I::GalleryVerticalEnd,
+        Section::Accounts => I::LayoutDashboard,
+        Section::Provider(_) => I::Cpu,
+        Section::About => I::Info,
+        _ => I::Settings2,
     }
 }
 
-fn icon_tile(section: Section, size: f32) -> AnyElement {
+fn icon_tile(section: Section, size: f32, surface: Rgba, ink: Rgba) -> AnyElement {
     if let Section::Provider(provider) = section
         && let Some(logo) = chat_layout::provider_mark(provider_key(provider), size)
     {
         return logo.into_any_element();
     }
-    let (icon, tint) = section_icon(section);
     div()
         .w(px(size))
         .h(px(size))
         .flex_shrink_0()
-        .rounded(px(size * 0.26))
-        .bg(rgb(tint))
-        .text_color(rgb(0xffffff))
+        .rounded(px(size * 0.3))
+        .bg(surface)
+        .text_color(ink)
         .flex()
         .items_center()
         .justify_center()
-        .child(Icon::new(icon).xsmall())
+        .child(Icon::new(section_icon(section)).xsmall())
         .into_any_element()
 }
 
 pub(super) fn provider_enabled(settings: &Value, provider: ProviderId) -> bool {
-    if provider == ProviderId::Antigravity
-        && models_settings::provider_value(settings, provider_key(provider))["isEnabled"].is_null()
-    {
+    coincide_core::provider_preferences::enabled(settings, provider_key(provider)).unwrap_or(false)
+}
+
+/// Presentation only: an absent or temporarily unreadable executable never
+/// changes saved preferences, nor does it invalidate an existing thread.
+pub(super) fn provider_is_shown(
+    settings: &Value,
+    view: &Value,
+    provider: ProviderId,
+    selected: Option<&str>,
+) -> bool {
+    let key = provider_key(provider);
+    let explicit = models_settings::provider_value(settings, key)["isEnabled"] == true;
+    let configured = view["configured"]
+        .as_array()
+        .is_some_and(|rows| rows.iter().any(|row| row == key));
+    if explicit || configured || selected == Some(key) {
+        return true;
+    }
+    if provider == ProviderId::Lithos {
+        // OpenCode is its runtime, not evidence that Lithos has been set up.
         return false;
     }
-    coincide_core::provider_preferences::enabled(settings, provider_key(provider)).unwrap_or(false)
+    view["discovery"]["providers"]
+        .as_array()
+        .is_some_and(|rows| {
+            rows.iter()
+                .any(|row| row["provider"] == key && row["state"] == "found")
+        })
+}
+
+pub(super) fn registry_agent_rows(view: &Value, include_extra: bool, query: &str) -> Vec<Value> {
+    let mut rows = view["agents"].as_array().cloned().unwrap_or_default();
+    for registered in view["registered"].as_array().into_iter().flatten() {
+        let Some(id) = registered["provider"]
+            .as_str()
+            .and_then(coincide_core::acp_registry::registry_id)
+        else {
+            continue;
+        };
+        if let Some(row) = rows.iter_mut().find(|row| row["id"] == id) {
+            row["registered"] = json!(true);
+        } else {
+            rows.push(json!({"id":id,"name":registered["displayName"],"registered":true}));
+        }
+    }
+    let query = query.to_lowercase();
+    rows.retain(|row| {
+        (include_extra || row["executable"].is_string() || row["registered"] == true)
+            && (query.is_empty() || text(row, "name").to_lowercase().contains(&query))
+    });
+    rows.sort_by_key(|row| {
+        (
+            row["executable"].is_null() && row["registered"] != true,
+            text(row, "name").to_lowercase(),
+        )
+    });
+    rows
 }
 
 fn enabled_patch(
@@ -119,13 +177,7 @@ fn enabled_value_patch(
     enabled: bool,
 ) -> Result<Value> {
     anyhow::ensure!(settings.is_object(), "Saved settings are malformed");
-    let current = if provider == ProviderId::Antigravity
-        && models_settings::provider_value(settings, provider_key(provider))["isEnabled"].is_null()
-    {
-        false
-    } else {
-        coincide_core::provider_preferences::enabled(settings, provider_key(provider))?
-    };
+    let current = coincide_core::provider_preferences::enabled(settings, provider_key(provider))?;
     anyhow::ensure!(
         current == expected,
         "Provider settings changed; review the current value"
@@ -152,6 +204,162 @@ fn enabled_value_patch(
 }
 
 impl Coincide {
+    pub(super) fn poll_agent_discovery(&mut self, cx: &mut Context<Self>) {
+        if !(self.settings_open || self.selection_ui.expanded)
+            || self.settings_navigation.agent_read_pending
+            || self
+                .settings_navigation
+                .last_agent_read
+                .is_some_and(|at| at.elapsed() < Duration::from_secs(1))
+        {
+            return;
+        }
+        self.settings_navigation.agent_read_pending = true;
+        self.settings_navigation.last_agent_read = Some(Instant::now());
+        let rescan = self
+            .settings_navigation
+            .last_agent_scan
+            .is_none_or(|at| at.elapsed() >= Duration::from_secs(60));
+        if rescan {
+            self.settings_navigation.last_agent_scan = Some(Instant::now());
+        }
+        let engine = self.engine.clone();
+        cx.spawn(async move |this, cx| {
+            let view = cx
+                .background_executor()
+                .spawn(async move {
+                    try_state(&engine).map(|mut engine| {
+                        if rescan {
+                            let _ = engine.refresh_native_provider_discovery();
+                            let _ = engine.refresh_native_acp_registry();
+                        }
+                        engine.native_acp_registry_view()
+                    })
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.settings_navigation.agent_read_pending = false;
+                if view.is_err() && rescan {
+                    this.settings_navigation.last_agent_scan = None;
+                }
+                if let Ok(view) = view
+                    && this.settings_navigation.agent_view != view
+                {
+                    this.settings_navigation.agent_view = view;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    pub(super) fn refresh_agent_discovery(&mut self, cx: &mut Context<Self>) {
+        self.settings_navigation.last_agent_scan = None;
+        let engine = self.engine.clone();
+        cx.spawn(async move |this, cx| {
+            let _ = cx
+                .background_executor()
+                .spawn(async move {
+                    if let Ok(mut engine) = try_state(&engine) {
+                        let _ = engine.refresh_native_provider_discovery();
+                        let _ = engine.refresh_native_acp_registry();
+                    }
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.settings_navigation.last_agent_read = None;
+                this.poll_agent_discovery(cx);
+            });
+        })
+        .detach();
+    }
+
+    fn add_registry_agent_in_settings(&mut self, id: String, cx: &mut Context<Self>) {
+        if self.settings_navigation.agent_add_pending {
+            return;
+        }
+        self.settings_navigation.agent_add_pending = true;
+        let engine = self.engine.clone();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut owner = engine
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("App engine is unavailable"))?;
+                    owner.add_native_registry_agent(&id)
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.settings_navigation.agent_add_pending = false;
+                this.settings_status = match result {
+                    Ok(_) => "Agent added. You can select it in a conversation.".into(),
+                    Err(error) => format!("Agent could not be added: {error}"),
+                };
+                this.settings_navigation.last_agent_read = None;
+                this.refresh_provider_preferences(cx);
+                this.poll_agent_discovery(cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn add_custom_agent_in_settings(&mut self, cx: &mut Context<Self>) {
+        if self.settings_navigation.agent_add_pending {
+            return;
+        }
+        self.settings_navigation.agent_add_pending = true;
+        let name = self.custom_acp_name.read(cx).value().trim().to_owned();
+        let command = self
+            .custom_acp_executable
+            .read(cx)
+            .value()
+            .trim()
+            .to_owned();
+        let args = self.custom_acp_arguments.read(cx).value().to_string();
+        let engine = self.engine.clone();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    anyhow::ensure!(!name.is_empty(), "Enter an agent name");
+                    let executable = coincide_core::acp_registry::resolve_executable(&command)
+                        .context("Choose an installed command or executable path")?;
+                    let arguments =
+                        shell_words::split(&args).context("Check the agent arguments")?;
+                    let agent = coincide_core::acp_registry::Agent {
+                        id: format!("custom-{}", uuid::Uuid::new_v4().simple()),
+                        name,
+                        website: None,
+                        executable: Some(executable),
+                        arguments,
+                        environment: Default::default(),
+                    };
+                    let mut owner = engine
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("App engine is unavailable"))?;
+                    owner.register_native_acp_agent(&agent)
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.settings_navigation.agent_add_pending = false;
+                this.settings_status = match result {
+                    Ok(()) => {
+                        this.settings_navigation.show_custom_agent = false;
+                        "Agent added. You can select it in a conversation.".into()
+                    }
+                    Err(error) => format!("Agent could not be added: {error}"),
+                };
+                this.settings_navigation.last_agent_read = None;
+                this.refresh_provider_preferences(cx);
+                this.poll_agent_discovery(cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     pub(super) fn navigate_settings_section(
         &mut self,
         section: Section,
@@ -232,8 +440,8 @@ impl Coincide {
             None => label.into(),
         })
         .w_full()
-        .h(px(34.))
-        .rounded(px(9.))
+        .h(px(38.))
+        .rounded(px(10.))
         .ghost()
         .when(selected, |button| button.bg(self.color(0x202a3b)))
         .child(
@@ -242,7 +450,12 @@ impl Coincide {
                 .items_center()
                 .w_full()
                 .gap_2()
-                .child(icon_tile(section, 20.))
+                .child(icon_tile(
+                    section,
+                    22.,
+                    self.color(0x202a3b),
+                    self.color(0xe4e9f2).opacity(0.78),
+                ))
                 .child(
                     div()
                         .flex_1()
@@ -304,6 +517,19 @@ impl Coincide {
             )
             .child(self.settings_navigation_row(Section::Accounts, "Overview", cx));
         for provider in coincide_core::provider_catalog::provider_catalog() {
+            let selected = self
+                .selected
+                .as_ref()
+                .and_then(|thread| thread["selection"]["provider"].as_str());
+            if !provider_is_shown(
+                &self.settings,
+                &self.settings_navigation.agent_view,
+                provider.id,
+                selected,
+            ) && self.settings_section != Section::Provider(provider.id)
+            {
+                continue;
+            }
             navigation = navigation.child(self.settings_navigation_row(
                 Section::Provider(provider.id),
                 provider.display_name,
@@ -556,7 +782,21 @@ impl Coincide {
                     .text_color(self.color(0xe4e9f2).opacity(0.68))
                     .child("Choose which agents are available in Coincide."),
             );
-        for descriptor in coincide_core::provider_catalog::PROVIDERS {
+        let selected = self
+            .selected
+            .as_ref()
+            .and_then(|thread| thread["selection"]["provider"].as_str());
+        for descriptor in coincide_core::provider_catalog::PROVIDERS
+            .iter()
+            .filter(|descriptor| {
+                provider_is_shown(
+                    &self.settings,
+                    &self.settings_navigation.agent_view,
+                    descriptor.id,
+                    selected,
+                )
+            })
+        {
             let provider = descriptor.id;
             let section = Section::Provider(provider);
             let enabled = provider_enabled(&self.settings, provider);
@@ -568,6 +808,7 @@ impl Coincide {
             pane = pane.child(
                 div()
                     .flex()
+                    .flex_shrink_0()
                     .items_center()
                     .gap_3()
                     .p_4()
@@ -575,7 +816,12 @@ impl Coincide {
                     .border_1()
                     .border_color(self.color(0x29303d))
                     .bg(self.color(0x111722))
-                    .child(icon_tile(section, 30.))
+                    .child(icon_tile(
+                        section,
+                        30.,
+                        self.color(0x202a3b),
+                        self.color(0xe4e9f2),
+                    ))
                     .child(
                         div().flex_1().child(descriptor.display_name).child(
                             div()
@@ -618,10 +864,239 @@ impl Coincide {
                     ),
             );
         }
+        let registry = &self.settings_navigation.agent_view;
+        for agent in registry_agent_rows(registry, false, "") {
+            let id = text(&agent, "id");
+            let name = text(&agent, "name");
+            let registered = agent["registered"] == true;
+            let action_label = if registered {
+                format!("{name} added")
+            } else {
+                format!("Add {name}")
+            };
+            let detail = if registered {
+                "Added"
+            } else {
+                "Installed · add to use"
+            };
+            pane = pane.child(
+                self.settings_card(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .p_4()
+                        .child(Icon::new(gpui_kit::assets::IconName::Cpu).small())
+                        .child(
+                            div().flex_1().child(name).child(
+                                div()
+                                    .text_xs()
+                                    .text_color(self.color(0xe4e9f2).opacity(0.65))
+                                    .child(detail),
+                            ),
+                        )
+                        .child(
+                            Button::new(SharedString::from(format!("provider-add-{id}")))
+                                .label(if registered { "Added" } else { "Add" })
+                                .accessibility_label(action_label)
+                                .disabled(registered || self.settings_navigation.agent_add_pending)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.add_registry_agent_in_settings(id.clone(), cx)
+                                })),
+                        ),
+                )
+                .flex_shrink_0(),
+            );
+        }
+        if registry.is_null() || (registry["loading"] == true && registry["agents"].is_null()) {
+            pane = pane.child(
+                div()
+                    .text_sm()
+                    .text_color(self.color(0xe4e9f2).opacity(0.65))
+                    .child("Detecting installed agents…"),
+            );
+        }
+        pane = pane.child(
+            div()
+                .flex()
+                .flex_shrink_0()
+                .items_center()
+                .gap_2()
+                .mt_2()
+                .child(
+                    Button::new("providers-browse-more")
+                        .label(if self.settings_navigation.show_more_agents {
+                            "Hide extra agents"
+                        } else {
+                            "Browse more agents"
+                        })
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.settings_navigation.show_more_agents =
+                                !this.settings_navigation.show_more_agents;
+                            this.refresh_agent_discovery(cx);
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    Button::new("providers-rescan-installed")
+                        .label("Detect again")
+                        .ghost()
+                        .on_click(cx.listener(|this, _, _, cx| this.refresh_agent_discovery(cx))),
+                ),
+        );
+        if self.settings_navigation.show_more_agents {
+            pane = pane.child(div().mt_2().text_sm().text_color(self.color(0xe4e9f2).opacity(0.65))
+                .child("Set up another agent or model service. Newly installed agents appear above after detection."));
+            for descriptor in
+                coincide_core::provider_catalog::PROVIDERS
+                    .iter()
+                    .filter(|descriptor| {
+                        !provider_is_shown(&self.settings, registry, descriptor.id, selected)
+                    })
+            {
+                let provider = descriptor.id;
+                let label = descriptor.display_name;
+                pane =
+                    pane.child(
+                        self.settings_card(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_3()
+                                .p_4()
+                                .child(icon_tile(
+                                    Section::Provider(provider),
+                                    26.,
+                                    self.color(0x202a3b),
+                                    self.color(0xe4e9f2),
+                                ))
+                                .child(
+                                    div().flex_1().child(label).child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(self.color(0xe4e9f2).opacity(0.65))
+                                            .child(if provider == ProviderId::Lithos {
+                                                "Model service · separate setup"
+                                            } else {
+                                                "Not detected · setup available"
+                                            }),
+                                    ),
+                                )
+                                .child(
+                                    Button::new(SharedString::from(format!(
+                                        "provider-setup-extra-{}",
+                                        provider_key(provider)
+                                    )))
+                                    .label("Set up")
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        let enabled = provider_enabled(&this.settings, provider);
+                                        this.apply_settings_provider_enabled(
+                                            provider, enabled, true, window, cx,
+                                        );
+                                        this.navigate_settings_section(
+                                            Section::Provider(provider),
+                                            window,
+                                            cx,
+                                        );
+                                    })),
+                                ),
+                        )
+                        .flex_shrink_0(),
+                    );
+            }
+            pane = pane.child(
+                Button::new("providers-custom-agent")
+                    .flex_shrink_0()
+                    .label(if self.settings_navigation.show_custom_agent {
+                        "Close custom agent"
+                    } else {
+                        "Add custom ACP agent…"
+                    })
+                    .ghost()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.settings_navigation.show_custom_agent =
+                            !this.settings_navigation.show_custom_agent;
+                        cx.notify();
+                    })),
+            );
+            if self.settings_navigation.show_custom_agent {
+                pane = pane.child(self.settings_card(
+                    div().p_4().flex().flex_col().gap_2()
+                        .child(div().font_weight(FontWeight::SEMIBOLD).child("Add an installed ACP agent"))
+                        .child(div().text_xs().text_color(self.color(0xe4e9f2).opacity(0.65))
+                            .child("Enter its name, executable or command, and any ACP arguments."))
+                        .child(Input::new(&self.custom_acp_name))
+                        .child(Input::new(&self.custom_acp_executable))
+                        .child(Input::new(&self.custom_acp_arguments))
+                        .child(Button::new("providers-custom-agent-add").label("Add agent")
+                            .disabled(self.settings_navigation.agent_add_pending)
+                            .on_click(cx.listener(|this, _, _, cx| this.add_custom_agent_in_settings(cx))))
+                ).flex_shrink_0());
+            }
+            for agent in registry_agent_rows(registry, true, "")
+                .into_iter()
+                .filter(|agent| agent["executable"].is_null() && agent["registered"] != true)
+            {
+                let id = text(&agent, "id");
+                let name = text(&agent, "name");
+                let website = agent["website"].as_str().map(str::to_owned);
+                let link = website.clone();
+                let fallback_name = name.clone();
+                let action_label = if link.is_some() {
+                    format!("Install {name}")
+                } else {
+                    format!("Add {name} manually")
+                };
+                pane = pane.child(
+                    self.settings_card(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .p_4()
+                            .child(Icon::new(gpui_kit::assets::IconName::Cpu).small())
+                            .child(
+                                div().flex_1().child(name).child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(self.color(0xe4e9f2).opacity(0.65))
+                                        .child(if website.is_some() {
+                                            "Not detected · open the agent website to install"
+                                        } else {
+                                            "Not detected · add an installed executable"
+                                        }),
+                                ),
+                            )
+                            .child(
+                                Button::new(SharedString::from(format!("provider-install-{id}")))
+                                    .label(if link.is_some() {
+                                        "Install…"
+                                    } else {
+                                        "Add manually…"
+                                    })
+                                    .accessibility_label(action_label)
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        if let Some(url) = &link {
+                                            cx.open_url(url);
+                                        } else {
+                                            this.custom_acp_name.update(cx, |input, cx| {
+                                                input.set_value(fallback_name.clone(), window, cx)
+                                            });
+                                            this.settings_navigation.show_custom_agent = true;
+                                            cx.notify();
+                                        }
+                                    })),
+                            ),
+                    )
+                    .flex_shrink_0(),
+                );
+            }
+        }
         let content = pane
             .child(
                 div()
                     .flex()
+                    .flex_shrink_0()
                     .items_center()
                     .justify_between()
                     .child(panel.last_checked())
@@ -687,17 +1162,39 @@ impl Coincide {
             .flex()
             .items_center()
             .gap_3()
-            .p_4()
+            .px_5()
+            .py_4()
             .border_b_1()
             .border_color(self.color(0x29303d))
-            .child(icon_tile(section, 44.))
+            .child(icon_tile(
+                section,
+                30.,
+                self.color(0x202a3b),
+                self.color(0xe4e9f2),
+            ))
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
-                    .text_xl()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(section.label()),
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_xl()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(section.label()),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(self.color(0xe4e9f2).opacity(0.62))
+                            .child(if provider == ProviderId::Lithos {
+                                "Model service"
+                            } else {
+                                "Coding agent"
+                            }),
+                    ),
             )
             .child(
                 Button::new("provider-preferences-done")
@@ -707,15 +1204,12 @@ impl Coincide {
                     ),
             );
         let mut pane = div()
-            .id("provider-preferences")
-            .flex_1()
+            .w_full()
+            .max_w(px(900.))
             .min_w_0()
-            .min_h_0()
-            .overflow_y_scroll()
-            .p_5()
             .flex()
             .flex_col()
-            .gap_4()
+            .gap_5()
             .child(
                 div()
                     .rounded(px(10.))
@@ -723,18 +1217,19 @@ impl Coincide {
                     .child(status),
             )
             .child(
-                div()
-                    .rounded(px(10.))
-                    .border_1()
-                    .border_color(self.color(0x29303d))
-                    .bg(self.color(0x111722))
-                    .p_4()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_3()
-                    .child(div().flex_1().child(format!("Use {}", section.label())))
-                    .child(
+                self.settings_card(
+                    self.labeled_row(
+                        format!("Use {}", section.label()),
+                        Some(
+                            if provider == ProviderId::Lithos {
+                                "Use Lithos models through OpenCode; no OpenCode account is needed."
+                            } else if provider == ProviderId::Antigravity {
+                                "Uses a saved Gemini API-key account."
+                            } else {
+                                "Use this agent and its existing sign-in in Coincide."
+                            }
+                            .into(),
+                        ),
                         gpui_kit::component::switch::Switch::new("provider-preferences-enabled")
                             .accessibility_label(format!("Use {}", section.label()))
                             .checked(enabled)
@@ -745,12 +1240,7 @@ impl Coincide {
                                 )
                             })),
                     ),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(self.color(0x98a6ba))
-                    .child(if provider == ProviderId::Lithos { "Uses Lithos models with the installed OpenCode coding runtime. No OpenCode account is needed." } else if provider == ProviderId::Antigravity { "Uses the Gemini API with a saved API-key account. Google-account login is unavailable." } else { "Uses the provider’s command-line tool and your existing sign-in." }),
+                ),
             );
         if enabled {
             pane = pane.child(
@@ -791,21 +1281,33 @@ impl Coincide {
         catalogs.push(self.selection_ui.catalog.clone());
         let content = self.settings_scroll.frame(
             provider_key(provider),
-            pane.child(
-                div()
-                    .rounded(px(10.))
-                    .bg(self.color(0x111722))
-                    .child(executable),
-            )
-            .child(self.models_settings_panel(&catalogs, cx))
-            .child(
-                div()
-                    .rounded(px(10.))
-                    .bg(self.color(0x111722))
-                    .child(environment),
-            )
-            .child(div().rounded(px(10.)).bg(self.color(0x111722)).child(setup))
-            .child(div().text_sm().child(self.settings_status.clone())),
+            div()
+                .id("provider-preferences")
+                .flex_1()
+                .min_w_0()
+                .min_h_0()
+                .overflow_y_scroll()
+                .px_5()
+                .py_5()
+                .child(
+                    div().flex().justify_center().w_full().child(
+                        pane.child(
+                            div()
+                                .rounded(px(10.))
+                                .bg(self.color(0x111722))
+                                .child(executable),
+                        )
+                        .child(self.models_settings_panel(&catalogs, cx))
+                        .child(
+                            div()
+                                .rounded(px(10.))
+                                .bg(self.color(0x111722))
+                                .child(environment),
+                        )
+                        .child(div().rounded(px(10.)).bg(self.color(0x111722)).child(setup))
+                        .child(div().text_sm().child(self.settings_status.clone())),
+                    ),
+                ),
         );
         div()
             .flex_1()
@@ -821,7 +1323,7 @@ impl Coincide {
 
 #[cfg(test)]
 mod tests {
-    use super::{State, enabled_patch, provider_enabled};
+    use super::{State, enabled_patch, provider_enabled, provider_is_shown, registry_agent_rows};
     use coincide_core::provider_catalog::ProviderId as P;
     use serde_json::json;
 
@@ -864,8 +1366,8 @@ mod tests {
     #[::core::prelude::v1::test]
     fn native_antigravity_toggle_round_trip_preserves_provider_values_and_rejects_stale_state() {
         for providers in [
-            json!({"antigravity":{"opaque":42,"environment":{"SYNTHETIC_TEST_MODE":"fixture"}}}),
-            json!(["antigravity",{"opaque":42,"environment":{"SYNTHETIC_TEST_MODE":"fixture"}}]),
+            json!({"antigravity":{"isEnabled":false,"opaque":42,"environment":{"SYNTHETIC_TEST_MODE":"fixture"}}}),
+            json!(["antigravity",{"isEnabled":false,"opaque":42,"environment":{"SYNTHETIC_TEST_MODE":"fixture"}}]),
         ] {
             let initial = json!({"providers":providers});
             let on = super::enabled_value_patch(&initial, P::Antigravity, false, true).unwrap();
@@ -888,7 +1390,60 @@ mod tests {
     }
     #[::core::prelude::v1::test]
     fn antigravity_can_be_enabled_for_api_key_setup_without_oauth_prompt() {
-        assert!(!provider_enabled(&json!({}), P::Antigravity));
-        assert!(enabled_patch(&json!({}), P::Antigravity, false, true).is_ok());
+        assert!(provider_enabled(&json!({}), P::Antigravity));
+        assert!(enabled_patch(&json!({}), P::Antigravity, true, false).is_ok());
+    }
+
+    #[::core::prelude::v1::test]
+    fn installed_agents_are_shown_without_conflating_lithos_with_opencode() {
+        let view = json!({"discovery":{"providers":[
+            {"provider":"claude","state":"found"},
+            {"provider":"opencode","state":"found"},
+            {"provider":"lithos","state":"found"},
+            {"provider":"codex","state":"not_found"}
+        ]},"configured":["cursor"]});
+        assert!(provider_is_shown(&json!({}), &view, P::Claude, None));
+        assert!(provider_is_shown(&json!({}), &view, P::Opencode, None));
+        assert!(provider_is_shown(&json!({}), &view, P::Cursor, None));
+        assert!(!provider_is_shown(&json!({}), &view, P::Lithos, None));
+        assert!(!provider_is_shown(&json!({}), &view, P::Codex, None));
+        assert!(provider_is_shown(
+            &json!({}),
+            &view,
+            P::Codex,
+            Some("codex")
+        ));
+        assert!(provider_is_shown(
+            &json!({"providers":{"lithos":{"isEnabled":true}}}),
+            &view,
+            P::Lithos,
+            None
+        ));
+        // A disabled but installed agent remains in Settings so it can be enabled.
+        assert!(provider_is_shown(
+            &json!({"providers":{"claude":{"isEnabled":false}}}),
+            &view,
+            P::Claude,
+            None
+        ));
+    }
+
+    #[::core::prelude::v1::test]
+    fn installed_and_registered_agents_precede_the_browsable_extra_catalog() {
+        let view = json!({"agents":[{"id":"copilot","name":"Copilot","executable":"/bin/copilot"},
+            {"id":"qwen","name":"Qwen","executable":null}],
+            "registered":[{"provider":"acp-custom","displayName":"Custom"}]});
+        let installed = registry_agent_rows(&view, false, "");
+        assert_eq!(installed.len(), 2);
+        assert!(
+            installed
+                .iter()
+                .any(|row| row["id"] == "custom" && row["registered"] == true)
+        );
+        assert!(installed.iter().any(|row| row["id"] == "copilot"));
+        let all = registry_agent_rows(&view, true, "");
+        assert_eq!(all.len(), 3);
+        assert_eq!(all[2]["id"], "qwen");
+        assert_eq!(registry_agent_rows(&view, true, "qwe")[0]["id"], "qwen");
     }
 }

@@ -1,11 +1,18 @@
 # Coding agents and model services
 
-Coincide's model picker has an **Agents** tab. It reads the public ACP Registry
-when opened and shows which commands are installed. Choose an installed agent
-to add it; use that agent's normal sign-in and configuration first. Coincide
-does not download or install a registry entry on its own. You can also add a
-local ACP command with its executable name or absolute path and literal
-arguments. For DeepSeek Harness, use `dsh` with `--profile acp`.
+Coincide looks for installed coding-agent commands at startup and displays them
+in Settings › Providers and the model picker's **Agents** tab. Detection does
+not start a command or establish whether it is signed in. The app begins with
+a bundled ACP Registry snapshot, refreshes the live registry in the background,
+and scans again when those panels are open. User choices and existing threads
+are retained if a command is temporarily unavailable.
+
+Choose an installed ACP agent to add it. **Browse more agents** shows the
+remaining registry entries, and **Install…** opens an agent's website so you
+can follow its setup instructions. Coincide does not download or install a
+registry entry on its own. You can also add a local ACP command from Settings
+or the picker with its executable name or absolute path and literal arguments.
+For DeepSeek Harness, use `dsh` with `--profile acp`.
 On Windows, automatic discovery finds native `.exe` and `.com` commands;
 package-manager `.cmd` launchers are not automatically discovered.
 
@@ -26,7 +33,9 @@ LM Studio and vLLM discovery is also used; see OpenCode's provider documentation
 for endpoints and authentication. These are models for OpenCode, not separate
 agents. A configured provider must be accessible to the selected OpenCode account.
 
-**Lithos AI** has its own provider entry in Coincide. For hosted models, add a
+**Lithos AI** is a separate model service; it appears under **Browse more agents**
+until you set it up, rather than being inferred from an OpenCode installation.
+For hosted models, add a
 Lithos API-key account in its provider settings, save the key, and select that
 account in a conversation using Lithos. Coincide reads the models available to
 that account and shows them in the Lithos picker. Keys remain in the native

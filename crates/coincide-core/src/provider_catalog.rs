@@ -168,10 +168,11 @@ pub struct DiscoveryReport {
     pub inspected_candidates: usize,
 }
 
-/// Reads only the current process's PATH (never a login shell).
+/// Reads the current process's PATH and common user installation directories;
+/// discovery itself never invokes a shell or launches an agent.
 pub fn discover_installed_tools() -> DiscoveryReport {
     discover_on_path(
-        std::env::var_os("PATH").as_deref(),
+        crate::acp_registry::search_path().as_deref(),
         DiscoveryLimits::default(),
     )
 }

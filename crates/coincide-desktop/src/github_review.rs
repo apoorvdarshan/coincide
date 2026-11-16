@@ -2103,9 +2103,20 @@ impl GitHubReviewPanel {
                     .flex()
                     .flex_col()
                     .items_center()
-                    .gap_1()
+                    .gap_2()
+                    .px_4()
                     .py_8()
-                    .child(Icon::new(self.involvement.icon()).text_color(muted))
+                    .text_center()
+                    .child(
+                        div()
+                            .size(px(38.))
+                            .rounded(px(12.))
+                            .bg(cx.theme().muted)
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(Icon::new(self.involvement.icon()).text_color(muted)),
+                    )
                     .child(div().font_semibold().child(title))
                     .child(div().text_sm().text_color(muted).child(explanation)),
             );

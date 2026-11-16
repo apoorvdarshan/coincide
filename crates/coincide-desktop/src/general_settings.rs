@@ -174,6 +174,7 @@ pub(super) struct State {
     restore_prompt: Option<Task<()>>,
     /// Settings › About's T3 Code License disclosure.
     pub(super) t3_license_open: bool,
+    pub(super) acp_registry_license_open: bool,
 }
 impl State {
     pub(super) fn new(cx: &mut Context<Coincide>) -> Self {
@@ -189,6 +190,7 @@ impl State {
             command_line: CommandLineStatus::new(CommandLineTool::Missing),
             restore_prompt: None,
             t3_license_open: false,
+            acp_registry_license_open: false,
         };
         state.refresh_command_line_tool();
         state
@@ -341,7 +343,7 @@ impl Coincide {
         div()
             .flex()
             .items_center()
-            .gap_3()
+            .gap_4()
             .px_4()
             .py_3()
             .border_b_1()
@@ -352,13 +354,13 @@ impl Coincide {
                     .min_w_0()
                     .flex()
                     .flex_col()
-                    .gap_0p5()
-                    .child(title.into())
+                    .gap_1()
+                    .child(div().font_weight(FontWeight::MEDIUM).child(title.into()))
                     .when_some(caption, |row, caption| {
                         row.child(
                             div()
                                 .text_xs()
-                                .text_color(self.color(0x98a6ba).opacity(0.7))
+                                .text_color(self.color(0x98a6ba).opacity(0.68))
                                 .child(caption),
                         )
                     }),

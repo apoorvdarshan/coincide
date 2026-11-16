@@ -1,4 +1,5 @@
 //! Explicit default-Codex-runtime observations, separate from saved turn usage.
+use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::{base::Disableable, component::button::Button, *};
 use serde_json::Value;
 
@@ -344,7 +345,8 @@ impl Render for LimitsView {
                         .gap_1()
                         .p_2()
                         .border_1()
-                        .border_color(rgb(0x354050))
+                        .border_color(cx.theme().border)
+                        .rounded(px(10.))
                         .child(format!(
                             "{} · plan {}",
                             bucket

@@ -768,6 +768,26 @@ fn default_executable(provider: &str) -> Option<PathBuf> {
     })
 }
 impl Engine {
+    /// Display only provider identities, never the saved environment. Read the
+    /// private store once for a discovery snapshot rather than once per agent.
+    pub(super) fn native_configured_providers(&self) -> Result<Vec<String>> {
+        let Some(owner) = Private::open(&self.store, false)? else {
+            return Ok(Vec::new());
+        };
+        let payload = owner.read()?;
+        let mut configured = Vec::new();
+        for descriptor in crate::provider_catalog::PROVIDERS {
+            let value = serde_json::to_value(descriptor.id)?;
+            let provider = value.as_str().context("Invalid provider identity")?;
+            if read_record(&payload, provider)?
+                .is_some_and(|record| record.custom && record.executable.is_some())
+            {
+                configured.push(provider.to_owned());
+            }
+        }
+        Ok(configured)
+    }
+
     /// Only native UI may call this after a person chooses a registry entry.
     /// Public agent JSON and saved chat metadata cannot create this grant.
     pub fn register_native_acp_agent(&mut self, agent: &crate::acp_registry::Agent) -> Result<()> {
@@ -1453,6 +1473,20 @@ pub(crate) mod tests {
                     .any(|(key, value)| key == "XDG_DATA_HOME" && value == Some(home.as_os_str()))
             );
         });
+    }
+    #[test]
+    fn discovery_snapshot_retains_approved_custom_paths_without_exposing_environment() {
+        let (_root, mut engine, binary) = fixture();
+        save(&mut engine, "claude", &binary, "private-synthetic-value");
+        let view = engine.native_acp_registry_view();
+        assert!(
+            view["configured"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value == "claude")
+        );
+        assert!(!view.to_string().contains("private-synthetic-value"));
     }
     #[test]
     fn derived_runtime_requires_same_provider_source_and_bytes() {

@@ -92,6 +92,37 @@ fn no_defaults_preserves_api_and_store_fallbacks_and_existing_bot_snapshots() {
 }
 
 #[test]
+fn new_threads_use_an_installed_enabled_agent_without_overriding_saved_defaults() {
+    let (_dir, mut engine) = fixture();
+    engine.provider_discovery = Some(json!({"providers":[
+        {"provider":"codex","state":"not_found"},
+        {"provider":"claude","state":"found"},
+        {"provider":"opencode","state":"found"},
+        {"provider":"lithos","state":"found"}
+    ]}));
+    let thread = engine.execute("threads.create", &json!({})).unwrap();
+    assert_eq!(thread["selection"]["provider"], "claude");
+    engine
+        .store
+        .save_document(
+            "settings.json",
+            &json!({"providers":{"claude":{"isEnabled":false}}}),
+        )
+        .unwrap();
+    let thread = engine.execute("threads.create", &json!({})).unwrap();
+    assert_eq!(thread["selection"]["provider"], "opencode");
+    engine
+        .store
+        .save_document(
+            "settings.json",
+            &json!({"defaultSelection":{"provider":"codex","modelID":"default"}}),
+        )
+        .unwrap();
+    let thread = engine.execute("threads.create", &json!({})).unwrap();
+    assert_eq!(thread["selection"]["provider"], "codex");
+}
+
+#[test]
 fn unsupported_defaults_reject_before_any_row_revision_or_document_write() {
     let (_dir, mut engine) = fixture();
     let project = Uuid::new_v4().to_string();

@@ -161,7 +161,7 @@ impl Coincide {
                     .id("conversation-toolbar-primary")
                     .flex()
                     .items_center()
-                    .min_h(px(44.))
+                    .min_h(px(50.))
                     .px_3()
                     .gap_1()
                     .child(heading)

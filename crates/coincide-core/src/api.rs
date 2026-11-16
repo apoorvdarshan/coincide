@@ -464,7 +464,7 @@ impl Engine {
         if let Ok(Some(saved)) = store.document(SAVED_MODEL_CATALOG) {
             model_catalog.restore_saved(&saved);
         }
-        Self {
+        let mut engine = Self {
             appshots_owner: Uuid::new_v4(),
             thread_bulk_owner: Uuid::new_v4(),
             native_move_undos: HashMap::new(),
@@ -535,7 +535,11 @@ impl Engine {
             turn_results: Default::default(),
             turn_checkpoints: checkpoint_api::State::default(),
             composer_commands: Default::default(),
+        };
+        if discover {
+            let _ = engine.refresh_native_acp_registry();
         }
+        engine
     }
     pub fn native_ui_editors(&self) -> crate::native_ui_edits::NativeUiEditors {
         self.native_ui_editors.clone()
@@ -2643,6 +2647,24 @@ impl Engine {
                 self.provider_discovery = Some(result);
                 self.provider_discovery_pending = false;
                 self.revision += 1;
+                continue;
+            }
+            if id == "acp-registry-local" {
+                if let Ok(agents) = serde_json::from_value::<Vec<crate::acp_registry::Agent>>(
+                    result["agents"].take(),
+                ) {
+                    for local in agents {
+                        if let Some(previous) =
+                            self.acp_registry.iter_mut().find(|a| a.id == local.id)
+                        {
+                            // Re-scan installed paths without replacing newer registry metadata.
+                            previous.executable = local.executable;
+                        } else {
+                            self.acp_registry.push(local);
+                        }
+                    }
+                    self.revision += 1;
+                }
                 continue;
             }
             if id == "acp-registry" {
