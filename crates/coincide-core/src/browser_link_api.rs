@@ -123,7 +123,7 @@ mod tests {
         let mut engine = Engine::fixture(Store::open(&dir.path().join("state.sqlite")).unwrap());
         let id = text(&engine.execute("threads.create", &json!({})).unwrap(), "id");
         engine.ui_available = true;
-        let db = engine.store.connection().unwrap();
+        let db = rusqlite::Connection::open(dir.path().join("state.sqlite")).unwrap();
         db.execute(
             "UPDATE threads SET document=json_set(document,'$.syntheticPayload',?1) WHERE id=?2",
             rusqlite::params!["x".repeat(1_000_000), id],
@@ -131,9 +131,8 @@ mod tests {
         .unwrap();
         // An actual transcript read now fails with SQLITE_TOOBIG. An identity
         // lookup still succeeds, without timing-dependent performance limits.
-        unsafe {
-            rusqlite::ffi::sqlite3_limit(db.handle(), rusqlite::ffi::SQLITE_LIMIT_LENGTH, 4096);
-        }
+        drop(db);
+        engine.store.limit_value_size_for_test(4096).unwrap();
         assert!(engine.store.thread(&id).is_err());
         assert!(
             engine
