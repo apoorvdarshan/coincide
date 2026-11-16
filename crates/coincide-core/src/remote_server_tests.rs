@@ -220,22 +220,24 @@ fn pair(fixture: &mut Fixture) -> (Client, String, String) {
 }
 
 #[test]
-fn paired_phone_can_retry_initial_workspace_after_a_busy_mac() {
+fn paired_phone_loads_initial_workspace_after_a_brief_busy_period() {
     let mut fixture = fixture();
     fixture.server.set_enabled(true);
     let (mut phone, _, _) = pair(&mut fixture);
     let shared = fixture.server.running.as_ref().unwrap().0.clone();
     let _watch_gate = shared.watch_gate.lock().unwrap();
 
-    let held = fixture.engine.lock().unwrap();
+    let engine = fixture.engine.clone();
+    let (acquired, waiting) = std::sync::mpsc::channel();
+    let busy = std::thread::spawn(move || {
+        let _held = engine.lock().unwrap();
+        acquired.send(()).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(150));
+    });
+    waiting.recv().unwrap();
     request(&mut phone, "first", "workspace", None);
-    let busy = reply(&mut phone, "first");
-    assert_eq!(busy["kind"], "error");
-    assert_eq!(busy["error"]["code"], "failed");
-    drop(held);
-
-    request(&mut phone, "retry", "workspace", None);
-    let workspace = reply(&mut phone, "retry");
+    let workspace = reply(&mut phone, "first");
+    busy.join().unwrap();
     assert_eq!(workspace["type"], "workspace");
     assert!(
         workspace["body"]["projects"]
