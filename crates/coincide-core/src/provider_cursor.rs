@@ -108,6 +108,7 @@ pub(super) fn run(
     let mut session = None;
     let started = Instant::now();
     let mut mapper = acp::Mapper::default();
+    let mut accepted = false;
     let mut pending = HashMap::<String, Pending>::new();
     let mut stopping = None;
     let mut completed = false;
@@ -242,6 +243,10 @@ pub(super) fn run(
                 {
                     held_error = Some(report.into());
                     continue;
+                }
+                if !accepted && acp::prompt_activity(update) {
+                    events.send(Event::TurnAccepted)?;
+                    accepted = true;
                 }
                 if let Some(report) = held_error.take() {
                     delta(events, "cursor-provider-report", &report, false)?;

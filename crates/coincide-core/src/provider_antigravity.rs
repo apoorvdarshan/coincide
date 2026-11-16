@@ -178,6 +178,7 @@ fn run_owned(
     let mut session = None;
     let mut pending = HashMap::new();
     let mut mapper = acp::Mapper::default();
+    let mut accepted = false;
     let started = Instant::now();
     let mut stopping = None;
     let mut completed = false;
@@ -322,6 +323,13 @@ fn run_owned(
                 && frame["params"]["sessionId"].as_str() == session.as_deref()
                 && frame["params"]["_meta"]["isReplay"] != true
             {
+                if !accepted
+                    && frame["params"]["update"]["_meta"]["isReplay"] != true
+                    && acp::prompt_activity(&frame["params"]["update"])
+                {
+                    events.send(Event::TurnAccepted)?;
+                    accepted = true;
+                }
                 mapper.update(&frame["params"]["update"], &frame, events)?;
             }
             continue;
@@ -583,6 +591,7 @@ mod api_key_tests {
                     let deadline = Instant::now() + Duration::from_secs(20);
                     let mut text = String::new();
                     let mut stopped = false;
+                    let mut accepted = false;
                     let success = loop {
                         assert!(Instant::now() < deadline, "fixture timed out: {mode}");
                         if mode == "stop" && home.join("ready").exists() && !stopped {
@@ -603,6 +612,7 @@ mod api_key_tests {
                                 }
                             }
                             Ok(Event::Session(id)) => assert_eq!(id, ID),
+                            Ok(Event::TurnAccepted) => accepted = true,
                             Ok(Event::Finished) => break true,
                             Ok(Event::Failed(error)) => {
                                 assert!(!error.contains("secret-must-not-leak"));
@@ -615,6 +625,7 @@ mod api_key_tests {
                     assert_eq!(success, matches!(mode, "new" | "resume" | "stop"), "{mode}");
                     assert!(!text.contains("OLD REPLAY"));
                     if matches!(mode, "new" | "resume") {
+                        assert!(accepted);
                         assert_eq!(text, "NEW ANSWER");
                         assert_eq!(
                             fs::read(home.join("output.txt")).unwrap(),

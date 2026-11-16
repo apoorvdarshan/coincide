@@ -103,6 +103,11 @@ fn desktop_snapshots_leave_provider_events_for_the_background_poller() {
         ("agent.pending", json!({"threadId":id})),
         ("settings.read", json!({})),
         ("threads.list", json!({})),
+        ("threads.read", json!({"threadId":id})),
+        // Even a rejected discovery request must not drain an active turn.
+        ("agent.models.refresh", json!({"provider":"unknown"})),
+        ("providers.antigravity.status", json!({})),
+        ("providers.codex.profiles.status", json!({})),
         ("usage.codexLimits.status", json!({})),
         ("usage.claudeLimits.status", json!({})),
         ("providers.codex.profiles.limits.status", json!({})),

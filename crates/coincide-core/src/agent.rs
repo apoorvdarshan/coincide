@@ -149,6 +149,8 @@ pub struct Launch {
 #[derive(Debug)]
 pub enum Event {
     Session(String),
+    /// The provider accepted the initial prompt for this exact turn.
+    TurnAccepted,
     Frame(Value),
     /// Native goal state bound to the provider thread that reported it.
     Goal {
@@ -1346,6 +1348,7 @@ fn run(
                             capture.bind_turn(&frame["result"]["turn"]["id"]),
                             "Codex returned a missing, invalid or duplicate turn identity"
                         );
+                        events.send(Event::TurnAccepted)?;
                         if let Some(command @ codex_goals::Command::Set(_)) = initial_goal.as_ref()
                         {
                             goals.send(

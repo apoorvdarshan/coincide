@@ -424,6 +424,7 @@ pub(super) fn run(
     let initialize_id = "coincide-initialize";
     transport.write(&json!({"type":"control_request","request_id":initialize_id,"request":{"subtype":"initialize"}}))?;
     let mut initialized = false;
+    let mut prompt_accepted = false;
     let mut reported_session = None;
     let mut pending = HashMap::<String, Value>::new();
     let mut mapper = Mapper::default();
@@ -527,6 +528,17 @@ pub(super) fn run(
                 events.send(Event::Session(id.into()))?;
                 reported_session = Some(id.to_owned());
             }
+        }
+        if initialized
+            && content.is_none()
+            && stopping.is_none()
+            && frame["parent_tool_use_id"].is_null()
+            && (frame["error"].is_null() || frame["error"] == "max_output_tokens")
+            && matches!(frame["type"].as_str(), Some("assistant" | "stream_event"))
+            && !prompt_accepted
+        {
+            events.send(Event::TurnAccepted)?;
+            prompt_accepted = true;
         }
         match frame["type"].as_str() {
             Some("control_response") if frame["response"]["request_id"] == initialize_id => {

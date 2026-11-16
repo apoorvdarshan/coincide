@@ -223,6 +223,18 @@ fn transcript_scrolled_away(top: gpui_kit::ListOffset, count: usize) -> bool {
 fn engine_busy(error: &anyhow::Error) -> bool {
     error.is::<EngineBusy>()
 }
+
+#[derive(Clone)]
+struct PendingNewThread {
+    project: String,
+    based_on: Option<(std::path::PathBuf, String)>,
+    source: Option<String>,
+}
+impl PendingNewThread {
+    fn is_current(&self, selected: Option<&str>, requested: Option<&str>) -> bool {
+        self.source.as_deref() == selected && requested.is_none_or(|id| Some(id) == selected)
+    }
+}
 fn try_state<T>(state: &Mutex<T>) -> Result<std::sync::MutexGuard<'_, T>> {
     state.try_lock().map_err(|error| match error {
         std::sync::TryLockError::WouldBlock => EngineBusy.into(),
@@ -677,6 +689,7 @@ struct Coincide {
     /// A conversation the user asked for while the engine was busy. Retried
     /// each tick instead of failing with "App is busy".
     pending_select: Option<String>,
+    pending_new_thread: Option<PendingNewThread>,
     /// Text a refused send puts back in the composer on the next frame, where
     /// a window is available to edit the field.
     restore_composer: Option<(String, String)>,
@@ -1956,6 +1969,7 @@ impl Coincide {
             reply_media_cache: Default::default(),
             search,
             pending_select: None,
+            pending_new_thread: None,
             restore_composer: None,
             pending_follow_up: None,
             pending_follow_up_backlog: Default::default(),
@@ -3424,6 +3438,11 @@ impl Coincide {
             cx.notify();
             return;
         }
+        let pending = PendingNewThread {
+            project: project.to_owned(),
+            based_on: based_on.clone(),
+            source: self.selected.as_ref().map(|thread| text(thread, "id")),
+        };
         let (cwd, branch) = match based_on {
             Some((folder, branch)) => (Some(folder), Some(branch)),
             None => (
@@ -3438,8 +3457,14 @@ impl Coincide {
             ),
         };
         if !self.flush_pending_drafts() {
-            self.status = "Save pending drafts before opening a new conversation.".into();
-            cx.notify();
+            if self.pending_drafts.values().any(|draft| draft.failed) {
+                self.pending_new_thread = None;
+                self.status =
+                    "The current draft could not be saved; it remains in the composer.".into();
+                cx.notify();
+            } else {
+                self.pending_new_thread = Some(pending);
+            }
             return;
         }
         let result = (|| -> Result<Value> {
@@ -3453,6 +3478,7 @@ impl Coincide {
         })();
         match result {
             Ok(v) => {
+                self.pending_new_thread = None;
                 let created = text(&v, "id");
                 self.created_bot_thread_to_focus = Some(created.clone());
                 self.schedules_open = false;
@@ -3461,7 +3487,15 @@ impl Coincide {
                 self.refresh(cx);
                 self.select(&created, window, cx);
             }
-            Err(e) => self.status = e.to_string(),
+            Err(e) if engine_busy(&e) => {
+                // The click was not admitted. Retry it once the engine and
+                // draft saver are ready, bound to the originating thread.
+                self.pending_new_thread = Some(pending);
+            }
+            Err(e) => {
+                self.pending_new_thread = None;
+                self.status = e.to_string();
+            }
         }
     }
     /// Swift ThreadActions.newThread(in:worktreePath:branch:) after a PR
@@ -3919,6 +3953,19 @@ impl Coincide {
         true
     }
     fn tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(pending) = self.pending_new_thread.clone() {
+            let current = self
+                .selected
+                .as_ref()
+                .and_then(|thread| thread["id"].as_str());
+            if pending.is_current(current, self.pending_select.as_deref())
+                && !self.media.shutdown_requested
+            {
+                self.new_thread_in_folder(&pending.project, pending.based_on, window, cx);
+            } else {
+                self.pending_new_thread = None;
+            }
+        }
         self.poll_sidebar_resize(cx);
         self.poll_terminal_resize(cx);
         self.poll_project_defaults(window, cx);
@@ -5185,33 +5232,76 @@ impl Coincide {
                 .overflow_y_scroll()
                 .mb_2()
                 .children(imports.into_iter().map(|(job, preview)| {
+                    if let composer_attachments::ImportPreview::Path(path) = &preview
+                        && !composer_attachments::path_looks_like_image(path)
+                    {
+                        let name = path
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .unwrap_or("Attachment")
+                            .to_owned();
+                        // Use the same card geometry as a finished file. The
+                        // preview can fill in without a square-to-card jump.
+                        return div()
+                            .w(px(250.))
+                            .max_w_full()
+                            .h(px(68.))
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .min_w_0()
+                            .rounded(px(8.))
+                            .bg(cx.theme().muted)
+                            .border_1()
+                            .border_color(cx.theme().border)
+                            .px_1()
+                            .py_1()
+                            .child(
+                                div()
+                                    .w(px(48.))
+                                    .h(px(60.))
+                                    .flex_shrink_0()
+                                    .rounded(px(6.))
+                                    .bg(cx.theme().background)
+                                    .border_1()
+                                    .border_color(cx.theme().border)
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child(
+                                        Icon::new(gpui_kit::assets::IconName::FileText)
+                                            .size(px(22.)),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .child(div().px_1().truncate().child(name))
+                                    .child(
+                                        div()
+                                            .px_1()
+                                            .text_xs()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child("Local reference"),
+                                    ),
+                            )
+                            .child(
+                                Button::new(SharedString::from(format!(
+                                    "cancel-image-import-{job}"
+                                )))
+                                .icon(gpui_kit::assets::IconName::Close)
+                                .ghost()
+                                .xsmall()
+                                .accessibility_label("Remove attachment")
+                                .tooltip("Remove attachment")
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| this.cancel_image_import(job, cx),
+                                )),
+                            )
+                            .into_any_element();
+                    }
                     let preview = match preview {
-                        composer_attachments::ImportPreview::Path(path)
-                            if !composer_attachments::path_looks_like_image(&path) =>
-                        {
-                            let name = path
-                                .file_name()
-                                .and_then(|name| name.to_str())
-                                .unwrap_or("Attachment")
-                                .to_owned();
-                            div()
-                                .w_full()
-                                .h_full()
-                                .rounded_md()
-                                .bg(cx.theme().muted)
-                                .border_1()
-                                .border_color(cx.theme().border)
-                                .flex()
-                                .flex_col()
-                                .items_center()
-                                .justify_center()
-                                .gap_1()
-                                .child(
-                                    Icon::new(gpui_kit::assets::IconName::FileText).size(px(20.)),
-                                )
-                                .child(div().max_w(px(68.)).truncate().text_xs().child(name))
-                                .into_any_element()
-                        }
                         composer_attachments::ImportPreview::Path(path) => img(path)
                             .w_full()
                             .h_full()
@@ -5225,9 +5315,16 @@ impl Coincide {
                             .object_fit(ObjectFit::Cover)
                             .into_any_element(),
                     };
-                    div().relative().w(px(76.)).h(px(76.)).child(preview).child(
-                        div().absolute().top(px(2.)).right(px(2.)).child(
-                            Button::new(SharedString::from(format!("cancel-image-import-{job}")))
+                    div()
+                        .relative()
+                        .w(px(76.))
+                        .h(px(76.))
+                        .child(preview)
+                        .child(
+                            div().absolute().top(px(2.)).right(px(2.)).child(
+                                Button::new(SharedString::from(format!(
+                                    "cancel-image-import-{job}"
+                                )))
                                 .icon(gpui_kit::assets::IconName::Close)
                                 .ghost()
                                 .xsmall()
@@ -5237,11 +5334,12 @@ impl Coincide {
                                 .bg(self.color(0x111722).opacity(0.82))
                                 .accessibility_label("Remove attachment")
                                 .tooltip("Remove attachment")
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.cancel_image_import(job, cx)
-                                })),
-                        ),
-                    )
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| this.cancel_image_import(job, cx),
+                                )),
+                            ),
+                        )
+                        .into_any_element()
                 }))
                 .children(images.iter().map(|image| {
                     let id = text(image, "id");
@@ -7917,6 +8015,23 @@ mod find_mount_tests {
         assert_eq!(list.logical_scroll_top().item_ix, 74);
         assert_eq!(list.logical_scroll_top().offset_in_item, px(0.));
         assert!(!list.is_following_tail());
+    }
+}
+
+#[cfg(test)]
+mod pending_new_thread_tests {
+    use super::*;
+    #[::core::prelude::v1::test]
+    fn retry_stays_bound_to_the_origin_and_does_not_steal_navigation() {
+        let pending = PendingNewThread {
+            project: "project".into(),
+            based_on: None,
+            source: Some("one".into()),
+        };
+        assert!(pending.is_current(Some("one"), None));
+        assert!(pending.is_current(Some("one"), Some("one")));
+        assert!(!pending.is_current(Some("two"), None));
+        assert!(!pending.is_current(Some("one"), Some("two")));
     }
 }
 

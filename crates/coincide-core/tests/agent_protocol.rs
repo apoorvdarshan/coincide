@@ -44,6 +44,7 @@ sys.stdin.readline()
     let mut output = String::new();
     let mut approval = false;
     let mut native = false;
+    let mut accepted = false;
     loop {
         assert!(Instant::now() < deadline, "fixture timed out");
         match session.events.recv_timeout(Duration::from_secs(3)).unwrap() {
@@ -66,12 +67,16 @@ sys.stdin.readline()
             Event::Finished => break,
             Event::Failed(message) => panic!("{message}"),
             Event::Usage => {}
+            Event::TurnAccepted => {
+                assert!(native && !approval && !accepted);
+                accepted = true;
+            }
             Event::Goal { .. } | Event::TurnBoundary => {
                 panic!("unexpected goal event from ordinary turn")
             }
         }
     }
-    assert!(native && approval);
+    assert!(native && accepted && approval);
     assert_eq!(output, "fixture result");
     let log = fs::read_to_string(dir.path().join("requests.jsonl")).unwrap();
     let requests = log
@@ -136,7 +141,7 @@ sys.stdin.readline()
                 break;
             }
             Event::Failed(error) => panic!("{error}"),
-            Event::Usage => {}
+            Event::Usage | Event::TurnAccepted => {}
             Event::Goal { .. } | Event::TurnBoundary => {
                 panic!("unexpected goal event from ordinary turn")
             }

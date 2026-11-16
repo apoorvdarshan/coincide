@@ -620,6 +620,113 @@ sys.stdin.readline()
         assert_eq!(queue::read(&saved).unwrap()[0].state, State::Pending);
     }
     #[test]
+    fn acknowledged_queue_delivery_clears_the_row_while_the_turn_continues() {
+        for provider in [
+            "codex",
+            "claude",
+            "cursor",
+            "grok",
+            "opencode",
+            "antigravity",
+        ] {
+            for dismiss in [false, true] {
+                let (_dir, mut engine, id) = fixture();
+                let mut thread = engine.store.thread(&id).unwrap();
+                let message = queue::read(&thread).unwrap()[0].clone();
+                thread["rustMessageQueue"][0]["state"] = serde_json::json!("dispatching");
+                engine.store.save(&thread).unwrap();
+                let (send, receive) = std::sync::mpsc::channel();
+                let session = crate::agent::Session::fixture_worker(move |commands, events| {
+                    while let Ok(event) = receive.recv() {
+                        let finished = matches!(event, crate::agent::Event::Finished);
+                        events.send(event).unwrap();
+                        if finished {
+                            return;
+                        }
+                    }
+                    drop(commands);
+                });
+                engine.insert_running(
+                    id.clone(),
+                    super::super::Running {
+                        configuration: None,
+                        resume_safe: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+                        usage_context: None,
+                        session,
+                        provider: provider.into(),
+                        transcript_start: 0,
+                        pending: std::collections::HashMap::new(),
+                        schedule_claim: None,
+                        queue_claim: Some(message.id.clone()),
+                        cancelled: false,
+                        events: std::collections::VecDeque::new(),
+                        persistence_error: None,
+                    },
+                );
+                // A session ID alone is not a prompt acknowledgement.
+                send.send(crate::agent::Event::Session("session".into()))
+                    .unwrap();
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                loop {
+                    engine.poll();
+                    if crate::agent::provider_session(&engine.store.thread(&id).unwrap(), provider)
+                        .is_some()
+                    {
+                        break;
+                    }
+                    assert!(std::time::Instant::now() < deadline);
+                    std::thread::yield_now();
+                }
+                assert_eq!(
+                    queue::read(&engine.store.thread(&id).unwrap()).unwrap()[0].state,
+                    State::Dispatching
+                );
+                if dismiss {
+                    let result = engine
+                        .execute(
+                            "agent.queue.remove",
+                            &json!({"threadId":id,"messageId":message.id}),
+                        )
+                        .unwrap();
+                    assert!(result["messages"].as_array().unwrap().is_empty());
+                    let saved = engine.store.thread(&id).unwrap();
+                    assert_eq!(saved["rustMessageQueue"][0]["dismissed"], true);
+                    assert_eq!(saved["rustMessageQueue"][0]["future"], json!({"keep":1}));
+                    assert_eq!(
+                        engine.runs[&id].queue_claim.as_deref(),
+                        Some(message.id.as_str())
+                    );
+                    assert!(
+                        engine.native_queue_read(&id).unwrap()["messages"]
+                            .as_array()
+                            .unwrap()
+                            .is_empty()
+                    );
+                }
+                send.send(crate::agent::Event::TurnAccepted).unwrap();
+                loop {
+                    engine.poll();
+                    if queue::read(&engine.store.thread(&id).unwrap()).unwrap()[0].state
+                        == State::Completed
+                    {
+                        break;
+                    }
+                    assert!(std::time::Instant::now() < deadline);
+                    std::thread::yield_now();
+                }
+                assert!(engine.runs.contains_key(&id));
+                assert!(engine.runs[&id].queue_claim.is_none());
+                send.send(crate::agent::Event::Finished).unwrap();
+                while engine.runs.contains_key(&id) {
+                    engine.poll();
+                    assert!(std::time::Instant::now() < deadline);
+                    std::thread::yield_now();
+                }
+            }
+        }
+    }
+
+    #[test]
     fn queued_row_finishes_at_turn_boundary_while_goal_worker_continues() {
         let (_dir, mut engine, id) = fixture();
         let mut thread = engine.store.thread(&id).unwrap();

@@ -272,6 +272,7 @@ sys.stdin.readline()
             },
             Event::Finished => break,
             Event::Failed(error) => panic!("{error}"),
+            Event::TurnAccepted => {}
             Event::Goal { .. } | Event::Usage | Event::TurnBoundary => {
                 panic!("unexpected Codex goal event from Claude")
             }
@@ -437,6 +438,7 @@ sys.stdin.readline()
             Event::Frame(_) => {}
             Event::Finished => break,
             Event::Failed(error) => panic!("{error}"),
+            Event::TurnAccepted => {}
             Event::Goal { .. } | Event::Usage | Event::TurnBoundary => {
                 panic!("unexpected Codex goal event from ACP")
             }

@@ -674,6 +674,26 @@ impl Store {
         Ok(serde_json::from_str(&document)?)
     }
 
+    /// Composer metadata must not deserialize the entire transcript while
+    /// holding the engine lock. Preserve the complete queue and JSON types.
+    pub(crate) fn thread_selection_snapshot(&self, id: &str) -> Result<Value> {
+        let document: String = self.connection()?.query_row(
+            "SELECT json_object('id', document -> '$.id', 'selection', document -> '$.selection', 'accessMode', document -> '$.accessMode', 'interactionMode', document -> '$.interactionMode', 'botID', document -> '$.botID', 'rustBotContext', document -> '$.rustBotContext', 'rustMessageQueue', document -> '$.rustMessageQueue') FROM threads WHERE id=?1",
+            [id],
+            |row| row.get(0),
+        )?;
+        Ok(serde_json::from_str(&document)?)
+    }
+
+    pub(crate) fn thread_selection_envelope(&self, id: &str) -> Result<Value> {
+        let document: String = self.connection()?.query_row(
+            "SELECT json_object('selection', document -> '$.selection', 'accessMode', document -> '$.accessMode', 'interactionMode', document -> '$.interactionMode') FROM threads WHERE id=?1",
+            [id],
+            |row| row.get(0),
+        )?;
+        Ok(serde_json::from_str(&document)?)
+    }
+
     pub fn thread(&self, id: &str) -> Result<Value> {
         let document = self.thread_document(id)?;
         Ok(serde_json::from_str(&document)?)
@@ -2285,6 +2305,43 @@ mod tests {
         fs::create_dir_all(source.join("threads")).unwrap();
         let db = Store::open(&dir.path().join("rust/store.sqlite")).unwrap();
         (dir, source, db)
+    }
+    #[test]
+    fn composer_projection_preserves_selection_and_queue_for_every_provider() {
+        let root = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&root.path().join("state.sqlite")).unwrap();
+        let mut thread = store.new_thread("").unwrap();
+        let id = text(&thread, "id");
+        thread["items"] = json!([{"kind":"assistant","text":"long transcript".repeat(10000)}]);
+        thread["rustMessageQueue"] = json!([{"future":"must be preserved"}]);
+        for provider in [
+            "codex",
+            "claude",
+            "cursor",
+            "grok",
+            "opencode",
+            "antigravity",
+        ] {
+            thread["selection"] = json!({"provider":provider,"modelID":"default","accountID":null});
+            store.save(&thread).unwrap();
+            let projected = store.thread_selection_snapshot(&id).unwrap();
+            for key in [
+                "id",
+                "selection",
+                "accessMode",
+                "interactionMode",
+                "botID",
+                "rustBotContext",
+                "rustMessageQueue",
+            ] {
+                assert_eq!(projected[key], thread[key], "{provider} {key}");
+            }
+            assert!(projected.get("items").is_none());
+            assert_eq!(
+                store.thread_selection_envelope(&id).unwrap(),
+                json!({"selection":thread["selection"],"accessMode":thread["accessMode"],"interactionMode":thread["interactionMode"]})
+            );
+        }
     }
     #[test]
     fn streaming_defers_expensive_indexes_but_search_stays_current_and_recovers_after_reopen() {

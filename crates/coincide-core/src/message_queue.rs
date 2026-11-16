@@ -17,6 +17,10 @@ pub struct Message {
     pub images: Vec<crate::attachments::StoredImage>,
     pub state: State,
     pub created_at: f64,
+    /// The user dismissed an in-flight row. Its claim remains durable until
+    /// the provider acknowledges or finishes so it cannot be dispatched twice.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub dismissed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -47,7 +51,10 @@ pub fn read(thread: &Value) -> Result<Vec<Message>> {
 /// A consistent desktop queue view, whether the saved thread was read on the
 /// UI thread or decoded by the background conversation reader.
 pub fn native_snapshot(thread: &Value, enabled: bool) -> Result<Value> {
-    let messages = read(thread)?;
+    let messages = read(thread)?
+        .into_iter()
+        .filter(|message| !message.dismissed)
+        .collect::<Vec<_>>();
     let error = if messages
         .iter()
         .any(|message| message.state != State::Completed)
@@ -131,6 +138,7 @@ pub(crate) fn add_payload(
         images,
         state: State::Pending,
         created_at: crate::store::swift_timestamp(),
+        dismissed: false,
         error: None,
     };
     rows.push(serde_json::to_value(&message)?);
