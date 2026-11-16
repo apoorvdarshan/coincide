@@ -220,117 +220,91 @@ fn pair(fixture: &mut Fixture) -> (Client, String, String) {
 }
 
 #[test]
-fn live_alerts_reach_only_the_active_paired_phone_and_respect_preview_setting() {
-    use crate::platform_host::notifications::{Alert, AlertKind, Delivery, EventKey};
+fn paired_phone_can_list_and_open_bot_conversations_without_navigating_the_mac() {
     let mut fixture = fixture();
+    let bot = Uuid::new_v4().to_string().to_uppercase();
+    {
+        let mut engine = fixture.engine.lock().unwrap();
+        engine
+            .store
+            .save_document(
+                "bots.json",
+                &json!({"bots":[{
+                    "id":bot,"name":"Fixture bot","persona":"Be concise",
+                    "avatar":{"shape":"alien","tint":"mint"},
+                    "selection":{"provider":"codex","modelID":"default"},
+                    "accessMode":"approval","interactionMode":"build","folder":fixture._dir.path()
+                }]}),
+            )
+            .unwrap();
+        engine.requested_open = None;
+    }
     fixture.server.set_enabled(true);
-    let handle = fixture.server.alert_handle();
-    let (mut phone, device, _) = pair(&mut fixture);
-    handle.set_enabled(true);
-    let server = event_of(&mut phone, "server");
-    assert_eq!(server["body"]["notifies"], true);
-    request(
-        &mut phone,
-        "presence",
-        "presence",
-        Some(json!({
-            "state":"active", "idleSeconds":2
-        })),
-    );
-    assert_eq!(reply(&mut phone, "presence")["type"], "ok");
-    let now = (crate::remote::pairing::now_ms() / 1000.) as u64;
-    let presence = handle.presences();
-    assert!(
-        presence
-            .iter()
-            .any(|row| row.device_id == device && row.foreground(now, 75))
-    );
-    let shared = fixture.server.running.as_ref().unwrap().0.clone();
-    let session = shared
-        .sessions
-        .lock()
-        .unwrap()
-        .values()
-        .next()
-        .unwrap()
-        .clone();
-    let busy = session.lock().unwrap();
-    assert!(handle.presences().iter().any(|row| row.device_id == device));
-    drop(busy);
-    let alert = Alert {
-        key: EventKey {
-            thread: Uuid::parse_str(&fixture.thread).unwrap(),
-            item: Uuid::new_v4(),
-            kind: AlertKind::Completed,
-        },
-        title: "Private title".into(),
-        body: Some("Private reply".into()),
-    };
-    assert_eq!(
-        handle.deliver("not-paired", &alert, true, now),
-        Delivery::Unavailable
-    );
-    assert_eq!(
-        handle.deliver(&device, &alert, false, now),
-        Delivery::Accepted
-    );
-    let event = event_of(&mut phone, "notify");
-    assert_eq!(event["body"]["threadID"], fixture.thread.to_lowercase());
-    assert_eq!(event["body"]["title"], "Coincide");
-    assert!(event["body"]["body"].is_null());
-    assert!(!event.to_string().contains("Private"));
+    let (mut phone, _, _) = pair(&mut fixture);
+    request(&mut phone, "workspace-before", "workspace", None);
+    let workspace = reply(&mut phone, "workspace-before");
+    assert_eq!(workspace["body"]["bots"][0]["id"], bot);
+    assert_eq!(workspace["body"]["bots"][0]["avatar"]["character"], "alien");
+    assert_eq!(workspace["body"]["canEditBots"], false);
 
-    assert_eq!(
-        handle.deliver(&device, &alert, true, now),
-        Delivery::Accepted
-    );
-    let preview = event_of(&mut phone, "notify");
-    assert_eq!(preview["body"]["title"], "Private title");
-    assert_eq!(preview["body"]["body"], "Private reply");
-    handle.set_enabled(false);
-    assert_eq!(
-        handle.deliver(&device, &alert, true, now),
-        Delivery::Unavailable
-    );
-    handle.set_enabled(true);
     request(
         &mut phone,
-        "background",
-        "presence",
-        Some(json!({
-            "state":"background", "idleSeconds":2
-        })),
+        "new-bot",
+        "newBotConversation",
+        Some(json!({"botID":bot})),
     );
-    assert_eq!(reply(&mut phone, "background")["type"], "ok");
-    assert_eq!(
-        handle.deliver(&device, &alert, false, now),
-        Delivery::Unavailable
-    );
+    let created = reply(&mut phone, "new-bot");
+    assert_eq!(created["type"], "thread", "{created}");
+    let thread = created["body"]["value"].as_str().unwrap().to_owned();
+    assert!(fixture.engine.lock().unwrap().requested_open.is_none());
     request(
         &mut phone,
-        "foreground",
-        "presence",
-        Some(json!({"state":"active","idleSeconds":0})),
+        "reuse-bot",
+        "newBotConversation",
+        Some(json!({"botID":bot})),
     );
-    assert_eq!(reply(&mut phone, "foreground")["type"], "ok");
-    fixture.server.revoke(&device);
+    assert_eq!(reply(&mut phone, "reuse-bot")["body"]["value"], thread);
+    request(&mut phone, "workspace-after", "workspace", None);
+    let workspace = reply(&mut phone, "workspace-after");
+    assert_eq!(workspace["body"]["bots"][0]["threadIDs"][0], thread);
     assert!(
-        !fixture
-            .server
-            .snapshot()
-            .devices
+        workspace["body"]["threads"]
+            .as_array()
+            .unwrap()
             .iter()
-            .any(|row| row.id == device)
+            .any(|row| row["id"] == thread)
     );
-    assert_eq!(
-        handle.deliver(&device, &alert, true, now),
-        Delivery::Unavailable
+    request(
+        &mut phone,
+        "open-bot",
+        "openThread",
+        Some(json!({"threadID":thread,"limit":20})),
     );
-    fixture.server.set_enabled(false);
-    assert!(handle.presences().is_empty());
+    assert_eq!(reply(&mut phone, "open-bot")["type"], "transcript");
+    assert!(fixture.engine.lock().unwrap().requested_open.is_none());
+    {
+        let mut engine = fixture.engine.lock().unwrap();
+        let mut saved = engine.store.thread(&thread).unwrap();
+        saved["draft"] = json!("Unsent text");
+        engine.store.save(&saved).unwrap();
+    }
+    request(
+        &mut phone,
+        "new-after-draft",
+        "newBotConversation",
+        Some(json!({"botID":bot})),
+    );
+    let next = reply(&mut phone, "new-after-draft");
+    assert_ne!(next["body"]["value"], thread);
     assert_eq!(
-        handle.deliver(&device, &alert, false, now),
-        Delivery::Unavailable
+        fixture
+            .engine
+            .lock()
+            .unwrap()
+            .store
+            .thread(&thread)
+            .unwrap()["draft"],
+        "Unsent text"
     );
 }
 
@@ -483,6 +457,121 @@ fn phone_composer_settings_validate_before_changing_the_exact_thread() {
     assert_eq!(thread["accessMode"], "fullAccess");
     assert_eq!(thread["draft"], "Desktop draft stays here");
     assert_eq!(thread["items"][0]["text"], "Earlier message");
+}
+
+#[test]
+fn live_alerts_reach_only_the_active_paired_phone_and_respect_preview_setting() {
+    use crate::platform_host::notifications::{Alert, AlertKind, Delivery, EventKey};
+    let mut fixture = fixture();
+    fixture.server.set_enabled(true);
+    let handle = fixture.server.alert_handle();
+    let (mut phone, device, _) = pair(&mut fixture);
+    handle.set_enabled(true);
+    let server = event_of(&mut phone, "server");
+    assert_eq!(server["body"]["notifies"], true);
+    request(
+        &mut phone,
+        "presence",
+        "presence",
+        Some(json!({
+            "state":"active", "idleSeconds":2
+        })),
+    );
+    assert_eq!(reply(&mut phone, "presence")["type"], "ok");
+    let now = (crate::remote::pairing::now_ms() / 1000.) as u64;
+    let presence = handle.presences();
+    assert!(
+        presence
+            .iter()
+            .any(|row| row.device_id == device && row.foreground(now, 75))
+    );
+    let shared = fixture.server.running.as_ref().unwrap().0.clone();
+    let session = shared
+        .sessions
+        .lock()
+        .unwrap()
+        .values()
+        .next()
+        .unwrap()
+        .clone();
+    let busy = session.lock().unwrap();
+    assert!(handle.presences().iter().any(|row| row.device_id == device));
+    drop(busy);
+    let alert = Alert {
+        key: EventKey {
+            thread: Uuid::parse_str(&fixture.thread).unwrap(),
+            item: Uuid::new_v4(),
+            kind: AlertKind::Completed,
+        },
+        title: "Private title".into(),
+        body: Some("Private reply".into()),
+    };
+    assert_eq!(
+        handle.deliver("not-paired", &alert, true, now),
+        Delivery::Unavailable
+    );
+    assert_eq!(
+        handle.deliver(&device, &alert, false, now),
+        Delivery::Accepted
+    );
+    let event = event_of(&mut phone, "notify");
+    assert_eq!(event["body"]["threadID"], fixture.thread.to_lowercase());
+    assert_eq!(event["body"]["title"], "Coincide");
+    assert!(event["body"]["body"].is_null());
+    assert!(!event.to_string().contains("Private"));
+
+    assert_eq!(
+        handle.deliver(&device, &alert, true, now),
+        Delivery::Accepted
+    );
+    let preview = event_of(&mut phone, "notify");
+    assert_eq!(preview["body"]["title"], "Private title");
+    assert_eq!(preview["body"]["body"], "Private reply");
+    handle.set_enabled(false);
+    assert_eq!(
+        handle.deliver(&device, &alert, true, now),
+        Delivery::Unavailable
+    );
+    handle.set_enabled(true);
+    request(
+        &mut phone,
+        "background",
+        "presence",
+        Some(json!({
+            "state":"background", "idleSeconds":2
+        })),
+    );
+    assert_eq!(reply(&mut phone, "background")["type"], "ok");
+    assert_eq!(
+        handle.deliver(&device, &alert, false, now),
+        Delivery::Unavailable
+    );
+    request(
+        &mut phone,
+        "foreground",
+        "presence",
+        Some(json!({"state":"active","idleSeconds":0})),
+    );
+    assert_eq!(reply(&mut phone, "foreground")["type"], "ok");
+    fixture.server.revoke(&device);
+    assert!(
+        !fixture
+            .server
+            .snapshot()
+            .devices
+            .iter()
+            .any(|row| row.id == device)
+    );
+    assert_eq!(
+        handle.deliver(&device, &alert, true, now),
+        Delivery::Unavailable
+    );
+    fixture.server.set_enabled(false);
+    assert!(handle.presences().is_empty());
+    assert_eq!(
+        handle.deliver(&device, &alert, false, now),
+        Delivery::Unavailable
+    );
 }
 
 #[test]

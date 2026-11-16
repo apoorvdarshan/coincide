@@ -444,6 +444,10 @@ impl Session {
                 let thread = adapter.new_thread(project_id, &runs()?)?;
                 self.respond(id, "thread", Some(protocol::value_body(thread)));
             }
+            Request::NewBotConversation { bot_id } => {
+                let thread = adapter.new_bot_conversation(bot_id)?;
+                self.respond(id, "thread", Some(protocol::value_body(thread)));
+            }
             Request::SetProjectExpanded {
                 project_id,
                 expanded,

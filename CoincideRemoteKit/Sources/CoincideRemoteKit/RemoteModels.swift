@@ -70,6 +70,8 @@ public struct RemoteWorkspace: Codable, Hashable, Sendable {
     public var threads: [RemoteThreadSummary]
     /// Bots, when the Mac has any. Nil when this Mac has no bots feature.
     public var bots: [RemoteBot]?
+    /// False when the Mac can show bots but does not yet support editing them remotely.
+    public var canEditBots: Bool?
     public var providers: [RemoteProvider]
     /// The Mac sidebar's sections in its order: `pinned`, `projects`, `chats` (and kinds a newer Mac adds).
     public var sections: [String]
@@ -84,11 +86,12 @@ public struct RemoteWorkspace: Codable, Hashable, Sendable {
     public init(
         projects: [RemoteProject] = [], threads: [RemoteThreadSummary] = [], bots: [RemoteBot]? = nil,
         providers: [RemoteProvider] = [], sections: [String] = ["pinned", "projects", "chats"], pinnedOrder: [UUID] = [],
-        sidebar: RemoteSidebarOptions? = nil, botPersonalityPresets: [String]? = nil
+        sidebar: RemoteSidebarOptions? = nil, botPersonalityPresets: [String]? = nil, canEditBots: Bool? = nil
     ) {
         self.projects = projects
         self.threads = threads
         self.bots = bots
+        self.canEditBots = canEditBots
         self.providers = providers
         self.sections = sections
         self.pinnedOrder = pinnedOrder
