@@ -32,6 +32,12 @@ fn revision(engine: &Engine, configuration: &Value) -> Result<String> {
 }
 
 impl Engine {
+    /// Resolve an already registered legacy profile for local usage reads.
+    pub fn native_legacy_codex_usage_home(&self, id: &str) -> Result<PathBuf> {
+        let configuration = legacy::configuration(&self.store)?;
+        legacy::account(&configuration, id)?;
+        legacy::managed_home(&self.store.data_directory()?, id, false)
+    }
     pub fn native_legacy_codex_accounts(&self) -> Result<Vec<NativeLegacyCodexAccount>> {
         let configuration = legacy::configuration(&self.store)?;
         let revision = revision(self, &configuration)?;
