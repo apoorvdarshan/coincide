@@ -23,6 +23,9 @@ pub struct Message {
     pub dismissed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// A question reply must never migrate to a different native session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_question_session: Option<String>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -140,6 +143,7 @@ pub(crate) fn add_payload(
         created_at: crate::store::swift_timestamp(),
         dismissed: false,
         error: None,
+        codex_question_session: None,
     };
     rows.push(serde_json::to_value(&message)?);
     ensure!(

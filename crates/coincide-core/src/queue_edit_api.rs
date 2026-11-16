@@ -40,6 +40,10 @@ impl Engine {
             .find(|(_, message)| message.id == message_id)
             .context("Queued message is no longer available")?;
         ensure!(
+            message.codex_question_session.is_none(),
+            "Remove the queued answer to choose a different response"
+        );
+        ensure!(
             matches!(
                 message.state,
                 State::Pending | State::Failed | State::Interrupted

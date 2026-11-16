@@ -152,6 +152,9 @@ impl TurnContext {
             && self.thread["accessMode"] == thread["accessMode"]
             && self.thread["interactionMode"] == thread["interactionMode"]
     }
+    pub(crate) fn selection(&self) -> &Value {
+        &self.thread["selection"]
+    }
     pub(crate) fn finish(self, snapshot: Snapshot) -> Record {
         let mut usage = json!({});
         for (source, target) in [

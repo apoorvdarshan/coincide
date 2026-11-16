@@ -7,9 +7,12 @@ impl Engine {
         expected: &Value,
         visible: &Value,
     ) -> Result<NativeFollowUpTicket> {
-        self.native_send_queued_with_behavior(expected, visible, None)
+        let behavior = visible["codexQuestionSession"]
+            .is_string()
+            .then_some(Behavior::Steer);
+        self.native_send_queued_with_behavior(expected, visible, behavior)
     }
-    pub(super) fn native_send_queued_with_behavior(
+    pub(in crate::api) fn native_send_queued_with_behavior(
         &mut self,
         expected: &Value,
         visible: &Value,
@@ -17,6 +20,12 @@ impl Engine {
     ) -> Result<NativeFollowUpTicket> {
         self.require_admissions()?;
         let id = required(expected, "id")?.to_owned();
+        if visible["codexQuestionSession"].is_string() {
+            ensure!(
+                self.runs.get(&id).is_none_or(|run| run.pending.is_empty()),
+                "Respond to the pending provider request before sending the answer"
+            );
+        }
         let mut claim = Some(self.claim_native_queue_now(expected, visible)?);
         let current = self.store.thread(&id)?;
         if self.runs.contains_key(&id) {
