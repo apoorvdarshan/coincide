@@ -120,9 +120,9 @@ mod tests {
         assert!(image.prepare_in(root.path()).is_ok());
         assert_eq!(std::fs::read(&input).unwrap(), b"fixture");
         std::fs::write(&script, "#!/bin/sh\nwhile :; do :; done\n").unwrap();
-        let start = Instant::now();
-        assert!(generate(&input, root.path(), &script, Duration::from_millis(70)).is_err());
-        assert!(start.elapsed() < Duration::from_secs(2));
+        let error = generate(&input, root.path(), &script, Duration::from_millis(70))
+            .expect_err("The hung thumbnail process must time out");
+        assert!(error.to_string().contains("timed out"), "{error:#}");
     }
 
     #[test]
