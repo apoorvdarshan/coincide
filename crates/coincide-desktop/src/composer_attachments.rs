@@ -4,7 +4,13 @@ use std::path::PathBuf;
 
 enum IncomingImage {
     Path(PathBuf),
-    Clipboard(Vec<u8>),
+    Clipboard(Arc<Image>),
+}
+
+#[derive(Clone)]
+pub(super) enum ImportPreview {
+    Path(PathBuf),
+    Clipboard(Arc<Image>),
 }
 
 #[cfg(test)]
@@ -40,7 +46,13 @@ mod tests {
         for _ in 0..6 {
             let job = imports.reserve("chat").unwrap();
             imports
-                .ready(job, vec![IncomingImage::Clipboard(vec![1])])
+                .ready(
+                    job,
+                    vec![IncomingImage::Clipboard(Arc::new(Image::from_bytes(
+                        ImageFormat::Png,
+                        vec![1],
+                    )))],
+                )
                 .unwrap();
             jobs.push(job);
         }
@@ -63,6 +75,57 @@ mod tests {
             vec![jobs[4]]
         );
         assert!(imports.contains("chat"));
+    }
+
+    #[::core::prelude::v1::test]
+    fn cancelled_running_paste_disappears_but_a_send_waits_for_cleanup() {
+        let mut imports = ImageImports::default();
+        let job = imports.reserve("chat").unwrap();
+        imports
+            .ready(
+                job,
+                vec![IncomingImage::Clipboard(Arc::new(Image::from_bytes(
+                    ImageFormat::Png,
+                    vec![1],
+                )))],
+            )
+            .unwrap();
+        assert_eq!(imports.previews("chat").len(), 1);
+        assert_eq!(imports.take_ready().len(), 1);
+        imports.cancel(job);
+        assert!(imports.previews("chat").is_empty());
+        assert!(imports.cancelled(job));
+        assert!(imports.contains("chat"));
+        let mut pending = PendingSend::new(
+            &json!({"id":"chat","selection":{"provider":"codex"}}),
+            "text".into(),
+            false,
+        );
+        pending.add_imports(imports.claim("chat"));
+        assert!(pending.waiting_for_import);
+        assert!(pending.complete_import(job, &[], false));
+        imports.finish(job);
+        assert!(!pending.waiting_for_import);
+        assert!(
+            pending.captured["rustDraftImages"]
+                .as_array()
+                .is_none_or(Vec::is_empty)
+        );
+    }
+
+    #[::core::prelude::v1::test]
+    fn removed_image_blocks_a_send_until_its_removal_finishes() {
+        let mut imports = ImageImports::default();
+        let job = imports.reserve_removal("chat").unwrap();
+        let mut pending = PendingSend::new(
+            &json!({"id":"chat","selection":{"provider":"codex"},"rustDraftImages":[]}),
+            "text".into(),
+            false,
+        );
+        pending.add_imports(imports.claim("chat"));
+        assert!(pending.waiting_for_import);
+        assert!(pending.complete_import(job, &[], false));
+        assert!(!pending.waiting_for_import);
     }
 
     #[::core::prelude::v1::test]
@@ -94,6 +157,8 @@ struct ImportJob {
     thread: String,
     claimed: bool,
     bytes: usize,
+    preview: Option<ImportPreview>,
+    cancelled: bool,
     state: ImportState,
 }
 /// Own every paste independently, including ones received while another image
@@ -118,6 +183,8 @@ impl ImageImports {
             thread: thread.into(),
             claimed: false,
             bytes: 0,
+            preview: None,
+            cancelled: false,
             state: ImportState::Reserved,
         });
         Some(id)
@@ -141,7 +208,7 @@ impl ImageImports {
         let bytes = images
             .iter()
             .map(|image| match image {
-                IncomingImage::Clipboard(bytes) => bytes.len(),
+                IncomingImage::Clipboard(image) => image.bytes().len(),
                 IncomingImage::Path(_) => 0,
             })
             .sum::<usize>();
@@ -160,8 +227,40 @@ impl ImageImports {
             .find(|job| job.id == id)
             .context("Image import is no longer available")?;
         job.bytes = bytes;
+        job.preview = images.first().map(|image| match image {
+            IncomingImage::Path(path) => ImportPreview::Path(path.clone()),
+            IncomingImage::Clipboard(image) => ImportPreview::Clipboard(image.clone()),
+        });
         job.state = ImportState::Ready(images);
         Ok(())
+    }
+    pub fn previews(&self, thread: &str) -> Vec<(u64, ImportPreview)> {
+        self.jobs
+            .iter()
+            .filter(|job| job.thread == thread && !job.claimed && !job.cancelled)
+            .filter_map(|job| job.preview.clone().map(|preview| (job.id, preview)))
+            .collect()
+    }
+    fn cancel(&mut self, id: u64) {
+        if let Some(job) = self
+            .jobs
+            .iter_mut()
+            .find(|job| job.id == id && !job.claimed)
+        {
+            job.cancelled = true;
+            job.preview = None;
+            if !matches!(job.state, ImportState::Running) {
+                self.finish(id);
+            }
+        }
+    }
+    fn cancelled(&self, id: u64) -> bool {
+        self.jobs.iter().any(|job| job.id == id && job.cancelled)
+    }
+    pub fn reserve_removal(&mut self, thread: &str) -> Option<u64> {
+        let id = self.reserve(thread)?;
+        self.jobs.iter_mut().find(|job| job.id == id)?.state = ImportState::Running;
+        Some(id)
     }
     fn take_ready(&mut self) -> Vec<(u64, String, Vec<IncomingImage>)> {
         let mut slots = 4usize.saturating_sub(
@@ -308,7 +407,7 @@ impl Coincide {
                             total as u64 <= MAX_SOURCE_BYTES,
                             "Clipboard images exceed the 20 MiB combined limit"
                         );
-                        incoming.push(IncomingImage::Clipboard(image.bytes().to_vec()));
+                        incoming.push(IncomingImage::Clipboard(Arc::new(image.clone())));
                     }
                     ClipboardEntry::ExternalPaths(paths) => {
                         anyhow::ensure!(
@@ -418,11 +517,11 @@ impl Coincide {
                             anyhow::ensure!(path.is_absolute(), "Image file path must be absolute");
                             (path, None)
                         }
-                        IncomingImage::Clipboard(bytes) => {
+                        IncomingImage::Clipboard(image) => {
                             let root = data_directory.clone();
                             let staged = cx
                                 .background_executor()
-                                .spawn(async move { stage_clipboard_image(&root, &bytes) })
+                                .spawn(async move { stage_clipboard_image(&root, image.bytes()) })
                                 .await?;
                             (staged.path().to_owned(), Some(staged))
                         }
@@ -477,13 +576,58 @@ impl Coincide {
             }
             .await;
             let _ = this.update(cx, |this, cx| {
-                this.finish_image_import(job, &thread, imported, outcome.err(), cx)
+                if this.attachment_imports.cancelled(job) {
+                    this.cleanup_cancelled_import(job, thread, imported, cx);
+                } else {
+                    this.finish_image_import(job, &thread, imported, outcome.err(), cx);
+                }
             });
         })
         .detach();
     }
 
-    fn finish_image_import(
+    pub(super) fn cancel_image_import(&mut self, job: u64, cx: &mut Context<Self>) {
+        self.attachment_imports.cancel(job);
+        self.pump_image_imports(cx);
+        cx.notify();
+    }
+
+    fn cleanup_cancelled_import(
+        &mut self,
+        job: u64,
+        thread: String,
+        imported: Vec<Value>,
+        cx: &mut Context<Self>,
+    ) {
+        if imported.is_empty() {
+            self.finish_image_import(job, &thread, Vec::new(), None, cx);
+            return;
+        }
+        let engine = self.engine.clone();
+        cx.spawn(async move |this, cx| {
+            let owner = thread.clone();
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    for image in imported {
+                        let id = image["id"].as_str().context("Imported image has no ID")?;
+                        coincide_core::api::call(
+                            &engine,
+                            "attachments.remove",
+                            json!({"threadId":owner,"attachmentId":id}),
+                        )?;
+                    }
+                    Ok::<(), anyhow::Error>(())
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.finish_image_import(job, &thread, Vec::new(), result.err(), cx)
+            });
+        })
+        .detach();
+    }
+
+    pub(super) fn finish_image_import(
         &mut self,
         job: u64,
         thread: &str,
@@ -542,11 +686,25 @@ impl Coincide {
         };
         if import_failed && is_selected && claimed {
             self.show_local_error("The image could not be attached. Your message has not been sent; attach the image again to continue.");
+        } else if import_failed && is_selected {
+            self.show_local_error(
+                "The image could not be processed. Your draft is preserved; please try again.",
+            );
         }
-        if is_selected
-            && let Ok(value) = call(&self.engine, "threads.read", json!({"threadId":thread}))
-        {
-            self.replace_selected_thread(Some(value));
+        if is_selected && !imported.is_empty() {
+            if let Some(selected) = self.selected.as_mut() {
+                if selected["rustDraftImages"].is_null() {
+                    selected["rustDraftImages"] = json!([]);
+                }
+                if let Some(images) = selected["rustDraftImages"].as_array_mut() {
+                    for image in &imported {
+                        if !images.iter().any(|existing| existing["id"] == image["id"]) {
+                            images.push(image.clone());
+                        }
+                    }
+                }
+            }
+            self.selected_generation = self.selected_generation.wrapping_add(1);
         }
         self.reconcile_buffered_sends();
         self.pump_image_imports(cx);

@@ -4751,21 +4751,51 @@ impl Coincide {
         let Some(thread_id) = self.selected.as_ref().map(|v| text(v, "id")) else {
             return;
         };
-        match call(
-            &self.engine,
-            "attachments.remove",
-            json!({"threadId":thread_id,"attachmentId":attachment_id}),
-        ) {
-            Ok(_) => {
-                if let Ok(thread) =
-                    call(&self.engine, "threads.read", json!({"threadId":thread_id}))
+        let Some(job) = self.attachment_imports.reserve_removal(&thread_id) else {
+            self.show_local_error("Too many image operations are in progress. Try again shortly.");
+            cx.notify();
+            return;
+        };
+        let Some(images) = self
+            .selected
+            .as_mut()
+            .and_then(|thread| thread["rustDraftImages"].as_array_mut())
+        else {
+            self.finish_image_import(job, &thread_id, Vec::new(), None, cx);
+            return;
+        };
+        let Some(index) = images.iter().position(|image| image["id"] == attachment_id) else {
+            self.finish_image_import(job, &thread_id, Vec::new(), None, cx);
+            return;
+        };
+        // Remove it from the visible draft immediately. A send claims this
+        // job and waits until the removal is durable, so it cannot accidentally
+        // send an image the user just removed.
+        let removed = images.remove(index);
+        self.selected_generation = self.selected_generation.wrapping_add(1);
+        let engine = self.engine.clone();
+        let attachment_id = attachment_id.to_owned();
+        cx.spawn(async move |this, cx| {
+            let owner = thread_id.clone();
+            let outcome = cx.background_executor().spawn(async move {
+                coincide_core::api::call(&engine, "attachments.remove", json!({"threadId":owner,"attachmentId":attachment_id}))
+            }).await;
+            let _ = this.update(cx, |this, cx| {
+                if outcome.is_err()
+                    && let Some(images) = this.selected.as_mut().filter(|thread| text(thread, "id") == thread_id)
+                        .and_then(|thread| thread["rustDraftImages"].as_array_mut())
+                    && !images.iter().any(|image| image["id"] == removed["id"])
                 {
-                    self.replace_selected_thread(Some(thread));
+                    images.insert(index.min(images.len()), removed);
+                    this.selected_generation = this.selected_generation.wrapping_add(1);
                 }
-                self.status = "Image removed from this draft.".into();
-            }
-            Err(error) => self.status = format!("Image could not be removed: {error}"),
-        }
+                let failed = outcome.is_err();
+                this.finish_image_import(job, &thread_id, Vec::new(), outcome.err(), cx);
+                this.status = if failed { "Image could not be removed; it remains in the draft." } else { "Image removed from this draft." }.into();
+                if failed { this.show_local_error("The image could not be removed. It remains in the draft, and any waiting message was not sent."); }
+                cx.notify();
+            });
+        }).detach();
         cx.notify();
     }
     /// Keep the reader's place across a transcript splice. gpui moves a scroll
@@ -5081,10 +5111,13 @@ impl Coincide {
     }
     fn draft_images(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let thread = self.selected.as_ref()?;
-        let images = self
-            .pending_images
-            .visible(&text(thread, "id"), thread["rustDraftImages"].as_array()?);
-        if images.is_empty() {
+        let id = text(thread, "id");
+        let images = thread["rustDraftImages"]
+            .as_array()
+            .map(|images| self.pending_images.visible(&id, images))
+            .unwrap_or_default();
+        let imports = self.attachment_imports.previews(&id);
+        if images.is_empty() && imports.is_empty() {
             return None;
         }
         Some(
@@ -5097,6 +5130,42 @@ impl Coincide {
                 .max_h(px(132.))
                 .overflow_y_scroll()
                 .mb_2()
+                .children(imports.into_iter().map(|(job, preview)| {
+                    let image = match preview {
+                        composer_attachments::ImportPreview::Path(path) => img(path),
+                        composer_attachments::ImportPreview::Clipboard(image) => img(image),
+                    };
+                    div()
+                        .relative()
+                        .w(px(76.))
+                        .h(px(76.))
+                        .child(
+                            image
+                                .w_full()
+                                .h_full()
+                                .rounded_md()
+                                .object_fit(ObjectFit::Cover),
+                        )
+                        .child(
+                            div().absolute().top(px(2.)).right(px(2.)).child(
+                                Button::new(SharedString::from(format!(
+                                    "cancel-image-import-{job}"
+                                )))
+                                .icon(gpui_kit::assets::IconName::Close)
+                                .ghost()
+                                .xsmall()
+                                .w(px(18.))
+                                .h(px(18.))
+                                .rounded(px(9.))
+                                .bg(self.color(0x111722).opacity(0.82))
+                                .accessibility_label("Remove image")
+                                .tooltip("Remove image")
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| this.cancel_image_import(job, cx),
+                                )),
+                            ),
+                        )
+                }))
                 .children(images.iter().map(|image| {
                     let id = text(image, "id");
                     let name: String = text(image, "originalName").chars().take(120).collect();
@@ -5173,7 +5242,7 @@ impl Coincide {
             "id": format!("pending-send-{seq}"),
             "kind": "user",
             "text": message,
-            "createdAt": 0,
+            "createdAt": coincide_core::store::swift_timestamp(),
             "pendingSend": true
         });
         if !images.is_empty() {
@@ -5310,7 +5379,7 @@ impl Coincide {
             "id": format!("pending-send-{seq}"),
             "kind": "user",
             "text": message,
-            "createdAt": 0,
+            "createdAt": coincide_core::store::swift_timestamp(),
             "pendingSend": true
         });
         if let Some(images) = self.pending_images.images(seq) {
@@ -7085,7 +7154,6 @@ impl Render for Coincide {
                                                         .tooltip(if importing_images { "Importing images…" } else { "Attach images" })
                                                         .compact().ghost()
                                                         .xsmall().h(px(26.)).rounded(px(7.))
-                                                        .disabled(importing_images)
                                                         .on_click(cx.listener(|this, _, _, cx| {
                                                             this.attach_images(cx)
                                                         })),

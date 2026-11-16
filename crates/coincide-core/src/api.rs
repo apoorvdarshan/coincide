@@ -412,6 +412,23 @@ impl Engine {
         }
     }
 
+    /// The saved selection identity used by the native composer's background
+    /// capability reader. Do not deserialize the transcript merely to compare
+    /// these three fields before and after that read.
+    pub fn saved_selection_envelope(&self, id: &str) -> Result<Value> {
+        let (thread, _) = self.store.remote_thread_metadata(id)?;
+        Ok(
+            json!({"selection":thread["selection"],"accessMode":thread["accessMode"],"interactionMode":thread["interactionMode"]}),
+        )
+    }
+
+    /// Read a composer's capabilities without polling provider events again;
+    /// the desktop's normal poll owns event advancement.
+    pub fn selection_capabilities_snapshot(&mut self, id: &str) -> Result<Value> {
+        self.require_admissions()?;
+        self.execute("agent.selection.capabilities", &json!({"threadId":id}))
+    }
+
     pub fn new(store: Store) -> Self {
         Self::initialize(store, true)
     }
@@ -530,6 +547,29 @@ impl Engine {
         match result {
             Ok(result) => json!({"id":id,"result":result}),
             Err(e) => json!({"id":id,"error":{"message":e.to_string()}}),
+        }
+    }
+
+    /// Read the current in-memory snapshot without advancing provider events.
+    /// Remote workspace construction performs several reads; polling for each
+    /// one repeatedly saves the active transcript and can starve the phone.
+    /// Keep the allowlist narrow: actions must use normal dispatch and its
+    /// ordering guarantees. The regular desktop/control poll advances events.
+    pub(crate) fn dispatch_remote_snapshot(&mut self, method: &str, params: Value) -> Value {
+        if !matches!(
+            method,
+            "app.status"
+                | "agent.pending"
+                | "projects.list"
+                | "bots.list"
+                | "threads.list"
+                | "agent.selection.capabilities"
+        ) {
+            return json!({"error":{"message":"Unsupported remote snapshot read"}});
+        }
+        match self.execute(method, &params) {
+            Ok(result) => json!({"result":result}),
+            Err(error) => json!({"error":{"message":error.to_string()}}),
         }
     }
     fn execute(&mut self, method: &str, p: &Value) -> Result<Value> {
@@ -3445,6 +3485,21 @@ mod tests {
             json!({"method":"threads.patch","params":{"threadId":id,"patch":{"sessions":{}}}}),
         );
         assert!(reply.get("error").is_some());
+    }
+
+    #[test]
+    fn remote_snapshot_cannot_perform_mutations() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("data.sqlite")).unwrap();
+        let mut engine = Engine::fixture(store);
+        let thread = engine.store.new_thread("").unwrap();
+        let id = thread["id"].as_str().unwrap();
+        let result = engine.dispatch_remote_snapshot(
+            "threads.patch",
+            json!({"threadId":id,"patch":{"draft":"must not be saved"}}),
+        );
+        assert!(result.get("error").is_some());
+        assert_eq!(engine.store.thread(id).unwrap()["draft"], thread["draft"]);
     }
     #[test]
     fn thread_read_snapshot_keeps_its_revision_and_unsaved_recovery_data() {

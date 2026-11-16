@@ -166,7 +166,14 @@ impl Turns<'_> {
     }
 
     fn time(&self, index: usize, field: &str) -> Option<f64> {
-        seconds(&self.items[index][field])
+        let item = &self.items[index];
+        // Older optimistic send rows used zero as a placeholder. It is not a
+        // real start time and must never turn into decades of elapsed work.
+        if item["pendingSend"] == true && item[field] == 0 {
+            None
+        } else {
+            seconds(&item[field])
+        }
     }
 
     fn end(&self, indices: impl Iterator<Item = usize>) -> Option<f64> {
@@ -626,7 +633,7 @@ impl super::Coincide {
                 let opener = turns.running_opener()?;
                 let started = turns
                     .running_started_at
-                    .or_else(|| seconds(&turns.items[opener]["createdAt"]))
+                    .or_else(|| turns.time(opener, "createdAt"))
                     .unwrap_or(now);
                 Some((opener, id.to_owned(), elapsed(now - started)))
             })
@@ -949,6 +956,24 @@ mod tests {
             turns.plan(0).header,
             Some(Header::Working { started_at: 200. })
         );
+    }
+
+    #[::core::prelude::v1::test]
+    fn pending_placeholder_does_not_show_decades_of_work() {
+        let items = [json!({"id":"pending", "kind":"user", "createdAt":0, "pendingSend":true})];
+        let expanded = |_: &str| false;
+        let turns = Turns {
+            items: &items,
+            recorded_durations: None,
+            running: true,
+            running_started_at: None,
+            show_reasoning: true,
+            expanded: &expanded,
+        };
+        let Some(Header::Working { started_at }) = turns.plan(0).header else {
+            panic!("missing working header")
+        };
+        assert!(coincide_core::store::swift_timestamp() - started_at < 1.);
     }
 
     #[::core::prelude::v1::test]

@@ -29,11 +29,7 @@ impl CapabilityCache {
         // inspect its saved selection, so never load it on the UI thread.
         let cached = self.authoritative.as_ref() == Some(scope);
         let result = self.named.read_with(shared, scope, cached, |engine, id| {
-            selection_response(
-                engine,
-                "agent.selection.capabilities",
-                json!({"threadId":id}),
-            )
+            engine.selection_capabilities_snapshot(id)
         });
         if matches!(result, Read::Ready(_)) {
             self.authoritative = Some(scope.clone());

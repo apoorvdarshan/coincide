@@ -9,11 +9,11 @@ use super::protocol::{
     RemoteError, Script, Selection, SendRequest, ServerInfo, Speed, ThemeInfo, ThreadAction,
     ThreadSettings, ThreadSummary, Transcript, TurnState, Workspace,
 };
-use crate::api::SharedEngine;
+use crate::api::{Engine, SharedEngine};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
-    sync::Mutex,
+    sync::{Mutex, MutexGuard, TryLockError},
     time::{Duration, Instant},
 };
 use uuid::Uuid;
@@ -253,6 +253,43 @@ impl Adapter {
         &self.engine
     }
 
+    // Workspace reads run on a Remote worker, not the desktop UI thread.
+    // Wait briefly for an in-progress save instead of immediately failing an
+    // entire 80+ conversation snapshot on a single moment of contention.
+    fn read_engine_until(&self, deadline: Instant) -> Result<MutexGuard<'_, Engine>, RemoteError> {
+        loop {
+            match self.engine.try_lock() {
+                Ok(engine) => return Ok(engine),
+                Err(TryLockError::Poisoned(_)) => {
+                    return Err(RemoteError::failed("Application state is unavailable."));
+                }
+                Err(TryLockError::WouldBlock) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(TryLockError::WouldBlock) => {
+                    return Err(RemoteError::failed("The computer is busy. Try again."));
+                }
+            }
+        }
+    }
+
+    fn snapshot_call(
+        &self,
+        method: &str,
+        params: Value,
+        deadline: Instant,
+    ) -> Result<Value, RemoteError> {
+        let response = self
+            .read_engine_until(deadline)?
+            .dispatch_remote_snapshot(method, params);
+        if let Some(error) = response.get("error") {
+            return Err(RemoteError::failed(
+                error["message"].as_str().unwrap_or("Command failed"),
+            ));
+        }
+        Ok(response["result"].clone())
+    }
+
     fn call(&self, method: &str, params: Value) -> Result<Value, RemoteError> {
         // The desktop may hold Engine during a save. Never strand a Remote
         // worker (and shutdown) waiting for that mutex; let the phone retry its
@@ -270,20 +307,19 @@ impl Adapter {
         Ok(response["result"].clone())
     }
 
-    fn providers(&self) -> Result<Vec<Provider>, RemoteError> {
-        let mut engine = self
-            .engine
-            .try_lock()
-            .map_err(|_| RemoteError::failed("The computer is busy. Try again."))?;
+    fn snapshot_providers(&self, deadline: Instant) -> Result<Vec<Provider>, RemoteError> {
+        let mut engine = self.read_engine_until(deadline)?;
         if engine.admissions_frozen() {
             return Err(RemoteError::failed("The computer is closing."));
         }
-        let result = engine.dispatch(json!({"method":"agent.selection.capabilities","params":{}}));
+        let result = engine.dispatch_remote_snapshot("agent.selection.capabilities", json!({}));
         if result.get("error").is_some() {
             return Err(RemoteError::failed("Provider settings are unavailable."));
         }
-        let models = engine.remote_discovered_models();
-        Ok(remote_providers(&result["result"], &models))
+        Ok(remote_providers(
+            &result["result"],
+            &engine.remote_discovered_models(),
+        ))
     }
 
     pub(super) fn enabled_usage(
@@ -333,13 +369,24 @@ impl Adapter {
     }
 
     pub fn runs(&self) -> Result<Runs, RemoteError> {
+        self.runs_inner(None)
+    }
+
+    pub fn workspace_runs(&self) -> Result<Runs, RemoteError> {
+        self.runs_inner(Some(Instant::now() + Duration::from_secs(8)))
+    }
+
+    fn runs_inner(&self, deadline: Option<Instant>) -> Result<Runs, RemoteError> {
         let mut runs = Runs::default();
         // One nonblocking engine snapshot prevents a temporary busy state from
         // masquerading as an idle run or empty set of approvals on the phone.
-        let mut engine = self
-            .engine
-            .try_lock()
-            .map_err(|_| RemoteError::failed("The computer is busy. Try again."))?;
+        let mut engine = if let Some(deadline) = deadline {
+            self.read_engine_until(deadline)?
+        } else {
+            self.engine
+                .try_lock()
+                .map_err(|_| RemoteError::failed("The computer is busy. Try again."))?
+        };
         let result = |response: Value| -> Result<Value, RemoteError> {
             if let Some(error) = response.get("error") {
                 return Err(RemoteError::failed(
@@ -348,7 +395,11 @@ impl Adapter {
             }
             Ok(response["result"].clone())
         };
-        let status = result(engine.dispatch(json!({"method":"app.status","params":{}})))?;
+        let status = result(if deadline.is_some() {
+            engine.dispatch_remote_snapshot("app.status", json!({}))
+        } else {
+            engine.dispatch(json!({"method":"app.status","params":{}}))
+        })?;
         for id in status["running"].as_array().into_iter().flatten() {
             let Some(id) = id.as_str() else { continue };
             let key = upper(id);
@@ -360,9 +411,11 @@ impl Adapter {
             if let Some(started) = stored_date_ms(&clock["startedAt"]) {
                 runs.started_at.insert(key.clone(), started);
             }
-            let pending = result(
-                engine.dispatch(json!({"method":"agent.pending","params":{"threadId":id}})),
-            )?;
+            let pending = result(if deadline.is_some() {
+                engine.dispatch_remote_snapshot("agent.pending", json!({"threadId":id}))
+            } else {
+                engine.dispatch(json!({"method":"agent.pending","params":{"threadId":id}}))
+            })?;
             runs.pending.insert(
                 key.clone(),
                 pending
@@ -426,32 +479,45 @@ impl Adapter {
 
     /// The thread document's sidebar fields, read again only when its summary
     /// changed or it's running (streaming changes the document, not the title).
+    #[cfg(test)]
     fn cached_fields(&self, summary: &Value, runs: &Runs) -> Result<ThreadFields, RemoteError> {
+        self.cached_fields_until(summary, runs, Instant::now())
+    }
+
+    fn cached_fields_until(
+        &self,
+        summary: &Value,
+        runs: &Runs,
+        deadline: Instant,
+    ) -> Result<ThreadFields, RemoteError> {
         let id = summary["id"]
             .as_str()
             .ok_or_else(|| RemoteError::failed("A conversation is temporarily unavailable."))?;
         let key = upper(id);
-        let mut cache = self
-            .cache
-            .try_lock()
-            .map_err(|_| RemoteError::failed("The computer is busy. Try again."))?;
-        if !runs.running.contains(&key)
-            && let Some((seen, fields)) = cache.get(&key)
-            && seen == summary
         {
-            return Ok(fields.clone());
+            let cache = self
+                .cache
+                .lock()
+                .map_err(|_| RemoteError::failed("Workspace cache is unavailable."))?;
+            if !runs.running.contains(&key)
+                && let Some((seen, fields)) = cache.get(&key)
+                && seen == summary
+            {
+                return Ok(fields.clone());
+            }
         }
         // A busy engine is not a deleted conversation. Fail the snapshot so
         // the phone can retry rather than replacing its sidebar with a partial
         // list. Fields already read stay cached for the next attempt.
         let (document, item_count) = self
-            .engine
-            .try_lock()
-            .map_err(|_| RemoteError::failed("The computer is busy. Try again."))?
+            .read_engine_until(deadline)?
             .remote_thread_metadata(id)
             .map_err(|_| RemoteError::failed("A conversation is temporarily unavailable."))?;
         let fields = Self::fields_with_item_count(&document, item_count);
-        cache.insert(key, (summary.clone(), fields.clone()));
+        self.cache
+            .lock()
+            .map_err(|_| RemoteError::failed("Workspace cache is unavailable."))?
+            .insert(key, (summary.clone(), fields.clone()));
         Ok(fields)
     }
 
@@ -520,8 +586,31 @@ impl Adapter {
     /// Projects in the sidebar's order with Chats last, and every thread in
     /// them, most recently active first.
     pub fn workspace(&self, include_archived: bool, runs: &Runs) -> Result<Workspace, RemoteError> {
-        let stored = self.call("projects.list", json!({}))?;
-        let markers = self.markers()?;
+        self.workspace_until(include_archived, runs, Instant::now())
+    }
+
+    /// Explicit initial reads may wait for a save. Periodic refreshes stay
+    /// nonblocking so they do not delay unrelated phone actions.
+    pub fn initial_workspace(
+        &self,
+        include_archived: bool,
+        runs: &Runs,
+    ) -> Result<Workspace, RemoteError> {
+        self.workspace_until(
+            include_archived,
+            runs,
+            Instant::now() + Duration::from_secs(12),
+        )
+    }
+
+    fn workspace_until(
+        &self,
+        include_archived: bool,
+        runs: &Runs,
+        deadline: Instant,
+    ) -> Result<Workspace, RemoteError> {
+        let stored = self.snapshot_call("projects.list", json!({}), deadline)?;
+        let markers = self.markers_until(deadline)?;
         let chats_id = stored
             .as_array()
             .into_iter()
@@ -531,7 +620,7 @@ impl Adapter {
             .unwrap_or(NO_PROJECT)
             .to_uppercase();
         let home = home_directory();
-        let bot_list = self.call("bots.list", json!({}))?;
+        let bot_list = self.snapshot_call("bots.list", json!({}), deadline)?;
         let mut projects = stored
             .as_array()
             .into_iter()
@@ -585,13 +674,17 @@ impl Adapter {
             .iter()
             .map(|p| p.id.clone())
             .collect::<HashSet<_>>();
-        let summaries = self.call("threads.list", json!({"includeArchived":include_archived}))?;
+        let summaries = self.snapshot_call(
+            "threads.list",
+            json!({"includeArchived":include_archived}),
+            deadline,
+        )?;
         let mut threads = Vec::new();
         let mut bot_threads: HashMap<String, Vec<(f64, String)>> = HashMap::new();
         let mut seen = HashSet::new();
         for summary in summaries.as_array().into_iter().flatten() {
             let project = upper(summary["project_id"].as_str().unwrap_or_default());
-            let fields = self.cached_fields(summary, runs)?;
+            let fields = self.cached_fields_until(summary, runs, deadline)?;
             seen.insert(upper(summary["id"].as_str().unwrap_or_default()));
             let project = if fields.bot_id.is_some() {
                 crate::bot_runtime::BOTS_PROJECT_ID.to_owned()
@@ -674,7 +767,7 @@ impl Adapter {
             threads,
             bots,
             can_edit_bots: false,
-            providers: self.providers()?,
+            providers: self.snapshot_providers(deadline)?,
             sections: vec!["pinned".into(), "projects".into(), "chats".into()],
             pinned_order,
         })
@@ -905,10 +998,11 @@ impl Adapter {
     }
 
     fn markers(&self) -> Result<ThreadMarkers, RemoteError> {
-        let engine = self
-            .engine
-            .try_lock()
-            .map_err(|_| RemoteError::failed("The computer is busy. Try again."))?;
+        self.markers_until(Instant::now())
+    }
+
+    fn markers_until(&self, deadline: Instant) -> Result<ThreadMarkers, RemoteError> {
+        let engine = self.read_engine_until(deadline)?;
         let state = engine
             .store
             .document("ui-state.json")
@@ -1952,6 +2046,34 @@ mod tests {
         assert!(adapter.cached_fields(&summary, &runs).is_err());
         drop(held);
         assert!(adapter.cached_fields(&summary, &runs).is_ok());
+    }
+
+    #[test]
+    fn workspace_waits_for_a_busy_engine_and_returns_the_full_list() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut engine = crate::api::Engine::fixture(
+            crate::store::Store::open(&directory.path().join("state.sqlite")).unwrap(),
+        );
+        let one = engine.store.new_thread(NO_PROJECT).unwrap();
+        let two = engine.store.new_thread(NO_PROJECT).unwrap();
+        let ids = [
+            upper(one["id"].as_str().unwrap()),
+            upper(two["id"].as_str().unwrap()),
+        ];
+        let engine = std::sync::Arc::new(Mutex::new(engine));
+        let held = engine.lock().unwrap();
+        let remote_engine = engine.clone();
+        let reader = std::thread::spawn(move || {
+            let adapter = Adapter::new(remote_engine, "fixture");
+            let runs = adapter.workspace_runs()?;
+            adapter.initial_workspace(false, &runs)
+        });
+        std::thread::sleep(Duration::from_millis(100));
+        drop(held);
+        let workspace = reader.join().unwrap().unwrap();
+        for id in ids {
+            assert!(workspace.threads.iter().any(|thread| thread.id == id));
+        }
     }
 
     #[test]

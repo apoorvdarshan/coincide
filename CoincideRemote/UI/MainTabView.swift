@@ -412,9 +412,15 @@ struct WorkspaceLoadingView: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            ProgressView()
             if client.workspaceLoadFailed {
+                Image(systemName: "exclamationmark.circle")
+                    .font(.title2)
+                    .foregroundStyle(.secondary)
+                Text("Couldn’t load the workspace.")
+                    .foregroundStyle(.secondary)
                 Button("Try Again") { Task { await client.refreshWorkspace() } }
+            } else {
+                ProgressView()
             }
         }
     }

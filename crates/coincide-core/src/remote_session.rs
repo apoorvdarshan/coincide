@@ -356,9 +356,10 @@ impl Session {
             Request::Ping => self.respond(id, "ok", None),
             Request::Workspace { include_archived } => {
                 self.includes_archived = include_archived;
-                let workspace =
-                    serde_json::to_value(adapter.workspace(include_archived, &runs()?)?)
-                        .map_err(|e| RemoteError::failed(e.to_string()))?;
+                let workspace = serde_json::to_value(
+                    adapter.initial_workspace(include_archived, &adapter.workspace_runs()?)?,
+                )
+                .map_err(|e| RemoteError::failed(e.to_string()))?;
                 self.last_workspace = Some(workspace.clone());
                 self.respond(id, "workspace", Some(workspace));
             }
