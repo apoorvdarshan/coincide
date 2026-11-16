@@ -352,23 +352,7 @@ impl Engine {
             "Transcript persistence is recovering; retry after recovery"
         );
         let thread = self.store.thread_queue_snapshot(id)?;
-        let messages = crate::message_queue::read(&thread)?;
-        // Older queue failures can remain in saved metadata after the last
-        // message completed or was removed. They are no longer actionable.
-        let error = if messages
-            .iter()
-            .any(|message| message.state != crate::message_queue::State::Completed)
-        {
-            thread["rustQueueError"].clone()
-        } else {
-            Value::Null
-        };
-        Ok(json!({
-            "messages": messages,
-            "rawQueue": thread["rustMessageQueue"],
-            "error": error,
-            "enabled": self.enabled_queues.contains(id)
-        }))
+        crate::message_queue::native_snapshot(&thread, self.enabled_queues.contains(id))
     }
 
     /// Keep the latest discovered lists for the next launch. A failure here is

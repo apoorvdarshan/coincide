@@ -43,6 +43,27 @@ pub fn read(thread: &Value) -> Result<Vec<Message>> {
     ensure!(messages.len() <= 32, "Saved message queue is too large");
     Ok(messages)
 }
+
+/// A consistent desktop queue view, whether the saved thread was read on the
+/// UI thread or decoded by the background conversation reader.
+pub fn native_snapshot(thread: &Value, enabled: bool) -> Result<Value> {
+    let messages = read(thread)?;
+    let error = if messages
+        .iter()
+        .any(|message| message.state != State::Completed)
+    {
+        thread["rustQueueError"].clone()
+    } else {
+        Value::Null
+    };
+    Ok(serde_json::json!({
+        "messages": messages,
+        "rawQueue": thread["rustMessageQueue"],
+        "error": error,
+        "enabled": enabled,
+    }))
+}
+
 pub fn write(thread: &mut Value, messages: &[Message]) -> Result<()> {
     thread["rustMessageQueue"] = serde_json::to_value(messages)?;
     Ok(())

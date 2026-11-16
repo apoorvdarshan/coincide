@@ -116,16 +116,10 @@ impl Reader {
                 };
                 let thread = snapshot.decode().map_err(|_| ())?;
                 let queue = match queue_enabled {
-                    Some(enabled) => coincide_core::message_queue::read(&thread)
-                        .map(|messages| {
-                            serde_json::json!({
-                                "messages": messages,
-                                "rawQueue": thread["rustMessageQueue"],
-                                "error": thread["rustQueueError"],
-                                "enabled": enabled,
-                            })
-                        })
-                        .map_err(|error| error.to_string()),
+                    Some(enabled) => {
+                        coincide_core::message_queue::native_snapshot(&thread, enabled)
+                            .map_err(|error| error.to_string())
+                    }
                     None => {
                         Err("Transcript persistence is recovering; retry after recovery".into())
                     }
@@ -277,6 +271,47 @@ mod tests {
             assert_eq!(queue["messages"][0]["text"], "queued for this provider");
             assert_eq!(queue["rawQueue"][0]["futureField"]["preserve"], true);
             assert!(changes.is_some());
+            reader.close();
+            while !reader.closed_and_drained() {
+                assert!(Instant::now() < deadline, "background reader did not drain");
+                std::thread::yield_now();
+            }
+        }
+    }
+
+    #[test]
+    fn background_read_does_not_restore_a_completed_queue_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = coincide_core::store::Store::open(&dir.path().join("queue.sqlite")).unwrap();
+        let engine = Arc::new(Mutex::new(coincide_core::api::Engine::new(store)));
+        let mut thread = engine
+            .lock()
+            .unwrap()
+            .dispatch(json!({"method":"threads.create","params":{}}))["result"]
+            .clone();
+        coincide_core::message_queue::add(&mut thread, "message").unwrap();
+        thread["rustQueueError"] = json!("old model error");
+        for (state, expected) in [
+            ("pending", json!("old model error")),
+            ("completed", Value::Null),
+        ] {
+            thread["rustMessageQueue"][0]["state"] = json!(state);
+            engine.lock().unwrap().store.save(&thread).unwrap();
+            let mut reader = Reader::default();
+            assert!(reader.start(&engine, &thread, 1));
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let completed = loop {
+                if let Some(result) = reader.poll() {
+                    break result.unwrap();
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "background thread read timed out"
+                );
+                std::thread::yield_now();
+            };
+            let (_, _, queue, _) = completed.apply_if_current(&thread, 1).unwrap();
+            assert_eq!(queue.unwrap()["error"], expected);
             reader.close();
             while !reader.closed_and_drained() {
                 assert!(Instant::now() < deadline, "background reader did not drain");
