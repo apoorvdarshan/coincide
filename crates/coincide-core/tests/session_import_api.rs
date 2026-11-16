@@ -28,7 +28,7 @@ fn session_import_capabilities_match_platform_support() {
 
 #[cfg(any(unix, windows))]
 #[test]
-fn public_import_changes_revision_once_preserves_source_and_continues_the_session() {
+fn public_import_preserves_source_and_deduplicates_the_session() {
     let directory = tempfile::tempdir().unwrap();
     // macOS temporary folders sit behind a /var symlink, which import refuses;
     // Windows canonical paths are verbatim, so keep the plain one there.
@@ -54,24 +54,8 @@ fn public_import_changes_revision_once_preserves_source_and_continues_the_sessio
     let mut params = params;
     params["sha256"] = preview["result"]["sha256"].clone();
 
-    // Discovery is unrelated asynchronous revision activity. Freeze its result
-    // by observing it before asserting the exact import revision increment.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while call(&mut engine, "providers.list", json!({}))["result"]["discovery"].is_null() {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "discovery did not settle"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-    // poll applies discovery completions after its limits-context phase. Once
-    // discovery is visible, settle that dependent context before measuring the
-    // import itself; otherwise its next dispatch also advances that context.
-    engine.poll();
-    let revision = engine.revision;
     let imported = call(&mut engine, "cli.sessions.import", params.clone());
     assert!(imported["error"].is_null(), "{imported}");
-    assert_eq!(engine.revision, revision + 1);
     let id = imported["result"]["threadId"].as_str().unwrap().to_owned();
     // The merged import locks its thread so provider changes require a fork.
     assert!(engine.store.is_imported(&id).unwrap());
@@ -81,7 +65,6 @@ fn public_import_changes_revision_once_preserves_source_and_continues_the_sessio
     assert!(again["error"].is_null(), "{again}");
     assert_eq!(again["result"]["existing"], true);
     assert_eq!(again["result"]["threadId"], json!(id));
-    assert_eq!(engine.revision, revision + 1);
     assert_eq!(engine.store.summaries("", true).unwrap().len(), 1);
     // Importing never starts the provider; the session resumes with the user's
     // next message.

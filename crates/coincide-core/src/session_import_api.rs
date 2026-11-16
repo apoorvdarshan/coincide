@@ -373,6 +373,21 @@ mod tests {
         );
     }
     #[test]
+    fn import_dispatch_advances_revision_only_for_a_new_thread() {
+        let (_dir, _path, store, params, _bytes) = setup("codex");
+        // Startup discovery can also advance the global revision. Use the
+        // isolated engine fixture to measure the import's own effect.
+        let mut engine = crate::api::Engine::fixture(store);
+        let revision = engine.revision;
+        let request = json!({"id":"test", "method":"cli.sessions.import", "params":params});
+        let imported = engine.dispatch(request.clone());
+        assert!(imported["error"].is_null(), "{imported}");
+        assert_eq!(engine.revision, revision + 1);
+        let again = engine.dispatch(request);
+        assert_eq!(again["result"]["existing"], true, "{again}");
+        assert_eq!(engine.revision, revision + 1);
+    }
+    #[test]
     fn auto_detection_and_existing_import_lookup() {
         for provider in ["codex", "claude"] {
             let (_dir, _path, mut store, params, _bytes) = setup(provider);
