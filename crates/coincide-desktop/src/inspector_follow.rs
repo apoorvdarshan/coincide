@@ -79,6 +79,7 @@ impl State {
             Err(error) => {
                 // Do not silently rebase a failed compare-and-save. A new
                 // explicit choice may retry it against the newer state.
+                eprintln!("Inspector choice could not be saved: {error}");
                 self.failed.insert(id.to_owned());
                 self.error = Some(format!(
                     "Inspector choice is kept for this session; could not save: {error}"
@@ -224,6 +225,7 @@ impl Coincide {
             Ok(SavedChoice::Deferred) => return,
             Ok(SavedChoice::Ready(saved)) => saved,
             Err(error) => {
+                eprintln!("Inspector state could not be restored: {error}");
                 self.inspector_follow.error =
                     Some(format!("Inspector state was not restored: {error}"));
                 self.clear_inspector_placeholders();
