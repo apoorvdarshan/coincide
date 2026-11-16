@@ -127,6 +127,10 @@ impl Coincide {
             self.status = "Finishing your composer choice before quitting…".into();
             return false;
         }
+        if !self.inspector_follow.close_when_saved(&self.engine) {
+            self.status = "Saving the current panel before quitting…".into();
+            return false;
+        }
         // Only committed source may enter the normal draft-flush custody.
         self.close_dictation_preview(cx);
         self.palette_search.shutdown();
@@ -233,6 +237,7 @@ impl Coincide {
             self.selection_ui.capability_read_shutdown_status(),
             self.thread_bulk.shutdown_status(),
             self.selected_thread_reader.shutdown_status(),
+            self.inspector_follow.shutdown_status(),
             self.instructions_panel
                 .update(cx, |panel, _| panel.instruction_git_shutdown_status()),
             self.composer_files.shutdown_status(),

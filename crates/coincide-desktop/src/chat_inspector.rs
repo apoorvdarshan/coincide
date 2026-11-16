@@ -72,6 +72,29 @@ pub(super) fn columns(chat: AnyElement, inspector: Option<AnyElement>) -> Div {
         .when_some(inspector, |view, panel| view.child(panel))
 }
 impl Coincide {
+    /// Select the browser immediately; a tab may still be loading or waiting
+    /// for admission. Its native views remain owned by the browser controller.
+    pub(super) fn reveal_selected_browser(&mut self, cx: &mut Context<Self>) {
+        let Some(thread) = self.selected.as_ref().map(|thread| text(thread, "id")) else {
+            return;
+        };
+        if self.browser.is_none() {
+            return;
+        }
+        self.clear_inspector_placeholders();
+        self.session_import_open = false;
+        self.workspace_open = false;
+        self.close_schedule_surface();
+        if self.terminal_on_right() {
+            self.terminal_open = false;
+        }
+        self.browser_panels.insert(thread.clone());
+        if let Some(browser) = &mut self.browser {
+            browser.set_thread_visible(Some(&thread), cx);
+        }
+        self.remember_current_inspector(cx);
+        cx.notify();
+    }
     pub(super) fn sync_inspector_browser_visibility(&mut self, cx: &mut Context<Self>) {
         let visible =
             self.chat_inspector_panel() == Some(Panel::Browser) && !self.historical_image_is_open();

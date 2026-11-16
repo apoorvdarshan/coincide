@@ -3,6 +3,7 @@
 use super::*;
 pub(super) use coincide_core::inspector_preferences::Panel as SavedPanel;
 use coincide_core::inspector_preferences::{self as preferences, Change};
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 #[derive(Default)]
 pub(super) struct State {
     bound: Option<String>,
@@ -15,6 +16,8 @@ pub(super) struct State {
     deferred_browser_hides: std::collections::BTreeSet<String>,
     pending: std::collections::BTreeMap<String, Option<SavedPanel>>,
     failed: std::collections::BTreeSet<String>,
+    writes: worker_owner::WorkerOwner,
+    inflight: Option<(String, Option<SavedPanel>, Receiver<Result<Value>>)>,
     pub(super) terminal_placeholder: bool,
     pub(super) preview_placeholder: bool,
     pub(super) error: Option<String>,
@@ -85,44 +88,93 @@ impl State {
     pub(super) fn fallback_destination(&mut self, id: &str) {
         self.choices.insert(id.to_owned(), None);
     }
-    /// Keep the newest choice queued while the engine is temporarily busy.
-    /// A successful retry updates the store; a real failure is still reported.
-    fn persist_choice(&mut self, engine: &SharedEngine, id: &str) -> bool {
-        let Some(choice) = self.pending.get(id).copied() else {
-            return false;
-        };
-        let result = (|| -> Result<Value> {
-            let mut engine = try_state(engine)?;
-            anyhow::ensure!(
-                !engine.admissions_frozen() && !engine.shutdown,
-                "App is closing"
-            );
-            let source = engine.store.native_inspector_document()?;
-            let saved =
-                engine
-                    .store
-                    .remember_native_inspector_panel(source.as_ref(), id, choice)?;
-            Ok(saved)
-        })();
-        match result {
-            Ok(document) => {
-                self.document = Some(document);
-                self.pending.remove(id);
-                self.failed.remove(id);
-                self.error = None;
-            }
-            Err(error) if engine_busy(&error) => return false,
-            Err(error) => {
-                // Do not silently rebase a failed compare-and-save. A new
-                // explicit choice may retry it against the newer state.
-                eprintln!("Inspector choice could not be saved: {error}");
-                self.failed.insert(id.to_owned());
-                self.error = Some(format!(
-                    "Inspector choice is kept for this session; could not save: {error}"
-                ));
+    /// Persist outside the UI thread: SQLite can wait on another writer even
+    /// after the engine mutex was acquired. Keep newer choices while an older
+    /// write finishes, and serialize writes to the shared UI-state document.
+    fn poll_writes(&mut self, engine: &SharedEngine) -> bool {
+        self.writes.poll();
+        let received =
+            self.inflight
+                .as_ref()
+                .and_then(|(_, _, receiver)| match receiver.try_recv() {
+                    Ok(result) => Some(result),
+                    Err(TryRecvError::Empty) => None,
+                    Err(TryRecvError::Disconnected) => {
+                        Some(Err(anyhow::anyhow!("Inspector save stopped")))
+                    }
+                });
+        let mut changed = false;
+        if let Some(result) = received {
+            let (id, choice, _) = self.inflight.take().expect("received inspector write");
+            match result {
+                Ok(document) => {
+                    self.document = Some(document);
+                    if self.pending.get(&id) == Some(&choice) {
+                        self.pending.remove(&id);
+                        self.failed.remove(&id);
+                        self.error = None;
+                    }
+                    changed = true;
+                }
+                Err(error) if engine_busy(&error) => {}
+                Err(error) if self.pending.get(&id) == Some(&choice) => {
+                    eprintln!("Inspector choice could not be saved: {error}");
+                    self.failed.insert(id);
+                    self.error = Some(format!(
+                        "Inspector choice is kept for this session; could not save: {error}"
+                    ));
+                    changed = true;
+                }
+                Err(_) => {}
             }
         }
-        true
+        if self.inflight.is_none() && self.writes.can_start() {
+            if let Some((id, choice)) = self
+                .pending
+                .iter()
+                .find(|(id, _)| !self.failed.contains(*id))
+                .map(|(id, choice)| (id.clone(), *choice))
+            {
+                let engine = engine.clone();
+                let write_id = id.clone();
+                let (sender, receiver) = mpsc::sync_channel(1);
+                if self.writes.spawn(move |admission| {
+                    let result = (|| -> Result<Value> {
+                        anyhow::ensure!(admission.allowed(), "App is closing");
+                        let mut engine = try_state(&engine)?;
+                        anyhow::ensure!(
+                            !engine.admissions_frozen() && !engine.shutdown,
+                            "App is closing"
+                        );
+                        let source = engine.store.native_inspector_document()?;
+                        engine.store.remember_native_inspector_panel(
+                            source.as_ref(),
+                            &write_id,
+                            choice,
+                        )
+                    })();
+                    let _ = sender.try_send(result);
+                }) {
+                    self.inflight = Some((id, choice, receiver));
+                }
+            }
+        }
+        changed
+    }
+
+    /// Finish accepted choices before closing the store or native window.
+    pub(super) fn close_when_saved(&mut self, engine: &SharedEngine) -> bool {
+        self.poll_writes(engine);
+        if self.inflight.is_some() || self.pending.keys().any(|id| !self.failed.contains(id)) {
+            return false;
+        }
+        self.writes.close();
+        let status = self.writes.status();
+        status.closed && status.unjoined == 0 && status.panicked == 0 && status.unclassified == 0
+    }
+
+    pub(super) fn shutdown_status(&mut self) -> worker_owner::ShutdownStatus {
+        self.writes.status()
     }
     pub(super) fn clear_loaded_error(&mut self, id: &str, status: &mut String) {
         if !self.failed.contains(id) {
@@ -421,14 +473,13 @@ impl Coincide {
         }
         self.inspector_follow.failed.remove(&id);
         self.inspector_follow.pending.insert(id.clone(), choice);
-        self.persist_inspector_choice(&id, cx);
-    }
-    fn persist_inspector_choice(&mut self, id: &str, cx: &mut Context<Self>) {
-        if self.inspector_follow.persist_choice(&self.engine, id) {
-            cx.notify();
-        }
+        self.inspector_follow.poll_writes(&self.engine);
+        cx.notify();
     }
     pub(super) fn poll_inspector_follow(&mut self, cx: &mut Context<Self>) {
+        if self.inspector_follow.poll_writes(&self.engine) {
+            cx.notify();
+        }
         if self.media.close_requested || self.media.shutdown_requested {
             return;
         }
@@ -453,15 +504,6 @@ impl Coincide {
             }
         }
         self.restore_inspector_for_selected(cx);
-        if let Some(id) = self
-            .inspector_follow
-            .pending
-            .keys()
-            .find(|id| !self.inspector_follow.failed.contains(*id))
-            .cloned()
-        {
-            self.persist_inspector_choice(&id, cx);
-        }
     }
     pub(super) fn clear_inspector_placeholders(&mut self) {
         self.inspector_follow.terminal_placeholder = false;
@@ -651,6 +693,7 @@ mod tests {
     fn busy_save_is_silent_and_persists_the_choice_after_retry() {
         use coincide_core::{api::Engine, store::Store};
         use std::sync::{Arc, Mutex};
+        use std::time::{Duration, Instant};
         let directory = tempfile::tempdir().unwrap();
         let mut store = Store::open(&directory.path().join("state.sqlite")).unwrap();
         let id = "00000000-0000-4000-8000-000000000001";
@@ -661,11 +704,16 @@ mod tests {
         let mut state = State::default();
         state.pending.insert(id.into(), Some(SavedPanel::Schedules));
         let held = engine.lock().unwrap();
-        assert!(!state.persist_choice(&engine, id));
+        state.poll_writes(&engine);
         assert!(state.error.is_none());
         assert!(state.pending.contains_key(id));
         drop(held);
-        assert!(state.persist_choice(&engine, id));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !state.pending.is_empty() {
+            state.poll_writes(&engine);
+            assert!(Instant::now() < deadline, "inspector save did not finish");
+            std::thread::yield_now();
+        }
         assert!(state.pending.is_empty());
         assert!(state.error.is_none());
         let document = engine
@@ -678,6 +726,43 @@ mod tests {
         assert_eq!(
             coincide_core::inspector_preferences::saved(&document, id).unwrap(),
             Some(SavedPanel::Schedules)
+        );
+    }
+
+    #[::core::prelude::v1::test]
+    fn a_newer_panel_choice_survives_an_inflight_save_and_closing_waits_for_it() {
+        use coincide_core::{api::Engine, store::Store};
+        use std::sync::{Arc, Mutex};
+        use std::time::{Duration, Instant};
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&directory.path().join("state.sqlite")).unwrap();
+        let id = "00000000-0000-4000-8000-000000000001";
+        store
+            .save(&serde_json::json!({"id":id,"title":"Synthetic","items":[]}))
+            .unwrap();
+        let engine = Arc::new(Mutex::new(Engine::new(store)));
+        let mut state = State::default();
+        state.pending.insert(id.into(), Some(SavedPanel::Preview));
+        state.poll_writes(&engine);
+        state
+            .pending
+            .insert(id.into(), Some(SavedPanel::PullRequests));
+        assert!(!state.close_when_saved(&engine));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !state.close_when_saved(&engine) {
+            assert!(Instant::now() < deadline, "inspector close did not drain");
+            std::thread::yield_now();
+        }
+        let saved = engine
+            .lock()
+            .unwrap()
+            .store
+            .native_inspector_document()
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            coincide_core::inspector_preferences::saved(&saved, id).unwrap(),
+            Some(SavedPanel::PullRequests)
         );
     }
 }

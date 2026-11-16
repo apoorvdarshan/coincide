@@ -456,6 +456,29 @@ impl BrowserController {
         }
     }
 
+    /// The tab's own close button uses the same validated owner path as the
+    /// native keyboard shortcut, without waiting on the shared engine queue.
+    pub fn close_user_tab(
+        &mut self,
+        thread: &str,
+        tab: &str,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<bool> {
+        self.handle(
+            BrowserRequest {
+                id: Uuid::new_v4().to_string(),
+                thread_id: thread.to_owned(),
+                tab: Some(tab.to_owned()),
+                frame: None,
+                action: BrowserAction::CloseTab,
+            },
+            window,
+            cx,
+        )?;
+        Ok(self.active_view(thread).is_none())
+    }
+
     fn handle(
         &mut self,
         request: BrowserRequest,
@@ -2204,10 +2227,14 @@ impl BrowserController {
             for tab in tabs {
                 let visible =
                     thread == Some(owner.as_str()) && self.active.get(owner) == Some(&tab.id);
-                tab.view.update(
-                    cx,
-                    |view, _| if visible { view.show() } else { view.hide() },
-                );
+                // This runs on every poll and render. Repeated native show/hide
+                // calls are expensive and can also steal focus during a switch.
+                if tab.view.read(cx).visible() != visible {
+                    tab.view.update(
+                        cx,
+                        |view, _| if visible { view.show() } else { view.hide() },
+                    );
+                }
             }
         }
     }

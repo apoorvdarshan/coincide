@@ -551,8 +551,9 @@ impl Engine {
     /// The desktop's frequent status reads must not drain provider events on
     /// the UI thread. The control owner continuously polls the same engine on
     /// its own thread, including when command-line access is disabled. Only
-    /// independent snapshots and provider-catalog reads bypass that poll;
-    /// actions retain the normal ordering against pending provider events.
+    /// independent snapshots, provider-catalog reads, and native browser
+    /// queue admission/receipts bypass that poll. Browser requests retain
+    /// their own queue order; other actions retain provider-event ordering.
     pub fn dispatch_desktop(&mut self, request: Value) -> Value {
         let method = request["method"].as_str().unwrap_or("");
         let snapshot = matches!(
@@ -565,6 +566,8 @@ impl Engine {
                 | "threads.list"
                 | "threads.read"
                 | "schedules.list"
+                | "browser.request"
+                | "browser.result"
                 | "host.awake.status"
                 | "agent.models.refresh"
                 | "agent.models.status"
@@ -794,7 +797,8 @@ impl Engine {
                 let mut params=p.clone();
                 params["id"]=json!(Uuid::new_v4().to_string());
                 let mut request:crate::browser_protocol::BrowserRequest=serde_json::from_value(params)?;
-                request.validate()?;self.store.thread(&request.thread_id)?;
+                request.validate()?;
+                ensure!(self.store.contains_thread(&request.thread_id)?,"Conversation not found");
                 self.resolve_browser_search(&mut request)?;
                 let id=request.id.clone();
                 let timeout=request.action.result_timeout();

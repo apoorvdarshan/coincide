@@ -48,6 +48,7 @@ mod browser_passkey_ui;
 mod browser_settings;
 mod browser_tab_shortcuts;
 mod browser_tab_shortcuts_mount;
+mod browser_ui_queue;
 mod browser_user_turn_ui;
 #[cfg(any(target_os = "windows", test))]
 mod browser_viewport_geometry;
@@ -734,6 +735,8 @@ struct Coincide {
     browser_control: Value,
     pending_browser_control: browser_controls::PendingControls,
     browser_ui_operations: std::collections::HashMap<String, String>,
+    browser_ui_pending_tabs: std::collections::HashMap<String, String>,
+    browser_ui_queue: browser_ui_queue::Queue,
     browser_replies: Vec<coincide_core::browser_protocol::BrowserReply>,
     link_menu: Option<transcript_links::LinkMenu>,
     turn_changes: turn_changes::TurnChanges,
@@ -2019,6 +2022,8 @@ impl Coincide {
             browser_control,
             pending_browser_control: Default::default(),
             browser_ui_operations: Default::default(),
+            browser_ui_pending_tabs: Default::default(),
+            browser_ui_queue: Default::default(),
             browser_replies: Vec::new(),
             link_menu: None,
             turn_changes: Default::default(),
@@ -2193,20 +2198,61 @@ impl Coincide {
         let Some(thread) = self.selected.as_ref().map(|v| text(v, "id")) else {
             return;
         };
-        let mut params = serde_json::to_value(action).unwrap_or_default();
-        params["threadId"] = json!(thread);
-        if let Some(tab) = tab {
-            params["tab"] = json!(tab);
+        if matches!(action, BrowserAction::Hide) {
+            self.hide_selected_browser_surface(cx);
+            self.clear_inspector_placeholders();
+            self.remember_current_inspector(cx);
+            cx.notify();
+            return;
         }
-        match call(&self.engine, "browser.request", params) {
-            Ok(result) => {
-                if self.status.starts_with("Browser:") {
-                    self.status.clear();
+        if matches!(action, BrowserAction::Show) {
+            self.reveal_selected_browser(cx);
+        }
+        self.enqueue_browser_ui(
+            browser_ui_queue::Intent::Action {
+                thread,
+                action,
+                tab,
+            },
+            cx,
+        );
+    }
+    fn enqueue_browser_ui(&mut self, intent: browser_ui_queue::Intent, cx: &mut Context<Self>) {
+        if self.media.close_requested || self.media.shutdown_requested {
+            self.status = "Browser: App is closing".into();
+        } else if let Err(error) = self.browser_ui_queue.push(intent) {
+            self.status = format!("Browser: {error}");
+        } else if self.status.starts_with("Browser:") {
+            self.status.clear();
+        }
+        cx.notify();
+    }
+    fn close_browser_tab(&mut self, tab: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(thread) = self.selected.as_ref().map(|value| text(value, "id")) else {
+            return;
+        };
+        let result = self
+            .browser
+            .as_mut()
+            .map(|browser| browser.close_user_tab(&thread, tab, window, cx));
+        match result {
+            Some(Ok(true)) => {
+                let opening_tab = self.browser_ui_queue.opens_tab_for(&thread)
+                    || self
+                        .browser_ui_pending_tabs
+                        .values()
+                        .any(|owner| owner == &thread);
+                if !opening_tab
+                    && self.chat_inspector_panel() == Some(chat_inspector::Panel::Browser)
+                {
+                    self.hide_selected_browser_surface(cx);
+                    self.clear_inspector_placeholders();
+                    self.remember_current_inspector(cx);
                 }
-                self.browser_ui_operations
-                    .insert(text(&result, "operationId"), thread);
             }
-            Err(error) => self.status = format!("Browser: {error}"),
+            Some(Ok(false)) => {}
+            Some(Err(error)) => self.status = format!("Browser: {error}"),
+            None => self.status = "Browser: Browser is unavailable".into(),
         }
         cx.notify();
     }
@@ -2272,6 +2318,21 @@ impl Coincide {
         self.browser_action(action, None, cx);
     }
     fn poll_browser(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (admitted, error) = self
+            .browser_ui_queue
+            .poll(&self.engine, &self.browser_panels);
+        for operation in admitted {
+            if operation.creates_tab {
+                self.browser_ui_pending_tabs
+                    .insert(operation.id.clone(), operation.thread.clone());
+            }
+            self.browser_ui_operations
+                .insert(operation.id, operation.thread);
+        }
+        if let Some(error) = error {
+            self.status = format!("Browser: {error}");
+            cx.notify();
+        }
         let requests = self
             .engine
             .try_lock()
@@ -2282,6 +2343,22 @@ impl Coincide {
             .iter()
             .any(|r| matches!(r.action, BrowserAction::FillLogin { .. }));
         for request in requests {
+            // A native show can have been admitted before the user chose a
+            // different panel. A late receipt must not reopen the browser.
+            if browser_ui_queue::superseded_show(
+                &request.action,
+                &request.thread_id,
+                self.browser_ui_operations.contains_key(&request.id),
+                &self.browser_panels,
+            ) {
+                self.browser_replies
+                    .push(coincide_core::browser_protocol::BrowserReply {
+                        id: request.id,
+                        thread_id: request.thread_id,
+                        result: json!({"visible":false,"superseded":true}),
+                    });
+                continue;
+            }
             if !self.pending_browser_control.request_allowed(
                 &self.browser_control,
                 &request.thread_id,
@@ -2387,9 +2464,14 @@ impl Coincide {
         changed |= browser.poll(window, cx);
         self.browser_completion.poll();
         if close_visible_last_tab
-            && selected_id
-                .as_deref()
-                .is_some_and(|thread| browser.active_view(thread).is_none())
+            && selected_id.as_deref().is_some_and(|thread| {
+                browser.active_view(thread).is_none()
+                    && !self.browser_ui_queue.opens_tab_for(thread)
+                    && !self
+                        .browser_ui_pending_tabs
+                        .values()
+                        .any(|owner| owner == thread)
+            })
         {
             if let Some(thread) = &selected_id {
                 self.browser_panels.remove(thread);
@@ -2420,6 +2502,7 @@ impl Coincide {
             ) {
                 Ok(result) if result["ready"] == true => {
                     self.browser_ui_operations.remove(&id);
+                    self.browser_ui_pending_tabs.remove(&id);
                     if let Some(error) = result["result"]["error"].as_str() {
                         self.status = format!("Browser: {error}");
                     } else if self.status.starts_with("Browser:") {
@@ -2430,6 +2513,7 @@ impl Coincide {
                 Err(error) if engine_busy(&error) => {}
                 Err(error) => {
                     self.browser_ui_operations.remove(&id);
+                    self.browser_ui_pending_tabs.remove(&id);
                     self.status = format!("Browser: {error}");
                     changed = true;
                 }
@@ -2558,13 +2642,9 @@ impl Coincide {
                             .xsmall()
                             .accessibility_label(format!("Close tab: {title}"))
                             .tooltip("Close tab")
-                            .on_click(cx.listener(move |this, _, _, cx| {
+                            .on_click(cx.listener(move |this, _, window, cx| {
                                 cx.stop_propagation();
-                                this.browser_action(
-                                    BrowserAction::CloseTab,
-                                    Some(close_id.clone()),
-                                    cx,
-                                );
+                                this.close_browser_tab(&close_id, window, cx);
                             })),
                     )
                     .into_any_element()
@@ -4132,6 +4212,7 @@ impl Coincide {
             self.sync_media_context(cx);
             if drafts_saved
                 && cookies_ready
+                && self.inspector_follow.close_when_saved(&self.engine)
                 && !self.selection_ui.apply_inflight()
                 && !self.follow_up_choice_inflight
                 && self.media_shutdown_ready(cx)
@@ -6654,13 +6735,7 @@ impl Coincide {
                 .as_ref()
                 .is_some_and(|thread| self.browser_panels.contains(&text(thread, "id")))
             {
-                self.browser_action(BrowserAction::Hide, None, cx);
-                if let Some(thread) = self.selected.as_ref() {
-                    self.browser_panels.remove(&text(thread, "id"));
-                }
-                if let Some(browser) = &mut self.browser {
-                    browser.set_thread_visible(None, cx);
-                }
+                self.hide_selected_browser_surface(cx);
             }
         }
         // Accessibility and menu actions can arrive before this window becomes
