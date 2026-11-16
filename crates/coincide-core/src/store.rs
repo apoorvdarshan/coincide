@@ -885,7 +885,8 @@ impl Store {
             tx.execute("INSERT INTO documents(name,document) VALUES ('usage-history.json',?1) ON CONFLICT(name) DO UPDATE SET document=excluded.document", [next.to_string()])?;
         }
         provider_accounts::invalidate_changed_selection(&tx, document)?;
-        tx.execute("INSERT INTO threads(id,document) VALUES (?1,?2) ON CONFLICT(id) DO UPDATE SET document=excluded.document", params![id,document.to_string()])?;
+        let serialized = serde_json::to_string(document)?;
+        tx.execute("INSERT INTO threads(id,document) VALUES (?1,?2) ON CONFLICT(id) DO UPDATE SET document=excluded.document", params![id,serialized])?;
         let has_summary: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM thread_summaries WHERE id=?1 COLLATE NOCASE)",
             [id],

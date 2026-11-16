@@ -68,6 +68,9 @@ mod browser_history_api;
 mod browser_link_api;
 #[path = "browser_settings_api.rs"]
 mod browser_settings_api;
+#[cfg(test)]
+#[path = "desktop_poll_tests.rs"]
+mod desktop_poll_tests;
 #[path = "named_profile_departure_api.rs"]
 mod named_profile_departure;
 #[cfg(test)]
@@ -530,16 +533,50 @@ impl Engine {
         self.native_ui_editors.clone()
     }
     pub fn dispatch(&mut self, request: Value) -> Value {
+        self.dispatch_inner(request, true)
+    }
+
+    /// The desktop's frequent status reads must not drain provider events on
+    /// the UI thread. The control owner continuously polls the same engine on
+    /// its own thread, including when command-line access is disabled. Only
+    /// independent snapshots and provider-catalog reads bypass that poll;
+    /// actions retain the normal ordering against pending provider events.
+    pub fn dispatch_desktop(&mut self, request: Value) -> Value {
+        let method = request["method"].as_str().unwrap_or("");
+        let snapshot = matches!(
+            method,
+            "app.status"
+                | "agent.pending"
+                | "settings.read"
+                | "projects.list"
+                | "bots.list"
+                | "threads.list"
+                | "schedules.list"
+                | "host.awake.status"
+                | "agent.models.status"
+                | "usage.codexLimits.refresh"
+                | "usage.codexLimits.status"
+                | "usage.claudeLimits.refresh"
+                | "usage.claudeLimits.status"
+                | "providers.codex.profiles.limits.refresh"
+                | "providers.codex.profiles.limits.status"
+        );
+        self.dispatch_inner(request, !snapshot)
+    }
+
+    fn dispatch_inner(&mut self, request: Value, poll_before: bool) -> Value {
         let id = request.get("id").cloned().unwrap_or(Value::Null);
         if let Err(error) = self.require_admissions() {
             return json!({"id":id,"error":{"message":error.to_string()}});
         }
         let method = request["method"].as_str().unwrap_or("");
         // Apply cancellation intent before polling can dispatch the next message.
-        if !matches!(
-            method,
-            "agent.queue.pause" | "agent.queue.remove" | "agent.stop"
-        ) {
+        if poll_before
+            && !matches!(
+                method,
+                "agent.queue.pause" | "agent.queue.remove" | "agent.stop"
+            )
+        {
             self.poll();
         }
         let result = self.execute(method, &request["params"]);
@@ -2584,10 +2621,31 @@ impl Engine {
             if self.runs[&id].events.is_empty() {
                 continue;
             }
-            if let Some(clock) = self.run_clocks.get_mut(&id) {
+            let newly_connected = self.run_clocks.get_mut(&id).is_some_and(|clock| {
+                let changed = !clock.connected;
                 clock.connected = true;
+                changed
+            });
+            let newly_answered = self.answered_runs.insert(id.clone());
+            // Many provider notifications (for example token-usage updates)
+            // are already handled by the provider worker and have no effect
+            // on the transcript. Avoid decoding and rewriting the entire
+            // conversation for those notifications. Recovery still uses the
+            // regular save path when an earlier write or usage record is pending.
+            if !self.unsaved_threads.contains_key(&id)
+                && !self.pending_usage.contains_key(&id)
+                && self.store.contains_thread(&id).unwrap_or(false)
+            {
+                let run = self.runs.get_mut(&id).unwrap();
+                run.events
+                    .retain(|event| !ignored_provider_notification(event));
+                if run.events.is_empty() {
+                    if newly_connected || newly_answered {
+                        self.revision += 1;
+                    }
+                    continue;
+                }
             }
-            self.answered_runs.insert(id.clone());
             // A worker publishes steering ACK before Finished. Recheck after
             // receiving terminal events so accepted input precedes seen-count
             // advancement and cannot be recapped into the next turn twice.
@@ -3323,6 +3381,30 @@ fn mark_completed(row: &mut Value, method: &str) {
         fields
             .entry("completedAt")
             .or_insert_with(|| json!(swift_timestamp()));
+    }
+}
+/// Mirrors the no-op cases in the frame handler without touching the
+/// saved conversation. Requests with an ID are retained so unsupported
+/// provider requests still produce an error row rather than being ignored.
+fn ignored_provider_notification(event: &Event) -> bool {
+    let Event::Frame(frame) = event else {
+        return false;
+    };
+    match frame["method"].as_str().unwrap_or("") {
+        "provider/event" => {
+            crate::composer_suggestions::reported_commands(&frame["params"]).is_none()
+        }
+        "item/agentMessage/delta"
+        | "item/reasoning/textDelta"
+        | "item/reasoning/summaryTextDelta"
+        | "item/commandExecution/requestApproval"
+        | "item/fileChange/requestApproval"
+        | "item/tool/requestUserInput"
+        | "provider/requestCancelled"
+        | "provider/requestRejected"
+        | "item/started"
+        | "item/completed" => false,
+        _ => frame.get("id").is_none() || frame.get("method").is_none(),
     }
 }
 /// A dismissed question must use each provider adapter's cancellation shape.
