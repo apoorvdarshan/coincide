@@ -1153,50 +1153,73 @@ impl Coincide {
             && !self.provider_settings.open
         {
             div()
-                    .id("extra-settings-surface")
-                    .flex_1()
-                    .min_h_0()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(self.settings_subpage_header(
-                        if self.bots_open { "Bots" } else if self.notifications_open { "Notifications" } else { "Voice" },
-                        "extra-settings-done", cx,
-                    ))
-                    .child(if self.bots_open {
-                        div()
-                            .flex_1()
-                            .min_h_0()
-                            .child(self.bot_panel.clone())
-                            .into_any_element()
+                .id("extra-settings-surface")
+                .flex_1()
+                .min_h_0()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .child(self.settings_subpage_header(
+                    if self.bots_open {
+                        "Bots"
                     } else if self.notifications_open {
-                        self.settings_scroll.frame("notifications",
-                        div()
-                            .id("notification-settings-scroll")
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_y_scroll()
-                            .child(self.notification_panel.clone())
-                            .child(div().p_3().text_sm().child("Alerts use the visible conversation and available desktop activity signals. Remote-device monitoring is not connected."))
-                        )
-                            .into_any_element()
+                        "Notifications"
                     } else {
-                        self.settings_scroll.frame("voice",
-                        div()
-                            .id("transcription-settings-scroll")
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_y_scroll()
-                            .child(div().px_4().pt_4().pb_6().flex().flex_col().gap_4()
-                                .child(self.settings_group("Dictation", self.voice_preferences(cx)))
-                                .child(self.settings_card(self.voice_credentials.clone()))
-                                .child(self.settings_card(self.transcription_panel.clone()))
-                                .child(self.settings_card(self.microphone_panel.clone()))
-                                .when(!self.status.is_empty(), |pane| pane.child(div().text_sm().child(self.status.clone()))))
+                        "Voice"
+                    },
+                    "extra-settings-done",
+                    cx,
+                ))
+                .child(if self.bots_open {
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .child(self.bot_panel.clone())
+                        .into_any_element()
+                } else if self.notifications_open {
+                    self.settings_scroll
+                        .frame(
+                            "notifications",
+                            div()
+                                .id("notification-settings-scroll")
+                                .flex_1()
+                                .min_h_0()
+                                .overflow_y_scroll()
+                                .child(self.notification_panel.clone()),
                         )
-                            .into_any_element()
-                    })
-                    .into_any_element()
+                        .into_any_element()
+                } else {
+                    self.settings_scroll
+                        .frame(
+                            "voice",
+                            div()
+                                .id("transcription-settings-scroll")
+                                .flex_1()
+                                .min_h_0()
+                                .overflow_y_scroll()
+                                .child(
+                                    div()
+                                        .px_4()
+                                        .pt_4()
+                                        .pb_6()
+                                        .flex()
+                                        .flex_col()
+                                        .gap_4()
+                                        .child(self.settings_group(
+                                            "Dictation",
+                                            self.voice_preferences(cx),
+                                        ))
+                                        .child(self.settings_card(self.voice_credentials.clone()))
+                                        .child(self.settings_card(self.transcription_panel.clone()))
+                                        .child(self.settings_card(self.microphone_panel.clone()))
+                                        .when(!self.status.is_empty(), |pane| {
+                                            pane.child(div().text_sm().child(self.status.clone()))
+                                        }),
+                                ),
+                        )
+                        .into_any_element()
+                })
+                .into_any_element()
         } else if self.settings_section == SettingsSection::Instructions {
             div()
                 .flex_1()

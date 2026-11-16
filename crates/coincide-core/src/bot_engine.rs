@@ -11,6 +11,15 @@ impl Engine {
         Ok(result)
     }
 
+    /// A paired phone may create its own conversation, but must not make the
+    /// Mac's UI navigate to it (that action is local-only).
+    pub(crate) fn create_remote_bot_conversation(&mut self, params: &Value) -> Result<Value> {
+        self.require_admissions()?;
+        let result = crate::bot_runtime::create(&mut self.store, params)?;
+        self.revision += 1;
+        Ok(result)
+    }
+
     /// Make a policy-only view after verifying the bot identity and local
     /// instruction authority. Never persist this view or accept one from a client.
     pub(super) fn bot_validation_view(&self, thread: &Value) -> Result<Value> {

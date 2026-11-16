@@ -229,10 +229,13 @@ pub struct Bridge {
     handle: BridgeHandle,
 }
 impl Bridge {
-    pub fn start(engine: SharedEngine) -> Result<Self> {
+    pub fn start(
+        engine: SharedEngine,
+        remote: Option<coincide_core::remote::server::AlertHandle>,
+    ) -> Result<Self> {
         Self::start_with(
             EngineAccess(engine),
-            NotificationRuntime::spawn_native,
+            move || NotificationRuntime::spawn_native(remote),
             native_compiled(),
         )
     }
@@ -918,8 +921,12 @@ pub struct NotificationSettingsPanel {
     _poll: Task<()>,
 }
 impl NotificationSettingsPanel {
-    pub fn new(engine: SharedEngine, cx: &mut Context<Self>) -> Self {
-        let (bridge, notice) = match Bridge::start(engine) {
+    pub fn new(
+        engine: SharedEngine,
+        remote: Option<coincide_core::remote::server::AlertHandle>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let (bridge, notice) = match Bridge::start(engine, remote) {
             Ok(b) => (Some(b), None),
             Err(e) => (None, Some(short(e))),
         };

@@ -220,6 +220,361 @@ fn pair(fixture: &mut Fixture) -> (Client, String, String) {
 }
 
 #[test]
+fn paired_phone_can_list_and_open_bot_conversations_without_navigating_the_mac() {
+    let mut fixture = fixture();
+    let bot = Uuid::new_v4().to_string().to_uppercase();
+    {
+        let mut engine = fixture.engine.lock().unwrap();
+        engine
+            .store
+            .save_document(
+                "bots.json",
+                &json!({"bots":[{
+                    "id":bot,"name":"Fixture bot","persona":"Be concise",
+                    "avatar":{"shape":"alien","tint":"mint"},
+                    "selection":{"provider":"codex","modelID":"default"},
+                    "accessMode":"approval","interactionMode":"build","folder":fixture._dir.path()
+                }]}),
+            )
+            .unwrap();
+        engine.requested_open = None;
+    }
+    fixture.server.set_enabled(true);
+    let (mut phone, _, _) = pair(&mut fixture);
+    request(&mut phone, "workspace-before", "workspace", None);
+    let workspace = reply(&mut phone, "workspace-before");
+    assert_eq!(workspace["body"]["bots"][0]["id"], bot);
+    assert_eq!(workspace["body"]["bots"][0]["avatar"]["character"], "alien");
+    assert_eq!(workspace["body"]["canEditBots"], false);
+
+    request(
+        &mut phone,
+        "new-bot",
+        "newBotConversation",
+        Some(json!({"botID":bot})),
+    );
+    let created = reply(&mut phone, "new-bot");
+    assert_eq!(created["type"], "thread", "{created}");
+    let thread = created["body"]["value"].as_str().unwrap().to_owned();
+    assert!(fixture.engine.lock().unwrap().requested_open.is_none());
+    request(
+        &mut phone,
+        "reuse-bot",
+        "newBotConversation",
+        Some(json!({"botID":bot})),
+    );
+    assert_eq!(reply(&mut phone, "reuse-bot")["body"]["value"], thread);
+    request(&mut phone, "workspace-after", "workspace", None);
+    let workspace = reply(&mut phone, "workspace-after");
+    assert_eq!(workspace["body"]["bots"][0]["threadIDs"][0], thread);
+    assert!(
+        workspace["body"]["threads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["id"] == thread)
+    );
+    request(
+        &mut phone,
+        "open-bot",
+        "openThread",
+        Some(json!({"threadID":thread,"limit":20})),
+    );
+    assert_eq!(reply(&mut phone, "open-bot")["type"], "transcript");
+    assert!(fixture.engine.lock().unwrap().requested_open.is_none());
+    {
+        let mut engine = fixture.engine.lock().unwrap();
+        let mut saved = engine.store.thread(&thread).unwrap();
+        saved["draft"] = json!("Unsent text");
+        engine.store.save(&saved).unwrap();
+    }
+    request(
+        &mut phone,
+        "new-after-draft",
+        "newBotConversation",
+        Some(json!({"botID":bot})),
+    );
+    let next = reply(&mut phone, "new-after-draft");
+    assert_ne!(next["body"]["value"], thread);
+    assert_eq!(
+        fixture
+            .engine
+            .lock()
+            .unwrap()
+            .store
+            .thread(&thread)
+            .unwrap()["draft"],
+        "Unsent text"
+    );
+}
+
+#[test]
+fn paired_devices_sync_project_disclosure_without_changing_special_groups() {
+    let mut fixture = fixture();
+    let (project_id, chats_id, bots_id) = {
+        let mut engine = fixture.engine.lock().unwrap();
+        let mut projects = engine.store.projects().unwrap();
+        let project = projects[0]["id"].as_str().unwrap().to_owned();
+        let chats = Uuid::new_v4().to_string().to_uppercase();
+        let bots = Uuid::new_v4().to_string().to_uppercase();
+        projects.as_array_mut().unwrap().push(json!({
+            "id":chats,"name":"Chats","isChats":true,"isExpanded":true
+        }));
+        projects.as_array_mut().unwrap().push(json!({
+            "id":bots,"name":"Bots","isBots":true,"isExpanded":true
+        }));
+        engine
+            .store
+            .save_document("projects.json", &projects)
+            .unwrap();
+        (project, chats, bots)
+    };
+    fixture.server.set_enabled(true);
+    let (mut phone, _, _) = pair(&mut fixture);
+    let (mut tablet, _, _) = pair(&mut fixture);
+    let mut stranger = connect(
+        running_port(&fixture.server),
+        &fixture.server.snapshot().fingerprint.unwrap(),
+    )
+    .unwrap();
+    request(
+        &mut stranger,
+        "unauthorized",
+        "setProjectExpanded",
+        Some(json!({
+            "projectID":project_id,"expanded":false
+        })),
+    );
+    assert_eq!(
+        reply(&mut stranger, "unauthorized")["error"]["code"],
+        "unauthorized"
+    );
+
+    let shared = fixture.server.running.as_ref().unwrap().0.clone();
+    let gate = shared.watch_gate.lock().unwrap();
+    request(&mut tablet, "workspace", "workspace", None);
+    let original = reply(&mut tablet, "workspace");
+    assert_eq!(original["kind"], "response", "{original}");
+    assert_eq!(original["body"]["projects"][0]["isExpanded"], true);
+    let codex = original["body"]["providers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == "codex")
+        .unwrap();
+    assert_eq!(codex["state"], "unknown");
+    assert_eq!(codex["models"][0]["id"], "default");
+
+    request(
+        &mut phone,
+        "malformed",
+        "setProjectExpanded",
+        Some(json!({
+            "projectID":project_id,"expanded":"false"
+        })),
+    );
+    assert_eq!(
+        reply(&mut phone, "malformed")["error"]["code"],
+        "badRequest"
+    );
+    for id in [&chats_id, &bots_id] {
+        request(
+            &mut phone,
+            "special",
+            "setProjectExpanded",
+            Some(json!({
+                "projectID":id,"expanded":false
+            })),
+        );
+        assert_eq!(reply(&mut phone, "special")["error"]["code"], "notFound");
+    }
+    request(
+        &mut phone,
+        "collapse",
+        "setProjectExpanded",
+        Some(json!({
+            "projectID":project_id,"expanded":false
+        })),
+    );
+    let response = reply(&mut phone, "collapse");
+    assert_eq!(response["type"], "ok", "{response}");
+    {
+        let engine = fixture.engine.lock().unwrap();
+        let saved = engine.store.projects().unwrap();
+        assert_eq!(saved[0]["isExpanded"], false);
+        assert_eq!(saved[0]["name"], "Fixture");
+        assert_eq!(saved[1]["isExpanded"], true);
+        assert_eq!(saved[2]["isExpanded"], true);
+    }
+    drop(gate);
+    let update = event_of(&mut tablet, "workspace");
+    assert_eq!(update["body"]["projects"][0]["isExpanded"], false);
+}
+
+#[test]
+fn phone_composer_settings_validate_before_changing_the_exact_thread() {
+    let mut fixture = fixture();
+    {
+        let mut engine = fixture.engine.lock().unwrap();
+        let mut thread = engine.store.thread(&fixture.thread).unwrap();
+        thread["draft"] = json!("Desktop draft stays here");
+        thread["items"] =
+            json!([{"id":Uuid::new_v4(),"kind":"user","text":"Earlier message","createdAt":1.0}]);
+        engine.store.save(&thread).unwrap();
+    }
+    fixture.server.set_enabled(true);
+    let (mut phone, _, _) = pair(&mut fixture);
+    let shared = fixture.server.running.as_ref().unwrap().0.clone();
+    let _gate = shared.watch_gate.lock().unwrap();
+    request(
+        &mut phone,
+        "invalid",
+        "updateSettings",
+        Some(json!({
+            "threadID":fixture.thread,"accessMode":"invalid"
+        })),
+    );
+    let rejected = reply(&mut phone, "invalid");
+    assert_eq!(rejected["kind"], "error", "{rejected}");
+    {
+        let engine = fixture.engine.lock().unwrap();
+        let thread = engine.store.thread(&fixture.thread).unwrap();
+        assert_ne!(thread["accessMode"], "invalid");
+        assert_eq!(thread["draft"], "Desktop draft stays here");
+    }
+    request(
+        &mut phone,
+        "update",
+        "updateSettings",
+        Some(json!({
+            "threadID":fixture.thread,"accessMode":"fullAccess"
+        })),
+    );
+    let response = reply(&mut phone, "update");
+    assert_eq!(response["type"], "ok", "{response}");
+    let engine = fixture.engine.lock().unwrap();
+    let thread = engine.store.thread(&fixture.thread).unwrap();
+    assert_eq!(thread["accessMode"], "fullAccess");
+    assert_eq!(thread["draft"], "Desktop draft stays here");
+    assert_eq!(thread["items"][0]["text"], "Earlier message");
+}
+
+#[test]
+fn live_alerts_reach_only_the_active_paired_phone_and_respect_preview_setting() {
+    use crate::platform_host::notifications::{Alert, AlertKind, Delivery, EventKey};
+    let mut fixture = fixture();
+    fixture.server.set_enabled(true);
+    let handle = fixture.server.alert_handle();
+    let (mut phone, device, _) = pair(&mut fixture);
+    handle.set_enabled(true);
+    let server = event_of(&mut phone, "server");
+    assert_eq!(server["body"]["notifies"], true);
+    request(
+        &mut phone,
+        "presence",
+        "presence",
+        Some(json!({
+            "state":"active", "idleSeconds":2
+        })),
+    );
+    assert_eq!(reply(&mut phone, "presence")["type"], "ok");
+    let now = (crate::remote::pairing::now_ms() / 1000.) as u64;
+    let presence = handle.presences();
+    assert!(
+        presence
+            .iter()
+            .any(|row| row.device_id == device && row.foreground(now, 75))
+    );
+    let shared = fixture.server.running.as_ref().unwrap().0.clone();
+    let session = shared
+        .sessions
+        .lock()
+        .unwrap()
+        .values()
+        .next()
+        .unwrap()
+        .clone();
+    let busy = session.lock().unwrap();
+    assert!(handle.presences().iter().any(|row| row.device_id == device));
+    drop(busy);
+    let alert = Alert {
+        key: EventKey {
+            thread: Uuid::parse_str(&fixture.thread).unwrap(),
+            item: Uuid::new_v4(),
+            kind: AlertKind::Completed,
+        },
+        title: "Private title".into(),
+        body: Some("Private reply".into()),
+    };
+    assert_eq!(
+        handle.deliver("not-paired", &alert, true, now),
+        Delivery::Unavailable
+    );
+    assert_eq!(
+        handle.deliver(&device, &alert, false, now),
+        Delivery::Accepted
+    );
+    let event = event_of(&mut phone, "notify");
+    assert_eq!(event["body"]["threadID"], fixture.thread.to_lowercase());
+    assert_eq!(event["body"]["title"], "Coincide");
+    assert!(event["body"]["body"].is_null());
+    assert!(!event.to_string().contains("Private"));
+
+    assert_eq!(
+        handle.deliver(&device, &alert, true, now),
+        Delivery::Accepted
+    );
+    let preview = event_of(&mut phone, "notify");
+    assert_eq!(preview["body"]["title"], "Private title");
+    assert_eq!(preview["body"]["body"], "Private reply");
+    handle.set_enabled(false);
+    assert_eq!(
+        handle.deliver(&device, &alert, true, now),
+        Delivery::Unavailable
+    );
+    handle.set_enabled(true);
+    request(
+        &mut phone,
+        "background",
+        "presence",
+        Some(json!({
+            "state":"background", "idleSeconds":2
+        })),
+    );
+    assert_eq!(reply(&mut phone, "background")["type"], "ok");
+    assert_eq!(
+        handle.deliver(&device, &alert, false, now),
+        Delivery::Unavailable
+    );
+    request(
+        &mut phone,
+        "foreground",
+        "presence",
+        Some(json!({"state":"active","idleSeconds":0})),
+    );
+    assert_eq!(reply(&mut phone, "foreground")["type"], "ok");
+    fixture.server.revoke(&device);
+    assert!(
+        !fixture
+            .server
+            .snapshot()
+            .devices
+            .iter()
+            .any(|row| row.id == device)
+    );
+    assert_eq!(
+        handle.deliver(&device, &alert, true, now),
+        Delivery::Unavailable
+    );
+    fixture.server.set_enabled(false);
+    assert!(handle.presences().is_empty());
+    assert_eq!(
+        handle.deliver(&device, &alert, false, now),
+        Delivery::Unavailable
+    );
+}
+
+#[test]
 fn seen_on_phone_clears_only_its_thread_and_reaches_other_devices() {
     let mut fixture = fixture();
     let other = Uuid::new_v4().to_string().to_uppercase();

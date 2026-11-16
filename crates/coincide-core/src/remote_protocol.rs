@@ -180,6 +180,23 @@ pub struct SendRequest {
     pub delivery: Delivery,
 }
 
+/// Composer settings sent by a paired phone. Missing fields keep their value.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadSettings {
+    #[serde(rename = "threadID")]
+    pub thread_id: Uuid,
+    pub provider: Option<String>,
+    #[serde(rename = "modelID")]
+    pub model_id: Option<String>,
+    #[serde(rename = "accountID")]
+    pub account_id: Option<String>,
+    pub effort: Option<String>,
+    pub speed: Option<String>,
+    pub access_mode: Option<String>,
+    pub interaction_mode: Option<String>,
+}
+
 /// What a phone says about itself (`RemotePresence`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -278,6 +295,7 @@ pub enum Request {
         thread_id: Uuid,
     },
     Send(SendRequest),
+    UpdateSettings(ThreadSettings),
     SteerQueued {
         thread_id: Uuid,
         message_id: Uuid,
@@ -306,6 +324,13 @@ pub enum Request {
     },
     NewThread {
         project_id: Option<Uuid>,
+    },
+    NewBotConversation {
+        bot_id: Uuid,
+    },
+    SetProjectExpanded {
+        project_id: Uuid,
+        expanded: bool,
     },
     ThreadAction {
         thread_id: Uuid,
@@ -441,6 +466,7 @@ impl ClientMessage {
                 thread_id: thread()?,
             },
             "send" => Request::Send(parse(typed()?)?),
+            "updateSettings" => Request::UpdateSettings(parse(typed()?)?),
             "steerQueued" | "removeQueued" => {
                 let thread_id = thread()?;
                 let message_id = uuid(fields.get("messageID"))?;
@@ -489,6 +515,15 @@ impl ClientMessage {
                     None | Some(Value::Null) => None,
                     some => Some(uuid(some)?),
                 },
+            },
+            "newBotConversation" => Request::NewBotConversation {
+                bot_id: uuid(fields.get("botID"))?,
+            },
+            "setProjectExpanded" => Request::SetProjectExpanded {
+                project_id: uuid(fields.get("projectID"))?,
+                expanded: fields["expanded"]
+                    .as_bool()
+                    .ok_or_else(RemoteError::bad_request)?,
             },
             "threadAction" => Request::ThreadAction {
                 thread_id: thread()?,
@@ -677,9 +712,42 @@ impl PairingPayload {
 pub struct Workspace {
     pub projects: Vec<Project>,
     pub threads: Vec<ThreadSummary>,
+    pub bots: Vec<Bot>,
+    pub can_edit_bots: bool,
     pub providers: Vec<Provider>,
     pub sections: Vec<String>,
     pub pinned_order: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Bot {
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "projectID")]
+    pub project_id: String,
+    #[serde(rename = "threadIDs")]
+    pub thread_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avatar: Option<BotAvatar>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub persona: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selection: Option<Selection>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub access_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interaction_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub personality: Option<Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct BotAvatar {
+    pub character: String,
+    pub tint: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -987,6 +1055,28 @@ mod tests {
     fn decodes_requests_as_the_swift_decoder_does() {
         let thread = "E621E1F8-C36C-495A-93FC-0C247A3E6E5F";
         let item = "A0F7B85C-4877-46C5-9F7B-9AD9709223E2";
+        let settings = decode(json!({"v":1,"id":"s","type":"updateSettings","body":{
+            "threadID":thread,"modelID":"example-model","speed":"standard","accessMode":"fullAccess"
+        }}))
+        .unwrap();
+        assert!(
+            matches!(settings.request, Request::UpdateSettings(ThreadSettings {
+            model_id: Some(ref model), speed: Some(ref speed), access_mode: Some(ref access), ..
+        }) if model == "example-model" && speed == "standard" && access == "fullAccess")
+        );
+        assert!(
+            decode(
+                json!({"v":1,"id":"s","type":"updateSettings","body":{"threadID":thread,"speed":4}})
+            )
+            .is_err()
+        );
+        let project = Uuid::new_v4();
+        assert_eq!(
+            decode(json!({"v":1,"id":"expand","type":"setProjectExpanded", "body":{"projectID":project,"expanded":false}})).unwrap().request,
+            Request::SetProjectExpanded { project_id: project, expanded: false }
+        );
+        assert!(decode(json!({"v":1,"id":"expand","type":"setProjectExpanded", "body":{"projectID":project}})).is_err());
+        assert!(decode(json!({"v":1,"id":"expand","type":"setProjectExpanded", "body":{"projectID":project,"expanded":"false"}})).is_err());
         assert_eq!(
             decode(json!({"v":1,"id":"dismiss","type":"dismissQuestion","body":{"threadID":thread,"itemID":item}})).unwrap().request,
             Request::DismissQuestion { thread_id: Uuid::parse_str(thread).unwrap(), item_id: Uuid::parse_str(item).unwrap() }

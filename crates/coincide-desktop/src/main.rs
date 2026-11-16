@@ -7407,9 +7407,11 @@ fn main() -> Result<()> {
         let native_quit = None;
         transcript::init(cx);
         Theme::change(ThemeMode::Dark, None, cx);
-        let notification_panel =
-            cx.new(|cx| notification_settings::NotificationSettingsPanel::new(engine.clone(), cx));
         let remote_panel = cx.new(|_| remote_settings::RemoteSettingsPanel::new(engine.clone()));
+        let remote_alerts = remote_panel.read(cx).alert_handle();
+        let notification_panel = cx.new(|cx| {
+            notification_settings::NotificationSettingsPanel::new(engine.clone(), remote_alerts, cx)
+        });
         #[cfg(target_os = "macos")]
         usage_menubar::install(engine.clone(), cx);
         cx.set_global(Launch {

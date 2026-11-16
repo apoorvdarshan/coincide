@@ -27,7 +27,7 @@ use std::{
     net::{IpAddr, Ipv6Addr, Shutdown, SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, Weak,
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
     thread::JoinHandle,
@@ -39,6 +39,9 @@ use tungstenite::{Message, protocol::WebSocketConfig};
 pub const MAX_CONNECTIONS: usize = 12;
 const ADDRESS_INTERVAL: Duration = Duration::from_secs(30);
 const POLL: Duration = Duration::from_millis(50);
+/// The phone sends a heartbeat while foregrounded; stale presence must never
+/// route private alerts to a device that has gone away.
+pub const LIVE_PRESENCE_LIFETIME: u64 = 75;
 
 /// Coincide Remote's settings, in `remote.json` beside the app's data, with the
 /// Mac's keys.
@@ -160,6 +163,10 @@ struct Shared {
     #[cfg(test)]
     watch_gate: Mutex<()>,
     sessions: Mutex<HashMap<u64, Arc<Mutex<Session>>>>,
+    /// Last authenticated presence by connection, independent of a session
+    /// that may be busy waiting for an agent's steering acknowledgement.
+    live_presences: Mutex<HashMap<u64, crate::remote::Presence>>,
+    notifications_enabled: Arc<AtomicBool>,
     /// Authenticated devices by session, kept apart so Settings never waits
     /// on a session that's busy answering its phone.
     connected: Mutex<HashMap<u64, String>>,
@@ -178,9 +185,120 @@ struct Shared {
     pairing_payload: Mutex<Option<PairingPayload>>,
     last_paired: Mutex<Option<Device>>,
 }
+
+/// A nonblocking bridge for the notification worker. It never keeps a stopped
+/// Remote server alive and cannot address an unauthenticated connection.
+#[derive(Clone, Default)]
+pub struct AlertHandle {
+    target: Arc<Mutex<Option<Weak<Shared>>>>,
+    enabled: Arc<AtomicBool>,
+}
+
+impl AlertHandle {
+    fn shared(&self) -> Option<Arc<Shared>> {
+        let shared = self
+            .target
+            .try_lock()
+            .ok()
+            .and_then(|server| server.as_ref()?.upgrade())?;
+        if shared.stop.load(Ordering::Acquire) {
+            return None;
+        }
+        Some(shared)
+    }
+
+    /// Reflects the notification worker's configuration, not an OS permission
+    /// or a claim that a notification was displayed on the phone.
+    pub fn set_enabled(&self, enabled: bool) {
+        self.enabled.store(enabled, Ordering::Release);
+    }
+    fn sessions(shared: &Shared) -> Vec<Arc<Mutex<Session>>> {
+        shared
+            .sessions
+            .try_lock()
+            .ok()
+            .map(|sessions| sessions.values().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    pub fn presences(&self) -> Vec<crate::remote::Presence> {
+        let Some(shared) = self.shared() else {
+            return Vec::new();
+        };
+        let Ok(pairing) = shared.pairing.try_lock() else {
+            return Vec::new();
+        };
+        let Ok(rows) = shared.live_presences.try_lock() else {
+            return Vec::new();
+        };
+        rows.values()
+            .filter(|presence| pairing.is_paired(&presence.device_id))
+            .cloned()
+            .collect()
+    }
+
+    /// A successful return means a live authenticated connection accepted the
+    /// event into its send queue, not that iOS displayed it.
+    pub fn deliver(
+        &self,
+        device: &str,
+        alert: &crate::platform_host::notifications::Alert,
+        previews: bool,
+        now: u64,
+    ) -> crate::platform_host::notifications::Delivery {
+        use crate::platform_host::notifications::{AlertKind, Delivery};
+        if !self.enabled.load(Ordering::Acquire) {
+            return Delivery::Unavailable;
+        }
+        let (kind, generic) = match alert.key.kind {
+            AlertKind::Completed => ("completed", "Agent finished"),
+            AlertKind::Failed => ("failed", "Agent stopped with an error"),
+            AlertKind::Approval => ("approval", "Agent needs approval"),
+            AlertKind::Question => ("question", "Agent has a question"),
+            AlertKind::SlowStart => return Delivery::Unavailable,
+        };
+        let Some(shared) = self.shared() else {
+            return Delivery::Unavailable;
+        };
+        // Hold this nonblocking lock through admission so a concurrent revoke
+        // cannot route an alert after the device was removed.
+        let Ok(pairing) = shared.pairing.try_lock() else {
+            return Delivery::Unavailable;
+        };
+        if !pairing.is_paired(device) {
+            return Delivery::Unavailable;
+        }
+        let message = serde_json::json!({
+            "id": format!("coincide-rust.{}.{}.{kind}", alert.key.thread, alert.key.item),
+            "threadID": alert.key.thread,
+            "kind":kind,
+            "title": if previews { alert.title.chars().take(120).collect::<String>() } else { "Coincide".to_owned() },
+            "subtitle":generic,
+            "body": if previews { alert.body.as_ref().map(|body| body.chars().take(240).collect::<String>()) } else { None },
+        });
+        for session in Self::sessions(&shared) {
+            let Ok(mut session) = session.try_lock() else {
+                continue;
+            };
+            if !shared.stop.load(Ordering::Acquire)
+                && session.live_presence().is_some_and(|presence| {
+                    presence.device_id == device && presence.foreground(now, LIVE_PRESENCE_LIFETIME)
+                })
+                && session.enqueue_live_alert(message.clone())
+            {
+                return Delivery::Accepted;
+            }
+        }
+        Delivery::Unavailable
+    }
+}
 impl Shared {
     fn with_context<T>(&self, work: impl FnOnce(&Context<'_>) -> T) -> T {
-        let info = || self.adapter.server_info(&self.server_id, &self.name);
+        let info = || {
+            let mut info = self.adapter.server_info(&self.server_id, &self.name);
+            info.notifies = Some(self.notifications_enabled.load(Ordering::Acquire));
+            info
+        };
         work(&Context {
             adapter: &self.adapter,
             pairing: &self.pairing,
@@ -240,6 +358,7 @@ pub struct RemoteServer {
     seen: Arc<SeenBus>,
     usage: Arc<Mutex<Vec<super::protocol::RemoteUsage>>>,
     sidebar_revision: Arc<AtomicU64>,
+    alerts: AlertHandle,
 }
 
 impl RemoteServer {
@@ -271,6 +390,7 @@ impl RemoteServer {
             seen: Arc::new(SeenBus::default()),
             usage: Arc::new(Mutex::new(Vec::new())),
             sidebar_revision: Arc::new(AtomicU64::new(0)),
+            alerts: AlertHandle::default(),
         }
     }
 
@@ -284,6 +404,10 @@ impl RemoteServer {
 
     pub fn sidebar_revision(&self) -> u64 {
         self.sidebar_revision.load(Ordering::Acquire)
+    }
+
+    pub fn alert_handle(&self) -> AlertHandle {
+        self.alerts.clone()
     }
 
     /// A Mac selection clears the matching phone notifications too.
@@ -346,6 +470,9 @@ impl RemoteServer {
                     self.settings.port = Some(shared.port);
                     let _ = self.settings.save(&self.directory);
                 }
+                if let Ok(mut target) = self.alerts.target.lock() {
+                    *target = Some(Arc::downgrade(&shared));
+                }
                 self.running = Some((shared, advertisement));
             }
             Err(error) => self.status = Status::Failed(error.to_string()),
@@ -370,6 +497,8 @@ impl RemoteServer {
             #[cfg(test)]
             watch_gate: Mutex::new(()),
             sessions: Mutex::new(HashMap::new()),
+            live_presences: Mutex::new(HashMap::new()),
+            notifications_enabled: self.alerts.enabled.clone(),
             connected: Mutex::new(HashMap::new()),
             workers: Mutex::new(Vec::new()),
             connections: AtomicUsize::new(0),
@@ -430,6 +559,9 @@ impl RemoteServer {
     }
 
     pub fn stop(&mut self) {
+        if let Ok(mut target) = self.alerts.target.lock() {
+            *target = None;
+        }
         if let Some((shared, advertisement)) = self.running.take() {
             drop(advertisement);
             shared.stop.store(true, Ordering::Relaxed);
@@ -732,7 +864,18 @@ fn serve(stream: TcpStream, peer: IpAddr, id: u64, shared: &Arc<Shared>) {
         let device = (!closed)
             .then(|| state.device_id().map(str::to_owned))
             .flatten();
+        let presence = (!closed).then(|| state.live_presence()).flatten();
         drop(state);
+        if let Ok(mut presences) = shared.live_presences.lock() {
+            match presence {
+                Some(presence) => {
+                    presences.insert(id, presence);
+                }
+                None => {
+                    presences.remove(&id);
+                }
+            }
+        }
         if let Ok(mut connected) = shared.connected.lock() {
             match device {
                 Some(device) => connected.insert(id, device),
@@ -765,6 +908,9 @@ fn serve(stream: TcpStream, peer: IpAddr, id: u64, shared: &Arc<Shared>) {
     }
     if let Ok(mut sessions) = shared.sessions.lock() {
         sessions.remove(&id);
+    }
+    if let Ok(mut presences) = shared.live_presences.lock() {
+        presences.remove(&id);
     }
     if let Ok(mut connected) = shared.connected.lock() {
         connected.remove(&id);
@@ -800,6 +946,7 @@ fn send_bounded(
 /// `WORKSPACE_INTERVAL`, and the addresses every half minute.
 fn watch_loop(shared: Arc<Shared>) {
     let mut revision = None;
+    let mut notification_state = None;
     let mut workspace_dirty = false;
     let mut last_workspace = Instant::now();
     let mut last_addresses = Instant::now();
@@ -838,7 +985,9 @@ fn watch_loop(shared: Arc<Shared>) {
         };
         let changed = Some(current) != revision;
         revision = Some(current);
-        workspace_dirty |= changed;
+        let notifies = shared.notifications_enabled.load(Ordering::Acquire);
+        workspace_dirty |= changed || notification_state != Some(notifies);
+        notification_state = Some(notifies);
         let workspace = workspace_dirty && last_workspace.elapsed() >= WORKSPACE_INTERVAL;
         if !changed && !workspace {
             continue;

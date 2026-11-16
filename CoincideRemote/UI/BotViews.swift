@@ -103,9 +103,11 @@ struct BotsView: View {
                 BotLink(bot: bot)
                     .contextMenu { menu(bot) }
                     .swipeActions(edge: .trailing) {
-                        Button(role: .destructive) { deleting = bot } label: { Label("Delete", systemImage: "trash") }
-                        Button { editing = .edit(bot) } label: { Label("Edit", systemImage: "pencil") }
-                            .tint(.gray)
+                        if client.workspace.canEditBots != false {
+                            Button(role: .destructive) { deleting = bot } label: { Label("Delete", systemImage: "trash") }
+                            Button { editing = .edit(bot) } label: { Label("Edit", systemImage: "pencil") }
+                                .tint(.gray)
+                        }
                     }
                     .swipeActions(edge: .leading) {
                         Button { Task { await newConversation(bot) } } label: {
@@ -136,7 +138,7 @@ struct BotsView: View {
                         ? "Update Coincide on your Mac to use bots here."
                         : "A bot is an assistant you set up once and talk to anytime.")
                 } actions: {
-                    if client.workspace.bots != nil {
+                    if client.workspace.bots != nil, client.workspace.canEditBots != false {
                         Button("New Bot") { if ProGate.allows() { editing = .new } }
                             .prominentButton()
                     }
@@ -155,7 +157,7 @@ struct BotsView: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button { if ProGate.allows() { editing = .new } } label: { Label("New Bot", systemImage: "plus") }
-                    .disabled(!client.isConnected || client.workspace.bots == nil)
+                    .disabled(!client.isConnected || client.workspace.bots == nil || client.workspace.canEditBots == false)
             }
         }
         .sheet(item: $editing) { target in BotEditorView(target: target) }
@@ -177,9 +179,11 @@ struct BotsView: View {
         Button { navigator.push(.bot(bot.id)) } label: {
             Label("Past Conversations", systemImage: "clock")
         }
-        Divider()
-        Button { editing = .edit(bot) } label: { Label("Edit…", systemImage: "pencil") }
-        Button(role: .destructive) { deleting = bot } label: { Label("Delete…", systemImage: "trash") }
+        if client.workspace.canEditBots != false {
+            Divider()
+            Button { editing = .edit(bot) } label: { Label("Edit…", systemImage: "pencil") }
+            Button(role: .destructive) { deleting = bot } label: { Label("Delete…", systemImage: "trash") }
+        }
     }
 
     private func newConversation(_ bot: RemoteBot) async {
@@ -311,7 +315,7 @@ struct BotConversationsView: View {
         .navigationTitle(bot?.name ?? String(localized: "Bot"))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if let bot {
+            if let bot, client.workspace.canEditBots != false {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { editing = .edit(bot) } label: { Label("Edit", systemImage: "pencil") }
                 }

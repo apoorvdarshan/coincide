@@ -34,6 +34,10 @@ struct AlertsCoordinator: ViewModifier {
                 // Already paired before alerts existed: ask the first time the Mac is reached.
                 Task { await alerts.requestAuthorizationIfNeeded() }
             }
+            .onChange(of: client.server?.notifies) { _, notifies in
+                guard notifies == true, client.isConnected, store.isPro else { return }
+                Task { await alerts.requestAuthorizationIfNeeded() }
+            }
             // Coincide Pro turned on or off: the Mac hears it at once, and with it on the app asks for notifications as
             // pairing would.
             .onChange(of: store.isPro) { _, unlocked in
