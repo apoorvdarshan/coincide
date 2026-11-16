@@ -441,6 +441,19 @@ impl Coincide {
         Some((id, job))
     }
 
+    /// Reuse the normal attachment pipeline while keeping the conversation
+    /// that opened the folder picker, even if another thread became active.
+    pub(super) fn attach_folder_path(
+        &mut self,
+        thread: String,
+        path: PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(job) = self.reserve_import_for_thread(&thread, cx) {
+            self.queue_image_import(job, thread, vec![IncomingImage::Path(path)], cx);
+        }
+    }
+
     pub(super) fn attach_images(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some((thread, job)) = self.reserve_image_import(cx) else {
             return;
