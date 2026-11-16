@@ -352,13 +352,15 @@ impl ReplyProjection {
     }
     pub fn current(&self, window: &Window, cx: &App) -> bool {
         self.current_in_menu(window, cx)
-            && self
-                .state
-                .upgrade()
-                .is_some_and(|state| state.read(cx).focus_handle().is_focused(window))
+            && self.state.upgrade().is_some_and(|state| {
+                let state = state.read(cx);
+                state.focus_handle().is_focused(window)
+                    && state.selected_source_range() == Some(self.source_range.clone())
+            })
     }
-    /// A context menu owns focus while open. The message, parse and selected
-    /// range must still be identical to the focused selection it captured.
+    /// A click on a context menu can clear the native selection before its
+    /// handler runs. Retain the captured range in that case, but reject a new
+    /// selection and always recheck the owning message and its parsed source.
     pub fn current_in_menu(&self, window: &Window, cx: &App) -> bool {
         if !window.is_window_active() || window.window_handle().window_id() != self.owner {
             return false;
@@ -375,7 +377,9 @@ impl ReplyProjection {
         }
         let state = state.read(cx);
         state.rendered_text() == self.rendered
-            && state.selected_source_range() == Some(self.source_range.clone())
+            && state
+                .selected_source_range()
+                .is_none_or(|range| range == self.source_range)
             && self.rendered.range_for_source(self.source_range.clone())
                 == Some(self.rendered_range.clone())
     }

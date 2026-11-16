@@ -104,6 +104,13 @@ fn headless_native_focus_selection_reparse_and_semantic_rebind_revoke_the_projec
     });
     assert!(!vcx.update(|window, cx| selected.current(window, cx)));
     assert!(vcx.update(|window, cx| selected.current_in_menu(window, cx)));
+    // A real popup click can clear the text selection before its handler.
+    vcx.update(|window, cx| {
+        let state = view.read(cx).state.clone();
+        state.update(cx, |state, cx| state.clear_selection(cx));
+        draw(window, cx);
+    });
+    assert!(vcx.update(|window, cx| selected.current_in_menu(window, cx)));
     assert!(
         vcx.update(|window, cx| focused_reply_projection(window, cx))
             .is_none()

@@ -392,7 +392,7 @@ impl PendingSent {
 mod pending_sent_tests {
     use super::*;
 
-    #[test]
+    #[::core::prelude::v1::test]
     fn preview_survives_refresh_and_thread_switch_until_its_full_message_is_saved() {
         let pending = PendingSent {
             thread: "one".into(),
