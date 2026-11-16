@@ -73,6 +73,10 @@ impl RemoteSettingsPanel {
         self.server.as_ref().is_some_and(RemoteServer::is_enabled)
     }
 
+    pub(super) fn alert_handle(&self) -> Option<coincide_core::remote::server::AlertHandle> {
+        self.server.as_ref().map(RemoteServer::alert_handle)
+    }
+
     pub(super) fn pending_sidebar_revision(&self) -> Option<u64> {
         let revision = self.server.as_ref()?.sidebar_revision();
         (revision != self.sidebar_revision).then_some(revision)
