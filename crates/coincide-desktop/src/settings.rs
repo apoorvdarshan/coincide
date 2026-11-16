@@ -386,6 +386,19 @@ fn relative_luminance(color: u32) -> f64 {
     0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0)
 }
 
+fn link_ink(palette: &Palette) -> u32 {
+    let contrast = |background| {
+        let a = relative_luminance(palette.accent);
+        let b = relative_luminance(background);
+        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    };
+    if contrast(palette.content) >= 4.5 && contrast(palette.surface) >= 4.5 {
+        palette.accent
+    } else {
+        palette.ink
+    }
+}
+
 /// Swift's caption under "Open links in your default browser", naming this
 /// platform's modifier for the other destination.
 fn link_routing_caption(default_browser: bool) -> &'static str {
@@ -479,6 +492,10 @@ impl Coincide {
             cx,
         );
         Theme::update(cx, |theme| {
+            // Give shared controls and dialogs the same shape and surfaces as
+            // the app's own cards across every selected palette.
+            theme.radius = px(9.);
+            theme.radius_lg = px(16.);
             // gpui-component keeps separate tokens for primary buttons, tabs,
             // selected rows and inputs. Updating only `primary` leaves those
             // controls in the library's default palette after a theme change.
@@ -486,6 +503,18 @@ impl Coincide {
             theme.colors.background = rgb(p.content).into();
             theme.colors.foreground = rgb(p.ink).into();
             theme.colors.border = rgb(p.border).into();
+            theme.colors.group_box = rgb(p.surface).into();
+            theme.colors.group_box_foreground = rgb(p.ink).into();
+            theme.colors.accordion = rgb(p.surface).into();
+            theme.colors.description_list_label = rgb(p.raised).into();
+            theme.colors.description_list_label_foreground = rgb(p.ink).into();
+            theme.colors.skeleton = rgb(p.raised).into();
+            theme.colors.link = rgb(link_ink(p)).into();
+            theme.colors.link_hover = rgb(link_ink(p)).into();
+            theme.colors.link_active = rgb(link_ink(p)).into();
+            theme.colors.slider_bar = rgb(p.border).into();
+            theme.colors.slider_thumb = rgb(p.accent).into();
+            theme.colors.progress_bar = rgb(p.accent).into();
             theme.colors.primary = rgb(p.accent).into();
             theme.colors.primary_foreground = rgb(accent_ink(p.accent)).into();
             theme.colors.primary_hover = rgb(p.accent).into();
@@ -2113,6 +2142,16 @@ mod navigation_tests {
             assert!(
                 contrast(palette.ink, palette.surface) >= 4.5,
                 "{} surfaces",
+                palette.name
+            );
+            assert!(
+                contrast(link_ink(&palette), palette.surface) >= 4.5,
+                "{} links",
+                palette.name
+            );
+            assert!(
+                contrast(link_ink(&palette), palette.content) >= 4.5,
+                "{} links on content",
                 palette.name
             );
             assert!(

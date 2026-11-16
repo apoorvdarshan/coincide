@@ -7337,6 +7337,8 @@ impl Render for Coincide {
                 .into_any_element()
         } else if self.settings_in_main_window() {
             self.settings_surface(cx)
+        } else if self.selected.is_none() && !self.schedules_open {
+            self.empty_workspace_welcome(cx)
         } else {
             transcript.into_any_element()
         };

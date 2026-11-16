@@ -4014,6 +4014,36 @@ impl Coincide {
     pub(super) fn composer_selection_expanded(&self) -> bool {
         self.selection_ui.expanded
     }
+    pub(super) fn empty_workspace_welcome(&self, cx: &mut Context<Self>) -> AnyElement {
+        div()
+            .id("empty-workspace-welcome")
+            .flex_1().min_h_0().min_w_0()
+            .flex().items_center().justify_center().px_5()
+            .child(
+                div().w_full().max_w(px(440.)).flex().flex_col().items_center().text_center().gap_3()
+                    .child(div().size(px(60.)).rounded(px(18.))
+                        .border_1().border_color(self.color(0x29303d))
+                        .bg(self.color(0x111722)).flex().items_center().justify_center()
+                        .child(Icon::new(gpui_kit::assets::IconName::MessagesSquare)
+                            .text_color(self.color(0xe4e9f2).opacity(0.8))))
+                    .child(div().text_2xl().font_weight(FontWeight::SEMIBOLD).child("Your agents, together"))
+                    .child(div().text_sm().text_color(self.color(0xe4e9f2).opacity(0.65))
+                        .child("Start a conversation or choose from the agents installed on this computer."))
+                    .child(div().flex().flex_wrap().justify_center().gap_2().mt_2()
+                        .child(Button::new("welcome-new-thread").label("New Thread")
+                            .icon(gpui_kit::assets::IconName::SquarePen).primary()
+                            .on_click(cx.listener(|this, _, window, cx| this.new_thread(window, cx))))
+                        .child(Button::new("welcome-browse-agents").label("Browse agents")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_settings_panel(window, cx);
+                                this.settings_search.update(cx, |input, cx| input.set_value("", window, cx));
+                                this.settings_section = settings::SettingsSection::Accounts;
+                                this.sync_transcription_binding(cx);
+                                cx.notify();
+                            }))))
+            )
+            .into_any_element()
+    }
     /// Swift's start of an empty thread: the serif headline just above the
     /// composer, with the agent and model the thread will use.
     pub(super) fn chat_welcome(&self, cx: &mut Context<Self>) -> AnyElement {
