@@ -110,7 +110,102 @@ impl QueueClaim {
     }
 }
 
+fn needs_default_codex_catalog(thread: &Value) -> bool {
+    let selection = &thread["selection"];
+    selection["provider"] == "codex"
+        && crate::composer_selection::default_account(&selection["accountID"])
+        && thread["botID"].is_null()
+        && thread["rustBotContext"].is_null()
+        && (!selection["effort"].is_null()
+            || !selection["speed"].is_null()
+            || crate::model_catalog::astra_default_needed(selection))
+}
+
 impl Engine {
+    /// A queued turn must not be claimed and failed merely because the
+    /// in-memory default Codex catalog is still starting after a restart.
+    /// Discovery runs in its own worker and is shared across waiting queues.
+    pub(super) fn queue_waits_for_codex_catalog(&mut self, thread: &Value) -> bool {
+        let selection = &thread["selection"];
+        let Ok(messages) = queue::read(thread) else {
+            return false;
+        };
+        if messages
+            .iter()
+            .any(|message| message.state == State::Dispatching)
+            || messages
+                .iter()
+                .find(|message| message.state == State::Pending)
+                .is_none_or(|message| message.selection != *selection)
+        {
+            return false;
+        }
+        self.waits_for_default_codex_catalog(thread)
+    }
+
+    /// Only an unchanged native send can request a model read. Final send
+    /// admission still rechecks the full captured execution context.
+    pub fn native_send_waits_for_codex_catalog(&mut self, captured: &Value) -> bool {
+        if !needs_default_codex_catalog(captured) {
+            return false;
+        }
+        let Some(id) = captured["id"].as_str() else {
+            return false;
+        };
+        let Ok(current) = self.saved_selection_envelope(id) else {
+            return false;
+        };
+        if ["selection", "accessMode", "interactionMode"]
+            .iter()
+            .any(|field| current[*field] != captured[*field])
+        {
+            return false;
+        }
+        self.waits_for_default_codex_catalog(captured)
+    }
+
+    fn waits_for_default_codex_catalog(&mut self, thread: &Value) -> bool {
+        if !needs_default_codex_catalog(thread) || self.require_provider_enabled("codex").is_err() {
+            return false;
+        }
+        let Ok(configuration) = self.provider_launch_configuration_for_thread(thread) else {
+            return false;
+        };
+        let _configuration_scope = crate::provider_configuration::enter(configuration);
+        let executable = match self.composer_codex_executable() {
+            Ok(executable) => executable,
+            Err(_) => return self.provider_discovery_pending,
+        };
+        if self.composer_thread_effort_proof(thread).is_ok() {
+            return false;
+        }
+        match self.model_catalog.codex_catalog_state(&executable) {
+            // A real, current list without the chosen model or options is a
+            // validation failure, not a reason to keep retrying forever.
+            crate::model_catalog::CodexCatalogState::Ready => false,
+            crate::model_catalog::CodexCatalogState::Loading => true,
+            crate::model_catalog::CodexCatalogState::Missing
+            | crate::model_catalog::CodexCatalogState::Failed => {
+                let now = Instant::now();
+                if self
+                    .queue_catalog_retry_after
+                    .is_none_or(|until| now >= until)
+                {
+                    let started = self
+                        .model_catalog
+                        .refresh("codex", Some(executable))
+                        .is_ok();
+                    self.queue_catalog_retry_after =
+                        Some(now + Duration::from_secs(if started { 30 } else { 2 }));
+                    if started {
+                        self.revision += 1;
+                    }
+                }
+                true
+            }
+        }
+    }
+
     pub(super) fn claim_next_queue_turn(&mut self, id: &str) -> Result<Option<QueueClaim>> {
         self.require_admissions()?;
         ensure!(self.enabled_queues.contains(id), "Queue is paused");
@@ -312,6 +407,150 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn queued_codex_turn_waits_for_background_catalog_and_recovers_from_failure() {
+        use std::{fs, os::unix::fs::PermissionsExt};
+        let (root, mut engine, binary) = super::super::provider_configuration::tests::fixture();
+        fs::write(&binary, r#"#!/usr/bin/env python3
+import json,sys
+from pathlib import Path
+root=Path(__file__).parent
+def read(): return json.loads(sys.stdin.readline())
+def write(v): print(json.dumps(v),flush=True)
+r=read(); write({'id':r['id'],'result':{}}); assert read()['method']=='initialized'
+r=read()
+if r['method']=='model/list':
+ with (root/'model-reads').open('a') as f: f.write('read\n')
+ if (root/'fail-models').exists():
+  write({'id':r['id'],'error':{'code':-32603,'message':'temporary test failure'}}); sys.exit(0)
+ write({'id':r['id'],'result':{'data':[{'model':'reported-model','supportedReasoningEfforts':[{'reasoningEffort':'high'}]}],'nextCursor':None}}); sys.exit(0)
+assert r['method'] in ['thread/start','thread/resume']
+write({'id':r['id'],'result':{'thread':{'id':'native-thread'},'model':'reported-model'}})
+r=read(); assert r['method']=='turn/start'
+with (root/'turns').open('a') as f: f.write(json.dumps(r['params'])+'\n')
+write({'id':r['id'],'result':{'turn':{'id':'native-turn'}}})
+write({'method':'turn/completed','params':{'threadId':'native-thread','turn':{'id':'native-turn','status':'completed'}}})
+sys.stdin.readline()
+"#).unwrap();
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+        super::super::provider_configuration::tests::save(
+            &mut engine,
+            "codex",
+            &binary,
+            "synthetic",
+        );
+        let mut thread = engine
+            .execute("threads.create", &json!({"cwd":root.path()}))
+            .unwrap();
+        let id = text(&thread, "id");
+        thread["selection"] =
+            json!({"provider":"codex","modelID":"reported-model","effort":"high","speed":null});
+        queue::add(&mut thread, "deliver exactly once").unwrap();
+        engine.store.save(&thread).unwrap();
+        engine.enabled_queues.insert(id.clone());
+        fs::write(root.path().join("fail-models"), b"").unwrap();
+        let mut stale = thread.clone();
+        stale["selection"]["modelID"] = json!("another-model");
+        assert!(!engine.native_send_waits_for_codex_catalog(&stale));
+        assert!(engine.native_send_waits_for_codex_catalog(&thread));
+        engine.poll_message_queues();
+        let saved = engine.store.thread(&id).unwrap();
+        assert_eq!(queue::read(&saved).unwrap()[0].state, State::Pending);
+        assert!(saved["rustQueueError"].is_null());
+        assert!(engine.enabled_queues.contains(&id));
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            engine.model_catalog.poll();
+            let _scope = crate::provider_configuration::enter(
+                engine.provider_launch_configuration("codex").unwrap(),
+            );
+            if engine.model_catalog.codex_catalog_state(&binary)
+                == crate::model_catalog::CodexCatalogState::Failed
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "catalog failure was not observed"
+            );
+            std::thread::yield_now();
+        }
+        assert_eq!(
+            queue::read(&engine.store.thread(&id).unwrap()).unwrap()[0].state,
+            State::Pending
+        );
+        assert!(!root.path().join("turns").exists());
+        fs::remove_file(root.path().join("fail-models")).unwrap();
+        engine.queue_catalog_retry_after = None;
+        engine.queue_catalog_poll_after.clear();
+        loop {
+            engine.poll();
+            let saved = engine.store.thread(&id).unwrap();
+            let state = queue::read(&saved).unwrap()[0].state;
+            if state == State::Completed {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "queued turn did not recover: state={state:?}, error={}, enabled={}, model_reads={}, turns={}",
+                saved["rustQueueError"],
+                engine.enabled_queues.contains(&id),
+                fs::read_to_string(root.path().join("model-reads"))
+                    .unwrap_or_default()
+                    .lines()
+                    .count(),
+                fs::read_to_string(root.path().join("turns"))
+                    .unwrap_or_default()
+                    .lines()
+                    .count(),
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let turns = fs::read_to_string(root.path().join("turns")).unwrap();
+        assert_eq!(turns.lines().count(), 1);
+        assert_eq!(
+            serde_json::from_str::<Value>(turns.lines().next().unwrap()).unwrap()["effort"],
+            "high"
+        );
+        assert!(
+            fs::read_to_string(root.path().join("model-reads"))
+                .unwrap()
+                .lines()
+                .count()
+                >= 2
+        );
+        let saved = engine.store.thread(&id).unwrap();
+        assert!(saved["rustQueueError"].is_null());
+        engine.freeze_admissions();
+        if engine.runs.contains_key(&id) {
+            engine.request_provider_stop(&id).unwrap();
+        }
+    }
+    #[test]
+    fn a_fresh_catalog_with_an_unavailable_model_does_not_retry_forever() {
+        let (_root, mut engine, binary) = super::super::provider_configuration::tests::fixture();
+        super::super::provider_configuration::tests::save(
+            &mut engine,
+            "codex",
+            &binary,
+            "synthetic",
+        );
+        {
+            let _scope = crate::provider_configuration::enter(
+                engine.provider_launch_configuration("codex").unwrap(),
+            );
+            engine
+                .model_catalog
+                .fixture_reported_configuration_effort(&binary)
+                .unwrap();
+        }
+        let mut thread = engine.store.new_thread("").unwrap();
+        thread["selection"] = json!({"provider":"codex","modelID":"removed-model","effort":"high"});
+        queue::add(&mut thread, "saved").unwrap();
+        engine.store.save(&thread).unwrap();
+        assert!(!engine.queue_waits_for_codex_catalog(&thread));
+    }
     #[cfg(unix)]
     #[test]
     fn pausing_queue_checks_a_paused_goal_without_touching_the_composer() {

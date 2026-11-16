@@ -802,6 +802,35 @@ impl Adapter {
         Ok((id, document))
     }
 
+    /// Opening a conversation is a read-only request on a Remote worker. Wait
+    /// briefly for an ongoing desktop save, then decode the captured document
+    /// outside the Engine lock so a long chat does not stall the desktop.
+    fn document_until(
+        &self,
+        thread: Uuid,
+        deadline: Instant,
+    ) -> Result<(String, Value), RemoteError> {
+        let (id, snapshot) = {
+            let engine = self.lock_engine_until(deadline)?;
+            if engine.admissions_frozen() {
+                return Err(RemoteError::failed("The computer is closing."));
+            }
+            let id = engine
+                .store
+                .resolve_thread_id(thread)
+                .map_err(|error| RemoteError::failed(error.to_string()))?
+                .ok_or_else(RemoteError::thread_not_found)?;
+            let (_, snapshot, _) = engine
+                .capture_thread_read(&id)
+                .map_err(|error| RemoteError::failed(error.to_string()))?;
+            (id, snapshot)
+        };
+        let document = snapshot
+            .decode()
+            .map_err(|error| RemoteError::failed(error.to_string()))?;
+        Ok((id, document))
+    }
+
     pub fn require_thread(&self, thread: Uuid) -> Result<(), RemoteError> {
         self.document(thread).map(|_| ())
     }
@@ -997,10 +1026,6 @@ impl Adapter {
         Ok(())
     }
 
-    fn markers(&self) -> Result<ThreadMarkers, RemoteError> {
-        self.markers_until(Instant::now())
-    }
-
     fn markers_until(&self, deadline: Instant) -> Result<ThreadMarkers, RemoteError> {
         let engine = self.lock_engine_until(deadline)?;
         let state = engine
@@ -1046,6 +1071,16 @@ impl Adapter {
         document: &Value,
         runs: &Runs,
     ) -> Result<ThreadSummary, RemoteError> {
+        self.thread_summary_until(id, document, runs, Instant::now())
+    }
+
+    fn thread_summary_until(
+        &self,
+        id: &str,
+        document: &Value,
+        runs: &Runs,
+        deadline: Instant,
+    ) -> Result<ThreadSummary, RemoteError> {
         let summary = json!({
             "id": id,
             "title": document["title"],
@@ -1056,15 +1091,21 @@ impl Adapter {
         });
         let project = document["projectID"].as_str().unwrap_or(NO_PROJECT);
         let mut summary = Self::summary(&summary, &Self::fields(document), project, runs);
-        self.markers()?.apply(&mut summary);
+        self.markers_until(deadline)?.apply(&mut summary);
         Ok(summary)
     }
 
     fn can_steer(&self, id: &str, document: &Value) -> Result<bool, RemoteError> {
-        let engine = self
-            .engine
-            .try_lock()
-            .map_err(|_| RemoteError::failed("The computer is busy. Try again."))?;
+        self.can_steer_until(id, document, Instant::now())
+    }
+
+    fn can_steer_until(
+        &self,
+        id: &str,
+        document: &Value,
+        deadline: Instant,
+    ) -> Result<bool, RemoteError> {
+        let engine = self.lock_engine_until(deadline)?;
         Ok(engine.remote_can_steer(id, document))
     }
 
@@ -1074,13 +1115,23 @@ impl Adapter {
         document: &Value,
         runs: &Runs,
     ) -> Result<TurnState, RemoteError> {
+        self.turn_state_until(id, document, runs, Instant::now())
+    }
+
+    fn turn_state_until(
+        &self,
+        id: &str,
+        document: &Value,
+        runs: &Runs,
+        deadline: Instant,
+    ) -> Result<TurnState, RemoteError> {
         let running = runs.running.contains(&upper(id));
         Ok(TurnState {
             is_running: running,
             is_starting: runs.starting.contains(&upper(id)),
             started_at: runs.started_at.get(&upper(id)).copied(),
             provider: runs.provider.get(&upper(id)).cloned(),
-            can_steer: running && self.can_steer(id, document)?,
+            can_steer: running && self.can_steer_until(id, document, deadline)?,
             queued: crate::message_queue::read(document)
                 .unwrap_or_default()
                 .into_iter()
@@ -1102,7 +1153,36 @@ impl Adapter {
         runs: &Runs,
     ) -> Result<(Transcript, Value), RemoteError> {
         let (id, document) = self.document(thread)?;
-        let items = document["items"].as_array().cloned().unwrap_or_default();
+        self.transcript_from_document(id, document, limit, runs, Instant::now())
+    }
+
+    /// A single read-only OpenThread request waits for short Engine ownership
+    /// handoffs instead of making the phone retry an otherwise valid open.
+    pub(super) fn open_transcript(
+        &self,
+        thread: Uuid,
+        limit: i64,
+    ) -> Result<(Transcript, Value, Runs), RemoteError> {
+        let deadline = Instant::now() + Duration::from_secs(8);
+        let runs = self.runs_inner(Some(deadline))?;
+        let (id, document) = self.document_until(thread, deadline)?;
+        let (transcript, document) =
+            self.transcript_from_document(id, document, limit, &runs, deadline)?;
+        Ok((transcript, document, runs))
+    }
+
+    fn transcript_from_document(
+        &self,
+        id: String,
+        document: Value,
+        limit: i64,
+        runs: &Runs,
+        deadline: Instant,
+    ) -> Result<(Transcript, Value), RemoteError> {
+        let items = document["items"]
+            .as_array()
+            .map(Vec::as_slice)
+            .unwrap_or_default();
         let limit = limit.clamp(1, 1_000) as usize;
         let start = items.len().saturating_sub(limit);
         let pending = runs.pending.get(&upper(&id)).cloned().unwrap_or_default();
@@ -1113,10 +1193,10 @@ impl Adapter {
             .collect();
         Ok((
             Transcript {
-                thread: self.thread_summary(&id, &document, runs)?,
+                thread: self.thread_summary_until(&id, &document, runs, deadline)?,
                 items: remote,
                 has_earlier: start > 0,
-                turn: self.turn_state(&id, &document, runs)?,
+                turn: self.turn_state_until(&id, &document, runs, deadline)?,
                 turn_changes: BTreeMap::new(),
             },
             document,
@@ -2073,6 +2153,25 @@ mod tests {
         for id in ids {
             assert!(workspace.threads.iter().any(|thread| thread.id == id));
         }
+    }
+
+    #[test]
+    fn opening_a_conversation_stops_waiting_when_the_engine_stays_busy() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut engine = crate::api::Engine::fixture(
+            crate::store::Store::open(&directory.path().join("state.sqlite")).unwrap(),
+        );
+        let thread = engine.store.new_thread(NO_PROJECT).unwrap();
+        let id = Uuid::parse_str(thread["id"].as_str().unwrap()).unwrap();
+        let engine = std::sync::Arc::new(Mutex::new(engine));
+        let adapter = Adapter::new(engine.clone(), "fixture");
+        let held = engine.lock().unwrap();
+        let error = adapter
+            .document_until(id, Instant::now() + Duration::from_millis(30))
+            .unwrap_err();
+        assert_eq!(error.message, "The computer is busy. Try again.");
+        drop(held);
+        assert!(adapter.document_until(id, Instant::now()).is_ok());
     }
 
     #[test]

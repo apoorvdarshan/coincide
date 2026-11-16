@@ -173,7 +173,7 @@ fn effort_choices(
 ) -> Result<Vec<String>> {
     anyhow::ensure!(
         saved_effort_scope(draft, thread),
-        "Apply the provider/account/model first, then refresh capabilities before choosing effort. Existing effort was retained"
+        "Apply the selected model before changing reasoning. Existing reasoning was retained"
     );
     let provider = provider.context("Effort capabilities are unavailable")?;
     let capability = &provider["effort"];
@@ -192,7 +192,7 @@ fn effort_choices(
         "{}",
         capability["reason"]
             .as_str()
-            .unwrap_or("Refresh the current model catalog to choose effort")
+            .unwrap_or("Model options are temporarily unavailable")
     );
     anyhow::ensure!(
         draft.use_custom && !draft.custom.is_empty() && draft.custom != "default",
@@ -242,7 +242,7 @@ fn effort_default_label(
     if proven {
         "Model/app default: Medium".into()
     } else {
-        "Model/app default — refresh catalog required".into()
+        "Model default unavailable".into()
     }
 }
 fn automatic_default_replacement_context(
@@ -316,7 +316,7 @@ fn speed_choices(
 ) -> Result<Vec<SpeedChoice>> {
     anyhow::ensure!(
         saved_effort_scope(draft, thread),
-        "Apply or discard provider/account/model edits, then refresh capabilities before choosing speed. Existing speed was retained"
+        "Apply or discard the selected model before changing speed. Existing speed was retained"
     );
     let provider = provider.context("Speed capabilities are unavailable")?;
     let capability = &provider["speed"];
@@ -330,7 +330,7 @@ fn speed_choices(
         "{}",
         capability["reason"]
             .as_str()
-            .unwrap_or("Refresh the current model catalog to choose speed")
+            .unwrap_or("Model options are temporarily unavailable")
     );
     anyhow::ensure!(
         draft.use_custom && !draft.custom.is_empty() && draft.custom != "default",
@@ -959,6 +959,8 @@ pub(super) struct ComposerSelection {
     /// Disk cache is display-only; each app session still needs a live read.
     catalog_attempted: std::collections::HashSet<(String, String)>,
     catalog_attempted_at: HashMap<(String, String), Instant>,
+    /// A failed refresh is retried sooner than the normal freshness interval.
+    catalog_failed: std::collections::HashSet<(String, String)>,
     catalog_retry_after: Option<Instant>,
     named_catalog_retry_after: Option<(String, String, Instant)>,
     capability_pending: bool,
@@ -969,6 +971,7 @@ pub(super) struct ComposerSelection {
     pending_provider_picker: Option<PickerRestore>,
     pending_model: Option<PendingPickerModel>,
     automatic_profile_context: Option<Value>,
+    automatic_profile_attempted_at: Option<Instant>,
     automatic_profile_quiet: Option<(Value, Instant)>,
     pub(super) expanded: bool,
     pub(super) facet: PickerFacet,
@@ -1029,11 +1032,23 @@ struct CatalogRequest {
 }
 
 const CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(10 * 60);
+const CATALOG_RETRY_INTERVAL: Duration = Duration::from_secs(30);
 
-fn catalog_refresh_due(attempted: bool, last_attempt: Option<Instant>, now: Instant) -> bool {
+fn catalog_refresh_due(
+    attempted: bool,
+    last_attempt: Option<Instant>,
+    failed: bool,
+    now: Instant,
+) -> bool {
     !attempted
-        || last_attempt
-            .is_some_and(|at| now.saturating_duration_since(at) >= CATALOG_REFRESH_INTERVAL)
+        || last_attempt.is_none_or(|at| {
+            now.saturating_duration_since(at)
+                >= if failed {
+                    CATALOG_RETRY_INTERVAL
+                } else {
+                    CATALOG_REFRESH_INTERVAL
+                }
+        })
 }
 
 fn catalog_scope_matches(catalog: &Value, request: &CatalogRequest) -> bool {
@@ -1451,7 +1466,7 @@ fn next_background_catalog(
     accounts: &Value,
     attempted: &std::collections::HashSet<(String, String)>,
     last_attempt: &HashMap<(String, String), Instant>,
-    running: bool,
+    failed: &std::collections::HashSet<(String, String)>,
     now: Instant,
 ) -> Option<String> {
     providers
@@ -1466,9 +1481,8 @@ fn next_background_catalog(
             }
             let key = (provider.to_owned(), account.to_owned());
             let already = attempted.contains(&key);
-            if !catalog_refresh_due(already, last_attempt.get(&key).copied(), now)
-                || (already && provider == draft.provider && running)
-            {
+            let last_failed = failed.contains(&key);
+            if !catalog_refresh_due(already, last_attempt.get(&key).copied(), last_failed, now) {
                 return None;
             }
             Some((provider != draft.provider, provider.to_owned()))
@@ -1502,18 +1516,28 @@ enum SendCatalogAction {
 fn observed_discovery(capabilities: &Value, supported: Option<bool>) -> Option<bool> {
     supported.or_else(|| (!capabilities.is_null()).then_some(false))
 }
-fn named_catalog_needs_observation(named: &Value, pending: bool, observed: bool) -> bool {
+fn named_catalog_needs_observation(named: &Value, pending: bool) -> bool {
     named["nativeApiKey"] != true
         && named["nativeAccount"] != true
         && named["refreshAllowed"] == true
-        && named["accountCatalogReady"] != true
-        && (pending || !observed)
+        && (pending || named["accountCatalogReady"] != true)
+}
+fn named_profile_retry_due(
+    same_context: bool,
+    attempted_at: Option<Instant>,
+    now: Instant,
+) -> bool {
+    !same_context
+        || attempted_at
+            .is_some_and(|at| now.saturating_duration_since(at) >= CATALOG_RETRY_INTERVAL)
 }
 fn send_catalog_action(
     selection: &Value,
     running: bool,
-    attempted: bool,
     pending: bool,
+    proven: bool,
+    failed: bool,
+    retry_due: bool,
     discovery: Option<bool>,
 ) -> SendCatalogAction {
     let astra_default = selection["effort"].is_null()
@@ -1530,14 +1554,26 @@ fn send_catalog_action(
     if pending {
         return SendCatalogAction::Wait;
     }
-    if attempted {
+    if proven {
         return SendCatalogAction::Proceed;
+    }
+    if failed && !retry_due {
+        return SendCatalogAction::Wait;
     }
     match discovery {
         None => SendCatalogAction::Wait,
         Some(true) => SendCatalogAction::Refresh,
         Some(false) => SendCatalogAction::Unavailable,
     }
+}
+
+fn saved_codex_catalog_ready(provider: Option<&Value>) -> bool {
+    let Some(provider) = provider else {
+        return false;
+    };
+    // A ready catalog may genuinely reject a removed model or option. Let
+    // admission explain that once instead of refreshing forever.
+    provider["effort"]["catalogState"] == "ready"
 }
 /// Swift's collapse priority: mode, follow-up, access, speed, effort, model.
 fn footer_compaction(widths: [f32; 6], available: f32) -> [bool; 6] {
@@ -1610,7 +1646,6 @@ impl Coincide {
             if named_catalog_needs_observation(
                 named,
                 self.selection_ui.pending_provider_picker.is_some(),
-                self.selection_ui.automatic_profile_context.is_some(),
             ) {
                 self.observe_saved_profile_once(cx);
                 return true;
@@ -1644,11 +1679,21 @@ impl Coincide {
                         && request.account_id == "default"
                         && request.thread_id.is_none()
                 });
+        let attempted = self.selection_ui.catalog_attempted.contains(&key);
+        let failed = self.selection_ui.catalog_failed.contains(&key);
+        let retry_due = catalog_refresh_due(
+            attempted,
+            self.selection_ui.catalog_attempted_at.get(&key).copied(),
+            failed,
+            Instant::now(),
+        );
         match send_catalog_action(
             selection,
             false,
-            self.selection_ui.catalog_attempted.contains(&key),
             codex_request_pending,
+            saved_codex_catalog_ready(provider),
+            failed,
+            retry_due,
             discovery,
         ) {
             SendCatalogAction::Proceed => return false,
@@ -1663,15 +1708,10 @@ impl Coincide {
             SendCatalogAction::Refresh => {}
         }
         self.refresh_model_catalog(Some("codex".into()), cx);
-        self.selection_ui
-            .catalog_request
-            .as_ref()
-            .is_some_and(|request| {
-                request.provider == "codex"
-                    && request.account_id == "default"
-                    && request.thread_id.is_none()
-            })
-            || !self.selection_ui.catalog_attempted.contains(&key)
+        // A busy owner or a synchronous discovery failure may leave no job
+        // handle yet. Keep the captured send waiting for the bounded retry;
+        // an earlier attempt is not evidence of a current model list.
+        true
     }
     fn switch_provider_from_history(
         &mut self,
@@ -2037,7 +2077,11 @@ impl Coincide {
             return;
         }
         let context = json!({"id":thread["id"],"selection":thread["selection"],"accessMode":thread["accessMode"],"interactionMode":thread["interactionMode"],"projectID":thread["projectID"],"worktreePath":thread["worktreePath"],"selectionGeneration":named["selectionGeneration"],"readinessGeneration":named["readinessGeneration"]});
-        if self.selection_ui.automatic_profile_context.as_ref() == Some(&context) {
+        if !named_profile_retry_due(
+            self.selection_ui.automatic_profile_context.as_ref() == Some(&context),
+            self.selection_ui.automatic_profile_attempted_at,
+            Instant::now(),
+        ) {
             return;
         }
         match &self.selection_ui.automatic_profile_quiet {
@@ -2050,6 +2094,7 @@ impl Coincide {
             }
         }
         self.selection_ui.automatic_profile_context = Some(context);
+        self.selection_ui.automatic_profile_attempted_at = Some(Instant::now());
         self.switch_provider_from_history("codex".into(), None, cx);
     }
 
@@ -2113,6 +2158,7 @@ impl Coincide {
             self.selection_ui.displayed_capability_scope = None;
             self.selection_ui.catalog_attempted.clear();
             self.selection_ui.catalog_attempted_at.clear();
+            self.selection_ui.catalog_failed.clear();
             self.selection_ui.named_catalog_retry_after = None;
         }
         if self
@@ -2141,6 +2187,7 @@ impl Coincide {
     pub(super) fn refresh_provider_preferences(&mut self, cx: &mut Context<Self>) {
         self.selection_ui.catalog_attempted.clear();
         self.selection_ui.catalog_attempted_at.clear();
+        self.selection_ui.catalog_failed.clear();
         self.selection_ui.named_catalog_retry_after = None;
         self.selection_ui.capability_cache.invalidate();
         self.selection_ui.displayed_capability_scope = None;
@@ -2157,6 +2204,7 @@ impl Coincide {
             self.selection_ui.displayed_capability_scope = None;
             self.selection_ui.catalog_attempted.clear();
             self.selection_ui.catalog_attempted_at.clear();
+            self.selection_ui.catalog_failed.clear();
             self.selection_ui.named_catalog_retry_after = None;
         }
         let Some(thread) = self.selected.as_ref() else {
@@ -2285,6 +2333,7 @@ impl Coincide {
         self.selection_ui.capability_cache.invalidate();
         self.selection_ui.context = None;
         self.selection_ui.automatic_profile_context = None;
+        self.selection_ui.automatic_profile_attempted_at = None;
         self.selection_ui.automatic_profile_quiet = None;
         self.selection_ui.pending_provider = None;
         self.selection_ui.pending_provider_picker = None;
@@ -2299,6 +2348,7 @@ impl Coincide {
         {
             self.selection_ui.capability_cache.invalidate();
             self.selection_ui.automatic_profile_context = None;
+            self.selection_ui.automatic_profile_attempted_at = None;
             self.selection_ui.automatic_profile_quiet = None;
         }
     }
@@ -2769,6 +2819,7 @@ impl Coincide {
         let due = catalog_refresh_due(
             self.selection_ui.catalog_attempted.contains(&key),
             self.selection_ui.catalog_attempted_at.get(&key).copied(),
+            self.selection_ui.catalog_failed.contains(&key),
             Instant::now(),
         );
         if catalog_scope_matches(catalog, &scope)
@@ -2909,6 +2960,9 @@ impl Coincide {
                     thread_id: None,
                 };
                 if request.request_id.is_empty() || !catalog_response_matches(&value, &request) {
+                    self.selection_ui
+                        .catalog_failed
+                        .insert((request.provider.clone(), request.account_id.clone()));
                     let failed = json!({"provider":request.provider,"accountID":request.account_id,"state":"failed","error":"Invalid catalog refresh response"});
                     if should_replace_catalog(
                         &self.selection_ui.catalog,
@@ -2930,7 +2984,7 @@ impl Coincide {
                     self.selection_ui.catalog_last_poll = None;
                     // Starting a new job revokes the prior private proof. Do not
                     // use stale Codex capability proof for the current selection.
-                    if revokes_codex {
+                    if revokes_codex && !self.running.contains(&text(thread, "id")) {
                         self.selection_ui.capability_cache.invalidate();
                         self.selection_ui.context = None;
                     }
@@ -2947,7 +3001,10 @@ impl Coincide {
                 if error.to_string().contains("Too many model catalog reads")
                     || error
                         .to_string()
-                        .contains("Too many pending model catalog reads") =>
+                        .contains("Too many pending model catalog reads")
+                    || error
+                        .to_string()
+                        .contains("Provider discovery is still in progress") =>
             {
                 self.selection_ui.catalog_retry_after =
                     Some(Instant::now() + Duration::from_millis(500));
@@ -2960,6 +3017,9 @@ impl Coincide {
                 self.selection_ui
                     .catalog_attempted_at
                     .insert((provider.clone(), account_id.clone()), Instant::now());
+                self.selection_ui
+                    .catalog_failed
+                    .insert((provider.clone(), account_id.clone()));
                 let failed = json!({"provider":provider,"accountID":account_id,"state":"failed","error":format!("Catalog refresh failed: {error}")});
                 if should_replace_catalog(
                     &self.selection_ui.catalog,
@@ -3028,7 +3088,7 @@ impl Coincide {
             &self.selection_ui.accounts,
             &self.selection_ui.catalog_attempted,
             &self.selection_ui.catalog_attempted_at,
-            self.running.contains(&id),
+            &self.selection_ui.catalog_failed,
             Instant::now(),
         );
         if let Some(provider) = candidate {
@@ -3067,6 +3127,14 @@ impl Coincide {
                 let visible = self.catalog_request_visible(&request);
                 if value["state"] == "ready" {
                     self.remember_catalog(&request, &value);
+                }
+                if done && request.thread_id.is_none() {
+                    let key = (request.provider.clone(), request.account_id.clone());
+                    if value["state"] == "ready" {
+                        self.selection_ui.catalog_failed.remove(&key);
+                    } else {
+                        self.selection_ui.catalog_failed.insert(key);
+                    }
                 }
                 if should_replace_catalog(&self.selection_ui.catalog, &value, &request, visible)
                     && self.selection_ui.catalog != value
@@ -3112,6 +3180,11 @@ impl Coincide {
             }
             Ok(_) => {
                 changed = true;
+                if request.thread_id.is_none() {
+                    self.selection_ui
+                        .catalog_failed
+                        .insert((request.provider.clone(), request.account_id.clone()));
+                }
                 if let Some(thread) = &request.thread_id {
                     self.selection_ui.named_catalog_retry_after = Some((
                         thread.clone(),
@@ -3133,6 +3206,11 @@ impl Coincide {
             Err(error) if engine_busy(&error) => return,
             Err(error) => {
                 changed = true;
+                if request.thread_id.is_none() {
+                    self.selection_ui
+                        .catalog_failed
+                        .insert((request.provider.clone(), request.account_id.clone()));
+                }
                 if let Some(thread) = &request.thread_id {
                     self.selection_ui.named_catalog_retry_after = Some((
                         thread.clone(),
@@ -4806,11 +4884,19 @@ impl Coincide {
         if let Some(reason) = draft_speed_problem.clone() {
             pane = pane.child(div().text_sm().child(reason));
         }
-        if replacement_context {
-            pane = pane.child(div().text_sm().child("The current model's app default is unproved. Refresh its catalog, or explicitly choose another provider/model and Apply. Modes, effort, speed and Send remain locked; the replacement is validated normally."));
-        }
-        if let Some(reason) = lock.filter(|reason| !reason.to_ascii_lowercase().contains("catalog"))
+        if replacement_context
+            && provider.is_some_and(|provider| provider["effort"]["catalogState"] == "ready")
         {
+            pane = pane.child(div().text_sm().child(
+                "This model's default reasoning is unavailable. Choose another model to continue.",
+            ));
+        }
+        if let Some(reason) = lock.filter(|reason| {
+            let lower = reason.to_ascii_lowercase();
+            !lower.contains("catalog")
+                && !lower.contains("model options are temporarily unavailable")
+                && !lower.contains("codex changed; model options are being updated")
+        }) {
             pane = pane.child(div().text_sm().child(reason));
         }
         if conflict {
@@ -4972,16 +5058,25 @@ mod tests {
     fn automatic_model_refresh_is_bounded_and_retries_after_the_interval() {
         use super::*;
         let now = Instant::now();
-        assert!(catalog_refresh_due(false, None, now));
-        assert!(!catalog_refresh_due(true, Some(now), now));
+        assert!(catalog_refresh_due(false, None, false, now));
+        assert!(!catalog_refresh_due(true, Some(now), false, now));
         assert!(catalog_refresh_due(
             true,
             Some(now - CATALOG_REFRESH_INTERVAL),
+            false,
             now
         ));
         assert!(!catalog_refresh_due(
             true,
             Some(now + Duration::from_secs(1)),
+            false,
+            now
+        ));
+        assert!(!catalog_refresh_due(true, Some(now), true, now));
+        assert!(catalog_refresh_due(
+            true,
+            Some(now - CATALOG_RETRY_INTERVAL),
+            true,
             now
         ));
     }
@@ -5002,15 +5097,16 @@ mod tests {
         let draft = SelectionDraft::from_thread(&thread);
         let mut attempted = std::collections::HashSet::new();
         let mut times = HashMap::new();
+        let mut failed = std::collections::HashSet::new();
         let now = Instant::now();
-        let next = |attempted: &_, times: &_, running, now| {
+        let next = |attempted: &_, times: &_, failed: &_, now| {
             next_background_catalog(
                 &providers,
                 &draft,
                 &Value::Null,
                 attempted,
                 times,
-                running,
+                failed,
                 now,
             )
         };
@@ -5022,15 +5118,24 @@ mod tests {
             "grok",
             "antigravity",
         ] {
-            assert_eq!(next(&attempted, &times, false, now).as_deref(), Some(name));
+            assert_eq!(
+                next(&attempted, &times, &failed, now).as_deref(),
+                Some(name)
+            );
             let key = (name.to_owned(), "default".to_owned());
             attempted.insert(key.clone());
             times.insert(key, now);
         }
-        assert_eq!(next(&attempted, &times, false, now), None);
+        assert_eq!(next(&attempted, &times, &failed, now), None);
         assert_eq!(
-            next(&attempted, &times, true, now + CATALOG_REFRESH_INTERVAL).as_deref(),
-            Some("claude")
+            next(&attempted, &times, &failed, now + CATALOG_REFRESH_INTERVAL).as_deref(),
+            Some("codex")
+        );
+        failed.insert(("codex".into(), "default".into()));
+        assert_eq!(
+            next(&attempted, &times, &failed, now + CATALOG_RETRY_INTERVAL).as_deref(),
+            Some("codex"),
+            "a failed startup read retries even during a running turn"
         );
         let mut named = draft.clone();
         named.account = json!("named-account");
@@ -5041,7 +5146,7 @@ mod tests {
                 &Value::Null,
                 &Default::default(),
                 &Default::default(),
-                false,
+                &Default::default(),
                 now
             )
             .as_deref(),
@@ -5150,46 +5255,56 @@ mod tests {
             Some(true)
         );
         let named = json!({"refreshAllowed":true,"accountCatalogReady":false});
-        assert!(named_catalog_needs_observation(&named, false, false));
-        assert!(!named_catalog_needs_observation(&named, false, true));
+        assert!(named_catalog_needs_observation(&named, false));
+        assert!(named_catalog_needs_observation(&named, true));
+        let now = Instant::now();
+        assert!(named_profile_retry_due(false, None, now));
+        assert!(!named_profile_retry_due(true, Some(now), now));
+        assert!(named_profile_retry_due(
+            true,
+            Some(now - CATALOG_RETRY_INTERVAL),
+            now
+        ));
+        assert!(!named_catalog_needs_observation(
+            &json!({"refreshAllowed":true,"accountCatalogReady":true}),
+            false
+        ));
         assert!(!named_catalog_needs_observation(
             &json!({"nativeApiKey":true,"refreshAllowed":true}),
-            false,
             false
         ));
         assert!(!named_catalog_needs_observation(
             &json!({"nativeAccount":true,"refreshAllowed":true}),
-            false,
             false
         ));
         assert_eq!(
-            send_catalog_action(&codex, false, false, false, None),
+            send_catalog_action(&codex, false, false, false, false, true, None),
             SendCatalogAction::Wait
         );
         assert_eq!(
-            send_catalog_action(&codex, false, false, false, Some(true)),
+            send_catalog_action(&codex, false, false, false, false, true, Some(true)),
             SendCatalogAction::Refresh
         );
         assert_eq!(
-            send_catalog_action(&codex, false, true, true, Some(true)),
+            send_catalog_action(&codex, false, true, false, false, false, Some(true)),
             SendCatalogAction::Wait
         );
         assert_eq!(
-            send_catalog_action(&codex, false, true, false, Some(true)),
+            send_catalog_action(&codex, false, false, true, false, false, Some(true)),
             SendCatalogAction::Proceed
         );
         assert_eq!(
-            send_catalog_action(&codex, false, false, false, Some(false)),
+            send_catalog_action(&codex, false, false, false, false, true, Some(false)),
             SendCatalogAction::Unavailable
         );
         assert_eq!(
-            send_catalog_action(&codex, true, false, true, Some(true)),
+            send_catalog_action(&codex, true, true, false, false, false, Some(true)),
             SendCatalogAction::Proceed
         );
         for provider in ["claude", "opencode", "cursor", "grok", "antigravity"] {
             let selection = json!({"provider":provider,"modelID":"model","effort":"high"});
             assert_eq!(
-                send_catalog_action(&selection, false, false, true, None),
+                send_catalog_action(&selection, false, true, false, false, false, None),
                 SendCatalogAction::Proceed
             );
         }
@@ -5199,10 +5314,31 @@ mod tests {
                 false,
                 false,
                 false,
+                false,
+                true,
                 Some(true)
             ),
             SendCatalogAction::Refresh
         );
+        assert_eq!(
+            send_catalog_action(&codex, false, false, false, true, false, Some(true)),
+            SendCatalogAction::Wait
+        );
+        assert_eq!(
+            send_catalog_action(&codex, false, false, false, true, true, Some(true)),
+            SendCatalogAction::Refresh
+        );
+        assert_eq!(
+            send_catalog_action(&codex, false, false, false, false, false, Some(true)),
+            SendCatalogAction::Refresh,
+            "an evicted proof is refreshed even after a prior successful read"
+        );
+        let options = json!({"effort":{"supported":false,"catalogState":"ready"}});
+        assert!(saved_codex_catalog_ready(Some(&options)));
+        assert!(!saved_codex_catalog_ready(Some(
+            &json!({"effort":{"catalogState":"failed"}})
+        )));
+        assert!(!saved_codex_catalog_ready(None));
     }
     #[::core::prelude::v1::test]
     fn capability_reads_never_replace_the_agent_tab_the_picker_shows() {
@@ -6546,21 +6682,16 @@ mod tests {
             let mut bad = provider.clone();
             bad["effort"].as_object_mut().unwrap().remove(field);
             let label = effort_default_label(&draft, &thread, Some(&bad));
-            assert!(label.contains("refresh catalog required"));
+            assert!(label.contains("unavailable"));
             assert!(!label.contains("Medium"));
             assert!(!label.contains("Provider default"));
         }
         let mut bad = provider.clone();
         bad["effort"]["choices"] = json!(["low", "high"]);
-        assert!(
-            effort_default_label(&draft, &thread, Some(&bad)).contains("refresh catalog required")
-        );
+        assert!(effort_default_label(&draft, &thread, Some(&bad)).contains("unavailable"));
         let mut stale = thread.clone();
         stale["selection"]["speed"] = json!("priority");
-        assert!(
-            effort_default_label(&draft, &stale, Some(&provider))
-                .contains("refresh catalog required")
-        );
+        assert!(effort_default_label(&draft, &stale, Some(&provider)).contains("unavailable"));
     }
     #[::core::prelude::v1::test]
     fn non_astra_and_explicit_effort_keep_existing_semantics_and_raw_values() {

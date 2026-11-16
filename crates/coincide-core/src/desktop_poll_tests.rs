@@ -1,6 +1,51 @@
 use super::*;
 use std::sync::mpsc;
 
+#[test]
+fn startup_model_refresh_waits_for_provider_discovery() {
+    let result = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--ignored",
+            "--exact",
+            "api::desktop_poll_tests::startup_model_refresh_fixture_child",
+        ])
+        .env_remove("COINCIDE_CODEX_EXECUTABLE")
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+}
+
+#[test]
+#[ignore = "Run by the isolated provider-discovery parent test"]
+fn startup_model_refresh_fixture_child() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut engine = Engine::fixture(Store::open(&directory.path().join("state.sqlite")).unwrap());
+    engine.provider_discovery_pending = true;
+    let error = engine
+        .execute("agent.models.refresh", &json!({"provider":"codex"}))
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("Provider discovery is still in progress")
+    );
+    assert_eq!(engine.model_catalog.shutdown_status().running, 0);
+    engine.provider_discovery_pending = false;
+    let result = engine
+        .execute("agent.models.refresh", &json!({"provider":"codex"}))
+        .unwrap();
+    assert_eq!(result["state"], "loading");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while engine.model_catalog.shutdown_status().running != 0 {
+        assert!(Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+}
+
 fn fixture() -> (
     tempfile::TempDir,
     Engine,

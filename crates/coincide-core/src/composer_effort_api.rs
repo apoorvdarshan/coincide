@@ -17,9 +17,7 @@ impl Engine {
                     .as_str()
                     .map(PathBuf::from)
             })
-            .context(
-                "Configure and explicitly refresh the Codex model catalog before choosing effort/speed",
-            )
+            .context("Codex is unavailable. Check the provider in Settings.")
     }
     pub(super) fn composer_effort_proof(
         &self,
@@ -73,19 +71,31 @@ impl Engine {
     }
     pub(super) fn composer_effort_capability(&self, selection: &Value) -> Value {
         match self.composer_codex_executable() {
-            Ok(executable) => self.model_catalog.effort_capability(selection, &executable),
+            Ok(executable) => {
+                let mut result = self.model_catalog.effort_capability(selection, &executable);
+                result["catalogState"] =
+                    json!(self.model_catalog.codex_catalog_state(&executable).as_str());
+                result
+            }
             Err(error) => {
                 let mut null_selection = selection.clone();
                 null_selection["effort"] = Value::Null;
                 json!({"supported":false,"choices":[],"reportedDefault":null,"effectiveDefault":null,
-                    "appDefaultRequired":crate::model_catalog::astra_default_needed(&null_selection),"appDefaultAvailable":false,"reason":error.to_string()})
+                    "appDefaultRequired":crate::model_catalog::astra_default_needed(&null_selection),"appDefaultAvailable":false,"catalogState":"unavailable","reason":error.to_string()})
             }
         }
     }
     pub(super) fn composer_speed_capability(&self, selection: &Value) -> Value {
         match self.composer_codex_executable() {
-            Ok(executable) => self.model_catalog.speed_capability(selection, &executable),
-            Err(error) => json!({"supported":false,"choices":[],"reason":error.to_string()}),
+            Ok(executable) => {
+                let mut result = self.model_catalog.speed_capability(selection, &executable);
+                result["catalogState"] =
+                    json!(self.model_catalog.codex_catalog_state(&executable).as_str());
+                result
+            }
+            Err(error) => {
+                json!({"supported":false,"choices":[],"catalogState":"unavailable","reason":error.to_string()})
+            }
         }
     }
     pub(super) fn validate_composer_defaults(&self, defaults: &Value) -> Result<Value> {

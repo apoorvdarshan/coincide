@@ -24,7 +24,7 @@ mod restore;
 #[path = "model_catalog_delete.rs"]
 mod thread_delete;
 use effort::EffortExecutable;
-pub(crate) use effort::{CodexEffortProof, astra_default_needed, astra_model};
+pub(crate) use effort::{CodexCatalogState, CodexEffortProof, astra_default_needed, astra_model};
 pub(crate) use restore::resolve_reported_preferences;
 
 #[path = "model_catalog_claude_limits.rs"]

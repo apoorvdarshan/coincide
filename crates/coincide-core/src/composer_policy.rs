@@ -250,9 +250,10 @@ impl Policy {
             );
         }
         if self.effort.is_some() || self.speed.is_some() {
-            let proof = self.effort_proof.as_ref().context(
-                "Refresh the exact Codex model catalog before applying reasoning effort or speed",
-            )?;
+            let proof = self
+                .effort_proof
+                .as_ref()
+                .context("Codex model options are temporarily unavailable")?;
             proof.validate_executable_for_policy()?;
         }
         Ok(())
