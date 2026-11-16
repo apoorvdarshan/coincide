@@ -2,8 +2,6 @@
 //! a provider or discovers/authenticates models. Explicit Apply and acknowledged
 //! standalone mode commands use the same validated selection endpoint.
 use super::*;
-use crate::native_menu::AccessibleMenuExt as _;
-use gpui_kit::component::menu::PopupMenuItem;
 #[path = "composer_native_accounts.rs"]
 mod native_accounts;
 use std::collections::HashMap;
@@ -1672,7 +1670,7 @@ fn saved_codex_catalog_ready(provider: Option<&Value>) -> bool {
     provider["effort"]["catalogState"] == "ready"
 }
 /// Swift's collapse priority: mode, follow-up, access, speed, effort, model.
-pub(super) fn footer_compaction(widths: [f32; 6], available: f32) -> [bool; 6] {
+fn footer_compaction(widths: [f32; 6], available: f32) -> [bool; 6] {
     let mut result = [false; 6];
     let mut total = widths.iter().sum::<f32>()
         + widths.iter().filter(|w| **w > 0.).count().saturating_sub(1) as f32 * 2.;
@@ -1686,30 +1684,6 @@ pub(super) fn footer_compaction(widths: [f32; 6], available: f32) -> [bool; 6] {
         }
     }
     result
-}
-
-/// When icon-only controls still cannot fit, move the least critical choices
-/// to a menu rather than hiding the Send button or adding a second line.
-pub(super) fn footer_overflow(widths: [f32; 6], available: f32) -> [bool; 6] {
-    let mut hidden = [false; 6];
-    let needed = |hidden: &[bool; 6]| {
-        let visible = widths
-            .iter()
-            .enumerate()
-            .filter(|(i, width)| **width > 0. && !hidden[*i])
-            .count();
-        let count = visible + usize::from(hidden.iter().any(|value| *value));
-        count as f32 * 28. + count.saturating_sub(1) as f32 * 2.
-    };
-    for index in [2, 1, 5, 3, 4] {
-        if needed(&hidden) <= available {
-            break;
-        }
-        if widths[index] > 0. {
-            hidden[index] = true;
-        }
-    }
-    hidden
 }
 
 /// Reserve the action buttons and their gaps before sizing the model controls.
@@ -3876,69 +3850,8 @@ impl Coincide {
             },
             self.draft_attachment_count(),
         );
-        let room = (available - trailing).max(0.);
-        let overflow = footer_overflow(widths, room);
-        let mut visible_widths = widths;
-        for (width, hidden) in visible_widths.iter_mut().zip(overflow) {
-            if hidden {
-                *width = 0.;
-            }
-        }
-        let overflow_width = if overflow.iter().any(|hidden| *hidden) {
-            30.
-        } else {
-            0.
-        };
-        let compact = footer_compaction(visible_widths, (room - overflow_width).max(0.));
-        // Keep as much of the model name as fits before falling back to the
-        // provider mark alone. This preserves context in narrower panes.
-        let other_count = visible_widths[1..]
-            .iter()
-            .filter(|width| **width > 0.)
-            .count();
-        let other_width = visible_widths[1..]
-            .iter()
-            .enumerate()
-            .map(|(offset, width)| {
-                if *width == 0. {
-                    0.
-                } else if compact[offset + 1] {
-                    28.
-                } else {
-                    *width
-                }
-            })
-            .sum::<f32>();
-        let compact_model_width =
-            (room - overflow_width - other_width - other_count as f32 * 2.).clamp(28., 240.);
+        let compact = footer_compaction(widths, (available - trailing).max(0.));
         let mut controls = chat_layout::composer_selection_controls();
-
-        let menu_entries = [
-            (
-                1,
-                format!("Reasoning effort: {effort}"),
-                Some(PickerFacet::Effort),
-            ),
-            (
-                2,
-                format!("Response speed: {speed}"),
-                Some(PickerFacet::Speed),
-            ),
-            (
-                3,
-                format!("Permissions: {access}"),
-                Some(PickerFacet::Access),
-            ),
-            (
-                4,
-                format!("While the agent works: {}", follow.label()),
-                None,
-            ),
-            (5, format!("Build or Plan: {mode}"), Some(PickerFacet::Mode)),
-        ]
-        .into_iter()
-        .filter(|(index, _, _)| overflow[*index])
-        .collect::<Vec<_>>();
 
         let facets = [
             (
@@ -3976,136 +3889,89 @@ impl Coincide {
             .into_iter()
             .filter(|(facet, ..)| *facet != PickerFacet::Speed || speed_supported)
         {
-            let index = match facet {
+            let small = compact[match facet {
                 PickerFacet::Model => 0,
                 PickerFacet::Effort => 1,
                 PickerFacet::Speed => 2,
                 PickerFacet::Access => 3,
                 PickerFacet::Mode => 5,
-            };
-            let small = compact[index];
-            if !overflow[index] {
-                controls = controls.child(
-                    Button::new(id)
-                        .flex_shrink_0()
-                        .when(facet != PickerFacet::Model && !small, |button| {
-                            button.label(label.clone())
-                        })
-                        .accessibility_label(help.clone())
-                        .tooltip(help)
-                        .h(px(28.))
-                        .rounded(px(8.))
-                        .when(facet == PickerFacet::Model, |button| {
-                            if small {
-                                button.w(px(compact_model_width)).p_0().child(
-                                    chat_layout::provider_label(
-                                        &text(selection, "provider"),
-                                        if compact_model_width >= 72. {
-                                            label.clone()
-                                        } else {
-                                            String::new()
-                                        },
-                                    ),
-                                )
-                            } else {
-                                button.max_w(px(240.)).child(chat_layout::provider_label(
-                                    &text(selection, "provider"),
-                                    label.clone(),
-                                ))
-                            }
-                        })
-                        .when(small && facet != PickerFacet::Model, |button| {
-                            button.w(px(28.)).p_0()
-                        })
-                        .when(facet != PickerFacet::Mode && !small, |button| {
-                            button.dropdown_caret(true)
-                        })
-                        .when(facet != PickerFacet::Model, |button| {
-                            button.icon(match facet {
-                                PickerFacet::Effort => gpui_kit::assets::IconName::Brain,
-                                PickerFacet::Speed => gpui_kit::assets::IconName::Zap,
-                                PickerFacet::Access => {
-                                    if access == "Full access" {
-                                        gpui_kit::assets::IconName::LockOpen
-                                    } else {
-                                        gpui_kit::assets::IconName::Lock
-                                    }
-                                }
-                                PickerFacet::Mode if mode == "Plan" => {
-                                    gpui_kit::assets::IconName::PencilRuler
-                                }
-                                _ => gpui_kit::assets::IconName::Hammer,
-                            })
-                        })
-                        .ghost()
-                        .compact()
-                        .when(
-                            self.selection_ui.expanded && self.selection_ui.facet == facet,
-                            |button| button.bg(self.color(0x202a3b)),
-                        )
-                        .on_click(
-                            cx.listener(move |this, event: &gpui_kit::ClickEvent, _, cx| {
-                                let was_open =
-                                    this.selection_ui.expanded && this.selection_ui.facet == facet;
-                                this.selection_ui.expanded = !was_open;
-                                this.selection_ui.facet = facet;
-                                this.selection_ui.popover_anchor = Some(event.position());
-                                if !was_open {
-                                    this.selection_ui.tab_provider = this
-                                        .selected
-                                        .as_ref()
-                                        .map(|thread| text(&thread["selection"], "provider"))
-                                        .filter(|provider| !provider.is_empty());
-                                    if facet == PickerFacet::Model {
-                                        this.ensure_picker_catalog(cx);
-                                    }
-                                }
-                                cx.notify();
-                            }),
-                        ),
-                );
-            }
-            if facet == PickerFacet::Access && !overflow[4] {
-                controls = controls.child(self.follow_up_button(compact[4], cx));
-            }
-        }
-        if !menu_entries.is_empty() {
-            let owner = cx.entity().downgrade();
+            }];
             controls = controls.child(
-                Button::new("composer-more-options")
-                    .icon(gpui_kit::assets::IconName::Ellipsis)
-                    .accessibility_label("More composer options")
-                    .tooltip("More composer options")
+                Button::new(id)
+                    .flex_shrink_0()
+                    .when(facet != PickerFacet::Model && !small, |button| {
+                        button.label(label.clone())
+                    })
+                    .accessibility_label(help.clone())
+                    .tooltip(help)
+                    .h(px(28.))
+                    .rounded(px(8.))
+                    .when(facet == PickerFacet::Model, |button| {
+                        if small {
+                            button.w(px(28.)).p_0().child(chat_layout::provider_label(
+                                &text(selection, "provider"),
+                                String::new(),
+                            ))
+                        } else {
+                            button.max_w(px(240.)).child(chat_layout::provider_label(
+                                &text(selection, "provider"),
+                                label.clone(),
+                            ))
+                        }
+                    })
+                    .when(small && facet != PickerFacet::Model, |button| {
+                        button.w(px(28.)).p_0()
+                    })
+                    .when(facet != PickerFacet::Mode && !small, |button| {
+                        button.dropdown_caret(true)
+                    })
+                    .when(facet != PickerFacet::Model, |button| {
+                        button.icon(match facet {
+                            PickerFacet::Effort => gpui_kit::assets::IconName::Brain,
+                            PickerFacet::Speed => gpui_kit::assets::IconName::Zap,
+                            PickerFacet::Access => {
+                                if access == "Full access" {
+                                    gpui_kit::assets::IconName::LockOpen
+                                } else {
+                                    gpui_kit::assets::IconName::Lock
+                                }
+                            }
+                            PickerFacet::Mode if mode == "Plan" => {
+                                gpui_kit::assets::IconName::PencilRuler
+                            }
+                            _ => gpui_kit::assets::IconName::Hammer,
+                        })
+                    })
                     .ghost()
                     .compact()
-                    .w(px(28.))
-                    .h(px(28.))
-                    .p_0()
-                    .rounded(px(8.))
-                    .accessible_menu_with_anchor(Anchor::TopRight, move |mut menu, _, _| {
-                        for (_, label, facet) in &menu_entries {
-                            let owner = owner.clone();
-                            let facet = *facet;
-                            menu = menu.item(PopupMenuItem::new(label.clone()).on_click(
-                                move |event, _, cx| {
-                                    let anchor = event.position();
-                                    let _ = owner.update(cx, |this, cx| {
-                                        if let Some(facet) = facet {
-                                            this.open_composer_picker(facet, cx);
-                                            this.selection_ui.popover_anchor = Some(anchor);
-                                        } else {
-                                            this.selection_ui.expanded = false;
-                                            this.follow_up_anchor = Some(anchor);
-                                            this.follow_up_picker = true;
-                                            cx.notify();
-                                        }
-                                    });
-                                },
-                            ));
-                        }
-                        menu
-                    }),
+                    .when(
+                        self.selection_ui.expanded && self.selection_ui.facet == facet,
+                        |button| button.bg(self.color(0x202a3b)),
+                    )
+                    .on_click(
+                        cx.listener(move |this, event: &gpui_kit::ClickEvent, _, cx| {
+                            let was_open =
+                                this.selection_ui.expanded && this.selection_ui.facet == facet;
+                            this.selection_ui.expanded = !was_open;
+                            this.selection_ui.facet = facet;
+                            this.selection_ui.popover_anchor = Some(event.position());
+                            if !was_open {
+                                this.selection_ui.tab_provider = this
+                                    .selected
+                                    .as_ref()
+                                    .map(|thread| text(&thread["selection"], "provider"))
+                                    .filter(|provider| !provider.is_empty());
+                                if facet == PickerFacet::Model {
+                                    this.ensure_picker_catalog(cx);
+                                }
+                            }
+                            cx.notify();
+                        }),
+                    ),
             );
+            if facet == PickerFacet::Access {
+                controls = controls.child(self.follow_up_button(compact[4], cx));
+            }
         }
         div()
             .flex_1()
@@ -5997,24 +5863,6 @@ mod tests {
         assert!(
             compact_implement.iter().filter(|compact| **compact).count()
                 > compact_send.iter().filter(|compact| **compact).count()
-        );
-    }
-
-    #[::core::prelude::v1::test]
-    fn narrow_footer_moves_secondary_controls_to_the_overflow_menu() {
-        let widths = [180., 75., 0., 110., 80., 65.];
-        assert_eq!(super::footer_overflow(widths, 180.), [false; 6]);
-        assert_eq!(
-            super::footer_overflow(widths, 118.),
-            [false, true, false, false, false, true]
-        );
-        assert_eq!(
-            super::footer_overflow(widths, 88.),
-            [false, true, false, true, false, true]
-        );
-        assert!(
-            super::footer_trailing_width(0., false, false, 28., 2)
-                > super::footer_trailing_width(0., false, false, 28., 0)
         );
     }
 

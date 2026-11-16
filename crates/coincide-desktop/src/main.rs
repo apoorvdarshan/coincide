@@ -7854,6 +7854,7 @@ impl Render for Coincide {
                                                 self.composer_selection_footer(window, implement_button.is_some(), cx),
                                                 div()
                                                 .flex()
+                                                .flex_wrap()
                                                 .items_center()
                                                 .justify_end()
                                                 .min_w_0()
@@ -7870,7 +7871,7 @@ impl Render for Coincide {
                                                         })
                                                         .tooltip(if importing_images { "Adding attachments…" } else { "Attach files or folders" })
                                                         .compact().ghost()
-                                                        .xsmall().h(px(26.)).rounded(px(7.))
+                                                        .h(px(28.)).rounded(px(7.))
                                                         .on_click(cx.listener(|this, _, window, cx| {
                                                             this.attach_images(window, cx)
                                                         })),
@@ -7882,7 +7883,7 @@ impl Render for Coincide {
                                                         .accessibility_label("Attach folder")
                                                         .tooltip("Attach folder")
                                                         .compact().ghost()
-                                                        .xsmall().h(px(26.)).rounded(px(7.))
+                                                        .h(px(28.)).rounded(px(7.))
                                                         .on_click(cx.listener(|this, _, window, cx| {
                                                             this.open_composer_folder_picker(window, cx)
                                                         })),
