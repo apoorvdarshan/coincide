@@ -276,6 +276,7 @@ fn cursor_fixture_child() {
                 };
                 break;
             }
+            Event::TurnAccepted => {}
             Event::Goal { .. } | Event::Usage | Event::TurnBoundary => {
                 panic!("unexpected Codex goal event from Cursor")
             }

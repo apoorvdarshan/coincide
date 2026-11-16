@@ -417,10 +417,7 @@ impl Engine {
     /// capability reader. Do not deserialize the transcript merely to compare
     /// these three fields before and after that read.
     pub fn saved_selection_envelope(&self, id: &str) -> Result<Value> {
-        let (thread, _) = self.store.remote_thread_metadata(id)?;
-        Ok(
-            json!({"selection":thread["selection"],"accessMode":thread["accessMode"],"interactionMode":thread["interactionMode"]}),
-        )
+        self.store.thread_selection_envelope(id)
     }
 
     /// Read a composer's capabilities without polling provider events again;
@@ -552,9 +549,13 @@ impl Engine {
                 | "projects.list"
                 | "bots.list"
                 | "threads.list"
+                | "threads.read"
                 | "schedules.list"
                 | "host.awake.status"
+                | "agent.models.refresh"
                 | "agent.models.status"
+                | "providers.antigravity.status"
+                | "providers.codex.profiles.status"
                 | "usage.codexLimits.refresh"
                 | "usage.codexLimits.status"
                 | "usage.claudeLimits.refresh"
@@ -1069,7 +1070,18 @@ impl Engine {
                 self.apply_provider_preferences(&mut result)?;
                 if let Some(id) = p.get("threadId") {
                     let id = id.as_str().context("threadId must be text")?;
-                    let thread = self.store.thread(id)?;
+                    // Ordinary capability reads need selection and queue metadata,
+                    // not the transcript. Bot and named-profile checks retain the
+                    // complete document for their stronger ownership validation.
+                    let compact = self.store.thread_selection_snapshot(id)?;
+                    let thread = if !compact["rustBotContext"].is_null()
+                        || !compact["botID"].is_null()
+                        || codex_profile_models_api::named_thread(&compact)
+                    {
+                        self.store.thread(id)?
+                    } else {
+                        compact
+                    };
                     let is_bot = !thread["rustBotContext"].is_null() || !thread["botID"].is_null();
                     let policy_view = if is_bot { self.bot_validation_view(&thread).map(Some) } else { Ok(None) };
                     let policy_thread = policy_view.as_ref().ok().and_then(Option::as_ref).unwrap_or(&thread);
@@ -2171,12 +2183,23 @@ impl Engine {
                     .iter()
                     .position(|m| m.id == message_id)
                     .context("Queued message not found")?;
-                ensure!(
-                    messages[index].state != State::Dispatching,
-                    "Stop this turn before removing its message"
-                );
-                messages.remove(index);
-                queue::write(&mut thread, &messages)?;
+                if messages[index].state == State::Dispatching {
+                    // Removing a row cannot recall a prompt already handed to
+                    // a provider. Hide it while retaining its owned claim so
+                    // later acknowledgement and recovery remain exactly once.
+                    let owned = self.runs.get(id).and_then(|run| run.queue_claim.as_deref())
+                        == Some(message_id);
+                    if !owned {
+                        // No current worker can acknowledge this old claim.
+                        // It stays non-replayable, but must not keep the queue
+                        // and provider switch blocked after the user dismisses it.
+                        thread["rustMessageQueue"][index]["state"] = json!("interrupted");
+                    }
+                    thread["rustMessageQueue"][index]["dismissed"] = json!(true);
+                } else {
+                    messages.remove(index);
+                    queue::write(&mut thread, &messages)?;
+                }
                 self.store.save(&thread)?;
             }
             _ => bail!("Unsupported queue command"),
@@ -2190,9 +2213,11 @@ impl Engine {
                 "The queue changed, but the paused goal could not resume: {error}"
             ));
         }
-        Ok(
-            json!({"messages":queue::read(&thread)?,"error":thread["rustQueueError"],"enabled":self.enabled_queues.contains(id)}),
-        )
+        let mut result = queue::native_snapshot(&thread, self.enabled_queues.contains(id))?;
+        if let Some(object) = result.as_object_mut() {
+            object.remove("rawQueue");
+        }
+        Ok(result)
     }
     fn sync_goal_queue_waiting(&self, id: &str) {
         if let Some(run) = self.runs.get(id).filter(|run| run.provider == "codex") {
@@ -2659,8 +2684,11 @@ impl Engine {
                 && self.store.contains_thread(&id).unwrap_or(false)
             {
                 let run = self.runs.get_mut(&id).unwrap();
-                run.events
-                    .retain(|event| !ignored_provider_notification(event));
+                let no_queue_claim = run.queue_claim.is_none();
+                run.events.retain(|event| {
+                    !(no_queue_claim && matches!(event, Event::TurnAccepted))
+                        && !ignored_provider_notification(event)
+                });
                 if run.events.is_empty() {
                     if newly_connected || newly_answered {
                         self.revision += 1;
@@ -2806,6 +2834,26 @@ impl Engine {
                         }
                     }
                     Event::Usage => {}
+                    Event::TurnAccepted => {
+                        // A queue row represents delivery, not the duration of
+                        // the provider's reply. Session creation alone does not
+                        // prove delivery; this follows a verified turn ACK.
+                        if !self.runs[&id].cancelled
+                            && self.runs[&id].persistence_error.is_none()
+                            && let Some(claim) = self.runs.get_mut(&id).unwrap().queue_claim.take()
+                            && let Err(error) = crate::message_queue::finish(
+                                &mut v,
+                                &claim,
+                                crate::message_queue::State::Completed,
+                                None,
+                            )
+                        {
+                            self.runs.get_mut(&id).unwrap().queue_claim = Some(claim);
+                            self.runs.get_mut(&id).unwrap().persistence_error =
+                                Some(error.to_string());
+                            self.runs[&id].session.stop();
+                        }
+                    }
                     Event::TurnBoundary => {
                         // A queued turn can finish while the native goal
                         // continues in the same worker. Settle its owned row

@@ -518,11 +518,14 @@ impl Coincide {
                         Button::new(SharedString::from(format!("remove-queued-{id}")))
                             .icon(IconName::Close)
                             .accessibility_label("Remove queued message")
-                            .tooltip("Remove from queue")
+                            .tooltip(if state == "dispatching" {
+                                "Dismiss sending message"
+                            } else {
+                                "Remove from queue"
+                            })
                             .ghost()
                             .xsmall()
                             .compact()
-                            .disabled(state == "dispatching")
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.queue_action("agent.queue.remove", Some(id.clone()), cx)
                             })),

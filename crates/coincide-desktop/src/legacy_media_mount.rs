@@ -447,8 +447,19 @@ impl Coincide {
             let result = (|| -> Result<(Value, Vec<DisplayImage>)> {
                 // Existing loaded-thread metadata only. No media/legacy path IO
                 // and no Engine lock while decoding or hashing image data.
-                let current =
-                    coincide_core::api::call(&engine, "threads.read", json!({"threadId":thread}))?;
+                let snapshot = {
+                    let owner = engine
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("App engine is unavailable"))?;
+                    anyhow::ensure!(
+                        !owner.shutdown && !owner.admissions_frozen(),
+                        "Application is closing"
+                    );
+                    owner.capture_thread_read(&thread)?.1
+                };
+                // Decode after releasing the engine. A freshness read must not
+                // poll provider events and rewrite the active conversation.
+                let current = snapshot.decode()?;
                 let mut images = Vec::new();
                 let mut seen = HashSet::new();
                 for entry in entries.iter().take(8) {

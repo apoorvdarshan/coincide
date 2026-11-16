@@ -184,29 +184,71 @@ fn control_dormant_queue_removal_and_validation_never_replay_saved_work() {
         assert_eq!(queue["messages"][1]["state"], "dispatching");
         fixture.reject(
             "agent.queue.remove",
-            json!({"threadId":id,"messageId":claimed}),
-        );
-        fixture.reject(
-            "agent.queue.remove",
             json!({"threadId":id,"messageId":Uuid::new_v4()}),
         );
         assert_eq!(fixture.read(id), source);
         assert_eq!(fixture.call("app.status", json!({}))["running"], json!([]));
         fixture.restart();
     }
+    let queue = fixture.call(
+        "agent.queue.remove",
+        json!({"threadId":id,"messageId":claimed}),
+    );
+    assert_eq!(queue["messages"].as_array().unwrap().len(), 1);
+    assert_eq!(queue["messages"][0]["id"], pending);
+    let saved = fixture.read(id);
+    assert_eq!(saved["rustMessageQueue"][1]["state"], "interrupted");
+    assert_eq!(saved["rustMessageQueue"][1]["dismissed"], true);
+    fixture.restart();
+    let queue = fixture.call("agent.queue.list", json!({"threadId":id}));
+    assert_eq!(queue["enabled"], false);
+    assert_eq!(queue["messages"].as_array().unwrap().len(), 1);
+    assert_eq!(queue["messages"][0]["id"], pending);
     fixture.call("agent.queue.pause", json!({"threadId":id}));
     let queue = fixture.call(
         "agent.queue.remove",
         json!({"threadId":id,"messageId":pending}),
     );
     assert_eq!(queue["enabled"], false);
-    assert_eq!(queue["messages"].as_array().unwrap().len(), 1);
-    assert_eq!(queue["messages"][0]["id"], claimed);
+    assert!(queue["messages"].as_array().unwrap().is_empty());
     fixture.restart();
     let queue = fixture.call("agent.queue.list", json!({"threadId":id}));
     assert_eq!(queue["enabled"], false);
-    assert_eq!(queue["messages"].as_array().unwrap().len(), 1);
-    assert_eq!(queue["messages"][0]["state"], "dispatching");
+    assert!(queue["messages"].as_array().unwrap().is_empty());
+    assert_eq!(
+        fixture.read(id)["rustMessageQueue"][0]["state"],
+        "interrupted"
+    );
+    assert_eq!(fixture.read(id)["rustMessageQueue"][0]["dismissed"], true);
     assert_eq!(fixture.read(id)["items"], json!([]));
     assert_eq!(fixture.call("app.status", json!({}))["running"], json!([]));
+
+    // An old dismissed claim must not make provider changes fail after the
+    // restart. These transitions only select defaults; no provider is started.
+    fixture.call("threads.open", json!({"threadId":id}));
+    for provider in ["codex", "cursor", "grok", "opencode", "claude"] {
+        let current = fixture.read(id);
+        let expected = [
+            "id",
+            "draft",
+            "selection",
+            "accessMode",
+            "interactionMode",
+            "rustDraftImages",
+            "draftContext",
+        ]
+        .into_iter()
+        .map(|key| (key.to_owned(), current[key].clone()))
+        .collect::<serde_json::Map<_, _>>();
+        let changed = fixture.call(
+            "agent.provider.select",
+            json!({"threadId":id,"provider":provider,"expected":expected}),
+        );
+        assert_eq!(changed["thread"]["selection"]["provider"], provider);
+        assert_eq!(changed["thread"]["items"], json!([]));
+        assert_eq!(
+            changed["thread"]["rustMessageQueue"][0]["state"],
+            "interrupted"
+        );
+    }
 }

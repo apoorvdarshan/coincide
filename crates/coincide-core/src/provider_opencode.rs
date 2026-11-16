@@ -444,7 +444,8 @@ impl Mapper {
         }
         match kind {
             "session.inbox.delivered" => {
-                if data["inboxID"] == self.prompt {
+                if data["inboxID"] == self.prompt && !self.delivered {
+                    events.send(Event::TurnAccepted)?;
                     self.delivered = true;
                 }
             }

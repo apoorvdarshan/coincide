@@ -13,6 +13,22 @@ fn selected_option<'a>(options: &'a [Value], kind: &str) -> Option<&'a Value> {
         .find(|option| option["kind"] == kind && option["optionId"].is_string())
 }
 
+// These updates are produced by the live prompt, after session/replay checks.
+// Command catalogs and other session metadata do not acknowledge a prompt.
+pub(super) fn prompt_activity(update: &Value) -> bool {
+    matches!(
+        update["sessionUpdate"].as_str(),
+        Some(
+            "agent_message_chunk"
+                | "agent_message"
+                | "agent_thought_chunk"
+                | "agent_thought"
+                | "tool_call"
+                | "tool_call_update"
+        )
+    )
+}
+
 pub(super) fn permission_reply(params: &Value, answer: &Value) -> Result<Value> {
     let options = params["options"]
         .as_array()
@@ -156,6 +172,7 @@ fn run_flavored(
     let mut session_request = None;
     let prompt_id = uuid::Uuid::new_v4().to_string();
     let mut mapper = Mapper::default();
+    let mut accepted = false;
     let started = Instant::now();
     let mut stopping: Option<Instant> = None;
     let mut completed = false;
@@ -333,6 +350,10 @@ fn run_flavored(
                 && frame["params"]["_meta"]["isReplay"] != true
                 && frame["params"]["update"]["_meta"]["isReplay"] != true
             {
+                if !accepted && prompt_activity(&frame["params"]["update"]) {
+                    events.send(Event::TurnAccepted)?;
+                    accepted = true;
+                }
                 mapper.update(&frame["params"]["update"], &frame, events)?;
             }
             continue;
@@ -504,6 +525,20 @@ fn prompt_params(session_id: Value, prompt: Value, is_grok: bool, prompt_id: &st
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn session_metadata_does_not_acknowledge_a_prompt() {
+        for kind in [
+            "available_commands_update",
+            "current_mode_update",
+            "config_option_update",
+        ] {
+            assert!(!prompt_activity(&json!({"sessionUpdate":kind})));
+        }
+        for kind in ["agent_message_chunk", "agent_thought_chunk", "tool_call"] {
+            assert!(prompt_activity(&json!({"sessionUpdate":kind})));
+        }
+    }
     #[test]
     fn acceptance_requires_once_option_and_never_selects_always() {
         let options = json!({"options":[{"optionId":"always","kind":"allow_always"},{"optionId":"once","kind":"allow_once"}]});

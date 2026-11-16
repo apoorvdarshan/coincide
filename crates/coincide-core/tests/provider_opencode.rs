@@ -216,6 +216,7 @@ fn opencode_new_and_resumed_turns_stream_approve_ask_and_preserve_images() {
                 }
                 Event::Finished => break,
                 Event::Failed(error) => panic!("{error}"),
+                Event::TurnAccepted => {}
                 Event::Goal { .. } | Event::Usage | Event::TurnBoundary => {
                     panic!("unexpected Codex goal event from OpenCode")
                 }

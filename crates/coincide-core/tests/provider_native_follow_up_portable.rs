@@ -398,7 +398,8 @@ fn fixture(root: &Path) {
             saved["rustMessageQueue"].as_array().is_some_and(|rows| {
                 rows.iter()
                     .any(|row| row["id"] == queued_id && row["state"] == "completed")
-            }) && engine.provider_workers_status().running == 0
+            }) && !engine.is_thread_running(&id)
+                && engine.provider_workers_status().running == 0
         },
     );
     let queued_saved = engine.store.thread(&id).unwrap();
