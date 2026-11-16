@@ -4801,7 +4801,9 @@ impl Coincide {
                         .checked(chosen)
                         .disabled(submitting)
                         .accessibility_label(accessible_label)
-                        .on_change(move |_, _, window, app| choose(window, app))
+                        .when(!submitting, |control| {
+                            control.on_click(move |_, window, app| choose(window, app))
+                        })
                         .child(row)
                         .into_any_element()
                 };
