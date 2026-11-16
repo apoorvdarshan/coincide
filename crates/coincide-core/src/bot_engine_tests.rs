@@ -201,6 +201,83 @@ fn existing_bot_authorization_preserves_thread_and_requires_unchanged_sources() 
 }
 
 #[test]
+fn bot_instruction_refresh_preserves_thread_and_requires_both_current_sources() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().canonicalize().unwrap();
+    let engine = setup(&root, "codex", None);
+    let created = create(&engine);
+    let id = created["threadId"].as_str().unwrap();
+    let mut original = engine.lock().unwrap().store.thread(id).unwrap();
+    original["draft"] = json!("Keep my draft");
+    original["items"] = json!([{"kind":"user","text":"Keep my history"}]);
+    original["sessions"] = json!({"codex":{"sessionID":"existing-session"}});
+    engine.lock().unwrap().store.save(&original).unwrap();
+    let baseline = call(&engine, "bots.read", json!({"botId":BOT})).unwrap()["baseline"].clone();
+    call(
+        &engine,
+        "bots.patch",
+        json!({"botId":BOT,"baseline":baseline,
+        "patch":{"persona":"New instructions","personality":{"preset":"gentle"}}}),
+    )
+    .unwrap();
+    let mut e = engine.lock().unwrap();
+    let (source, replacement) =
+        crate::bot_runtime::current_context(&e.store, &original, &root).unwrap();
+    let mut changed = original.clone();
+    changed["draft"] = json!("A newer draft");
+    e.store.save(&changed).unwrap();
+    assert!(
+        e.store
+            .authorize_existing_bot_if_unchanged(source.as_ref(), &original, &replacement)
+            .is_err()
+    );
+    assert_eq!(e.store.thread(id).unwrap(), changed);
+    e.store.save(&original).unwrap();
+    let mut changed_bots = source.clone().unwrap();
+    changed_bots["bots"][0]["persona"] = json!("Another edit");
+    e.store.save_document("bots.json", &changed_bots).unwrap();
+    assert!(
+        e.store
+            .authorize_existing_bot_if_unchanged(source.as_ref(), &original, &replacement)
+            .is_err()
+    );
+    assert_eq!(e.store.thread(id).unwrap(), original);
+    e.store
+        .save_document("bots.json", source.as_ref().unwrap())
+        .unwrap();
+    let old_name = crate::bot_runtime::context_document_name(&original["rustBotContext"]).unwrap();
+    let connection = rusqlite::Connection::open(root.join("data.sqlite")).unwrap();
+    connection
+        .execute("DELETE FROM documents WHERE name=?1", [&old_name])
+        .unwrap();
+    assert!(
+        e.store
+            .authorize_existing_bot_if_unchanged(source.as_ref(), &original, &replacement)
+            .is_err()
+    );
+    assert_eq!(e.store.thread(id).unwrap(), original);
+    e.store
+        .save_document(&old_name, &original["rustBotContext"])
+        .unwrap();
+    let mut updated = original.clone();
+    assert!(e.refresh_bot_instructions(&mut updated).unwrap());
+    assert_eq!(updated["id"], original["id"]);
+    assert_eq!(updated["items"], original["items"]);
+    assert_eq!(updated["sessions"], original["sessions"]);
+    assert_eq!(updated["draft"], original["draft"]);
+    assert_eq!(updated["selection"], original["selection"]);
+    assert_eq!(updated["worktreePath"], original["worktreePath"]);
+    assert_eq!(updated["rustBotContext"], replacement);
+    assert!(
+        updated["rustBotContext"]["instructions"]
+            .as_str()
+            .unwrap()
+            .contains("New instructions")
+    );
+    assert!(!e.refresh_bot_instructions(&mut updated).unwrap());
+}
+
+#[test]
 fn authorized_bot_selection_changes_like_a_thread_without_changing_its_identity() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().canonicalize().unwrap();
@@ -503,7 +580,7 @@ fn bot_provider_fixture_child() {
     let id = created["threadId"].as_str().unwrap();
     assert!(!root.join("launches").exists());
     let thread = engine.lock().unwrap().store.thread(id).unwrap();
-    let context = thread["rustBotContext"].clone();
+    let mut context = thread["rustBotContext"].clone();
     std::fs::write(
         root.join("expected.json"),
         serde_json::to_vec(&context["instructions"]).unwrap(),
@@ -552,11 +629,43 @@ fn bot_provider_fixture_child() {
     );
     assert!(continued["rustBotContext"].is_object());
     let baseline = call(&engine, "bots.read", json!({"botId":BOT})).unwrap()["baseline"].clone();
-    call(&engine,"bots.patch",json!({"botId":BOT,"baseline":baseline,"patch":{"name":"Edited bot","persona":"New instructions must not replace snapshot"}})).unwrap();
+    call(&engine,"bots.patch",json!({"botId":BOT,"baseline":baseline,"patch":{"name":"Edited bot","persona":"Updated bot instructions"}})).unwrap();
+    let expected_context = {
+        let e = engine.lock().unwrap();
+        crate::bot_runtime::current_context(&e.store, &e.store.thread(id).unwrap(), &root)
+            .unwrap()
+            .1
+    };
+    std::fs::write(
+        root.join("expected.json"),
+        serde_json::to_vec(&expected_context["instructions"]).unwrap(),
+    )
+    .unwrap();
+    let original_context = context.clone();
     send(&engine, id, "second turn");
+    context = engine.lock().unwrap().store.thread(id).unwrap()["rustBotContext"].clone();
+    assert_eq!(context, expected_context);
+    assert_ne!(context["instructions"], original_context["instructions"]);
+    call(
+        &engine,
+        "agent.queue.add",
+        json!({"threadId":legacy_id,"text":"queued after the bot edit"}),
+    )
+    .unwrap();
+    wait_for_bot(&engine, legacy_id);
+    let queued = engine.lock().unwrap().store.thread(legacy_id).unwrap();
     assert_eq!(
-        engine.lock().unwrap().store.thread(id).unwrap()["rustBotContext"],
-        context
+        queued["rustBotContext"]["instructions"],
+        context["instructions"]
+    );
+    assert!(
+        queued["rustMessageQueue"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| {
+                row["text"] == "queued after the bot edit" && row["state"] == "completed"
+            })
     );
     drop(engine);
     let engine = Arc::new(Mutex::new(Engine::new(
@@ -572,11 +681,11 @@ fn bot_provider_fixture_child() {
         .unwrap();
     assert_ne!(
         next_thread["rustBotContext"]["instructions"],
-        context["instructions"]
+        original_context["instructions"]
     );
     assert_eq!(
         next_thread["rustBotContext"]["persona"],
-        "New instructions must not replace snapshot"
+        "Updated bot instructions"
     );
     assert!(next_thread["items"].as_array().unwrap().is_empty());
     let fork = call(&engine, "threads.fork", json!({"threadId":id})).unwrap();
@@ -599,9 +708,9 @@ fn bot_provider_fixture_child() {
         send(&engine, id, "/compact");
     }
     let expected = if provider == "codex" {
-        "thread/start\nthread/resume\nthread/resume\nthread/resume\nthread/start\nthread/resume\nthread/resume\n"
+        "thread/start\nthread/resume\nthread/resume\nthread/resume\nthread/resume\nthread/start\nthread/resume\nthread/resume\n"
     } else {
-        "--session-id\n--resume\n--resume\n--resume\n--session-id\n"
+        "--session-id\n--resume\n--resume\n--resume\n--resume\n--session-id\n"
     };
     assert_eq!(
         std::fs::read_to_string(root.join("launches")).unwrap(),
