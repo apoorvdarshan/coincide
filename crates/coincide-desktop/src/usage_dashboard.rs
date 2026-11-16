@@ -3,15 +3,19 @@
 //! account's limits. Limits are read only when the user refreshes; opening the
 //! page reads saved local history alone.
 use crate::codex_limits_view::{Bucket, Phase as CodexPhase, ResetCredits};
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, Local, NaiveDate, Utc};
 use coincide_core::{
     api::SharedEngine,
+    cli_session_import::ImportProvider,
+    cli_usage_logs::{Scan as CliScan, Source as CliSource},
     usage_limits::{Credits, Figure, Limits, Unit, Window, WindowKind},
-    usage_report::{DEFAULT_ACCOUNT, PROVIDERS, TurnRecord, turn_records},
+    usage_report::{self, DEFAULT_ACCOUNT, PROVIDERS, Report, TurnRecord, turn_records},
 };
 use serde_json::{Value, json};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -47,6 +51,107 @@ pub struct Data {
     pub skipped: usize,
     pub accounts: Vec<Account>,
     pub read_at: DateTime<Utc>,
+    pub logs: Option<Arc<CliScan>>,
+    pub(crate) report_cache: Arc<Mutex<ReportCache>>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ReportKey {
+    includes_other_sessions: bool,
+    enabled: Vec<String>,
+    provider: Option<String>,
+    account: Option<String>,
+    days: u32,
+    minute: i64,
+    local_offset: i32,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct ReportCache(VecDeque<(ReportKey, Arc<Report>)>);
+
+impl Data {
+    pub fn set_logs(&mut self, logs: Option<Arc<CliScan>>) {
+        self.logs = logs;
+        // Clones may still use the previous scan, so give this Data a new cache.
+        self.report_cache = Arc::new(Mutex::new(ReportCache::default()));
+    }
+
+    /// A complete provider log with Coincide sessions replaces its saved turn
+    /// totals, so a request present in both sources is never counted twice.
+    pub fn events(&self, include_other_sessions: bool) -> Vec<usage_report::Event> {
+        let Some(logs) = &self.logs else {
+            return usage_report::events(&self.records, &[]);
+        };
+        // An otherwise valid log scan may only contain sessions started outside
+        // Coincide. In that case it cannot replace Coincide's saved turns.
+        let replace: Vec<_> = logs
+            .complete_providers
+            .iter()
+            .copied()
+            .filter(|provider| {
+                logs.events
+                    .iter()
+                    .any(|logged| logged.event.provider == *provider && logged.is_from_coincide)
+            })
+            .collect();
+        let mut events = usage_report::events(&self.records, &replace);
+        events.extend(
+            logs.events
+                .iter()
+                .filter(|logged| {
+                    logs.complete_providers
+                        .contains(&logged.event.provider.as_str())
+                        && (include_other_sessions || logged.is_from_coincide)
+                })
+                .map(|logged| logged.event.clone()),
+        );
+        events
+    }
+
+    /// Reports are reused across frames and by the menu bar; rescanning a
+    /// large CLI history while the user scrolls would block the UI thread.
+    pub fn report(
+        &self,
+        includes_other_sessions: bool,
+        enabled: &[&str],
+        provider: Option<&str>,
+        account: Option<&str>,
+        days: u32,
+        now: DateTime<Utc>,
+    ) -> Arc<Report> {
+        let key = ReportKey {
+            includes_other_sessions,
+            enabled: enabled.iter().map(|value| (*value).to_owned()).collect(),
+            provider: provider.map(str::to_owned),
+            account: account.map(str::to_owned),
+            days,
+            minute: now.timestamp().div_euclid(60),
+            local_offset: now.with_timezone(&Local).offset().local_minus_utc(),
+        };
+        if let Ok(cache) = self.report_cache.lock()
+            && let Some((_, report)) = cache.0.iter().find(|(cached, _)| *cached == key)
+        {
+            return report.clone();
+        }
+        let events = self
+            .events(includes_other_sessions)
+            .into_iter()
+            .filter(|event| {
+                enabled.contains(&event.provider.as_str())
+                    && provider.is_none_or(|value| event.provider == value)
+                    && account.is_none_or(|value| event.account_id == value)
+            })
+            .collect::<Vec<_>>();
+        let report = Arc::new(Report::make(&events, days, now, &Local));
+        if let Ok(mut cache) = self.report_cache.lock() {
+            cache.0.retain(|(cached, _)| *cached != key);
+            cache.0.push_back((key, report.clone()));
+            while cache.0.len() > 12 {
+                cache.0.pop_front();
+            }
+        }
+        report
+    }
 }
 
 /// Worker side: holds the engine only to copy saved bytes and account rows.
@@ -78,7 +183,99 @@ pub(crate) fn read(engine: &SharedEngine) -> Result<Data, String> {
         skipped,
         accounts,
         read_at: Utc::now(),
+        logs: None,
+        report_cache: Arc::default(),
     })
+}
+
+fn log_roots(provider: ImportProvider, home: &Path) -> Vec<PathBuf> {
+    match provider {
+        ImportProvider::Claude => vec![home.join("projects")],
+        ImportProvider::Codex => vec![home.join("sessions"), home.join("archived_sessions")],
+    }
+}
+
+/// Snapshot only authorized paths and account IDs while holding the Engine;
+/// reading the logs and the separate read-only Store happens after release.
+pub(crate) fn cli_sources(
+    engine: &coincide_core::api::Engine,
+) -> Result<(Vec<CliSource>, PathBuf), String> {
+    let mut sources = Vec::new();
+    let default_home = coincide_core::cli_session_discovery::home_directory();
+    for (provider, kind, variable, folder) in [
+        (
+            "claude",
+            ImportProvider::Claude,
+            "CLAUDE_CONFIG_DIR",
+            ".claude",
+        ),
+        ("codex", ImportProvider::Codex, "CODEX_HOME", ".codex"),
+    ] {
+        let configuration = engine
+            .native_provider_configuration(provider)
+            .map_err(|_| "Provider configuration is unavailable.".to_owned())?;
+        let configured = configuration
+            .approved
+            .then(|| configuration.environment.get(variable))
+            .flatten()
+            .filter(|value| !value.trim().is_empty())
+            .map(PathBuf::from);
+        let home = configured
+            .or_else(|| {
+                std::env::var_os(variable)
+                    .filter(|value| !value.is_empty())
+                    .map(PathBuf::from)
+            })
+            .or_else(|| default_home.as_ref().map(|home| home.join(folder)));
+        if let Some(home) = home {
+            if !home.is_absolute() {
+                return Err("A provider log folder is not an absolute path.".into());
+            }
+            sources.push(CliSource {
+                provider: kind,
+                account_id: DEFAULT_ACCOUNT.into(),
+                roots: log_roots(kind, &home),
+            });
+        }
+        let accounts = engine
+            .native_usage_log_homes(provider)
+            .map_err(|_| "An account's log folder could not be verified.".to_owned())?;
+        for account in accounts {
+            sources.push(CliSource {
+                provider: kind,
+                account_id: account.id,
+                roots: log_roots(kind, &account.home),
+            });
+        }
+        if provider == "codex" {
+            let legacy = engine
+                .native_legacy_codex_accounts()
+                .map_err(|_| "Codex accounts could not be read.".to_owned())?;
+            for account in legacy {
+                if sources
+                    .iter()
+                    .any(|source| source.provider == kind && source.account_id == account.id)
+                {
+                    continue;
+                }
+                let home = engine
+                    .native_legacy_codex_usage_home(&account.id)
+                    .map_err(|_| {
+                        "A Codex account's log folder could not be verified.".to_owned()
+                    })?;
+                sources.push(CliSource {
+                    provider: kind,
+                    account_id: account.id,
+                    roots: log_roots(kind, &home),
+                });
+            }
+        }
+    }
+    let database = engine
+        .store
+        .usage_database_path()
+        .map_err(|_| "Usage store is unavailable.".to_owned())?;
+    Ok((sources, database))
 }
 
 /// Every provider's default account, then its saved accounts in their order.
@@ -453,6 +650,77 @@ impl Dashboard {
 mod tests {
     use super::*;
     use crate::codex_limits_view::{Credits as CodexCredits, WindowReport};
+
+    #[::core::prelude::v1::test]
+    fn cli_usage_replaces_only_complete_providers_and_honors_the_other_sessions_toggle() {
+        use coincide_core::cli_usage_logs::{LoggedEvent, Scan};
+        use coincide_core::usage_report::{Event, TokenTotals};
+        let now = Utc::now();
+        let saved = |provider: &str, count| TurnRecord {
+            thread_id: None,
+            project_id: None,
+            provider: provider.into(),
+            account_id: "default".into(),
+            model: None,
+            started_at: None,
+            finished_at: now,
+            turn_totals: Some(TokenTotals::new(count, 0, 0, 0, 0, 0)),
+        };
+        let logged = |count, own| LoggedEvent {
+            event: Event {
+                date: now,
+                provider: "codex".into(),
+                account_id: "default".into(),
+                model: None,
+                tokens: TokenTotals::new(count, 0, 0, 0, 0, 0),
+                prompt_tokens: 0,
+                project_id: None,
+            },
+            is_from_coincide: own,
+        };
+        let mut data = Data {
+            records: vec![
+                saved("codex", 100),
+                saved("claude", 200),
+                saved("grok", 300),
+            ],
+            skipped: 0,
+            accounts: vec![],
+            read_at: now,
+            logs: Some(Arc::new(Scan {
+                events: vec![logged(30, true), logged(40, false)],
+                complete_providers: vec!["codex"],
+                incomplete_providers: vec!["claude"],
+                ..Scan::default()
+            })),
+            report_cache: Arc::default(),
+        };
+        let total =
+            |events: Vec<Event>| events.iter().map(|event| event.tokens.total()).sum::<u64>();
+        assert_eq!(total(data.events(true)), 570);
+        assert_eq!(total(data.events(false)), 530);
+        let enabled = ["codex", "claude", "grok"];
+        let cached = data.report(false, &enabled, None, None, 30, now);
+        assert_eq!(cached.period.tokens.total(), 530);
+        assert!(Arc::ptr_eq(
+            &cached,
+            &data.report(false, &enabled, None, None, 30, now)
+        ));
+        let filtered = data.report(false, &enabled, Some("codex"), None, 30, now);
+        assert_eq!(filtered.period.tokens.total(), 30);
+        data.set_logs(Some(Arc::new(Scan {
+            events: vec![logged(40, false)],
+            complete_providers: vec!["codex"],
+            ..Scan::default()
+        })));
+        assert_eq!(total(data.events(true)), 640);
+        assert_eq!(total(data.events(false)), 600);
+        let replaced = data.report(false, &enabled, None, None, 30, now);
+        assert!(!Arc::ptr_eq(&cached, &replaced));
+        assert_eq!(replaced.period.tokens.total(), 600);
+        data.set_logs(None);
+        assert_eq!(total(data.events(true)), 600);
+    }
 
     #[::core::prelude::v1::test]
     fn claude_busy_start_keeps_previous_state_for_background_retry() {

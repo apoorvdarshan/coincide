@@ -3,7 +3,7 @@
 use crate::{
     usage_dashboard::{Dashboard, Data, LimitState},
     usage_history_view::{UsageHistoryEvent, UsageHistoryView},
-    worker_owner::{ShutdownStatus, WorkerOwner},
+    worker_owner::{Admission, ShutdownStatus, WorkerOwner},
 };
 use coincide_core::{
     api::SharedEngine,
@@ -12,7 +12,10 @@ use coincide_core::{
 use gpui_kit::*;
 use std::{
     collections::{HashMap, HashSet},
-    sync::mpsc::{self, Receiver, SyncSender},
+    sync::{
+        Arc, Mutex, OnceLock,
+        mpsc::{self, Receiver, SyncSender},
+    },
     time::Duration,
 };
 #[path = "usage_browser_fallback.rs"]
@@ -38,6 +41,12 @@ impl<T: Send + 'static> Reader<T> {
         &mut self,
         read: impl FnOnce() -> Result<T, String> + Send + 'static,
     ) -> Result<(), String> {
+        self.start_cancellable(move |_| read())
+    }
+    fn start_cancellable(
+        &mut self,
+        read: impl FnOnce(Admission) -> Result<T, String> + Send + 'static,
+    ) -> Result<(), String> {
         if !self.owner.can_start() {
             return Err("A saved-history read is still finishing, or this view is closing.".into());
         }
@@ -51,7 +60,7 @@ impl<T: Send + 'static> Reader<T> {
             if !admission.allowed() {
                 return;
             }
-            let result = read();
+            let result = read(admission.clone());
             if admission.allowed() {
                 let _ = tx.try_send((generation, result));
             }
@@ -91,6 +100,18 @@ pub struct Mount {
     engine: SharedEngine,
     reader: Reader<Report>,
     dashboard_reader: Reader<Data>,
+    cli_reader: Reader<(
+        Vec<coincide_core::cli_usage_logs::Source>,
+        std::path::PathBuf,
+        coincide_core::cli_usage_logs::Scan,
+    )>,
+    cli_pending: Option<(
+        Vec<coincide_core::cli_usage_logs::Source>,
+        std::path::PathBuf,
+        coincide_core::cli_usage_logs::Scan,
+    )>,
+    cli_cached: Option<Arc<coincide_core::cli_usage_logs::Scan>>,
+    pub cli_error: Option<String>,
     external_readers: HashMap<&'static str, Reader<coincide_core::provider_usage::Completed>>,
     external_pending: HashMap<&'static str, coincide_core::provider_usage::Completed>,
     external_retry: HashSet<&'static str>,
@@ -115,6 +136,10 @@ impl Mount {
             engine,
             reader: Reader::default(),
             dashboard_reader: Reader::default(),
+            cli_reader: Reader::default(),
+            cli_pending: None,
+            cli_cached: None,
+            cli_error: None,
             external_readers: HashMap::new(),
             external_pending: HashMap::new(),
             external_retry: HashSet::new(),
@@ -195,6 +220,61 @@ impl Mount {
             Ok(()) => self.dashboard.loading = true,
             Err(error) => self.dashboard.error = Some(error),
         }
+        self.start_cli_scan();
+    }
+
+    fn start_cli_scan(&mut self) {
+        // Unit UI fixtures must never discover the developer's real CLI logs.
+        if cfg!(test) {
+            return;
+        }
+        static SCANNER: OnceLock<Mutex<coincide_core::cli_usage_logs::Scanner>> = OnceLock::new();
+        let engine = self.engine.clone();
+        let _ = self.cli_reader.start_cancellable(move |admission| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(3);
+            let (sources, database) = loop {
+                if !admission.allowed() {
+                    return Err("Local usage scan was cancelled.".into());
+                }
+                match engine.try_lock() {
+                    Ok(engine) if !engine.admissions_frozen() => {
+                        break crate::usage_dashboard::cli_sources(&engine)?;
+                    }
+                    Ok(_) => return Err("Usage is closing.".into()),
+                    Err(std::sync::TryLockError::WouldBlock)
+                        if std::time::Instant::now() < deadline =>
+                    {
+                        std::thread::sleep(Duration::from_millis(20))
+                    }
+                    Err(_) => return Err("Local usage is temporarily unavailable.".into()),
+                }
+            };
+            let cancelled = || !admission.allowed();
+            let owners = coincide_core::cli_usage_logs::session_owners(&database, &cancelled)
+                .map_err(|_| "Local usage could not match saved sessions.".to_owned())?;
+            let lock = SCANNER.get_or_init(|| Mutex::new(Default::default()));
+            let mut scanner = loop {
+                if cancelled() {
+                    return Err("Local usage scan was cancelled.".into());
+                }
+                match lock.try_lock() {
+                    Ok(scanner) => break scanner,
+                    Err(std::sync::TryLockError::WouldBlock) => {
+                        std::thread::sleep(Duration::from_millis(25))
+                    }
+                    Err(std::sync::TryLockError::Poisoned(error)) => {
+                        let mut scanner = error.into_inner();
+                        *scanner = Default::default();
+                        lock.clear_poison();
+                        break scanner;
+                    }
+                }
+            };
+            let scan = scanner
+                .scan(&sources, &owners, &cancelled)
+                .map_err(|_| "Local usage logs could not be read completely.".to_owned())?;
+            Ok((sources, database, scan))
+        });
     }
     /// Fetch each enabled default account independently, so a slow provider
     /// never blocks another or the desktop's engine lock.
@@ -302,8 +382,56 @@ impl Mount {
             }
         }
         if let Some(result) = self.dashboard_reader.poll() {
-            self.dashboard.accept(result);
+            self.dashboard.accept(result.map(|mut data| {
+                data.set_logs(self.cli_cached.clone());
+                data
+            }));
             changed = true;
+        }
+        if let Some(result) = self.cli_reader.poll() {
+            match result {
+                Ok(result) => self.cli_pending = Some(result),
+                Err(error) => {
+                    self.cli_cached = None;
+                    if let Some(data) = &mut self.dashboard.data {
+                        data.set_logs(None);
+                    }
+                    self.cli_error = Some(error);
+                    changed = true;
+                }
+            }
+        }
+        let mut retry_cli = false;
+        if self.cli_pending.is_some()
+            && let Ok(engine) = self.engine.try_lock()
+        {
+            let current = crate::usage_dashboard::cli_sources(&engine);
+            let (sources, database, scan) = self.cli_pending.take().expect("checked above");
+            match current {
+                Ok((current_sources, current_database))
+                    if current_sources == sources && current_database == database =>
+                {
+                    let scan = Arc::new(scan);
+                    self.cli_error = None;
+                    self.cli_cached = Some(scan.clone());
+                    if let Some(data) = &mut self.dashboard.data {
+                        data.set_logs(Some(scan));
+                    }
+                }
+                _ => {
+                    self.cli_cached = None;
+                    if let Some(data) = &mut self.dashboard.data {
+                        data.set_logs(None);
+                    }
+                    self.cli_error =
+                        Some("Account settings changed; refreshing local usage.".into());
+                    retry_cli = true;
+                }
+            }
+            changed = true;
+        }
+        if retry_cli {
+            self.start_cli_scan();
         }
         for (provider, reader) in &mut self.external_readers {
             if let Some(result) = reader.poll() {
@@ -355,6 +483,8 @@ impl Mount {
     pub fn request_shutdown(&mut self) {
         self.reader.close();
         self.dashboard_reader.close();
+        self.cli_reader.close();
+        self.cli_pending = None;
         self.context_reader.close();
         for reader in self.external_readers.values_mut() {
             reader.close();
@@ -367,25 +497,33 @@ impl Mount {
     pub fn shutdown_status(&mut self) -> ShutdownStatus {
         let history = self.reader.owner.status();
         let dashboard = self.dashboard_reader.owner.status();
+        let cli = self.cli_reader.owner.status();
         let context = self.context_reader.owner.status();
         let mut result = ShutdownStatus {
-            closed: history.closed && dashboard.closed && context.closed,
-            unjoined: history.unjoined + dashboard.unjoined + context.unjoined,
+            closed: history.closed && dashboard.closed && cli.closed && context.closed,
+            unjoined: history.unjoined + dashboard.unjoined + cli.unjoined + context.unjoined,
             returned: history
                 .returned
                 .saturating_add(dashboard.returned)
+                .saturating_add(cli.returned)
                 .saturating_add(context.returned),
             panicked: history
                 .panicked
                 .saturating_add(dashboard.panicked)
+                .saturating_add(cli.panicked)
                 .saturating_add(context.panicked),
-            unclassified: history.unclassified + dashboard.unclassified + context.unclassified,
+            unclassified: history.unclassified
+                + dashboard.unclassified
+                + cli.unclassified
+                + context.unclassified,
             pending_pickers: history.pending_pickers
                 + dashboard.pending_pickers
+                + cli.pending_pickers
                 + context.pending_pickers,
             spawn_error: history
                 .spawn_error
                 .or(dashboard.spawn_error)
+                .or(cli.spawn_error)
                 .or(context.spawn_error),
         };
         for reader in self.external_readers.values_mut() {

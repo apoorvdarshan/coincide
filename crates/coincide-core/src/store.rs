@@ -184,6 +184,16 @@ impl Store {
         Ok(parent.canonicalize()?)
     }
 
+    /// A separate read-only usage worker can inspect session identities
+    /// without holding the UI's engine lock or copying conversation text.
+    pub fn usage_database_path(&self) -> Result<std::path::PathBuf> {
+        let path = self
+            .connection()?
+            .path()
+            .context("Store has no filesystem location")?;
+        Ok(Path::new(path).canonicalize()?)
+    }
+
     pub fn open(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
             let existed = parent.exists();
