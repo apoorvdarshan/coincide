@@ -326,10 +326,9 @@ mod tests {
     fn busy_control_click_is_kept_and_fails_closed_until_saved() {
         let dir = tempfile::tempdir().unwrap();
         let mut engine = Engine::new(Store::open(&dir.path().join("state.sqlite")).unwrap());
-        let thread = engine.execute("threads.create", &json!({})).unwrap()["id"]
-            .as_str()
-            .unwrap()
-            .to_owned();
+        let response = engine.dispatch(json!({"method":"threads.create","params":{}}));
+        assert!(response.get("error").is_none(), "{response}");
+        let thread = response["result"]["id"].as_str().unwrap().to_owned();
         let shared = Arc::new(Mutex::new(engine));
         let initial = shared.lock().unwrap().browser_agent_control_settings();
         let mut pending = PendingControls::default();
