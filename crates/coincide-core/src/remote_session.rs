@@ -404,6 +404,10 @@ impl Session {
                 let delivery = adapter.send(&send, &runs()?)?;
                 self.respond(id, "delivery", Some(protocol::value_body(delivery)));
             }
+            Request::UpdateSettings(settings) => {
+                adapter.update_thread_settings(&settings)?;
+                self.respond(id, "ok", None);
+            }
             Request::RemoveQueued {
                 thread_id,
                 message_id,
@@ -439,6 +443,14 @@ impl Session {
             Request::NewThread { project_id } => {
                 let thread = adapter.new_thread(project_id, &runs()?)?;
                 self.respond(id, "thread", Some(protocol::value_body(thread)));
+            }
+            Request::SetProjectExpanded {
+                project_id,
+                expanded,
+            } => {
+                adapter.set_project_expanded(project_id, expanded)?;
+                context.sidebar_revision.fetch_add(1, Ordering::Release);
+                self.respond(id, "ok", None);
             }
             Request::ThreadAction { thread_id, action } => {
                 adapter.perform(thread_id, &action)?;

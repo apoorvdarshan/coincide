@@ -377,6 +377,13 @@ impl Engine {
         let _ = self.store.save_document(SAVED_MODEL_CATALOG, &saved);
     }
 
+    pub(crate) fn remote_discovered_models(&mut self) -> Value {
+        if self.model_catalog.poll() {
+            self.revision += 1;
+        }
+        self.model_catalog.remote_default_models()
+    }
+
     pub fn new(store: Store) -> Self {
         Self::initialize(store, true)
     }
@@ -1346,15 +1353,28 @@ impl Engine {
         } else {
             None
         };
-        // Check any captured or queued scope before upgrading an older bot.
+        // Check any captured or queued scope before refreshing a bot context.
         // The authorization transaction changes only the local context; use
         // its resulting snapshot for the subsequent compare-and-save.
-        if !v["botID"].is_null() && v["rustBotContext"].is_null() {
-            self.authorize_existing_bot(&mut v)?;
+        let bot_context_changed = if !v["botID"].is_null() {
+            // OpenCode handles slash commands through a separate endpoint
+            // which does not carry the inline bot context. Leave an edit
+            // pending until its next ordinary prompt can actually deliver it.
+            let changed = if v["selection"]["provider"] == "opencode"
+                && prompt.trim_start().starts_with('/')
+            {
+                self.authorize_existing_bot(&mut v)?;
+                false
+            } else {
+                self.refresh_bot_instructions(&mut v)?
+            };
             if original.is_some() {
                 original = Some(v.clone());
             }
-        }
+            changed
+        } else {
+            false
+        };
         ensure!(
             p.get("context").is_none() && p.get("draftContext").is_none(),
             "Attach references through composer.context.edit before sending"
@@ -1604,7 +1624,7 @@ impl Engine {
             0
         };
         let inline_bot_context = if !matches!(provider.as_str(), "codex" | "claude")
-            && (session.is_none() || seen == 0)
+            && (session.is_none() || seen == 0 || bot_context_changed)
         {
             bot_instructions
                 .as_deref()

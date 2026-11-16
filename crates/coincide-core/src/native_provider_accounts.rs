@@ -641,6 +641,44 @@ impl Engine {
             .map(|account| Ok(summary(&account)))
             .collect()
     }
+    /// Account homes for a read-only local usage scan. Verify the signed
+    /// account's directory and guard identities without reading credentials.
+    pub fn native_usage_log_homes(&self, provider: &str) -> Result<Vec<NativeLoginAccount>> {
+        supported(provider)?;
+        let Some(owner) = Private::open(&self.store, false)? else {
+            return Ok(Vec::new());
+        };
+        let payload = read(
+            &owner,
+            provider,
+            self.store.native_accounts_payload(provider)?.as_deref(),
+        )?;
+        let root = self.store.data_directory()?;
+        let mut rows = Vec::new();
+        for id in ordered_ids(&payload)? {
+            let account = account(&payload, provider, &id)?;
+            // Codex API-key profiles have their own CODEX_HOME too; Claude
+            // API-key accounts share the default CLI home and are attributed
+            // from each saved session instead of scanning the same root twice.
+            if account.authentication != Authentication::Login && provider != "codex" {
+                continue;
+            }
+            ensure!(
+                account.home == home(&root, provider, &id)?,
+                "Account log home changed"
+            );
+            private(&account.home, true)?;
+            let guard = account.home.join(GUARD);
+            private(&guard, false)?;
+            ensure!(
+                crate::private_fs::identity(&account.home)? == account.home_identity
+                    && crate::private_fs::identity(&guard)? == account.guard_identity,
+                "Account log home identity changed"
+            );
+            rows.push(summary(&account));
+        }
+        Ok(rows)
+    }
     pub fn create_native_login_account(
         &mut self,
         provider: &str,

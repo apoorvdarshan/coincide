@@ -5,7 +5,7 @@ use chrono::{DateTime, Local, Utc};
 use coincide_core::{
     usage_limits::{DisplayMode, Limits, Unit, Window, most_constrained},
     usage_presentation as format,
-    usage_report::{self, Report, Totals},
+    usage_report::{self, Totals},
 };
 use serde_json::{Value, json};
 
@@ -371,12 +371,24 @@ pub fn snapshot(
     {
         readings.push(second);
     }
-    let records = data.map(|d| d.records.as_slice()).unwrap_or_default();
-    let events = usage_report::events(records, &[])
+    let enabled = usage_report::PROVIDERS
         .into_iter()
-        .filter(|event| is_enabled(&event.provider))
+        .filter(|provider| is_enabled(provider))
         .collect::<Vec<_>>();
-    let report = Report::make(&events, 30, now, &Local);
+    let report = data
+        .map(|data| {
+            data.report(
+                settings["usageIncludesOtherSessions"]
+                    .as_bool()
+                    .unwrap_or(true),
+                &enabled,
+                None,
+                None,
+                30,
+                now,
+            )
+        })
+        .unwrap_or_default();
     let accounts = cards.iter().map(|card| {
         let limits = current_limits(card, now);
         let rows = limits.as_ref().map(|limits| format::rows(limits, mode, now, &Local))
@@ -624,6 +636,8 @@ mod tests {
             skipped: 0,
             accounts: vec![],
             read_at: now,
+            logs: None,
+            report_cache: Default::default(),
         };
         let view = snapshot(&cards, Some(&data), &json!({}), None, now);
         assert_eq!(view["accounts"].as_array().unwrap().len(), 6);
@@ -716,6 +730,8 @@ mod tests {
             skipped: 0,
             accounts: vec![],
             read_at: now,
+            logs: None,
+            report_cache: Default::default(),
         };
         let view = snapshot(&cards, Some(&data), &json!({}), None, now);
         assert_eq!(view["periods"][0]["tokens"], "30");

@@ -184,6 +184,16 @@ impl Store {
         Ok(parent.canonicalize()?)
     }
 
+    /// A separate read-only usage worker can inspect session identities
+    /// without holding the UI's engine lock or copying conversation text.
+    pub fn usage_database_path(&self) -> Result<std::path::PathBuf> {
+        let path = self
+            .connection()?
+            .path()
+            .context("Store has no filesystem location")?;
+        Ok(Path::new(path).canonicalize()?)
+    }
+
     pub fn open(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
             let existed = parent.exists();
@@ -981,7 +991,7 @@ impl Store {
         Ok(())
     }
 
-    /// Authorize a previously saved bot thread without rewriting its history,
+    /// Authorize or refresh a bot thread without rewriting its history,
     /// selection, draft or provider sessions. Both source documents and the
     /// authorization are checked and committed as a single transaction.
     pub(crate) fn authorize_existing_bot_if_unchanged(
@@ -993,12 +1003,22 @@ impl Store {
         self.connection()?;
         let id = validate_thread(expected_thread)?.to_owned();
         ensure!(
-            expected_thread["rustBotContext"].is_null()
-                && expected_thread["botID"].is_string()
+            expected_thread["botID"].is_string()
                 && context["version"] == 1
                 && context["botId"] == expected_thread["botID"],
             "Invalid existing bot authorization"
         );
+        let previous = expected_thread
+            .get("rustBotContext")
+            .filter(|value| !value.is_null());
+        if let Some(previous) = previous {
+            ensure!(
+                previous["version"] == 1
+                    && previous["botId"] == expected_thread["botID"]
+                    && previous["cwd"] == context["cwd"],
+                "Invalid previous bot authorization"
+            );
+        }
         let name = crate::bot_runtime::context_document_name(context)?;
         let mut updated = expected_thread.clone();
         updated["rustBotContext"] = context.clone();
@@ -1020,6 +1040,25 @@ impl Store {
             serde_json::from_str::<Value>(&current)? == *expected_thread,
             "Bot conversation changed; retry after refreshing"
         );
+        if let Some(previous) = previous {
+            let previous_name = crate::bot_runtime::context_document_name(previous)?;
+            let trusted: Option<String> = tx
+                .query_row(
+                    "SELECT document FROM documents WHERE name=?1",
+                    [&previous_name],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            ensure!(
+                trusted
+                    .as_deref()
+                    .map(serde_json::from_str::<Value>)
+                    .transpose()?
+                    .as_ref()
+                    == Some(previous),
+                "Previous bot authorization is unavailable"
+            );
+        }
         let local: Option<String> = tx
             .query_row(
                 "SELECT document FROM documents WHERE name='bots.json'",

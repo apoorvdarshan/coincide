@@ -1,4 +1,4 @@
-//! Native bot conversations use frozen, locally authorized instruction CONTENT.
+//! Native bot conversations use locally authorized instruction CONTENT.
 //! Imported unknown metadata never becomes provider launch authorization.
 use super::*;
 use std::path::Path;
@@ -52,8 +52,33 @@ impl Engine {
         Ok(())
     }
 
+    /// Apply a saved personality or instruction edit at the next turn boundary.
+    /// The old context is validated first, and the Store compares both the
+    /// thread and bot document before granting authority to the replacement.
+    pub(super) fn refresh_bot_instructions(&mut self, thread: &mut Value) -> Result<bool> {
+        if thread["botID"].is_null() {
+            return Ok(false);
+        }
+        if thread["rustBotContext"].is_null() {
+            self.authorize_existing_bot(thread)?;
+            return Ok(false);
+        }
+        let cwd = self.working_directory(thread)?;
+        self.bot_instructions(thread, &cwd)?;
+        let (source, context) = crate::bot_runtime::current_context(&self.store, thread, &cwd)?;
+        if context["instructions"] == thread["rustBotContext"]["instructions"] {
+            return Ok(false);
+        }
+        *thread =
+            self.store
+                .authorize_existing_bot_if_unchanged(source.as_ref(), thread, &context)?;
+        self.revision += 1;
+        Ok(true)
+    }
+
     /// Validate on EVERY send, including resume/queue/schedule, before any
-    /// transcript/draft mutation. Later bot edits never change this snapshot.
+    /// transcript/draft mutation. A replacement snapshot is authorized at a
+    /// turn boundary, never in the middle of an existing provider turn.
     pub(super) fn bot_instructions(&self, thread: &Value, cwd: &Path) -> Result<Option<String>> {
         let Some(context) = thread.get("rustBotContext") else {
             ensure!(
