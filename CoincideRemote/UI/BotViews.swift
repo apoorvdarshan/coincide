@@ -119,7 +119,9 @@ struct BotsView: View {
         }
         .sidebarList(theme)
         .overlay {
-            if !search.isEmpty, bots.isEmpty {
+            if client.showsConnected, !client.hasWorkspace {
+                WorkspaceLoadingView()
+            } else if !search.isEmpty, bots.isEmpty {
                 ContentUnavailableView.search(text: query)
             } else if bots.isEmpty, client.showsConnected {
                 ContentUnavailableView {

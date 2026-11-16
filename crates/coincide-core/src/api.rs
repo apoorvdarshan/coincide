@@ -384,6 +384,34 @@ impl Engine {
         self.model_catalog.remote_default_models()
     }
 
+    /// Preserve a pending in-memory transcript, but copy only the fields a
+    /// remote sidebar needs. Persisted threads are projected by SQLite.
+    pub(crate) fn remote_thread_metadata(&self, id: &str) -> Result<(Value, usize)> {
+        if let Some(thread) = self.unsaved_threads.get(id) {
+            let mut metadata = serde_json::Map::new();
+            for key in [
+                "createdAt",
+                "updatedAt",
+                "selection",
+                "accessMode",
+                "interactionMode",
+                "branch",
+                "worktreePath",
+                "draft",
+                "botID",
+                "rustMessageQueue",
+            ] {
+                if let Some(value) = thread.get(key) {
+                    metadata.insert(key.to_owned(), value.clone());
+                }
+            }
+            let count = thread["items"].as_array().map_or(0, Vec::len);
+            Ok((Value::Object(metadata), count))
+        } else {
+            self.store.remote_thread_metadata(id)
+        }
+    }
+
     pub fn new(store: Store) -> Self {
         Self::initialize(store, true)
     }
@@ -3440,6 +3468,24 @@ mod tests {
         assert_eq!(snapshot.decode().unwrap(), unsaved);
         assert_eq!(queue, None);
         assert!(engine.capture_thread_read("missing").is_err());
+    }
+
+    #[test]
+    fn remote_sidebar_reads_unsaved_fields_without_copying_the_transcript() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = Engine::fixture(Store::open(&dir.path().join("state.sqlite")).unwrap());
+        let mut thread = engine
+            .store
+            .new_thread("00000000-0000-0000-0000-000000000000")
+            .unwrap();
+        let id = text(&thread, "id");
+        thread["items"] = json!([{"text":"not yet persisted"}, {"text":"second item"}]);
+        thread["draft"] = json!("unsaved draft");
+        engine.unsaved_threads.insert(id.clone(), thread);
+        let (metadata, count) = engine.remote_thread_metadata(&id).unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(metadata["draft"], "unsaved draft");
+        assert!(metadata.get("items").is_none());
     }
     #[test]
     fn queue_and_pending_reads_keep_validation_and_raw_queue_metadata() {

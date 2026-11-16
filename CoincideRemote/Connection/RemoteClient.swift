@@ -38,6 +38,9 @@ final class RemoteClient {
     /// The Mac is too old to share its Settings.
     private(set) var macSettingsUnsupported = false
     var workspace = RemoteWorkspace()
+    /// Distinguish an empty Mac workspace from one the phone has not received yet.
+    private(set) var hasWorkspace = false
+    private(set) var workspaceLoadFailed = false
     var includesArchived = false {
         didSet { if includesArchived != oldValue { Task { await refreshWorkspace() } } }
     }
@@ -64,6 +67,8 @@ final class RemoteClient {
     @ObservationIgnored private var connectTask: Task<Void, Never>?
     @ObservationIgnored private var receiveTask: Task<Void, Never>?
     @ObservationIgnored private var retryTask: Task<Void, Never>?
+    @ObservationIgnored private var workspaceRetryTask: Task<Void, Never>?
+    @ObservationIgnored private var workspaceRetrySerial = 0
     @ObservationIgnored private var reconnect = RemoteReconnect()
     /// Ends `isQuiet` when the grace period does.
     @ObservationIgnored private var quietTask: Task<Void, Never>?
@@ -116,8 +121,14 @@ final class RemoteClient {
             mac = DemoData.mac
             server = DemoData.server
             workspace = DemoData.workspace
+            hasWorkspace = true
             phase = DemoData.phase
             macSettings = DemoData.isEmpty ? nil : DemoData.macSettings
+            if DemoData.has("WorkspaceBusy") {
+                workspace = RemoteWorkspace()
+                hasWorkspace = false
+                Task { await refreshWorkspace() }
+            }
             if DemoData.has("Attachments") {
                 drafts[DemoData.threadID] = ComposerDraft(text: "Match these two screens", images: DemoData.draftImages)
             }
@@ -152,6 +163,8 @@ final class RemoteClient {
         if self.mac?.serverID != mac.serverID {
             threads = [:]
             workspace = RemoteWorkspace()
+            hasWorkspace = false
+            workspaceLoadFailed = false
             server = nil
             media.clear()
         }
@@ -201,6 +214,7 @@ final class RemoteClient {
 
     func disconnect() {
         generation += 1
+        cancelWorkspaceRetry()
         connectTask?.cancel()
         retryTask?.cancel()
         receiveTask?.cancel()
@@ -217,6 +231,8 @@ final class RemoteClient {
             disconnect()
             mac = nil
             workspace = RemoteWorkspace()
+            hasWorkspace = false
+            workspaceLoadFailed = false
             threads = [:]
             server = nil
         }
@@ -250,6 +266,8 @@ final class RemoteClient {
         mac = DemoData.mac
         server = DemoData.server
         workspace = DemoData.workspace
+        hasWorkspace = true
+        workspaceLoadFailed = false
         macSettings = DemoData.macSettings
         macSettingsUnsupported = false
         phase = DemoData.phase
@@ -267,6 +285,8 @@ final class RemoteClient {
         mac = nil
         server = nil
         workspace = RemoteWorkspace()
+        hasWorkspace = false
+        workspaceLoadFailed = false
         macSettings = nil
         phase = .idle
         // A screenshot launch (`-CoincideRemoteDemo`) has no Macs to look for.
@@ -282,6 +302,7 @@ final class RemoteClient {
     private func start() {
         guard let mac else { return }
         generation += 1
+        cancelWorkspaceRetry()
         let generation = generation
         connectTask?.cancel()
         retryTask?.cancel()
@@ -608,6 +629,17 @@ final class RemoteClient {
         do {
             message = try RemoteProtocol.makeDecoder().decode(RemoteServerMessage.self, from: data)
         } catch {
+            // Don't leave a workspace request waiting for its timeout when a
+            // newer Mac sent a response this version cannot decode.
+            struct Header: Decodable { var kind: String; var type: String?; var re: String? }
+            if let header = try? JSONDecoder().decode(Header.self, from: data), header.type == "workspace" {
+                if header.kind == "response", let id = header.re {
+                    finish(id, .failure(RemoteError(.failed, "Workspace response could not be read.")))
+                } else if header.kind == "event", isConnected {
+                    workspaceLoadFailed = true
+                    scheduleWorkspaceRetry()
+                }
+            }
             return
         }
         switch message {
@@ -653,6 +685,8 @@ final class RemoteClient {
 
     private func apply(_ workspace: RemoteWorkspace) {
         self.workspace = workspace
+        hasWorkspace = true
+        workspaceLoadFailed = false
         for thread in workspace.threads { threads[thread.id]?.summary = thread }
     }
 
@@ -684,8 +718,48 @@ final class RemoteClient {
 
     func refreshWorkspace() async {
         guard isConnected else { return }
-        if case .workspace(let workspace)? = try? await request(.workspace(includeArchived: includesArchived)) {
+        if await loadWorkspace() { cancelWorkspaceRetry() }
+        else if isConnected { scheduleWorkspaceRetry() }
+    }
+
+    private func loadWorkspace() async -> Bool {
+        let requestedGeneration = generation
+        let archived = includesArchived
+        do {
+            guard case .workspace(let workspace) = try await request(.workspace(includeArchived: archived)) else {
+                throw RemoteError(.failed, "Unexpected workspace response.")
+            }
+            guard requestedGeneration == generation, archived == includesArchived, isConnected else { return false }
             apply(workspace)
+            return true
+        } catch {
+            if requestedGeneration == generation, isConnected { workspaceLoadFailed = true }
+            return false
+        }
+    }
+
+    private func cancelWorkspaceRetry() {
+        workspaceRetrySerial += 1
+        workspaceRetryTask?.cancel()
+        workspaceRetryTask = nil
+    }
+
+    /// A busy Mac or a temporarily interrupted request must not leave the
+    /// phone empty forever. Reuse the connection and preserve any last data.
+    private func scheduleWorkspaceRetry() {
+        guard workspaceRetryTask == nil, isConnected else { return }
+        workspaceRetrySerial += 1
+        let serial = workspaceRetrySerial
+        let requestedGeneration = generation
+        workspaceRetryTask = Task {
+            var delay = 0.5
+            while !Task.isCancelled, requestedGeneration == generation, isConnected {
+                try? await Task.sleep(for: .seconds(delay))
+                guard !Task.isCancelled, requestedGeneration == generation, isConnected else { break }
+                if await loadWorkspace() { break }
+                delay = min(delay * 2, 10)
+            }
+            if serial == workspaceRetrySerial { workspaceRetryTask = nil }
         }
     }
 

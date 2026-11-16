@@ -386,6 +386,10 @@ impl Adapter {
     }
 
     fn fields(document: &Value) -> ThreadFields {
+        Self::fields_with_item_count(document, document["items"].as_array().map_or(0, Vec::len))
+    }
+
+    fn fields_with_item_count(document: &Value, item_count: usize) -> ThreadFields {
         let queued = crate::message_queue::read(document)
             .map(|messages| {
                 messages
@@ -411,7 +415,7 @@ impl Adapter {
             has_draft: document["draft"]
                 .as_str()
                 .is_some_and(|d| !d.trim().is_empty()),
-            item_count: document["items"].as_array().map_or(0, Vec::len),
+            item_count,
             queued,
             bot_id: document["botID"]
                 .as_str()
@@ -422,20 +426,33 @@ impl Adapter {
 
     /// The thread document's sidebar fields, read again only when its summary
     /// changed or it's running (streaming changes the document, not the title).
-    fn cached_fields(&self, summary: &Value, runs: &Runs) -> Option<ThreadFields> {
-        let id = summary["id"].as_str()?;
+    fn cached_fields(&self, summary: &Value, runs: &Runs) -> Result<ThreadFields, RemoteError> {
+        let id = summary["id"]
+            .as_str()
+            .ok_or_else(|| RemoteError::failed("A conversation is temporarily unavailable."))?;
         let key = upper(id);
-        let mut cache = self.cache.try_lock().ok()?;
+        let mut cache = self
+            .cache
+            .try_lock()
+            .map_err(|_| RemoteError::failed("The computer is busy. Try again."))?;
         if !runs.running.contains(&key)
             && let Some((seen, fields)) = cache.get(&key)
             && seen == summary
         {
-            return Some(fields.clone());
+            return Ok(fields.clone());
         }
-        let document = self.call("threads.read", json!({"threadId":id})).ok()?;
-        let fields = Self::fields(&document);
+        // A busy engine is not a deleted conversation. Fail the snapshot so
+        // the phone can retry rather than replacing its sidebar with a partial
+        // list. Fields already read stay cached for the next attempt.
+        let (document, item_count) = self
+            .engine
+            .try_lock()
+            .map_err(|_| RemoteError::failed("The computer is busy. Try again."))?
+            .remote_thread_metadata(id)
+            .map_err(|_| RemoteError::failed("A conversation is temporarily unavailable."))?;
+        let fields = Self::fields_with_item_count(&document, item_count);
         cache.insert(key, (summary.clone(), fields.clone()));
-        Some(fields)
+        Ok(fields)
     }
 
     fn selection(selection: &Value) -> Selection {
@@ -574,25 +591,24 @@ impl Adapter {
         let mut seen = HashSet::new();
         for summary in summaries.as_array().into_iter().flatten() {
             let project = upper(summary["project_id"].as_str().unwrap_or_default());
-            if let Some(fields) = self.cached_fields(summary, runs) {
-                seen.insert(upper(summary["id"].as_str().unwrap_or_default()));
-                let project = if fields.bot_id.is_some() {
-                    crate::bot_runtime::BOTS_PROJECT_ID.to_owned()
-                } else if known.contains(&project) {
-                    project
-                } else {
-                    chats_id.clone()
-                };
-                let mut thread = Self::summary(summary, &fields, &project, runs);
-                markers.apply(&mut thread);
-                if let Some(bot) = fields.bot_id {
-                    bot_threads
-                        .entry(bot)
-                        .or_default()
-                        .push((thread.updated_at, thread.id.clone()));
-                }
-                threads.push(thread);
+            let fields = self.cached_fields(summary, runs)?;
+            seen.insert(upper(summary["id"].as_str().unwrap_or_default()));
+            let project = if fields.bot_id.is_some() {
+                crate::bot_runtime::BOTS_PROJECT_ID.to_owned()
+            } else if known.contains(&project) {
+                project
+            } else {
+                chats_id.clone()
+            };
+            let mut thread = Self::summary(summary, &fields, &project, runs);
+            markers.apply(&mut thread);
+            if let Some(bot) = fields.bot_id {
+                bot_threads
+                    .entry(bot)
+                    .or_default()
+                    .push((thread.updated_at, thread.id.clone()));
             }
+            threads.push(thread);
         }
         if let Ok(mut cache) = self.cache.try_lock() {
             cache.retain(|id, _| seen.contains(id));
@@ -1884,6 +1900,59 @@ pub fn remote_item(item: &Value, index: usize, pending: &[PendingRequest]) -> It
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sidebar_projection_matches_the_full_thread_without_copying_transcript() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut store = crate::store::Store::open(&directory.path().join("state.sqlite")).unwrap();
+        let mut thread = store.new_thread(NO_PROJECT).unwrap();
+        thread["items"] = json!([{"text":"large transcript".repeat(10_000)}, {"text":"newer"}]);
+        thread["selection"] = json!({"provider":"codex","modelID":"example","effort":"high"});
+        thread["branch"] = json!("main");
+        thread["draft"] = json!("unfinished message");
+        crate::message_queue::add(&mut thread, "queued message").unwrap();
+        store.save(&thread).unwrap();
+        let (metadata, count) = store
+            .remote_thread_metadata(thread["id"].as_str().unwrap())
+            .unwrap();
+        assert!(metadata.get("items").is_none());
+        assert_eq!(count, 2);
+        assert_eq!(
+            Adapter::fields(&thread),
+            Adapter::fields_with_item_count(&metadata, count)
+        );
+    }
+
+    #[test]
+    fn busy_workspace_read_fails_instead_of_hiding_a_thread() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut engine = crate::api::Engine::fixture(
+            crate::store::Store::open(&directory.path().join("state.sqlite")).unwrap(),
+        );
+        let thread = engine.store.new_thread(NO_PROJECT).unwrap();
+        let id = thread["id"].as_str().unwrap();
+        let summary = json!({"id": id});
+        let engine = std::sync::Arc::new(std::sync::Mutex::new(engine));
+        let adapter = Adapter::new(engine.clone(), "fixture");
+        let held = engine.lock().unwrap();
+        assert_eq!(
+            adapter
+                .cached_fields(&summary, &Runs::default())
+                .unwrap_err()
+                .message,
+            "The computer is busy. Try again."
+        );
+        drop(held);
+        assert!(adapter.cached_fields(&summary, &Runs::default()).is_ok());
+        // Running threads must be refreshed, and a busy refresh must not
+        // silently return a snapshot that has dropped the conversation.
+        let mut runs = Runs::default();
+        runs.running.insert(upper(id));
+        let held = engine.lock().unwrap();
+        assert!(adapter.cached_fields(&summary, &runs).is_err());
+        drop(held);
+        assert!(adapter.cached_fields(&summary, &runs).is_ok());
+    }
 
     #[test]
     fn phone_picker_uses_only_enabled_providers_and_reported_default_account_models() {
