@@ -1185,7 +1185,7 @@ impl Coincide {
         if old_id != new_id {
             self.prepare_inspector_thread_change();
         }
-        if let (Some(current), Some(next)) = (&self.selected, &mut thread) {
+        if let (Some(current), Some(next)) = (self.selected.as_ref(), &mut thread) {
             composer_pending_images::preserve_inflight_draft(
                 current,
                 next,
