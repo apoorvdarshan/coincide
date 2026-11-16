@@ -2099,6 +2099,7 @@ impl Coincide {
         }
         let Some((id, selection, running)) = context else {
             self.selection_ui.bound = None;
+            self.selection_ui.displayed_capability_scope = None;
             self.selection_ui.capabilities = Value::Null;
             return;
         };
