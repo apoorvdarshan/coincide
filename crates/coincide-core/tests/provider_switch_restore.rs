@@ -78,20 +78,24 @@ fn call(engine: &mut Engine, method: &str, params: Value) -> Value {
     response["result"].clone()
 }
 fn settle_startup_discovery(engine: &mut Engine, stage: &str) {
-    // Engine::new discovers filesystem metadata on an owned background worker.
-    // A single poll is not a receipt: wait for its actual published report so
-    // dispatch's initial polling cannot contaminate an exact refusal revision.
-    let deadline = Instant::now() + Duration::from_secs(10);
+    // Both startup workers can publish independent revision changes. The ACP
+    // registry worker publishes its local results before its final receipt;
+    // wait for that receipt as well as installed-provider discovery before
+    // comparing the revision of a refused action. Its network timeout is 12s.
+    let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         let report = call(engine, "providers.list", json!({}));
-        if report["discovery"].is_object() {
+        let registry = engine.native_acp_registry_view();
+        if report["discovery"].is_object() && registry["loading"] == false {
+            // Apply any dependent state calculated before those receipts.
+            call(engine, "providers.list", json!({}));
             return;
         }
         assert!(
             Instant::now() < deadline,
-            "{stage}: startup provider discovery did not publish its report"
+            "{stage}: startup discovery did not publish all its receipts"
         );
-        std::thread::yield_now();
+        std::thread::sleep(Duration::from_millis(5));
     }
 }
 fn params(thread: &Value, provider: &str) -> Value {

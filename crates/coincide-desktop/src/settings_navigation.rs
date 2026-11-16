@@ -506,8 +506,8 @@ impl Coincide {
             None => label.into(),
         })
         .w_full()
-        .h(px(42.))
-        .rounded(px(12.))
+        .h(px(38.))
+        .rounded(px(10.))
         .ghost()
         .when(selected, |button| button.bg(self.color(0x202a3b)))
         .child(
@@ -570,21 +570,42 @@ impl Coincide {
 
     pub(super) fn settings_surface(&self, cx: &mut Context<Self>) -> AnyElement {
         let mut navigation = div().flex().flex_col().gap_1();
-        for section in [
-            Section::General,
-            Section::Models,
-            Section::Usage,
-            Section::Instructions,
-            Section::Archive,
-            Section::Keyboard,
-            Section::Voice,
-            Section::Browser,
-            Section::ComputerUse,
-            Section::Appshots,
-            Section::Media,
-        ] {
-            navigation =
-                navigation.child(self.settings_navigation_row(section, section.label(), cx));
+        let groups: &[(&str, &[Section])] = &[
+            (
+                "Workspace",
+                &[
+                    Section::General,
+                    Section::Models,
+                    Section::Usage,
+                    Section::Instructions,
+                ],
+            ),
+            (
+                "Tools",
+                &[
+                    Section::Keyboard,
+                    Section::Voice,
+                    Section::Browser,
+                    Section::ComputerUse,
+                    Section::Appshots,
+                ],
+            ),
+            ("Saved data", &[Section::Archive, Section::Media]),
+        ];
+        for (title, sections) in groups {
+            navigation = navigation.child(
+                div()
+                    .mt_2()
+                    .px_2()
+                    .text_xs()
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(self.color(0xe4e9f2).opacity(0.56))
+                    .child(*title),
+            );
+            for section in *sections {
+                navigation =
+                    navigation.child(self.settings_navigation_row(*section, section.label(), cx));
+            }
         }
         navigation = navigation
             .child(

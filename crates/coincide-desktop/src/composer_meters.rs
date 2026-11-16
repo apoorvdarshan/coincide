@@ -106,31 +106,6 @@ fn tokens(n: u64) -> String {
     }
 }
 impl Coincide {
-    pub(super) fn composer_meter_width(&self, cx: &App) -> f32 {
-        let Some(thread) = self.selected.as_ref() else {
-            return 0.;
-        };
-        let context = self
-            .usage_history
-            .context_usage
-            .as_ref()
-            .is_some_and(|(target, _)| target.matches(thread));
-        let provider = thread["selection"]["provider"].as_str().unwrap_or_default();
-        let account = thread["selection"]["accountID"]
-            .as_str()
-            .filter(|s| !s.is_empty())
-            .unwrap_or("default");
-        let limits = if provider == "codex" {
-            let panel = self.codex_limits.panel.read(cx);
-            panel.account().unwrap_or("default") == account
-                && matches!(panel.phase(), crate::codex_limits_view::Phase::Ready { buckets, .. } if buckets.iter().any(|bucket| !bucket.windows.is_empty()))
-        } else {
-            provider == "claude"
-                && account == "default"
-                && matches!(&self.usage_history.dashboard.claude.state, Some(crate::usage_dashboard::LimitState::Ready(limits)) if !limits.windows.is_empty())
-        };
-        (if context { 28. } else { 0. }) + (if limits { 32. } else { 0. })
-    }
     pub(super) fn composer_meters(&self, cx: &mut Context<Self>) -> AnyElement {
         let Some(thread) = self.selected.as_ref() else {
             return div().into_any_element();

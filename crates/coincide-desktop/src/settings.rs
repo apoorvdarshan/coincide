@@ -706,7 +706,7 @@ impl Coincide {
         div()
             .w_full()
             .min_w_0()
-            .rounded(px(16.))
+            .rounded(px(12.))
             .border_1()
             .border_color(self.color(0x29303d).opacity(0.85))
             .bg(self.color(0x111722))

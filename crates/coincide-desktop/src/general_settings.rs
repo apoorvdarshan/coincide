@@ -344,7 +344,7 @@ impl Coincide {
             .flex()
             .items_center()
             .gap_4()
-            .px_5()
+            .px_4()
             .py_3()
             .border_b_1()
             .border_color(self.color(0x29303d).opacity(0.6))
@@ -365,6 +365,7 @@ impl Coincide {
                         row.child(
                             div()
                                 .text_xs()
+                                .whitespace_normal()
                                 .text_color(self.color(0x98a6ba).opacity(0.7))
                                 .child(caption),
                         )

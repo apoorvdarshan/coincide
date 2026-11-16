@@ -7964,7 +7964,7 @@ impl Render for Coincide {
                                             div().mt_2().pt_2().border_t_1()
                                             .border_color(self.color(0x29303d).opacity(0.55))
                                             .child(chat_layout::composer_actions(
-                                                self.composer_selection_footer(window, implement_button.is_some(), cx),
+                                                self.composer_selection_footer(window, cx),
                                                 div()
                                                 .flex()
                                                 .flex_wrap()

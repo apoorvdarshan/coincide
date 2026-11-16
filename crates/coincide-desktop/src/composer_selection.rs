@@ -1669,43 +1669,18 @@ fn saved_codex_catalog_ready(provider: Option<&Value>) -> bool {
     // admission explain that once instead of refreshing forever.
     provider["effort"]["catalogState"] == "ready"
 }
-/// Swift's collapse priority: mode, follow-up, access, speed, effort, model.
-fn footer_compaction(widths: [f32; 6], available: f32) -> [bool; 6] {
-    let mut result = [false; 6];
-    let mut total = widths.iter().sum::<f32>()
-        + widths.iter().filter(|w| **w > 0.).count().saturating_sub(1) as f32 * 2.;
-    for i in [5, 4, 3, 2, 1, 0] {
-        if total <= available {
-            break;
-        }
-        if widths[i] > 28. {
-            total -= widths[i] - 28.;
-            result[i] = true;
-        }
-    }
-    result
-}
-
-/// Reserve the action buttons and their gaps before sizing the model controls.
-/// The plan action is wider than the ordinary round Send button.
-fn footer_trailing_width(
-    meters: f32,
-    voice: bool,
-    running: bool,
-    primary: f32,
-    attachments: usize,
-) -> f32 {
-    // Include both attachment actions, the primary action and their gaps,
-    // with a little room for font and platform-specific button padding.
-    132. + meters
-        + if voice { 30. } else { 0. }
-        + if running { 30. } else { 0. }
-        + (primary - 28.).max(0.)
-        + if attachments > 0 {
-            18. + attachments.to_string().len() as f32 * 8.
-        } else {
-            0.
-        }
+/// Controls can wrap, so keep their labels on desktop and compact only as the
+/// composer itself gets narrow. Running state, meters and attachments must not
+/// make labels appear or disappear while the pane stays the same width.
+fn footer_compaction(available: f32) -> [bool; 6] {
+    [
+        available < 260., // model
+        available < 300., // effort
+        available < 340., // speed
+        available < 380., // access
+        available < 420., // follow-up
+        available < 460., // build / plan
+    ]
 }
 
 impl Coincide {
@@ -3696,7 +3671,6 @@ impl Coincide {
     pub(super) fn composer_selection_footer(
         &self,
         window: &Window,
-        implement_visible: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let Some(thread) = self.selected.as_ref() else {
@@ -3808,49 +3782,7 @@ impl Coincide {
                         .as_array()
                         .is_some_and(|choices| !choices.is_empty())
             });
-        let available = self.composer_available_width(window);
-        let measure = |label: &str| {
-            let run = TextRun {
-                len: label.len(),
-                font: font("system-ui"),
-                color: self.color(0xe4e9f2).into(),
-                background_color: None,
-                underline: None,
-                strikethrough: None,
-            };
-            f32::from(
-                window
-                    .text_system()
-                    .shape_line(label.into(), px(14.), &[run], None)
-                    .width,
-            )
-        };
-        let follow = coincide_core::composer_follow_up::selected(thread, &self.settings);
-        let widths = [
-            (measure(&model) + 35.).min(240.),
-            measure(&effort) + 36.,
-            if speed_supported {
-                measure(&speed) + 36.
-            } else {
-                0.
-            },
-            measure(access) + 36.,
-            measure(follow.label()) + 36.,
-            measure(mode) + 28.,
-        ];
-        // Attach, voice, send and optional usage/context meters keep their space.
-        let trailing = footer_trailing_width(
-            self.composer_meter_width(cx),
-            coincide_core::voice::Settings::decode(&self.settings).enabled,
-            self.running.contains(&text(thread, "id")),
-            if implement_visible {
-                measure("Implement") + 24.
-            } else {
-                28.
-            },
-            self.draft_attachment_count(),
-        );
-        let compact = footer_compaction(widths, (available - trailing).max(0.));
+        let compact = footer_compaction(self.composer_available_width(window));
         let mut controls = chat_layout::composer_selection_controls();
 
         let facets = [
@@ -5834,36 +5766,22 @@ mod tests {
         ));
     }
     #[::core::prelude::v1::test]
-    fn footer_labels_collapse_in_swifts_order_without_spending_space_on_absent_speed() {
-        let widths = [180., 75., 0., 110., 80., 65.];
-        assert_eq!(super::footer_compaction(widths, 600.), [false; 6]);
+    fn footer_labels_stay_visible_at_desktop_widths_and_compact_gradually() {
+        assert_eq!(super::footer_compaction(650.), [false; 6]);
+        assert_eq!(super::footer_compaction(500.), [false; 6]);
         assert_eq!(
-            super::footer_compaction(widths, 485.),
+            super::footer_compaction(440.),
             [false, false, false, false, false, true]
         );
         assert_eq!(
-            super::footer_compaction(widths, 350.),
-            [false, false, false, true, true, true]
+            super::footer_compaction(400.),
+            [false, false, false, false, true, true]
         );
         assert_eq!(
-            super::footer_compaction(widths, 140.),
-            [true, true, false, true, true, true]
+            super::footer_compaction(320.),
+            [false, false, true, true, true, true]
         );
-    }
-
-    #[::core::prelude::v1::test]
-    fn footer_keeps_room_for_the_wider_implement_action_in_a_split_view() {
-        let widths = [170., 70., 0., 110., 80., 65.];
-        let available = 500.;
-        let send = super::footer_trailing_width(28., false, false, 28., 0);
-        let implement = super::footer_trailing_width(28., false, false, 90., 0);
-        let compact_send = super::footer_compaction(widths, available - send);
-        let compact_implement = super::footer_compaction(widths, available - implement);
-        assert!(implement > send);
-        assert!(
-            compact_implement.iter().filter(|compact| **compact).count()
-                > compact_send.iter().filter(|compact| **compact).count()
-        );
+        assert_eq!(super::footer_compaction(220.), [true; 6]);
     }
 
     use super::*;
