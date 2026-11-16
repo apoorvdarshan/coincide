@@ -261,6 +261,16 @@ pub(super) fn read(
         .map(PathBuf::from)
         .context("OpenCode metadata home unavailable")?
         .canonicalize()?;
+    read_workspace(executable, &cwd, allowed)
+}
+pub(super) fn read_workspace(
+    executable: &std::path::Path,
+    cwd: &std::path::Path,
+    allowed: &impl Fn() -> bool,
+) -> Result<(Vec<Value>, Option<String>)> {
+    let cwd = cwd
+        .canonicalize()
+        .context("OpenCode project directory unavailable")?;
     let directory = cwd
         .to_str()
         .context("OpenCode metadata directory is not text")?

@@ -478,6 +478,7 @@ fn auth_keys(provider: &str) -> &'static [&'static str] {
             "XAI_API_KEY",
             "GROQ_API_KEY",
             "DEEPSEEK_API_KEY",
+            "LITHOSAI_API_KEY",
             "MISTRAL_API_KEY",
         ],
         _ => &[],
@@ -952,6 +953,7 @@ fn build_configuration(
         companion: None,
         custom: false,
         environment: BTreeMap::new(),
+        acp: None,
     });
     record.executable = Some(Binary::capture(&executable)?);
     // Global provider environment is not an account-specific credential grant.

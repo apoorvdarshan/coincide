@@ -32,6 +32,7 @@ pub fn key_choices(provider: &str) -> Result<&'static [(&'static str, &'static s
             ("XAI_API_KEY", "xAI"),
             ("GROQ_API_KEY", "Groq"),
             ("DEEPSEEK_API_KEY", "DeepSeek"),
+            ("LITHOSAI_API_KEY", "Lithos AI"),
             ("MISTRAL_API_KEY", "Mistral"),
         ],
         _ => anyhow::bail!("Unknown provider"),

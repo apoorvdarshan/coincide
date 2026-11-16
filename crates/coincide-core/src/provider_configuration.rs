@@ -120,6 +120,13 @@ struct Record {
     companion: Option<Binary>,
     custom: bool,
     environment: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    acp: Option<AcpRegistration>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+struct AcpRegistration {
+    name: String,
+    arguments: Vec<String>,
 }
 /// Native editor data only. Deliberately not Debug or Serialize.
 pub struct Snapshot {
@@ -174,6 +181,11 @@ pub(crate) fn native_key_profile(provider: &str) -> bool {
         .and_then(|configuration| configuration.profile.as_ref())
         .is_some_and(|profile| profile.is_key_for(provider))
 }
+pub(crate) fn native_account_profile(provider: &str) -> bool {
+    current().as_ref().is_some_and(|configuration| {
+        configuration.stamp.provider == provider && configuration.profile.is_some()
+    })
+}
 /// Read only the selected native key account, never a global environment override.
 pub(crate) fn native_key_var(provider: &str, name: &str) -> Option<std::ffi::OsString> {
     current()
@@ -189,6 +201,18 @@ pub(crate) fn native_key_var(provider: &str, name: &str) -> Option<std::ffi::OsS
 }
 pub(crate) fn current_stamp() -> Option<Stamp> {
     CURRENT.with(|slot| slot.borrow().as_ref().map(|value| value.stamp.clone()))
+}
+pub(crate) fn current_acp_arguments(provider: &str) -> Result<Vec<String>> {
+    let configuration = current().context("ACP agent has not been added in Coincide")?;
+    ensure!(
+        configuration.stamp.provider == provider,
+        "ACP agent configuration belongs to another provider"
+    );
+    configuration
+        .record
+        .acp
+        .map(|acp| acp.arguments)
+        .context("ACP agent configuration is incomplete")
 }
 pub(crate) fn apply_to_child(command: &mut Command, named: bool) -> Result<()> {
     let Some(configuration) = current() else {
@@ -635,7 +659,7 @@ fn provider_id(provider: &str) -> Result<()> {
         matches!(
             provider,
             "codex" | "claude" | "cursor" | "grok" | "opencode" | "antigravity"
-        ),
+        ) || crate::acp_registry::registry_id(provider).is_some(),
         "Unsupported provider"
     );
     Ok(())
@@ -744,6 +768,95 @@ fn default_executable(provider: &str) -> Option<PathBuf> {
     })
 }
 impl Engine {
+    /// Only native UI may call this after a person chooses a registry entry.
+    /// Public agent JSON and saved chat metadata cannot create this grant.
+    pub fn register_native_acp_agent(&mut self, agent: &crate::acp_registry::Agent) -> Result<()> {
+        let provider =
+            crate::acp_registry::provider_id(&agent.id).context("Invalid ACP agent ID")?;
+        ensure!(
+            agent.name.len() <= 256
+                && !agent.name.trim().is_empty()
+                && !agent.name.chars().any(char::is_control),
+            "Invalid ACP agent name"
+        );
+        ensure!(
+            agent.arguments.len() <= 32
+                && agent.arguments.iter().all(|arg| !arg.is_empty()
+                    && arg.len() <= 512
+                    && !arg.chars().any(char::is_control)),
+            "Invalid ACP agent arguments"
+        );
+        let executable = agent
+            .executable
+            .as_deref()
+            .context("Install this agent first")?;
+        let current = self.native_provider_configuration(&provider)?;
+        let mut prepared = self.prepare_native_provider_configuration(
+            &provider,
+            &current.baseline,
+            Some(executable),
+            agent.environment.clone(),
+        )?;
+        prepared.record.acp = Some(AcpRegistration {
+            name: agent.name.clone(),
+            arguments: agent.arguments.clone(),
+        });
+        self.apply_native_provider_configuration(prepared)?;
+        Ok(())
+    }
+
+    /// Display rows contain no environment values or credential data.
+    pub fn native_acp_agents(&self) -> Result<Vec<Value>> {
+        let Some(owner) = Private::open(&self.store, false)? else {
+            return Ok(Vec::new());
+        };
+        let payload = owner.read()?;
+        let Some(providers) = payload["providers"].as_object() else {
+            return Ok(Vec::new());
+        };
+        let mut result = Vec::new();
+        for provider in providers
+            .keys()
+            .filter(|id| crate::acp_registry::registry_id(id).is_some())
+            .take(256)
+        {
+            if let Some(record) = read_record(&payload, provider)?
+                && let Some(acp) = record.acp
+                && record.executable.is_some()
+            {
+                result.push(json!({"provider":provider,"displayName":acp.name}));
+            }
+        }
+        result.sort_by_key(|row| row["displayName"].as_str().unwrap_or("").to_lowercase());
+        Ok(result)
+    }
+
+    /// A fresh native selection may reapprove an updated executable while
+    /// retaining the previously approved command and nonsecret environment.
+    pub(super) fn reapprove_native_acp_agent(&mut self, provider: &str) -> Result<()> {
+        let id = crate::acp_registry::registry_id(provider).context("Invalid ACP agent")?;
+        let owner =
+            Private::open(&self.store, false)?.context("ACP agent configuration missing")?;
+        let record =
+            read_record(&owner.read()?, provider)?.context("ACP agent configuration missing")?;
+        let acp = record
+            .acp
+            .context("ACP agent configuration is incomplete")?;
+        let executable = record
+            .executable
+            .context("ACP executable is missing")?
+            .requested;
+        drop(owner);
+        self.register_native_acp_agent(&crate::acp_registry::Agent {
+            id: id.into(),
+            name: acp.name,
+            website: None,
+            executable: Some(executable),
+            arguments: acp.arguments,
+            environment: record.environment,
+        })
+    }
+
     pub fn native_provider_configuration(&self, provider: &str) -> Result<Snapshot> {
         provider_id(provider)?;
         let record = Private::open(&self.store, false)?
@@ -816,6 +929,7 @@ impl Engine {
                 companion,
                 custom: executable.is_some(),
                 environment,
+                acp: None,
             },
         })
     }
@@ -862,6 +976,10 @@ impl Engine {
         provider_id(provider)?;
         let Some(owner) = Private::open(&self.store, false)? else {
             ensure!(
+                crate::acp_registry::registry_id(provider).is_none(),
+                "Add this ACP agent in Coincide first"
+            );
+            ensure!(
                 !self
                     .store
                     .requires_native_provider_configuration(provider)?,
@@ -872,6 +990,10 @@ impl Engine {
         let payload = owner.read()?;
         let Some(record) = read_record(&payload, provider)? else {
             ensure!(
+                crate::acp_registry::registry_id(provider).is_none(),
+                "Add this ACP agent in Coincide first"
+            );
+            ensure!(
                 !self
                     .store
                     .requires_native_provider_configuration(provider)?,
@@ -879,6 +1001,12 @@ impl Engine {
             );
             return Ok(None);
         };
+        if crate::acp_registry::registry_id(provider).is_some() {
+            ensure!(
+                record.acp.is_some() && record.executable.is_some(),
+                "ACP agent configuration is incomplete"
+            );
+        }
         validate_environment(&record.environment)?;
         record
             .executable
@@ -957,7 +1085,7 @@ impl Engine {
             ))
             && let Some(id) = params["threadId"].as_str()
         {
-            let thread = self.store.thread(id)?;
+            let thread = self.store.thread_selection_snapshot(id)?;
             let same_provider = if method.starts_with("providers.codex.") {
                 thread["selection"]["provider"] == "codex"
             } else {
@@ -991,7 +1119,7 @@ impl Engine {
             params["provider"].as_str().map(str::to_owned).or_else(|| {
                 params["threadId"]
                     .as_str()
-                    .and_then(|id| self.store.thread(id).ok())
+                    .and_then(|id| self.store.thread_selection_snapshot(id).ok())
                     .and_then(|thread| thread["selection"]["provider"].as_str().map(str::to_owned))
             })
         } else {

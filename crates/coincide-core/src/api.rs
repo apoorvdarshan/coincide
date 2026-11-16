@@ -79,6 +79,8 @@ mod named_profile_departure;
 #[path = "run_clock_tests.rs"]
 mod run_clock_tests;
 pub use browser_history_api::{AdmittedHistoryOpen, PreparedHistoryOpen};
+#[path = "acp_registry_api.rs"]
+mod acp_registry_api;
 #[path = "codex_login_profiles_api.rs"]
 mod codex_login_profiles_api;
 #[path = "codex_profile_limits_api.rs"]
@@ -299,6 +301,9 @@ pub struct Engine {
     workspace_rx: std::sync::mpsc::Receiver<(String, Value)>,
     provider_discovery: Option<Value>,
     provider_discovery_pending: bool,
+    acp_registry: Vec<crate::acp_registry::Agent>,
+    acp_registry_pending: bool,
+    acp_registry_error: Option<String>,
     schedule_initialized: bool,
     schedule_recovery_pending: bool,
     schedule_last_poll: Instant,
@@ -511,6 +516,9 @@ impl Engine {
             workspace_rx,
             provider_discovery: None,
             provider_discovery_pending: discover,
+            acp_registry: Vec::new(),
+            acp_registry_pending: false,
+            acp_registry_error: None,
             schedule_initialized: false,
             schedule_recovery_pending: false,
             schedule_last_poll: Instant::now() - Duration::from_secs(2),
@@ -1036,6 +1044,10 @@ impl Engine {
             "agent.models.refresh" => {
                 let provider = crate::model_catalog::refresh_provider(p)?;
                 self.require_provider_enabled(provider)?;
+                let acp_configuration = if crate::acp_registry::registry_id(provider).is_some() {
+                    self.provider_launch_configuration(provider)?
+                } else { provider_configuration::current() };
+                let _provider_configuration_scope = provider_configuration::enter(acp_configuration);
                 let executable = if crate::model_catalog::supported(provider) {
                     let variable = match provider {
                         "codex" => "COINCIDE_CODEX_EXECUTABLE",
@@ -1046,7 +1058,7 @@ impl Engine {
                         "antigravity" => "COINCIDE_ANTIGRAVITY_EXECUTABLE",
                         _ => "",
                     };
-                    std::env::var_os(variable).map(PathBuf::from).or_else(|| {
+                    (!variable.is_empty()).then(|| std::env::var_os(variable)).flatten().map(PathBuf::from).or_else(|| {
                         self.provider_discovery.as_ref()?["providers"].as_array()?.iter()
                             .find(|entry| entry["provider"] == provider)?["executable"].as_str().map(PathBuf::from)
                     })
@@ -1058,7 +1070,26 @@ impl Engine {
                         || !self.provider_discovery_pending,
                     "Provider discovery is still in progress"
                 );
-                let result = self.model_catalog.refresh(provider, executable)?;
+                let workspace = if let Some(thread_id) = p["threadId"].as_str() {
+                    let thread = self.store.thread_selection_snapshot(thread_id)?;
+                    let account = p["accountId"].as_str().filter(|id| !id.is_empty()).unwrap_or("default");
+                    if thread["selection"]["provider"] == provider {
+                        let saved_account = thread["selection"]["accountID"].as_str().filter(|id| !id.is_empty()).unwrap_or("default");
+                        ensure!(account == saved_account, "Select this account before reading its models");
+                    }
+                    if account != "default" {
+                        ensure!(thread["selection"]["provider"] == provider
+                            && thread["selection"]["accountID"] == account
+                            && provider_configuration::native_account_matches(&thread["selection"]),
+                            "Select this OpenCode account in the conversation before reading its models");
+                    }
+                    let cwd = self.working_directory(&thread).or_else(|_| {
+                        std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+                            .map(PathBuf::from).context("Working directory unavailable")
+                    })?;
+                    Some((thread_id.to_owned(), cwd, account.to_owned()))
+                } else { None };
+                let result = self.model_catalog.refresh_workspace(provider, executable, workspace)?;
                 self.revision += 1;
                 Ok(result)
             }
@@ -1069,6 +1100,7 @@ impl Engine {
             }
             "agent.selection.capabilities" => {
                 let mut result = crate::composer_selection::capabilities();
+                self.append_native_acp_capabilities(&mut result)?;
                 self.apply_provider_preferences(&mut result)?;
                 if let Some(id) = p.get("threadId") {
                     let id = id.as_str().context("threadId must be text")?;
@@ -1119,10 +1151,16 @@ impl Engine {
                     // offers what its discovered model list reported, so a
                     // provider with effort levels is never left unconnected.
                     let effort_provider = thread["selection"]["provider"].clone();
+                    let workspace_scoped = effort_provider == "opencode" || effort_provider.as_str().is_some_and(|id| crate::acp_registry::registry_id(id).is_some());
+                    let workspace_directory = workspace_scoped.then(|| self.working_directory(&thread).or_else(|_| {
+                        std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+                            .map(PathBuf::from).context("Working directory unavailable")
+                    }).ok()).flatten();
                     if effort_provider != "codex"
                         && policy_view.is_ok()
                         && !self.store.is_imported(id)?
-                        && let Some((choices, reported)) = self.model_catalog.reported_efforts(&thread["selection"])
+                        && let Some((choices, reported)) = self.model_catalog.reported_efforts_for_thread(&thread["selection"],
+                            workspace_scoped.then(|| thread["id"].as_str()).flatten(), workspace_directory.as_deref())
                         && let Some(provider) = result["providers"].as_array_mut().and_then(|providers| providers.iter_mut().find(|provider| provider["provider"] == effort_provider))
                     {
                         provider["effort"] = json!({"supported":true,"choices":choices,"reportedDefault":reported,
@@ -1201,6 +1239,9 @@ impl Engine {
                 let current_proof = self.composer_current_selection_proof(&policy_thread)?;
                 let target_proof = self.composer_target_effort_proof(p)?;
                 let selection = crate::composer_selection::select_with_proofs(p, &policy_thread,current_proof.as_ref(),target_proof.as_ref())?;
+                if let Some(provider) = selection["provider"].as_str().filter(|provider| crate::acp_registry::registry_id(provider).is_some()) {
+                    self.require_provider_enabled(provider)?;
+                }
                 if selection["provider"] == "antigravity" {
                     self.antigravity_selection(&selection)?;
                 }
@@ -1621,6 +1662,9 @@ impl Engine {
         };
         let provider = text(&v["selection"], "provider");
         let mut adapter = Provider::from_name(&provider)?;
+        if let Provider::RegisteredAcp { arguments, .. } = &mut adapter {
+            *arguments = provider_configuration::current_acp_arguments(&provider)?;
+        }
         ensure!(
             provider == "antigravity"
                 || codex_profile.is_some()
@@ -1654,6 +1698,10 @@ impl Engine {
             .filter(|session| {
                 self.native_configuration_session_allowed(&provider, &id, session)
                     .unwrap_or(false)
+            })
+            .filter(|_| {
+                crate::acp_registry::registry_id(&provider).is_none()
+                    || v["rustAcpResumable"][&provider] != false
             });
         // Native Interrupt and changed configuration each deny old continuation;
         // public JSON cannot select this branch or create native authority.
@@ -1800,10 +1848,16 @@ impl Engine {
             "opencode" => "COINCIDE_OPENCODE_EXECUTABLE",
             "cursor" => "COINCIDE_CURSOR_EXECUTABLE",
             "antigravity" => "COINCIDE_ANTIGRAVITY_EXECUTABLE",
+            _ if crate::acp_registry::registry_id(&provider).is_some() => "",
             _ => bail!("Provider executable is not configured"),
         };
         let executable = antigravity_executable
-            .or_else(|| std::env::var_os(executable_variable).map(PathBuf::from))
+            .or_else(|| {
+                (!executable_variable.is_empty())
+                    .then(|| std::env::var_os(executable_variable))
+                    .flatten()
+                    .map(PathBuf::from)
+            })
             .unwrap_or_else(|| {
                 if provider == "cursor" {
                     "cursor-agent".into()
@@ -2575,6 +2629,19 @@ impl Engine {
                 self.revision += 1;
                 continue;
             }
+            if id == "acp-registry" {
+                self.acp_registry_pending = false;
+                let error = result["error"].as_str().map(str::to_owned);
+                if let Some(rows) = result.get_mut("agents")
+                    && let Ok(agents) = serde_json::from_value(rows.take())
+                    && (error.is_none() || self.acp_registry.is_empty())
+                {
+                    self.acp_registry = agents;
+                }
+                self.acp_registry_error = error;
+                self.revision += 1;
+                continue;
+            }
             if self.workspace_pending.contains_key(&id) {
                 if is_attachment && result.get("error").is_none() {
                     let owner = self.workspace_pending[&id].0.clone();
@@ -3058,6 +3125,17 @@ impl Engine {
                                     }
                                 }
                             }
+                            "provider/acpSessionPersistence" => {
+                                let provider = self.runs[&id].provider.clone();
+                                if crate::acp_registry::registry_id(&provider).is_some()
+                                    && let Some(can_resume) = p["canResume"].as_bool()
+                                {
+                                    if !v["rustAcpResumable"].is_object() {
+                                        v["rustAcpResumable"] = json!({});
+                                    }
+                                    v["rustAcpResumable"][provider] = json!(can_resume);
+                                }
+                            }
                             "provider/event" => {
                                 if let Some(commands) =
                                     crate::composer_suggestions::reported_commands(p)
@@ -3506,6 +3584,7 @@ fn ignored_provider_notification(event: &Event) -> bool {
         | "item/tool/requestUserInput"
         | "provider/requestCancelled"
         | "provider/requestRejected"
+        | "provider/acpSessionPersistence"
         | "item/started"
         | "item/completed" => false,
         _ => frame.get("id").is_none() || frame.get("method").is_none(),

@@ -54,6 +54,22 @@ pub(crate) fn opencode_installation_metadata(
 ) -> Result<(Vec<Value>, Option<String>)> {
     opencode::installation_metadata(executable, allowed)
 }
+pub(crate) fn opencode_workspace_metadata(
+    executable: &std::path::Path,
+    cwd: &std::path::Path,
+    allowed: &impl Fn() -> bool,
+) -> Result<(Vec<Value>, Option<String>)> {
+    opencode::workspace_metadata(executable, cwd, allowed)
+}
+pub(crate) fn acp_model_metadata(
+    executable: &std::path::Path,
+    cwd: &std::path::Path,
+    arguments: &[String],
+    is_fx: bool,
+    allowed: &impl Fn() -> bool,
+) -> Result<Vec<Value>> {
+    acp::model_catalog(executable, cwd, arguments, is_fx, allowed)
+}
 pub(crate) fn opencode_command_metadata(
     executable: &std::path::Path,
     cwd: &std::path::Path,
@@ -94,6 +110,11 @@ pub enum Provider {
     AcpV1 {
         arguments: Vec<String>,
     },
+    /// An ACP agent whose native executable and arguments were approved in the UI.
+    RegisteredAcp {
+        id: String,
+        arguments: Vec<String>,
+    },
 }
 
 impl Provider {
@@ -119,10 +140,14 @@ impl Provider {
                 source_profile: None,
                 risk_acknowledged: false,
             }),
+            _ if crate::acp_registry::registry_id(name).is_some() => Ok(Self::RegisteredAcp {
+                id: name.into(),
+                arguments: Vec::new(),
+            }),
             _ => bail!("Unknown provider: {name}"),
         }
     }
-    pub fn id(&self) -> &'static str {
+    pub fn id(&self) -> &str {
         match self {
             Self::Codex => "codex",
             Self::Claude => "claude",
@@ -131,6 +156,7 @@ impl Provider {
             Self::Antigravity { .. } => "antigravity",
             Self::Cursor { .. } => "cursor",
             Self::AcpV1 { .. } => "acp",
+            Self::RegisteredAcp { id, .. } => id,
         }
     }
 }
@@ -466,6 +492,14 @@ impl Session {
                     Provider::AcpV1 { arguments } => {
                         acp::run(launch, arguments, images, commands, events_tx)
                     }
+                    Provider::RegisteredAcp { id, arguments } => acp::run_registered(
+                        launch,
+                        arguments,
+                        images,
+                        commands,
+                        events_tx,
+                        id == "acp-fx",
+                    ),
                 });
             if let Err(e) = result {
                 let _ = events_tx.send(Event::Failed(e.to_string()));

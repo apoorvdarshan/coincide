@@ -3,6 +3,19 @@ use crate::{agent::Provider, provider_catalog};
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
 
+pub(crate) fn acp_capability(provider: &str, name: &str) -> Value {
+    json!({"provider":provider,"displayName":name,"accountPolicy":"default_only",
+        "models":[{"id":"default","displayName":"Provider default","availability":"provider_resolved"}],
+        "customModel":{"supported":true,"availability":"unverified"},
+        "modelDiscovery":{"supported":true,"reason":null,"background":false},
+        "steering":{"supported":false,"textOnly":true,"requiresActiveTurn":true,
+            "reason":"Follow-ups are queued until this ACP turn finishes"},
+        "effort":{"supported":false,"reason":"This agent did not report reasoning options"},
+        "speed":{"supported":false,"reason":"This agent did not report speed options"},
+        "accessModes":["approval","fullAccess"],"interactionModes":["build"],
+        "modesOrdinaryThreadsOnly":false,"planModelRequirement":null})
+}
+
 pub fn capabilities() -> Value {
     let providers = provider_catalog::provider_catalog().iter().map(|entry| {
         let id = serde_json::to_value(entry.id).expect("provider ID is serializable");

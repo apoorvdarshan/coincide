@@ -170,7 +170,8 @@ impl Engine {
             let _source = provider_configuration::enter(configuration);
             crate::composer_selection::validate_thread_base(&current_policy)?;
         }
-        let capabilities = crate::composer_selection::capabilities();
+        let mut capabilities = crate::composer_selection::capabilities();
+        self.append_native_acp_capabilities(&mut capabilities)?;
         let target = capabilities["providers"]
             .as_array()
             .and_then(|rows| rows.iter().find(|row| row["provider"] == provider))

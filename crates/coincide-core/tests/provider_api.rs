@@ -76,6 +76,112 @@ fn call(engine: &mut Engine, method: &str, params: Value) -> Value {
 }
 
 #[test]
+fn public_requests_cannot_enroll_an_agent_or_read_another_account() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut engine =
+        Engine::new(Store::open(&directory.path().join("private/state.sqlite")).unwrap());
+    let thread = call(
+        &mut engine,
+        "threads.create",
+        json!({"cwd":directory.path()}),
+    );
+    let id = thread["id"].as_str().unwrap();
+    let select = engine.dispatch(
+        json!({"method":"agent.select","params":{"threadId":id,"provider":"acp-not-approved"}}),
+    );
+    assert!(select["error"]["message"].is_string());
+    let models = engine.dispatch(json!({"method":"agent.models.refresh","params":{"threadId":id,"provider":"opencode","accountId":"someone-else"}}));
+    assert!(models["error"]["message"].is_string());
+    assert_eq!(
+        engine.store.thread(id).unwrap()["selection"],
+        thread["selection"]
+    );
+}
+
+#[test]
+fn registered_acp_without_resume_keeps_history_across_turns() {
+    let directory = tempfile::tempdir().unwrap();
+    let executable = directory.path().join("fixture-acp");
+    fs::write(&executable, r#"#!/usr/bin/env python3
+import json,sys,os
+def read(): return json.loads(sys.stdin.readline())
+def write(v): print(json.dumps(v),flush=True)
+run=int(open('acp-run').read())+1 if os.path.exists('acp-run') else 1
+open('acp-run','w').write(str(run))
+r=read(); assert r['method']=='initialize'
+write({'id':r['id'],'result':{'protocolVersion':1,'agentCapabilities':{'loadSession':False}}})
+r=read(); assert r['method']=='session/new'
+write({'method':'session/update','params':{'sessionId':'session-'+str(run),'update':{'sessionUpdate':'available_commands_update','availableCommands':[{'name':'fixture-command','description':'A fixture command'}]}}})
+write({'id':r['id'],'result':{'sessionId':'session-'+str(run)}})
+r=read(); assert r['method']=='session/prompt'
+text=' '.join(part.get('text','') for part in r['params']['prompt'])
+assert 'prompt '+str(run) in text
+if run==2:
+ assert 'prompt 1' in text and 'answer 1' in text
+write({'method':'session/update','params':{'sessionId':'session-'+str(run),'update':{'sessionUpdate':'agent_message_chunk','content':{'type':'text','text':'answer '+str(run)}}}})
+write({'id':r['id'],'result':{'stopReason':'end_turn'}})
+"#).unwrap();
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+    let mut engine =
+        Engine::new(Store::open(&directory.path().join("private/state.sqlite")).unwrap());
+    engine
+        .register_native_acp_agent(&coincide_core::acp_registry::Agent {
+            id: "fixture".into(),
+            name: "Fixture".into(),
+            website: None,
+            executable: Some(executable),
+            arguments: vec![],
+            environment: Default::default(),
+        })
+        .unwrap();
+    let thread = call(
+        &mut engine,
+        "threads.create",
+        json!({"cwd":directory.path()}),
+    );
+    let id = thread["id"].as_str().unwrap().to_owned();
+    call(
+        &mut engine,
+        "agent.select",
+        json!({"threadId":id,"provider":"acp-fixture"}),
+    );
+    for turn in 1..=2 {
+        call(
+            &mut engine,
+            "agent.send",
+            json!({"threadId":id,"text":format!("prompt {turn}")}),
+        );
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let status = call(&mut engine, "app.status", json!({}));
+            if status["running"].as_array().unwrap().is_empty() {
+                break;
+            }
+            assert!(Instant::now() < deadline, "ACP fixture timed out");
+            std::thread::sleep(Duration::from_millis(15));
+        }
+        let thread = engine.store.thread(&id).unwrap();
+        assert!(
+            thread["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["text"] == format!("answer {turn}")),
+            "{thread}"
+        );
+        assert_eq!(thread["rustAcpResumable"]["acp-fixture"], false);
+        let commands = call(&mut engine, "composer.commands", json!({"threadId":id}));
+        assert!(
+            commands["commands"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|command| command["name"] == "fixture-command")
+        );
+    }
+}
+
+#[test]
 #[ignore = "invoked by isolated parent fixture test"]
 fn provider_api_fixture_child() {
     let Some(directory) = std::env::var_os("PROVIDER_API_FIXTURE_DIRECTORY") else {

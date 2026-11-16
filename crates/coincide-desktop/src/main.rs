@@ -663,6 +663,9 @@ struct Coincide {
     composer: Entity<TextareaState>,
     model_input: Entity<InputState>,
     model_picker_search: Entity<InputState>,
+    custom_acp_name: Entity<InputState>,
+    custom_acp_executable: Entity<InputState>,
+    custom_acp_arguments: Entity<InputState>,
     selection_ui: composer_selection::ComposerSelection,
     composer_accessory_scroll: ScrollHandle,
     composer_files: composer_file_picker::Picker,
@@ -1334,6 +1337,12 @@ impl Coincide {
         let project_scripts = project_scripts_ui::State::new(window, cx);
         let model_picker_search =
             cx.new(|cx| InputState::new(window, cx).placeholder("Search models"));
+        let custom_acp_name = cx.new(|cx| InputState::new(window, cx).placeholder("Agent name"));
+        let custom_acp_executable =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Command or executable path"));
+        let custom_acp_arguments = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("Arguments, for example: --profile acp")
+        });
         let model_input = cx.new(|cx| InputState::new(window, cx).placeholder("Default model"));
         let schedule_editor = scheduling::ScheduleEditor::new(window, cx);
         let provider_settings = provider_settings::ProviderSettings::new(window, cx);
@@ -1746,6 +1755,7 @@ impl Coincide {
             .map(|engine| engine.browser_agent_control_settings())
             .unwrap_or(json!({"agentControlByDefault":false}));
         let draft_saver = draft_saver::Saver::new(engine.clone());
+        let inspector_follow = inspector_follow::State::load(&engine);
         let mut this = Self {
             engine,
             quit_requested,
@@ -1848,7 +1858,7 @@ impl Coincide {
             browser_profile_requests,
             credential_panel,
             credential_jobs,
-            inspector_follow: Default::default(),
+            inspector_follow,
             workspace_open: false,
             workspace_panel,
             git_controls,
@@ -1941,6 +1951,9 @@ impl Coincide {
             composer,
             model_input,
             model_picker_search,
+            custom_acp_name,
+            custom_acp_executable,
+            custom_acp_arguments,
             selection_ui: {
                 let mut ui = composer_selection::ComposerSelection::default();
                 if let Ok(directory) = coincide_core::control::data_directory()
@@ -2833,6 +2846,20 @@ impl Coincide {
                     .selected
                     .as_ref()
                     .is_none_or(|thread| thread["id"] != id);
+                if changing_thread {
+                    match self.inspector_follow.prepare_destination(&self.engine, id) {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            self.pending_select = Some(id.to_owned());
+                            cx.notify();
+                            return;
+                        }
+                        Err(error) => {
+                            eprintln!("Unable to restore the conversation panel: {error}");
+                            self.inspector_follow.fallback_destination(id);
+                        }
+                    }
+                }
                 self.session_import_open = false;
                 if self
                     .selected

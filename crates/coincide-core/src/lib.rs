@@ -1,6 +1,7 @@
 //! Portable Coincide state. No UI or Apple framework dependencies.
 pub mod store;
 
+pub mod acp_registry;
 pub mod agent;
 pub mod api;
 pub mod async_questions;
