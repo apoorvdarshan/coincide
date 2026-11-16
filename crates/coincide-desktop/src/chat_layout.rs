@@ -93,20 +93,19 @@ struct ProviderTemplate {
 
 #[derive(IntoElement)]
 struct RegistryTemplate {
+    id: String,
     svg: Arc<[u8]>,
     size: f32,
 }
 impl RenderOnce for RegistryTemplate {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let ink = if cx.theme().is_dark() {
-            0xf4f4f4
-        } else {
-            0x171717
-        };
-        Icon::default()
-            .data(&self.svg)
-            .size(px(self.size))
-            .text_color(rgb(ink))
+        img(agent_logo_assets::colored_image(
+            &self.id,
+            self.svg,
+            cx.theme().is_dark(),
+        ))
+        .size(px(self.size))
+        .object_fit(ObjectFit::Contain)
     }
 }
 
@@ -124,17 +123,27 @@ impl RenderOnce for ProviderTemplate {
     }
 }
 
-/// Draw the provider's own mark without an invented background. Monochrome
-/// templates use neutral ink appropriate for the current appearance.
+/// Draw the provider's mark without an invented background. Registry
+/// templates receive a stable accent, while existing colored art is retained.
 pub(super) fn provider_mark(provider: &str, size: f32) -> Option<Div> {
     let mark = if let Some(svg) = provider_template(provider) {
         ProviderTemplate { svg, size }.into_any_element()
     } else if let Some(id) = coincide_core::acp_registry::registry_id(provider) {
-        RegistryTemplate {
-            svg: agent_logo_assets::logo(id)?,
-            size,
+        let original = match id {
+            "claude-acp" => provider_color_logo("claude"),
+            "antigravity-acp" => provider_color_logo("antigravity"),
+            _ => None,
+        };
+        if let Some(image) = original {
+            img(image).size(px(size)).into_any_element()
+        } else {
+            RegistryTemplate {
+                id: id.to_owned(),
+                svg: agent_logo_assets::logo(id)?,
+                size,
+            }
+            .into_any_element()
         }
-        .into_any_element()
     } else {
         img(provider_color_logo(provider)?)
             .size(px(size))
