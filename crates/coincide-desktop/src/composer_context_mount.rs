@@ -44,10 +44,116 @@ impl Coincide {
             cx,
         );
     }
-    pub(super) fn composer_context_pane(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+
+    fn remove_file_reference(&mut self, source: String, card: Value, cx: &mut Context<Self>) {
+        let Some(job) = self.attachment_imports.reserve_removal(&source) else {
+            self.show_local_error(
+                "Too many attachment changes are in progress. Try again shortly.",
+            );
+            cx.notify();
+            return;
+        };
+        let position = self
+            .selected
+            .as_mut()
+            .filter(|thread| thread["id"] == source)
+            .and_then(|thread| thread["draftContext"].as_array_mut())
+            .and_then(|rows| {
+                let index = rows.iter().position(|row| *row == card)?;
+                rows.remove(index);
+                Some(index)
+            });
+        let Some(position) = position else {
+            self.finish_image_import(job, &source, Vec::new(), None, cx);
+            return;
+        };
+        let expected_after = self
+            .selected
+            .as_ref()
+            .map(|thread| thread["draftContext"].clone());
+        self.selected_generation = self.selected_generation.wrapping_add(1);
+        let engine = self.engine.clone();
+        let owner = source.clone();
+        let expected = card.clone();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    engine
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("Application state is unavailable"))?
+                        .remove_cancelled_picked_path(&owner, &expected)
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if result.is_err() {
+                    if let Some(thread) = this
+                        .selected
+                        .as_mut()
+                        .filter(|thread| thread["id"] == source)
+                        && expected_after.as_ref() == Some(&thread["draftContext"])
+                        && let Some(rows) = thread["draftContext"].as_array_mut()
+                        && !rows.iter().any(|row| row["id"] == card["id"])
+                    {
+                        rows.insert(position.min(rows.len()), card);
+                        this.selected_generation = this.selected_generation.wrapping_add(1);
+                    }
+                }
+                this.finish_image_import(job, &source, Vec::new(), result.err(), cx);
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+    fn file_reference_preview(
+        &mut self,
+        card: &Value,
+        row: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        if let Some(image) = card.get("previewImage").filter(|image| image.is_object()) {
+            return self.image_preview(image, row, 48., 60., window, cx);
+        }
+        let mut tile = div()
+            .w(px(48.))
+            .h(px(60.))
+            .flex_shrink_0()
+            .rounded(px(6.))
+            .bg(cx.theme().background)
+            .border_1()
+            .border_color(cx.theme().border)
+            .overflow_hidden();
+        if let Some(preview) = card["previewText"].as_str().filter(|text| !text.is_empty()) {
+            tile = tile.child(
+                div()
+                    .p_1()
+                    .text_size(px(8.))
+                    .text_color(cx.theme().muted_foreground)
+                    .line_clamp(4)
+                    .child(preview.to_owned()),
+            );
+        } else {
+            tile = tile.flex().items_center().justify_center().child(
+                Icon::new(if card["isDirectory"] == true {
+                    gpui_kit::assets::IconName::Folder
+                } else {
+                    gpui_kit::assets::IconName::FileText
+                })
+                .size(px(22.)),
+            );
+        }
+        tile.into_any_element()
+    }
+
+    pub(super) fn composer_context_pane(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let thread = self.selected.as_ref()?;
-        let raw = thread.get("draftContext").unwrap_or(&Value::Null);
-        if !composer_context::has_context(raw) {
+        let raw = thread.get("draftContext").cloned().unwrap_or(Value::Null);
+        if !composer_context::has_context(&raw) {
             return None;
         }
         let source = text(thread, "id");
@@ -56,22 +162,37 @@ impl Coincide {
             .max_h(px(170.))
             .overflow_y_scroll()
             .flex()
-            .flex_col()
-            .gap_1();
-        if let Err(error) = composer_context::validate(raw) {
+            .flex_wrap()
+            .items_start()
+            .gap_2();
+        if let Err(error) = composer_context::validate(&raw) {
             pane = pane.child(format!("Attached references retained: {error}"));
         }
-        pane=pane.child("References are included when sending. File cards contain paths only; no file content is read or attached.");
-        for (index, card) in composer_context_view::cards(raw).into_iter().enumerate() {
+        for (index, card) in composer_context_view::cards(&raw).into_iter().enumerate() {
+            let row_value = raw.as_array().and_then(|rows| rows.get(index)).cloned();
+            let thumbnail = if card.is_file {
+                row_value
+                    .as_ref()
+                    .map(|value| self.file_reference_preview(value, None, window, cx))
+            } else {
+                None
+            };
+            let icon = if card.is_directory {
+                gpui_kit::assets::IconName::Folder
+            } else {
+                gpui_kit::assets::IconName::FileText
+            };
             let mut title = div().child(card.title.clone()).into_any_element();
             if let Some(id) = card.id.clone() {
                 let source = source.clone();
                 let expected = raw.clone();
                 title = Button::new(("open-composer-context", index))
-                    .label(card.title.clone())
+                    .child(div().w_full().truncate().child(card.title.clone()))
+                    .when(!card.is_file, |button| button.icon(icon))
+                    .w_full()
                     .accessibility_label(format!("Open {}", card.title))
                     .ghost()
-                    .compact()
+                    .xsmall()
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.open_context_details(
                             source.clone(),
@@ -84,70 +205,107 @@ impl Coincide {
                     }))
                     .into_any_element();
             }
-            let content = div()
-                .flex_1()
+            let content = div().flex_1().min_w_0().child(title).child(
+                div()
+                    .px_1()
+                    .line_clamp(2)
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(card.preview),
+            );
+            let mut row = div()
+                .flex()
+                .gap_2()
+                .items_center()
                 .min_w_0()
-                .child(title)
-                .child(div().text_xs().child(card.preview));
-            let mut row = div().flex().gap_2().items_center().child(content);
+                .when(card.is_file, |row| row.w(px(250.)).max_w_full())
+                .when(!card.is_file, |row| row.w_full())
+                .rounded(px(8.))
+                .bg(cx.theme().muted)
+                .border_1()
+                .border_color(cx.theme().border)
+                .px_1()
+                .py_1()
+                .when_some(thumbnail, |row, thumbnail| row.child(thumbnail))
+                .child(content);
             if let Some(id) = card.id {
                 let source = source.clone();
+                let is_file = card.is_file;
                 row = row.child(
                     Button::new(("remove-composer-context", index))
-                        .label("Remove")
+                        .icon(gpui_kit::assets::IconName::Close)
+                        .accessibility_label(format!("Remove {}", card.title))
+                        .tooltip("Remove attachment")
                         .ghost()
-                        .compact()
+                        .xsmall()
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            this.edit_context(&source, Edit::Remove { id: id.clone() }, cx)
+                            if is_file {
+                                if let Some(row) = row_value.clone() {
+                                    this.remove_file_reference(source.clone(), row, cx);
+                                }
+                            } else {
+                                this.edit_context(&source, Edit::Remove { id: id.clone() }, cx);
+                            }
                         })),
                 );
             }
             pane = pane.child(row);
         }
         let source = source.clone();
-        pane = pane.child(
-            Button::new("clear-composer-context")
-                .label("Remove all attached references")
-                .ghost()
-                .compact()
-                .on_click(
-                    cx.listener(move |this, _, _, cx| this.edit_context(&source, Edit::Clear, cx)),
-                ),
-        );
+        if raw.as_array().is_some_and(|rows| rows.len() > 1) {
+            pane = pane.child(
+                Button::new("clear-composer-context")
+                    .label("Clear references")
+                    .ghost()
+                    .xsmall()
+                    .text_color(cx.theme().muted_foreground)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.edit_context(&source, Edit::Clear, cx)
+                    })),
+            );
+        }
         Some(pane.into_any_element())
     }
     pub(super) fn transcript_context_pane(
-        &self,
+        &mut self,
         thread_id: &str,
         item_id: &str,
         item: &Value,
+        row_index: usize,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let raw = &item["context"];
         if !composer_context::has_context(raw) {
             return None;
         }
-        let mut pane = div()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .text_xs()
-            .child("Attached references");
+        let mut pane = div().flex().flex_wrap().items_start().gap_2().text_xs();
         if composer_context::validate(raw).is_err() {
             pane = pane.child("Some saved context is unsupported; its original data is retained.");
         }
         for (index, card) in composer_context_view::cards(raw).into_iter().enumerate() {
-            let title = format!("{}: {}", card.title, card.preview);
+            let title = card.title.clone();
+            let thumbnail = if card.is_file {
+                raw.as_array()
+                    .and_then(|rows| rows.get(index))
+                    .map(|value| self.file_reference_preview(value, Some(row_index), window, cx))
+            } else {
+                None
+            };
             let mut pill = div().child(title.clone()).into_any_element();
             if let Some(id) = card.id {
                 let thread = thread_id.to_owned();
                 let source = context_details::Source::Message(item_id.to_owned());
                 let expected = item.clone();
                 pill = Button::new(("transcript-context-card", index))
-                    .label(title)
+                    .child(div().w_full().truncate().child(title))
+                    .when(!card.is_file, |button| {
+                        button.icon(gpui_kit::assets::IconName::FileText)
+                    })
+                    .w_full()
                     .accessibility_label(format!("Open {}", card.title))
                     .ghost()
-                    .compact()
+                    .xsmall()
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.open_context_details(
                             thread.clone(),
@@ -160,7 +318,32 @@ impl Coincide {
                     }))
                     .into_any_element();
             }
-            pane = pane.child(pill);
+            pane = pane.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .min_w_0()
+                    .when(card.is_file, |row| row.w(px(250.)).max_w_full())
+                    .when(!card.is_file, |row| row.w_full())
+                    .rounded(px(8.))
+                    .bg(cx.theme().muted)
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .px_1()
+                    .py_1()
+                    .when_some(thumbnail, |row, thumbnail| row.child(thumbnail))
+                    .child(
+                        div().flex_1().min_w_0().child(pill).child(
+                            div()
+                                .px_1()
+                                .line_clamp(2)
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(card.preview),
+                        ),
+                    ),
+            );
         }
         Some(pane.into_any_element())
     }

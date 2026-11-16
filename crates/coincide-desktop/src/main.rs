@@ -4889,6 +4889,7 @@ impl Coincide {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let placeholder_background = self.color(0x111722);
+        let compact = width < 60.;
         let placeholder = |label: &'static str| {
             div()
                 .w(px(width))
@@ -4899,8 +4900,12 @@ impl Coincide {
                 .justify_center()
                 .bg(placeholder_background)
                 .rounded_md()
+                .overflow_hidden()
                 .text_xs()
-                .child(label)
+                .when(compact, |view| {
+                    view.child(Icon::new(gpui_kit::assets::IconName::FileText).size(px(18.)))
+                })
+                .when(!compact, |view| view.child(label))
                 .into_any_element()
         };
         let Ok(stored) = serde_json::from_value::<StoredImage>(metadata.clone()) else {
@@ -5036,11 +5041,22 @@ impl Coincide {
             .flex_shrink_0()
             .object_fit(ObjectFit::Contain)
             .rounded_md()
-            .with_loading(|| div().text_xs().child("Loading image…").into_any_element())
-            .with_fallback(|| {
+            .with_loading(move || {
                 div()
                     .text_xs()
-                    .child("Image unavailable")
+                    .when(compact, |view| {
+                        view.child(Icon::new(gpui_kit::assets::IconName::FileText).size(px(18.)))
+                    })
+                    .when(!compact, |view| view.child("Loading image…"))
+                    .into_any_element()
+            })
+            .with_fallback(move || {
+                div()
+                    .text_xs()
+                    .when(compact, |view| {
+                        view.child(Icon::new(gpui_kit::assets::IconName::FileText).size(px(18.)))
+                    })
+                    .when(!compact, |view| view.child("Image unavailable"))
                     .into_any_element()
             })
             .into_any_element()
@@ -5133,6 +5149,20 @@ impl Coincide {
             })
             .collect()
     }
+    fn draft_attachment_count(&self) -> usize {
+        let Some(thread) = self.selected.as_ref() else {
+            return 0;
+        };
+        let id = text(thread, "id");
+        let images = thread["rustDraftImages"]
+            .as_array()
+            .map(|images| self.pending_images.visible(&id, images).len())
+            .unwrap_or(0);
+        let files = thread["draftContext"].as_array().map_or(0, |rows| {
+            rows.iter().filter(|row| row["kind"] == "file").count()
+        });
+        images + files + self.attachment_imports.visible_count(&id)
+    }
     fn draft_images(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
         let thread = self.selected.as_ref()?;
         let id = text(thread, "id");
@@ -5155,26 +5185,49 @@ impl Coincide {
                 .overflow_y_scroll()
                 .mb_2()
                 .children(imports.into_iter().map(|(job, preview)| {
-                    let image = match preview {
-                        composer_attachments::ImportPreview::Path(path) => img(path),
-                        composer_attachments::ImportPreview::Clipboard(image) => img(image),
-                    };
-                    div()
-                        .relative()
-                        .w(px(76.))
-                        .h(px(76.))
-                        .child(
-                            image
+                    let preview = match preview {
+                        composer_attachments::ImportPreview::Path(path)
+                            if !composer_attachments::path_looks_like_image(&path) =>
+                        {
+                            let name = path
+                                .file_name()
+                                .and_then(|name| name.to_str())
+                                .unwrap_or("Attachment")
+                                .to_owned();
+                            div()
                                 .w_full()
                                 .h_full()
                                 .rounded_md()
-                                .object_fit(ObjectFit::Cover),
-                        )
-                        .child(
-                            div().absolute().top(px(2.)).right(px(2.)).child(
-                                Button::new(SharedString::from(format!(
-                                    "cancel-image-import-{job}"
-                                )))
+                                .bg(cx.theme().muted)
+                                .border_1()
+                                .border_color(cx.theme().border)
+                                .flex()
+                                .flex_col()
+                                .items_center()
+                                .justify_center()
+                                .gap_1()
+                                .child(
+                                    Icon::new(gpui_kit::assets::IconName::FileText).size(px(20.)),
+                                )
+                                .child(div().max_w(px(68.)).truncate().text_xs().child(name))
+                                .into_any_element()
+                        }
+                        composer_attachments::ImportPreview::Path(path) => img(path)
+                            .w_full()
+                            .h_full()
+                            .rounded_md()
+                            .object_fit(ObjectFit::Cover)
+                            .into_any_element(),
+                        composer_attachments::ImportPreview::Clipboard(image) => img(image)
+                            .w_full()
+                            .h_full()
+                            .rounded_md()
+                            .object_fit(ObjectFit::Cover)
+                            .into_any_element(),
+                    };
+                    div().relative().w(px(76.)).h(px(76.)).child(preview).child(
+                        div().absolute().top(px(2.)).right(px(2.)).child(
+                            Button::new(SharedString::from(format!("cancel-image-import-{job}")))
                                 .icon(gpui_kit::assets::IconName::Close)
                                 .ghost()
                                 .xsmall()
@@ -5182,13 +5235,13 @@ impl Coincide {
                                 .h(px(18.))
                                 .rounded(px(9.))
                                 .bg(self.color(0x111722).opacity(0.82))
-                                .accessibility_label("Remove image")
-                                .tooltip("Remove image")
-                                .on_click(cx.listener(
-                                    move |this, _, _, cx| this.cancel_image_import(job, cx),
-                                )),
-                            ),
-                        )
+                                .accessibility_label("Remove attachment")
+                                .tooltip("Remove attachment")
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.cancel_image_import(job, cx)
+                                })),
+                        ),
+                    )
                 }))
                 .children(images.iter().map(|image| {
                     let id = text(image, "id");
@@ -5239,7 +5292,12 @@ impl Coincide {
     }
     /// Draw the message the user just sent before the stored thread has it, so
     /// a send appears in the conversation at once instead of a second later.
-    pub(crate) fn show_pending_send(&mut self, id: &str, message: &str) -> Option<u64> {
+    pub(crate) fn show_pending_send(
+        &mut self,
+        id: &str,
+        message: &str,
+        context: &Value,
+    ) -> Option<u64> {
         let images = self
             .selected
             .as_ref()
@@ -5271,6 +5329,9 @@ impl Coincide {
         });
         if !images.is_empty() {
             pending["rustImages"] = json!(images);
+        }
+        if coincide_core::composer_context::has_context(context) {
+            pending["context"] = context.clone();
         }
         self.pending_images.begin(seq, id, images);
         self.submitted_drafts.begin(seq, id, message);
@@ -5489,7 +5550,17 @@ impl Coincide {
             return;
         }
         // Sending nothing while a plan is offered implements it, as in Swift.
-        if self.composer.read(cx).value().trim().is_empty() && self.proposed_plan().is_some() {
+        let has_attached_payload = self.selected.as_ref().is_some_and(|thread| {
+            coincide_core::composer_context::has_context(&thread["draftContext"])
+                || thread["rustDraftImages"]
+                    .as_array()
+                    .is_some_and(|images| !images.is_empty())
+                || self.attachment_imports.contains(&text(thread, "id"))
+        });
+        if self.composer.read(cx).value().trim().is_empty()
+            && !has_attached_payload
+            && self.proposed_plan().is_some()
+        {
             self.implement_plan(window, cx);
             return;
         }
@@ -5564,7 +5635,7 @@ impl Coincide {
                 .update(cx, |input, cx| input.set_value("", window, cx));
             // The engine call runs off the UI thread: the window never freezes
             // behind a send, and a refused send still restores the text.
-            let image_send = self.show_pending_send(&id, &sent);
+            let image_send = self.show_pending_send(&id, &sent, &pending.captured["draftContext"]);
             let engine = self.engine.clone();
             let sent_for_call = sent.clone();
             let captured_for_call = pending.captured;
@@ -5868,12 +5939,20 @@ impl Coincide {
         // Only Rust-ingested metadata is previewable. Legacy imported media is
         // deliberately not opened through arbitrary historical paths.
         let images = item["rustImages"].as_array().cloned().unwrap_or_default();
+        let attachment_count = images.len()
+            + item["context"].as_array().map_or(0, |rows| {
+                rows.iter().filter(|row| row["kind"] == "file").count()
+            });
         // Images a reply points at (Swift's `TranscriptMedia`): Markdown images
         // and image links, plus generated files listed in `attachments`.
         let media = self.reply_media(item);
         let media_cards = self.media_cards(&media);
         let pending_send = item["pendingSend"] == true;
-        let context_pane = self.transcript_context_pane(&source_id, &item_id, item, cx);
+        let context_item =
+            coincide_core::composer_context::has_context(&item["context"]).then(|| item.clone());
+        let context_pane = context_item.as_ref().and_then(|snapshot| {
+            self.transcript_context_pane(&source_id, &item_id, snapshot, index, window, cx)
+        });
         // Swift draws a user's attachments as a grid of small thumbnails and an
         // assistant's generated image as a card. One list, two densities.
         let (media_width, media_height) = if kind == "user" {
@@ -6108,6 +6187,17 @@ impl Coincide {
                     .border_color(self.color(0xe5645c).opacity(0.3))
             })
             .when_some(header, |view, header| view.child(header))
+            .when(kind == "user" && attachment_count > 0, |view| {
+                view.child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(format!(
+                            "{attachment_count} attachment{}",
+                            if attachment_count == 1 { "" } else { "s" }
+                        )),
+                )
+            })
             .when_some(context_pane, |view, context| view.child(context))
             .when_some(other_disclosure, |view, control| view.child(control))
             .child(transcript::preserve_selected_copy(
@@ -6988,6 +7078,7 @@ impl Render for Coincide {
         } else {
             None
         };
+        let attachment_count = self.draft_attachment_count();
         let show_composer = self.chat_visible();
         let importing_images = self.attachment_imports.contains(&selected_id);
         let queue_pane = self.queue_pane(cx);
@@ -7096,8 +7187,12 @@ impl Render for Coincide {
                                                         .max_h(px(160.))
                                                         .flex_shrink_1()
                                                         .overflow_y_scroll()
+                                                        .when(attachment_count > 0, |view| {
+                                                            view.child(div().mb_2().text_xs().text_color(cx.theme().muted_foreground)
+                                                                .child(format!("{attachment_count} attachment{}", if attachment_count == 1 { "" } else { "s" })))
+                                                        })
                                                         .when_some(
-                                                            self.composer_context_pane(cx),
+                                                            self.composer_context_pane(window, cx),
                                                             |view, context| view.child(context),
                                                         )
                                                         .when_some(draft_images, |view, images| {
@@ -7174,16 +7269,17 @@ impl Render for Coincide {
                                                     Button::new("attach-images")
                                                         .flex_shrink_0()
                                                         .icon(gpui_kit::assets::IconName::Paperclip)
+                                                        .when(attachment_count > 0, |button| button.label(attachment_count.to_string()))
                                                         .accessibility_label(if importing_images {
-                                                            "Importing images…"
+                                                            "Adding attachments…"
                                                         } else {
-                                                            "Attach images"
+                                                            "Attach files or folders"
                                                         })
-                                                        .tooltip(if importing_images { "Importing images…" } else { "Attach images" })
+                                                        .tooltip(if importing_images { "Adding attachments…" } else { "Attach files or folders" })
                                                         .compact().ghost()
                                                         .xsmall().h(px(26.)).rounded(px(7.))
-                                                        .on_click(cx.listener(|this, _, _, cx| {
-                                                            this.attach_images(cx)
+                                                        .on_click(cx.listener(|this, _, window, cx| {
+                                                            this.attach_images(window, cx)
                                                         })),
                                                 )
                                                 .child(div().flex_shrink_0().child(self.composer_voice_control(cx)))

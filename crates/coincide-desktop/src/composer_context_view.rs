@@ -5,6 +5,8 @@ pub struct Card {
     pub id: Option<String>,
     pub title: String,
     pub preview: String,
+    pub is_file: bool,
+    pub is_directory: bool,
 }
 pub fn cards(raw: &Value) -> Vec<Card> {
     let Some(rows) = raw.as_array() else {
@@ -34,6 +36,8 @@ pub fn cards(raw: &Value) -> Vec<Card> {
                     .map(str::to_owned),
                 title,
                 preview,
+                is_file: kind == "file",
+                is_directory: kind == "file" && row["isDirectory"] == true,
             }
         })
         .collect()
@@ -49,5 +53,19 @@ mod tests {
         assert_eq!(output.len(), 1);
         assert_eq!(output[0].title, "Unsupported saved reference");
         assert_eq!(raw, before);
+    }
+    #[::core::prelude::v1::test]
+    fn selected_file_and_folder_cards_keep_their_names_and_metadata() {
+        let raw = serde_json::json!([
+            {"id":uuid::Uuid::new_v4(),"kind":"file","path":"/tmp/notes.txt","isDirectory":false,"sizeBytes":22,"previewText":"First line"},
+            {"id":uuid::Uuid::new_v4(),"kind":"file","path":"/tmp/project","isDirectory":true}
+        ]);
+        let output = cards(&raw);
+        assert_eq!(output.len(), 2);
+        assert_eq!(output[0].title, "notes.txt");
+        assert!(output[0].is_file && !output[0].is_directory);
+        assert_eq!(output[0].preview, "TXT · 22 B · First line");
+        assert_eq!(output[1].title, "project");
+        assert!(output[1].is_file && output[1].is_directory);
     }
 }

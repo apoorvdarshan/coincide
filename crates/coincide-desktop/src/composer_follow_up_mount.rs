@@ -134,7 +134,17 @@ impl PendingSend {
         self.import_jobs.extend(jobs);
         self.waiting_for_import = !self.import_jobs.is_empty();
     }
+    #[cfg(test)]
     pub fn complete_import(&mut self, job: u64, imported: &[Value], failed: bool) -> bool {
+        self.complete_attachment_import(job, imported, &[], failed)
+    }
+    pub fn complete_attachment_import(
+        &mut self,
+        job: u64,
+        imported: &[Value],
+        references: &[Value],
+        failed: bool,
+    ) -> bool {
         let Some(index) = self.import_jobs.iter().position(|owned| *owned == job) else {
             return false;
         };
@@ -150,6 +160,19 @@ impl PendingSend {
         }
         self.captured["rustDraftImages"] = json!(images);
         self.selection["images"] = self.captured["rustDraftImages"].clone();
+        if !references.is_empty() {
+            let mut context = self.captured["draftContext"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            for reference in references {
+                if !context.iter().any(|row| row["id"] == reference["id"]) {
+                    context.push(reference.clone());
+                }
+            }
+            self.captured["draftContext"] = json!(context);
+            self.selection["draftContext"] = self.captured["draftContext"].clone();
+        }
         self.import_failed |= failed;
         self.waiting_for_import = !self.import_jobs.is_empty();
         true
@@ -474,6 +497,9 @@ impl Coincide {
                 {
                     item["rustImages"] = entry.captured["rustDraftImages"].clone();
                 }
+                if coincide_core::composer_context::has_context(&entry.captured["draftContext"]) {
+                    item["context"] = entry.captured["draftContext"].clone();
+                }
                 continue;
             }
             let mut item = json!({"id":buffer_id,"kind":"user","text":entry.draft,"createdAt":0,"bufferedSend":true});
@@ -482,6 +508,9 @@ impl Coincide {
                 .is_some_and(|images| !images.is_empty())
             {
                 item["rustImages"] = entry.captured["rustDraftImages"].clone();
+            }
+            if coincide_core::composer_context::has_context(&entry.captured["draftContext"]) {
+                item["context"] = entry.captured["draftContext"].clone();
             }
             items.push(item);
         }
@@ -833,7 +862,7 @@ impl Coincide {
         match result {
             Ok(ticket) => {
                 self.pending_follow_up = None;
-                let image_send = self.show_pending_send(&id, &draft);
+                let image_send = self.show_pending_send(&id, &draft, &thread["draftContext"]);
                 self.pending_drafts.remove(&id);
                 if let Some(thread) = self.selected.as_mut()
                     && text(thread, "id") == id
