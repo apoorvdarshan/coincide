@@ -2187,6 +2187,14 @@ impl Engine {
                     // Removing a row cannot recall a prompt already handed to
                     // a provider. Hide it while retaining its owned claim so
                     // later acknowledgement and recovery remain exactly once.
+                    let owned = self.runs.get(id).and_then(|run| run.queue_claim.as_deref())
+                        == Some(message_id);
+                    if !owned {
+                        // No current worker can acknowledge this old claim.
+                        // It stays non-replayable, but must not keep the queue
+                        // and provider switch blocked after the user dismisses it.
+                        thread["rustMessageQueue"][index]["state"] = json!("interrupted");
+                    }
                     thread["rustMessageQueue"][index]["dismissed"] = json!(true);
                 } else {
                     messages.remove(index);
