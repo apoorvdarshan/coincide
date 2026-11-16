@@ -17,7 +17,7 @@ struct DisplayImage {
 }
 #[derive(Clone)]
 pub(super) enum AttachmentImage {
-    Path(std::path::PathBuf),
+    Path(std::path::PathBuf, Option<(u32, u32)>),
     Image(Arc<Image>),
 }
 struct AttachmentView {
@@ -946,18 +946,25 @@ impl Coincide {
     }
     pub(super) fn historical_image_overlay(&self, cx: &Context<Self>) -> Option<AnyElement> {
         if let Some(view) = &self.media.attachment_viewer {
+            let (maximum_width, maximum_height) = match &view.image {
+                AttachmentImage::Path(_, Some((width, height))) => (
+                    (*width as f32 * 2.).min(1400.),
+                    (*height as f32 * 2.).min(1400.),
+                ),
+                _ => (1400., 1400.),
+            };
             let picture = match &view.image {
-                AttachmentImage::Path(path) => img(path.clone())
+                AttachmentImage::Path(path, _) => img(path.clone())
                     .image_cache(&self.image_assets)
-                    .absolute()
-                    .inset_0()
                     .size_full()
+                    .max_w(px(maximum_width))
+                    .max_h(px(maximum_height))
                     .object_fit(ObjectFit::Contain)
                     .into_any_element(),
                 AttachmentImage::Image(image) => img(image.clone())
-                    .absolute()
-                    .inset_0()
                     .size_full()
+                    .max_w(px(maximum_width))
+                    .max_h(px(maximum_height))
                     .object_fit(ObjectFit::Contain)
                     .into_any_element(),
             };
@@ -967,6 +974,7 @@ impl Coincide {
                     .role(Role::Dialog)
                     .aria_label("Image preview")
                     .p_6()
+                    .when(cfg!(target_os = "macos"), |view| view.pt(px(40.)))
                     .flex()
                     .items_center()
                     .justify_center()
@@ -1019,6 +1027,9 @@ impl Coincide {
                                     .min_h_0()
                                     .w_full()
                                     .overflow_hidden()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
                                     .child(picture),
                             ),
                     )

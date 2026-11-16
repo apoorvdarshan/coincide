@@ -5227,6 +5227,7 @@ impl Coincide {
         let Ok(stored) = serde_json::from_value::<StoredImage>(metadata.clone()) else {
             return placeholder("Image unavailable");
         };
+        let dimensions = (stored.width, stored.height);
         // The complete typed metadata is the cache revision. An ID reused with
         // a different path/dimensions never inherits an earlier validation.
         let Ok(key) = serde_json::to_string(&stored) else {
@@ -5399,7 +5400,7 @@ impl Coincide {
                     });
                 let validated = this.image_previews.get(&key).is_some_and(|entry| matches!(&entry.state, PreviewState::Ready(current) if current == &path));
                 if present && validated {
-                    this.open_attachment_image(&thread_id, name.clone(), legacy_media_mount::AttachmentImage::Path(path.clone()), window, cx);
+                    this.open_attachment_image(&thread_id, name.clone(), legacy_media_mount::AttachmentImage::Path(path.clone(), Some(dimensions)), window, cx);
                 }
             })).into_any_element()
     }
@@ -5518,6 +5519,7 @@ impl Coincide {
                                 preview_name.clone(),
                                 legacy_media_mount::AttachmentImage::Path(
                                     selected_media.path.clone(),
+                                    None,
                                 ),
                                 window,
                                 cx,
@@ -5675,7 +5677,10 @@ impl Coincide {
                                                 .and_then(|name| name.to_str())
                                                 .unwrap_or("Image")
                                                 .to_owned(),
-                                            legacy_media_mount::AttachmentImage::Path(path.clone()),
+                                            legacy_media_mount::AttachmentImage::Path(
+                                                path.clone(),
+                                                None,
+                                            ),
                                         ),
                                         composer_attachments::ImportPreview::Clipboard(image) => (
                                             "Pasted image".into(),
