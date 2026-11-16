@@ -1,5 +1,5 @@
-//! Lithos is a model service for OpenCode, not a separate coding agent.
-//! Only the selected native key account can authorize its discovery.
+//! Lithos models use the OpenCode runtime. Only the selected native key
+//! account can authorize hosted discovery.
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -223,6 +223,29 @@ fn cached_local_models() -> Vec<LocalModel> {
     }
     rows
 }
+
+/// Only models discovered from the selected account or Lithos Metal may use
+/// these reserved IDs. Project configuration cannot invent a Lithos endpoint.
+pub(super) fn available_model_ids() -> Vec<String> {
+    let mut ids = Vec::new();
+    let key = crate::provider_configuration::native_key_var("lithos", "LITHOSAI_API_KEY")
+        .or_else(|| crate::provider_configuration::native_key_var("opencode", "LITHOSAI_API_KEY"));
+    if let Some(key) = key.as_deref().and_then(OsStr::to_str)
+        && let Ok(models) = cached_models(key, false)
+    {
+        ids.extend(
+            models
+                .into_iter()
+                .map(|model| format!("coincide-lithos/{model}")),
+        );
+    }
+    ids.extend(
+        cached_local_models()
+            .into_iter()
+            .map(|(model, _)| format!("coincide-lithos-local/{model}")),
+    );
+    ids
+}
 fn local_overlay(existing: Option<&OsStr>, models: &[LocalModel]) -> Result<String> {
     let mut config = match existing {
         Some(value) => {
@@ -273,7 +296,9 @@ pub(super) fn configure_local(command: &mut Command) -> Result<()> {
     // A named account clears the parent environment. Do not reintroduce an
     // inline configuration belonging to a different account.
     let existing = explicit.unwrap_or_else(|| {
-        if crate::provider_configuration::native_account_profile("opencode") {
+        if crate::provider_configuration::native_account_profile("opencode")
+            || crate::provider_configuration::native_account_profile("lithos")
+        {
             None
         } else {
             std::env::var_os("OPENCODE_CONFIG_CONTENT")

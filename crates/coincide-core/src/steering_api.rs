@@ -59,7 +59,9 @@ impl Engine {
             return Ok(reply);
         }
         let stored = self.store.thread(thread)?;
-        if stored["selection"]["provider"] == "opencode" {
+        if stored["selection"]["provider"] == "opencode"
+            || stored["selection"]["provider"] == "lithos"
+        {
             let expected = json!({"id":thread,"draft":required(p,"text")?,
                 "draftContext":null,"rustDraftImages":[]});
             return self.steer_opencode_composer(&expected);
@@ -125,10 +127,15 @@ impl Engine {
             "Imported conversations are read-only for agent execution until cutover; fork first"
         );
         ensure!(
-            stored["selection"]["provider"] == "opencode",
+            stored["selection"]["provider"] == "opencode"
+                || stored["selection"]["provider"] == "lithos",
             "Active-turn steering is supported only for Codex and OpenCode"
         );
-        self.require_provider_enabled("opencode")?;
+        let provider = stored["selection"]["provider"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        self.require_provider_enabled(&provider)?;
         self.validate_native_follow_up_policy(&stored)?;
         ensure!(
             stored["interactionMode"]
@@ -150,7 +157,7 @@ impl Engine {
         );
         run.session.steer_text(&runtime_text)?;
         let item_id = Uuid::new_v4().to_string();
-        self.persist_text_steer(thread, &item_id, &text, &context, "opencode")?;
+        self.persist_text_steer(thread, &item_id, &text, &context, &provider)?;
         Ok(json!({"operationId":item_id,"threadId":thread,"status":"delivered","persisted":true}))
     }
 

@@ -26,16 +26,18 @@ LM Studio and vLLM discovery is also used; see OpenCode's provider documentation
 for endpoints and authentication. These are models for OpenCode, not separate
 agents. A configured provider must be accessible to the selected OpenCode account.
 
-For hosted Lithos AI, add an OpenCode API-key account in Coincide's provider
-settings, select **Lithos AI** as its key service, and save the key there. Select
-that account in the conversation; Coincide reads the models available to that
-key and exposes them in OpenCode's picker. Keys remain in the native secret
-store and are sent to Lithos in an authorization header, never in a URL.
-OpenCode assumes tool support for these models; actual capabilities depend on
-the model offered by Lithos.
+**Lithos AI** has its own provider entry in Coincide. For hosted models, add a
+Lithos API-key account in its provider settings, save the key, and select that
+account in a conversation using Lithos. Coincide reads the models available to
+that account and shows them in the Lithos picker. Keys remain in the native
+secret store and are sent to Lithos in an authorization header, never in a URL.
+The installed OpenCode executable provides the coding-agent runtime; an
+OpenCode account is not required. Existing OpenCode Lithos key accounts remain
+available in OpenCode. Tool support depends on the model offered by Lithos.
 
 If an unauthenticated Lithos Metal server is running on `127.0.0.1:8000`,
-Coincide discovers the `lithos-metal` models it reports and exposes them to
-OpenCode. A server on a different address or requiring authentication can be
-configured as an OpenCode-compatible provider. Local model/tool support depends
-on the running server and model; no model is downloaded automatically.
+Coincide discovers the `lithos-metal` models it reports and exposes them in the
+Lithos picker without a key. A server on a different address or requiring
+authentication can be configured as an OpenCode-compatible provider. Local
+model/tool support depends on the running server and model; no model is
+downloaded automatically.

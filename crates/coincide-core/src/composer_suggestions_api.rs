@@ -9,6 +9,7 @@ pub struct NativeCommandDiscovery {
     executable: PathBuf,
     profile: Option<crate::codex_login_profiles::LaunchContext>,
     configuration: Option<provider_configuration::LaunchConfiguration>,
+    observation: Option<provider_configuration::Stamp>,
 }
 pub struct NativeCommandReceipt {
     request: NativeCommandDiscovery,
@@ -24,7 +25,7 @@ impl NativeCommandDiscovery {
                 self.profile.as_ref(),
                 &allowed,
             )?,
-            "opencode" => {
+            "opencode" | "lithos" => {
                 crate::agent::opencode_command_metadata(&self.executable, &self.cwd, &allowed)?
             }
             "claude" => {
@@ -52,12 +53,22 @@ impl Engine {
         );
         let thread = self.store.thread(id)?;
         let provider = text(&thread["selection"], "provider");
-        if !matches!(provider.as_str(), "codex" | "opencode" | "claude") {
+        if !matches!(
+            provider.as_str(),
+            "codex" | "opencode" | "lithos" | "claude"
+        ) {
             return Ok(None);
         }
         self.require_provider_enabled(&provider)?;
         let cwd = self.working_directory(&thread)?.canonicalize()?;
-        let configuration = self.provider_metadata_configuration_for_thread(&thread)?;
+        // A metadata snapshot can identify an account but cannot authorize the
+        // read-only provider child. Capture an owned launch separately and
+        // retain the metadata stamp for the later comparison.
+        let observation = self
+            .provider_metadata_configuration_for_thread(&thread)?
+            .as_ref()
+            .map(|configuration| configuration.stamp().clone());
+        let configuration = self.provider_launch_configuration_for_thread(&thread)?;
         let scope = provider_configuration::enter(configuration.clone());
         let profile = if provider == "codex" {
             self.codex_login_context(&thread)?
@@ -66,8 +77,8 @@ impl Engine {
         };
         let executable = if let Some(profile) = &profile {
             profile.executable().to_path_buf()
-        } else if matches!(provider.as_str(), "opencode" | "claude") {
-            let env_name = if provider == "opencode" {
+        } else if matches!(provider.as_str(), "opencode" | "lithos" | "claude") {
+            let env_name = if matches!(provider.as_str(), "opencode" | "lithos") {
                 "COINCIDE_OPENCODE_EXECUTABLE"
             } else {
                 "COINCIDE_CLAUDE_EXECUTABLE"
@@ -82,7 +93,13 @@ impl Engine {
                         .as_str()
                         .map(PathBuf::from)
                 })
-                .unwrap_or_else(|| PathBuf::from(&provider));
+                .unwrap_or_else(|| {
+                    PathBuf::from(if provider == "lithos" {
+                        "opencode"
+                    } else {
+                        &provider
+                    })
+                });
             provider_configuration::current_executable(fallback)
         } else {
             self.composer_codex_executable()?
@@ -96,6 +113,7 @@ impl Engine {
             executable,
             profile,
             configuration,
+            observation,
         }))
     }
     /// Never attach a late result to a different account, project or provider.
@@ -108,9 +126,11 @@ impl Engine {
             "Conversation changed while reading provider commands"
         );
         let current = self.provider_metadata_configuration_for_thread(&thread)?;
+        if let Some(configuration) = &request.configuration {
+            configuration.validate_launch()?;
+        }
         ensure!(
-            current.as_ref().map(|value| value.stamp())
-                == request.configuration.as_ref().map(|value| value.stamp()),
+            current.as_ref().map(|value| value.stamp()) == request.observation.as_ref(),
             "Provider settings changed while reading commands"
         );
         let account = &thread["selection"]["accountID"];
@@ -170,6 +190,70 @@ impl Engine {
 mod tests {
     use super::*;
     use std::sync::mpsc;
+
+    #[cfg(unix)]
+    #[test]
+    fn named_account_commands_use_an_owned_launch_and_keep_their_scope() {
+        use std::os::unix::fs::PermissionsExt;
+        let (root, mut engine, binary) = provider_configuration::tests::fixture();
+        std::fs::write(&binary, r##"#!/usr/bin/env python3
+import json,os,sys
+assert os.environ.get('CLAUDE_CONFIG_DIR')
+request=json.loads(sys.stdin.readline())
+print(json.dumps({'type':'control_response','response':{'subtype':'success','request_id':request['request_id'],'response':{'commands':[{'name':'account-skill','builtin':False}]}}}),flush=True)
+"##).unwrap();
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+        provider_configuration::tests::save(&mut engine, "claude", &binary, "synthetic");
+        let account = engine
+            .create_native_login_account("claude", "Named")
+            .unwrap();
+        let auth = account.home.join(".credentials.json");
+        std::fs::write(&auth, b"synthetic credential fixture").unwrap();
+        std::fs::set_permissions(&auth, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let mut thread = engine
+            .execute("threads.create", &json!({"cwd":root.path()}))
+            .unwrap();
+        thread["selection"]["provider"] = json!("claude");
+        thread["worktreePath"] = json!(root.path());
+        engine.store.save(&thread).unwrap();
+        let id = text(&thread, "id");
+        engine.set_active_thread(Some(id.clone())).unwrap();
+        engine
+            .select_native_provider_account(&thread, Some(&account.id))
+            .unwrap();
+        let request = engine
+            .prepare_native_command_discovery(&id)
+            .unwrap()
+            .unwrap();
+        assert!(
+            request
+                .configuration
+                .as_ref()
+                .unwrap()
+                .validate_launch()
+                .is_ok()
+        );
+        let receipt = request.read(|| true).unwrap();
+        engine.accept_native_command_discovery(receipt).unwrap();
+        let commands = engine
+            .execute("composer.commands", &json!({"threadId":id}))
+            .unwrap();
+        assert!(
+            commands["commands"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|command| command["name"] == "account-skill")
+        );
+        let receipt = engine
+            .prepare_native_command_discovery(&id)
+            .unwrap()
+            .unwrap()
+            .read(|| true)
+            .unwrap();
+        std::fs::write(&auth, b"changed synthetic credential fixture").unwrap();
+        assert!(engine.accept_native_command_discovery(receipt).is_err());
+    }
 
     #[cfg(unix)]
     #[test]

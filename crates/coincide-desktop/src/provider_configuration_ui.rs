@@ -1133,7 +1133,9 @@ impl Panel {
                             .label("Open Setup Website")
                             .on_click(move |_, _, cx| cx.open_url(url)),
                     )
-                    .child(if provider == "antigravity" {
+                    .child(if provider == "lithos" {
+                        "Add a Lithos API key account for hosted models, or start a local Lithos server."
+                    } else if provider == "antigravity" {
                         "Add a Gemini API key account and select it in the composer."
                     } else {
                         "After installing or signing in, choose Check Again."
@@ -1209,6 +1211,7 @@ fn setup_website(provider: &str) -> &'static str {
         "cursor" => "https://cursor.com/cli",
         "grok" => "https://x.ai/cli",
         "opencode" => "https://opencode.ai",
+        "lithos" => "https://console.lithosai.cloud/",
         "antigravity" => "https://antigravity.google/docs/ide/extensions/acp",
         _ => "https://antigravity.google",
     }

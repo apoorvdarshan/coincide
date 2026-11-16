@@ -72,6 +72,7 @@ fn named_providers_never_silently_route_unsupported_transports() {
             "claude",
             "grok",
             "opencode",
+            "lithos",
             "cursor",
             "antigravity"
         ]

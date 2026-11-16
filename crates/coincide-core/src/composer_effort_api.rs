@@ -25,7 +25,7 @@ impl Engine {
     ) -> Result<Option<crate::model_catalog::CodexEffortProof>> {
         // OpenCode carries its reasoning variant in the model reference and
         // needs no Codex executable proof.
-        if selection["provider"] == "opencode" {
+        if selection["provider"] == "opencode" || selection["provider"] == "lithos" {
             return Ok(None);
         }
         if selection["effort"].is_null()

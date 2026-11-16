@@ -27,7 +27,7 @@ fn entry(report: &DiscoveryReport, id: ProviderId) -> &DiscoveredProvider {
 }
 
 #[test]
-fn catalog_matches_six_legacy_provider_identities_and_transports() {
+fn catalog_includes_lithos_with_its_own_identity_and_agent_transport() {
     let expected = [
         (
             ProviderId::Claude,
@@ -60,6 +60,12 @@ fn catalog_matches_six_legacy_provider_identities_and_transports() {
             TransportKind::OpenCodeHttpSse,
         ),
         (
+            ProviderId::Lithos,
+            "lithos",
+            "Lithos AI",
+            TransportKind::OpenCodeHttpSse,
+        ),
+        (
             ProviderId::Antigravity,
             "antigravity",
             "Antigravity",
@@ -87,13 +93,13 @@ fn catalog_matches_six_legacy_provider_identities_and_transports() {
 }
 
 #[test]
-fn discovers_all_six_without_executing_fixture_contents() {
+fn discovers_providers_without_executing_fixture_contents() {
     let temp = tempfile::tempdir().unwrap();
     for descriptor in provider_catalog() {
         executable(temp.path(), descriptor.executable_candidates[0]);
     }
     let report = discover_on_path(Some(&path(&[temp.path()])), DiscoveryLimits::default());
-    assert_eq!(report.providers.len(), 6);
+    assert_eq!(report.providers.len(), provider_catalog().len());
     for descriptor in provider_catalog() {
         let found = entry(&report, descriptor.id);
         assert_eq!(found.state, InstallationState::Found);
@@ -254,7 +260,11 @@ fn hard_entry_cap_applies_even_to_duplicate_directories() {
     // Deduplication avoids repeatedly checking the same files.
     assert_eq!(
         report.inspected_candidates,
-        if cfg!(windows) { 35 } else { 7 }
+        provider_catalog()
+            .iter()
+            .map(|provider| provider.executable_candidates.len())
+            .sum::<usize>()
+            * if cfg!(windows) { 5 } else { 1 }
     );
 }
 

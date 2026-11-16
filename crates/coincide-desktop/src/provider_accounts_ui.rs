@@ -1093,7 +1093,9 @@ impl Panel {
             .border_1()
             .border_color(cx.theme().border)
             .child(div().font_weight(FontWeight::SEMIBOLD).child("Accounts"))
-            .child(if provider == "antigravity" {
+            .child(if provider == "lithos" {
+                div().text_sm().child("Add a Lithos API key account for hosted models. Local models do not require a key.")
+            } else if provider == "antigravity" {
                 div().text_sm().child("Add a Gemini API key account, then select it in the composer. Google-account login is unavailable.")
             } else {
                 div().flex().flex_col().gap_1().child("Default").child(

@@ -191,7 +191,7 @@ impl Probe {
                     }
                 }
             }
-            "opencode" => {
+            "opencode" | "lithos" => {
                 self.binary.validate()?;
                 if report
                     .version
@@ -205,7 +205,14 @@ impl Probe {
                     )
                 {
                     report.models = models;
-                    report.integrations = integrations;
+                    if self.provider == "lithos" {
+                        crate::model_catalog::retain_available_lithos_models(
+                            &mut report.models,
+                            &crate::agent::opencode_lithos_model_ids(),
+                        );
+                    } else {
+                        report.integrations = integrations;
+                    }
                 }
             }
             "codex" => {}

@@ -135,6 +135,7 @@ pub fn details(card: &Value) -> Result<Details> {
                             "cursor" => "Cursor",
                             "grok" => "Grok",
                             "opencode" => "OpenCode",
+                            "lithos" => "Lithos AI",
                             "antigravity" => "Antigravity",
                             other => other,
                         }

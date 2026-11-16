@@ -1773,7 +1773,7 @@ fn text_steer_waits_for_ack_without_blocking_and_preserves_new_draft(provider: &
         observed.recv_timeout(Duration::from_secs(5)).unwrap(),
         "first steering message"
     );
-    if provider == "opencode"
+    if matches!(provider, "opencode" | "lithos")
         && let Some(Delivery::TextSteer { started, .. }) = engine
             .native_follow_up
             .operations
@@ -1905,6 +1905,10 @@ fn opencode_steer_waits_for_ack_without_blocking_and_preserves_new_draft() {
     text_steer_waits_for_ack_without_blocking_and_preserves_new_draft("opencode");
 }
 #[test]
+fn lithos_steer_waits_for_ack_without_blocking_and_preserves_new_draft() {
+    text_steer_waits_for_ack_without_blocking_and_preserves_new_draft("lithos");
+}
+#[test]
 fn claude_steer_waits_for_ack_without_blocking_and_preserves_new_draft() {
     text_steer_waits_for_ack_without_blocking_and_preserves_new_draft("claude");
 }
@@ -1914,6 +1918,7 @@ fn queue_and_interrupt_target_only_the_running_worker_for_every_provider() {
     for provider in [
         "codex",
         "opencode",
+        "lithos",
         "claude",
         "cursor",
         "grok",

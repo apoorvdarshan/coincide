@@ -11,13 +11,14 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// `ProviderAccount.defaultID`; a record without an account ran with it.
 pub const DEFAULT_ACCOUNT: &str = "default";
-/// Swift's `ProviderKind.allCases`, which orders the chart's stacks and legend.
-pub const PROVIDERS: [&str; 6] = [
+/// Orders the chart's stacks and legend.
+pub const PROVIDERS: [&str; 7] = [
     "claude",
     "codex",
     "cursor",
     "grok",
     "opencode",
+    "lithos",
     "antigravity",
 ];
 

@@ -200,6 +200,10 @@ pub(super) fn workspace_metadata(
     metadata::read_workspace(executable, cwd, allowed)
 }
 
+pub(super) fn lithos_model_ids() -> Vec<String> {
+    lithos::available_model_ids()
+}
+
 struct Server {
     child: OwnedChild,
     http: Http,
@@ -222,12 +226,38 @@ impl Server {
         crate::provider_configuration::apply_to_child(&mut command, false)?;
         isolate_environment(&mut command);
         if let Some(key) =
-            crate::provider_configuration::native_key_var("opencode", "LITHOSAI_API_KEY")
+            crate::provider_configuration::native_key_var("lithos", "LITHOSAI_API_KEY").or_else(
+                || crate::provider_configuration::native_key_var("opencode", "LITHOSAI_API_KEY"),
+            )
         {
-            lithos::configure(&mut command, &key, launch.prompt.is_empty())?;
+            let result = lithos::configure(&mut command, &key, launch.prompt.is_empty());
+            if launch
+                .model
+                .as_deref()
+                .is_some_and(|model| model.starts_with("coincide-lithos/"))
+            {
+                result?;
+            }
         }
         // Local discovery is optional and cannot block other providers.
-        let _ = lithos::configure_local(&mut command);
+        let local = lithos::configure_local(&mut command);
+        if launch
+            .model
+            .as_deref()
+            .is_some_and(|model| model.starts_with("coincide-lithos-local/"))
+        {
+            local?;
+        }
+        if let Some(model) = launch
+            .model
+            .as_deref()
+            .filter(|model| crate::model_catalog::lithos_model_id(model))
+        {
+            ensure!(
+                lithos::available_model_ids().iter().any(|id| id == model),
+                "The selected Lithos model is no longer available from its configured service"
+            );
+        }
         command
             .env_remove("OPENCODE_SERVER_PASSWORD")
             .env("OPENCODE_PASSWORD", &password);

@@ -47,6 +47,7 @@ pub(super) fn provider_key(provider: ProviderId) -> &'static str {
         ProviderId::Cursor => "cursor",
         ProviderId::Grok => "grok",
         ProviderId::Opencode => "opencode",
+        ProviderId::Lithos => "lithos",
         ProviderId::Antigravity => "antigravity",
     }
 }
@@ -749,7 +750,7 @@ impl Coincide {
                 div()
                     .text_xs()
                     .text_color(self.color(0x98a6ba))
-                    .child(if provider == ProviderId::Antigravity { "Uses the Gemini API with a saved API-key account. Google-account login is unavailable." } else { "Uses the provider’s command-line tool and your existing sign-in." }),
+                    .child(if provider == ProviderId::Lithos { "Uses Lithos models with the installed OpenCode coding runtime. No OpenCode account is needed." } else if provider == ProviderId::Antigravity { "Uses the Gemini API with a saved API-key account. Google-account login is unavailable." } else { "Uses the provider’s command-line tool and your existing sign-in." }),
             );
         if enabled {
             pane = pane.child(

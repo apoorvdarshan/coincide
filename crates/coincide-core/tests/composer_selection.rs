@@ -13,7 +13,7 @@ fn static_capabilities_never_claim_discovered_or_authenticated_models() {
     assert_eq!(value["provenance"], "static_runtime_contract");
     assert_eq!(value["authenticationChecked"], false);
     assert_eq!(value["modelsDiscovered"], false);
-    assert_eq!(value["providers"].as_array().unwrap().len(), 6);
+    assert_eq!(value["providers"].as_array().unwrap().len(), 7);
     for provider in value["providers"].as_array().unwrap() {
         assert_eq!(
             provider["models"],

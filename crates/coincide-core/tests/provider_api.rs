@@ -99,6 +99,48 @@ fn public_requests_cannot_enroll_an_agent_or_read_another_account() {
 }
 
 #[test]
+fn lithos_never_sends_to_a_default_or_other_service_model() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut engine =
+        Engine::new(Store::open(&directory.path().join("private/state.sqlite")).unwrap());
+    let thread = call(
+        &mut engine,
+        "threads.create",
+        json!({"cwd":directory.path()}),
+    );
+    let id = thread["id"].as_str().unwrap();
+    let mut stored = engine.store.thread(id).unwrap();
+    stored["worktreePath"] = json!(directory.path());
+    engine.store.save(&stored).unwrap();
+    for (model, expected_error) in [
+        ("default", "Choose a Lithos model before sending"),
+        (
+            "openai/another-model",
+            "Choose a Lithos model before sending",
+        ),
+        (
+            "coincide-lithos/hosted-model",
+            "Add and select a Lithos API key account before using a hosted model",
+        ),
+    ] {
+        call(
+            &mut engine,
+            "agent.select",
+            json!({"threadId":id,"provider":"lithos","model":model}),
+        );
+        let before = engine.store.thread(id).unwrap();
+        let result = engine.dispatch(
+            json!({"method":"agent.send","params":{"threadId":id,"text":"keep this draft"}}),
+        );
+        assert_eq!(
+            result["error"]["message"], expected_error,
+            "{model}: {result}"
+        );
+        assert_eq!(engine.store.thread(id).unwrap(), before);
+    }
+}
+
+#[test]
 fn registered_acp_without_resume_keeps_history_across_turns() {
     let directory = tempfile::tempdir().unwrap();
     let executable = directory.path().join("fixture-acp");

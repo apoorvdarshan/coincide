@@ -469,7 +469,7 @@ fn auth_keys(provider: &str) -> &'static [&'static str] {
     match provider {
         "claude" => &["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"],
         "grok" => &["XAI_API_KEY"],
-        "opencode" => &[
+        "opencode" | "lithos" => &[
             "OPENCODE_API_KEY",
             "ANTHROPIC_API_KEY",
             "OPENAI_API_KEY",
@@ -816,7 +816,7 @@ impl Engine {
         ensure!(
             matches!(
                 provider.as_str(),
-                "claude" | "cursor" | "grok" | "opencode" | "antigravity" | "codex"
+                "claude" | "cursor" | "grok" | "opencode" | "lithos" | "antigravity" | "codex"
             ),
             "Use this provider's existing guarded account workflow"
         );
@@ -973,7 +973,7 @@ fn build_configuration(
     });
     let home_variable = if profile.account.authentication == Authentication::Login {
         Some(supported(provider)?)
-    } else if provider == "opencode" {
+    } else if matches!(provider, "opencode" | "lithos") {
         Some("XDG_DATA_HOME")
     } else if provider == "codex" {
         Some("CODEX_HOME")

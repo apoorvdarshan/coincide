@@ -52,6 +52,7 @@ pub(super) fn provider_id(provider: &str) -> Option<ProviderId> {
         "cursor" => ProviderId::Cursor,
         "grok" => ProviderId::Grok,
         "opencode" => ProviderId::Opencode,
+        "lithos" => ProviderId::Lithos,
         "antigravity" => ProviderId::Antigravity,
         _ => return None,
     })
@@ -1772,7 +1773,7 @@ mod presentation_tests {
                 .iter()
                 .map(|card| card.account.provider)
                 .collect::<Vec<_>>(),
-            ["codex", "grok"]
+            ["codex", "grok", "lithos"]
         );
     }
 
