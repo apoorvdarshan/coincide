@@ -4799,7 +4799,9 @@ impl Coincide {
                 let failed = outcome.is_err();
                 this.finish_image_import(job, &thread_id, Vec::new(), outcome.err(), cx);
                 this.status = if failed { "Image could not be removed; it remains in the draft." } else { "Image removed from this draft." }.into();
-                if failed { this.show_local_error("The image could not be removed. It remains in the draft, and any waiting message was not sent."); }
+                if failed && this.selected.as_ref().is_some_and(|thread| text(thread, "id") == thread_id) {
+                    this.show_local_error("The image could not be removed. It remains in the draft, and any waiting message was not sent.");
+                }
                 cx.notify();
             });
         }).detach();
