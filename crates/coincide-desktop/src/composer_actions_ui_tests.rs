@@ -19,25 +19,54 @@ const ACTIONS: [(&str, &str); 4] = [
     ("layout-stop", "Stop"),
     ("layout-send", "Send"),
 ];
+const WIDTHS: [f32; 6] = [150., 70., 65., 110., 80., 65.];
+
+fn layout(width: f32) -> ([bool; 6], [bool; 6]) {
+    let room = (width - 136.).max(0.);
+    let hidden = crate::composer_selection::footer_overflow(WIDTHS, room);
+    let mut visible = WIDTHS;
+    for (width, hide) in visible.iter_mut().zip(hidden) {
+        if hide {
+            *width = 0.;
+        }
+    }
+    let menu = if hidden.iter().any(|hide| *hide) {
+        30.
+    } else {
+        0.
+    };
+    let compact = crate::composer_selection::footer_compaction(visible, (room - menu).max(0.));
+    (hidden, compact)
+}
 
 struct Harness {
     hits: Rc<Cell<usize>>,
 }
 impl Render for Harness {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let (hidden, compact) = layout(f32::from(window.viewport_size().width));
         let mut controls = composer_selection_controls();
-        for (selector, label) in CHIPS {
-            controls = controls.child(chip(selector, label, self.hits.clone()));
+        for (index, (selector, label)) in CHIPS.into_iter().enumerate() {
+            if !hidden[index] {
+                controls = controls.child(chip(
+                    selector,
+                    label,
+                    if compact[index] { 28. } else { WIDTHS[index] },
+                    self.hits.clone(),
+                ));
+            }
+        }
+        if hidden.iter().any(|hide| *hide) {
+            controls = controls.child(chip("layout-more", "…", 28., self.hits.clone()));
         }
         let mut actions = div()
             .flex()
-            .flex_wrap()
             .items_center()
             .justify_end()
             .min_w_0()
             .gap(px(6.));
         for (selector, label) in ACTIONS {
-            actions = actions.child(chip(selector, label, self.hits.clone()));
+            actions = actions.child(chip(selector, label, 28., self.hits.clone()));
         }
         div().size_full().child(composer_actions(
             controls.into_any_element(),
@@ -45,13 +74,16 @@ impl Render for Harness {
         ))
     }
 }
-fn chip(selector: &'static str, label: &'static str, hits: Rc<Cell<usize>>) -> Div {
+fn chip(selector: &'static str, label: &'static str, width: f32, hits: Rc<Cell<usize>>) -> Div {
     div()
         .debug_selector(move || selector.into())
         .flex_shrink_0()
+        .w(px(width))
         .child(
             gpui_kit::component::button::Button::new(selector)
-                .label(label)
+                .label(if width == 28. { "•" } else { label })
+                .w_full()
+                .p_0()
                 .h(px(28.))
                 .on_click(move |_, _, _| hits.set(hits.get() + 1)),
         )
@@ -79,8 +111,18 @@ fn headless_composer_controls_fit_and_remain_clickable_at_multiple_widths(cx: &m
             draw(window, cx);
             draw(window, cx);
         });
+        let (hidden, _) = layout(width);
+        let mut expected = CHIPS
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, item)| (!hidden[index]).then_some(item.0))
+            .collect::<Vec<_>>();
+        if hidden.iter().any(|hide| *hide) {
+            expected.push("layout-more");
+        }
+        expected.extend(ACTIONS.into_iter().map(|item| item.0));
         let mut bounds = Vec::new();
-        for (selector, _) in CHIPS.into_iter().chain(ACTIONS) {
+        for selector in &expected {
             let item = cx
                 .debug_bounds(selector)
                 .unwrap_or_else(|| panic!("missing {selector} at {width}"));
@@ -94,14 +136,21 @@ fn headless_composer_controls_fit_and_remain_clickable_at_multiple_widths(cx: &m
                     "{selector} overlaps {other} at {width}px"
                 );
             }
+            if let Some((_, first)) = bounds.first() {
+                assert!(
+                    (f32::from(item.top()) - f32::from(first.top())).abs() < 0.5,
+                    "{selector} wrapped at {width}px"
+                );
+            }
             bounds.push((selector, item));
         }
-        for selector in [
-            "layout-model",
-            "layout-follow",
-            "layout-attach",
-            "layout-send",
-        ] {
+        let mut clickable = vec!["layout-model", "layout-attach", "layout-send"];
+        clickable.push(if hidden.iter().any(|hide| *hide) {
+            "layout-more"
+        } else {
+            "layout-follow"
+        });
+        for selector in clickable {
             let position = cx.debug_bounds(selector).unwrap().center();
             let before = hits.get();
             cx.simulate_mouse_move(position, None, Modifiers::default());

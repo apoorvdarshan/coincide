@@ -359,7 +359,7 @@ impl Coincide {
         } else {
             available
         };
-        ((chat as f32 - presentation::CONTENT_GUTTER * 2.).min(presentation::CONTENT_WIDTH) - 24.)
+        ((chat as f32 - presentation::CONTENT_GUTTER * 2.).min(presentation::CONTENT_WIDTH) - 34.)
             .max(0.)
     }
     pub(super) fn ensure_terminal_space(&self, window: &mut Window) {

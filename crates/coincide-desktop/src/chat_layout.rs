@@ -166,14 +166,12 @@ pub(super) fn provider_label(provider: &str, label: String) -> AnyElement {
         .into_any_element()
 }
 
-/// Keep the selection chips and the send actions in distinct flex items. When
-/// the conversation narrows, the action group moves to a second line instead
-/// of drawing over the chips; each group can also wrap at very small widths.
+/// Keep the selection chips and send actions on one row. At very small sizes
+/// the selection strip can scroll without covering the always-visible actions.
 pub(super) fn composer_actions(selection: AnyElement, actions: AnyElement) -> AnyElement {
     div()
         .id("composer-actions")
         .flex()
-        .flex_wrap()
         .flex_shrink_0()
         .items_center()
         .justify_end()
@@ -184,9 +182,9 @@ pub(super) fn composer_actions(selection: AnyElement, actions: AnyElement) -> An
             div()
                 .debug_selector(|| "composer-selection-slot".into())
                 .flex_1()
-                .flex_basis(px(190.))
                 .min_w_0()
-                .max_w_full()
+                .id("composer-selection-scroll")
+                .overflow_x_scroll()
                 .child(selection),
         )
         .child(
@@ -200,12 +198,7 @@ pub(super) fn composer_actions(selection: AnyElement, actions: AnyElement) -> An
 }
 
 pub(super) fn composer_selection_controls() -> Div {
-    div()
-        .flex()
-        .flex_wrap()
-        .items_center()
-        .min_w_0()
-        .gap(px(2.))
+    div().flex().items_center().min_w_0().gap(px(2.))
 }
 
 #[cfg(test)]

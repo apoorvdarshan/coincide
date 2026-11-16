@@ -7854,7 +7854,6 @@ impl Render for Coincide {
                                                 self.composer_selection_footer(window, implement_button.is_some(), cx),
                                                 div()
                                                 .flex()
-                                                .flex_wrap()
                                                 .items_center()
                                                 .justify_end()
                                                 .min_w_0()
