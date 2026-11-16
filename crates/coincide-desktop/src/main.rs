@@ -4716,10 +4716,14 @@ impl Coincide {
                     .is_some_and(|choices| choices.contains(&label));
                 let key = key.clone();
                 let selected_label = label.clone();
+                let accessible_label = label.clone();
                 let option_id =
                     SharedString::from(format!("answer-{request_id}-{step}-{option_index}"));
                 let mut row = div()
-                    .id(option_id)
+                    .id(SharedString::from(format!(
+                        "answer-visual-{request_id}-{step}-{option_index}"
+                    )))
+                    .w_full()
                     .flex()
                     .items_start()
                     .gap_2()
@@ -4730,8 +4734,10 @@ impl Coincide {
                     .when(chosen, |row| row.bg(accent.opacity(0.14)))
                     .when(!chosen, |row| {
                         row.hover(|row| row.bg(self.color(0xe4e9f2).opacity(0.05)))
-                    })
-                    .on_click(cx.listener(move |this, _, window, cx| {
+                    });
+                let owner = cx.entity().downgrade();
+                let choose = move |window: &mut Window, app: &mut App| {
+                    let _ = owner.update(app, |this, cx| {
                         let choices = this.pending_choices.entry(key.clone()).or_default();
                         if multiple {
                             if choices.contains(&selected_label) {
@@ -4746,7 +4752,8 @@ impl Coincide {
                             input.update(cx, |input, cx| input.set_value("", window, cx));
                         }
                         cx.notify();
-                    }));
+                    });
+                };
                 row = row.child(
                     div()
                         .mt(px(2.))
@@ -4779,7 +4786,26 @@ impl Coincide {
                             column.child(div().text_xs().text_color(tertiary).child(description))
                         }),
                 );
-                options = options.child(row);
+                let control = if multiple {
+                    gpui_base::Checkbox::new(option_id)
+                        .w_full()
+                        .checked(chosen)
+                        .disabled(submitting)
+                        .accessibility_label(accessible_label)
+                        .on_change(move |_, _, window, app| choose(window, app))
+                        .child(row)
+                        .into_any_element()
+                } else {
+                    gpui_base::Radio::new(option_id)
+                        .w_full()
+                        .checked(chosen)
+                        .disabled(submitting)
+                        .accessibility_label(accessible_label)
+                        .on_change(move |_, _, window, app| choose(window, app))
+                        .child(row)
+                        .into_any_element()
+                };
+                options = options.child(control);
             }
             section = section.child(options);
             if question["allowsFreeText"] != false
