@@ -182,17 +182,6 @@ impl Coincide {
         } else {
             body
         };
-        let body = if let Some(error) = self.inspector_follow.error.clone() {
-            div()
-                .flex()
-                .flex_col()
-                .h_full()
-                .child(div().p_2().text_sm().child(error))
-                .child(body)
-                .into_any_element()
-        } else {
-            body
-        };
         self.inspector_surface(id, body, window, cx)
     }
 }
