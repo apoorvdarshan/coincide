@@ -28,6 +28,76 @@ pub(super) fn agent_request_allowed(settings: &Value, thread: &str, native: bool
         .map_or(true, |value| value.as_bool().unwrap_or(false))
 }
 
+/// A native click is retained until the engine can persist it. While a change
+/// is unsettled, agent requests fail closed; native browser controls continue
+/// to work. A non-contention error remains queued but is not retried silently.
+#[derive(Default)]
+pub(super) struct PendingControls {
+    choices: std::collections::BTreeMap<String, bool>,
+    failed: std::collections::BTreeSet<String>,
+}
+
+enum PersistControl {
+    Waiting,
+    Saved(Value),
+    Failed(anyhow::Error),
+}
+
+impl PendingControls {
+    fn choice(&self, thread: &str) -> Option<bool> {
+        self.choices
+            .iter()
+            .find_map(|(id, choice)| id.eq_ignore_ascii_case(thread).then_some(*choice))
+    }
+
+    fn displayed(&self, settings: &Value, thread: &str) -> bool {
+        if self.failed.iter().any(|id| id.eq_ignore_ascii_case(thread)) {
+            return false;
+        }
+        self.choice(thread)
+            .unwrap_or_else(|| agent_request_allowed(settings, thread, false))
+    }
+
+    pub(super) fn request_allowed(&self, settings: &Value, thread: &str, native: bool) -> bool {
+        native || (self.choice(thread).is_none() && agent_request_allowed(settings, thread, false))
+    }
+
+    fn queue(&mut self, thread: &str, enabled: bool) {
+        self.choices
+            .retain(|id, _| !id.eq_ignore_ascii_case(thread));
+        self.failed.retain(|id| !id.eq_ignore_ascii_case(thread));
+        self.choices.insert(thread.to_owned(), enabled);
+    }
+
+    fn persist_one(
+        &mut self,
+        shared: &SharedEngine,
+        native: &std::collections::HashSet<String>,
+    ) -> PersistControl {
+        let Some((thread, enabled)) = self
+            .choices
+            .iter()
+            .find(|(id, _)| !self.failed.contains(*id))
+            .map(|(id, enabled)| (id.clone(), *enabled))
+        else {
+            return PersistControl::Waiting;
+        };
+        let result = try_state(shared)
+            .and_then(|mut engine| engine.set_browser_agent_control(&thread, enabled, native));
+        match result {
+            Ok(settings) => {
+                self.choices.remove(&thread);
+                PersistControl::Saved(settings)
+            }
+            Err(error) if engine_busy(&error) => PersistControl::Waiting,
+            Err(error) => {
+                self.failed.insert(thread);
+                PersistControl::Failed(error)
+            }
+        }
+    }
+}
+
 impl Coincide {
     pub(super) fn browser_pane_controls_visible(&self) -> bool {
         !self.settings_open
@@ -55,25 +125,32 @@ impl Coincide {
         {
             return;
         }
-        let enabled = !agent_request_allowed(&self.browser_control, thread, false);
-        let native = self.browser_ui_operations.keys().cloned().collect();
-        let result = self
-            .engine
-            .try_lock()
-            .map_err(|_| anyhow::anyhow!("The app is busy"))
-            .and_then(|mut engine| engine.set_browser_agent_control(thread, enabled, &native));
-        match result {
-            Ok(settings) => {
-                self.browser_control = settings;
-                if !enabled {
-                    if let Some(browser) = &mut self.browser {
-                        browser.revoke_agent_control(thread);
-                    }
-                    self.credential_panel
-                        .update(cx, |panel, cx| panel.cancel(cx));
-                }
+        let enabled = !self
+            .pending_browser_control
+            .displayed(&self.browser_control, thread);
+        self.pending_browser_control.queue(thread, enabled);
+        if !enabled {
+            if let Some(browser) = &mut self.browser {
+                browser.revoke_agent_control(thread);
             }
-            Err(error) => self.status = format!("Agent Control was not changed: {error}"),
+            self.credential_panel
+                .update(cx, |panel, cx| panel.cancel(cx));
+        }
+        self.poll_pending_browser_control(cx);
+        cx.notify();
+    }
+
+    pub(super) fn poll_pending_browser_control(&mut self, cx: &mut Context<Self>) {
+        let native = self.browser_ui_operations.keys().cloned().collect();
+        match self
+            .pending_browser_control
+            .persist_one(&self.engine, &native)
+        {
+            PersistControl::Waiting => return,
+            PersistControl::Saved(settings) => self.browser_control = settings,
+            PersistControl::Failed(error) => {
+                self.status = format!("Agent Control could not be saved: {error}");
+            }
         }
         cx.notify();
     }
@@ -92,7 +169,9 @@ impl Coincide {
         thread: &str,
         cx: &mut Context<Self>,
     ) -> Button {
-        let enabled = agent_request_allowed(&self.browser_control, thread, false);
+        let enabled = self
+            .pending_browser_control
+            .displayed(&self.browser_control, thread);
         let thread = thread.to_owned();
         Button::new("browser-agent-control")
             .icon(gpui_kit::assets::IconName::Hand)
@@ -241,6 +320,74 @@ impl Coincide {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
+
+    #[::core::prelude::v1::test]
+    fn busy_control_click_is_kept_and_fails_closed_until_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = Engine::new(Store::open(&dir.path().join("state.sqlite")).unwrap());
+        let thread = engine.execute("threads.create", &json!({})).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let shared = Arc::new(Mutex::new(engine));
+        let initial = shared.lock().unwrap().browser_agent_control_settings();
+        let mut pending = PendingControls::default();
+        pending.queue(&thread, false);
+        let locked = shared.lock().unwrap();
+        assert!(matches!(
+            pending.persist_one(&shared, &Default::default()),
+            PersistControl::Waiting
+        ));
+        assert!(!pending.displayed(&initial, &thread));
+        assert!(!pending.request_allowed(&initial, &thread, false));
+        assert!(pending.request_allowed(&initial, &thread, true));
+        drop(locked);
+        let PersistControl::Saved(saved) = pending.persist_one(&shared, &Default::default()) else {
+            panic!("the queued click was not persisted")
+        };
+        assert_eq!(saved["agentControl"][&thread], false);
+        assert!(!pending.request_allowed(&saved, &thread, false));
+
+        pending.queue(&thread, true);
+        assert!(!pending.request_allowed(&saved, &thread, false));
+        let PersistControl::Saved(saved) = pending.persist_one(&shared, &Default::default()) else {
+            panic!("the queued re-enable was not persisted")
+        };
+        assert!(pending.request_allowed(&saved, &thread, false));
+    }
+
+    #[::core::prelude::v1::test]
+    fn newest_control_choice_is_thread_scoped_and_case_insensitive() {
+        let mut pending = PendingControls::default();
+        let settings = json!({"agentControl":{"other":true}});
+        pending.queue("ABC", false);
+        pending.queue("abc", true);
+        assert_eq!(pending.choice("ABC"), Some(true));
+        assert!(!pending.request_allowed(&settings, "aBc", false));
+        assert!(pending.request_allowed(&settings, "other", false));
+        assert!(pending.request_allowed(&settings, "abc", true));
+    }
+
+    #[::core::prelude::v1::test]
+    fn failed_control_change_does_not_authorize_agent_requests() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Engine::new(Store::open(&dir.path().join("state.sqlite")).unwrap());
+        let shared = Arc::new(Mutex::new(engine));
+        let mut pending = PendingControls::default();
+        pending.queue("missing", true);
+        assert!(matches!(
+            pending.persist_one(&shared, &Default::default()),
+            PersistControl::Failed(_)
+        ));
+        assert!(!pending.displayed(&json!({}), "missing"));
+        assert!(!pending.request_allowed(&json!({}), "missing", false));
+        assert!(pending.request_allowed(&json!({}), "missing", true));
+        assert!(matches!(
+            pending.persist_one(&shared, &Default::default()),
+            PersistControl::Waiting
+        ));
+    }
     #[::core::prelude::v1::test]
     fn malformed_saved_choices_fail_closed_without_affecting_native_browsing() {
         for settings in [

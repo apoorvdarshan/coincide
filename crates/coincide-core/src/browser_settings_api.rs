@@ -30,7 +30,10 @@ impl Engine {
         native_operations: &std::collections::HashSet<String>,
     ) -> Result<Value> {
         self.require_admissions()?;
-        self.store.thread(thread)?;
+        // The control belongs to a thread ID, not its transcript. Loading and
+        // decoding the whole conversation here can freeze the toolbar for a
+        // long chat while it holds the shared engine lock.
+        ensure!(self.store.contains_thread(thread)?, "Thread not found");
         let document = self.store.document(DOCUMENT)?.unwrap_or(json!({}));
         let mut controls = match document.get("agentControl") {
             None => serde_json::Map::new(),

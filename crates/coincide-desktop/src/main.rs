@@ -701,6 +701,7 @@ struct Coincide {
     browser_panels: std::collections::HashSet<String>,
     browser_library_thread: Option<String>,
     browser_control: Value,
+    pending_browser_control: browser_controls::PendingControls,
     browser_ui_operations: std::collections::HashMap<String, String>,
     browser_replies: Vec<coincide_core::browser_protocol::BrowserReply>,
     link_menu: Option<transcript_links::LinkMenu>,
@@ -1966,6 +1967,7 @@ impl Coincide {
             browser_panels: Default::default(),
             browser_library_thread: None,
             browser_control,
+            pending_browser_control: Default::default(),
             browser_ui_operations: Default::default(),
             browser_replies: Vec::new(),
             link_menu: None,
@@ -2230,7 +2232,7 @@ impl Coincide {
             .iter()
             .any(|r| matches!(r.action, BrowserAction::FillLogin { .. }));
         for request in requests {
-            if !browser_controls::agent_request_allowed(
+            if !self.pending_browser_control.request_allowed(
                 &self.browser_control,
                 &request.thread_id,
                 self.browser_ui_operations.contains_key(&request.id),
@@ -4223,6 +4225,7 @@ impl Coincide {
             }
         }
         self.poll_composer_follow_ups(window, cx);
+        self.poll_pending_browser_control(cx);
         self.poll_browser(window, cx);
         self.sync_browser_settings(window, cx);
         self.poll_codex_account_settings(cx);
