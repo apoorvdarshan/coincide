@@ -216,8 +216,7 @@ impl Coincide {
             ));
         }
         if details.file_path_only {
-            panel = panel
-                .child("File path reference only. No file content is read or opened by this view.");
+            panel = panel.child("Local path reference. The agent needs access to this location.");
         }
         panel = panel.child(readonly_reference_text(
             &opened.body,

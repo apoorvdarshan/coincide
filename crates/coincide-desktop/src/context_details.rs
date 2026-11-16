@@ -190,7 +190,14 @@ pub fn details(card: &Value) -> Result<Details> {
         ),
         "file" => {
             let path = read("path");
-            (filename(&path).to_owned(), None, None, path, false, true)
+            (
+                filename(&path).to_owned(),
+                card["previewText"].as_str().map(str::to_owned),
+                None,
+                path,
+                false,
+                true,
+            )
         }
         _ => anyhow::bail!("This saved context kind is unsupported; its original data is retained"),
     };
@@ -218,6 +225,29 @@ pub fn details(card: &Value) -> Result<Details> {
 }
 pub fn preview(card: &Value) -> String {
     match card["kind"].as_str() {
+        Some("file") if card["isDirectory"] == true => "Folder · local reference".into(),
+        Some("file") if card["isDirectory"] == false => {
+            let extension = std::path::Path::new(card["path"].as_str().unwrap_or(""))
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or("file")
+                .to_ascii_uppercase();
+            let description = match card["sizeBytes"].as_u64() {
+                Some(size) if size >= 1024 * 1024 => {
+                    format!("{extension} · {:.1} MB", size as f64 / (1024. * 1024.))
+                }
+                Some(size) if size >= 1024 => {
+                    format!("{extension} · {:.1} KB", size as f64 / 1024.)
+                }
+                Some(size) => format!("{extension} · {size} B"),
+                None => format!("{extension} · local reference"),
+            };
+            if let Some(preview) = card["previewText"].as_str().filter(|text| !text.is_empty()) {
+                format!("{description} · {}", first_line(preview))
+            } else {
+                description
+            }
+        }
         Some("window-text") => card["title"]
             .as_str()
             .map(first_line)
@@ -237,6 +267,20 @@ mod tests {
     use serde_json::json;
     fn card(kind: &str) -> Value {
         json!({"id":Uuid::new_v4(),"kind":kind})
+    }
+    #[::core::prelude::v1::test]
+    fn selected_paths_show_file_metadata_and_the_bounded_text_preview() {
+        let file = json!({"id":Uuid::new_v4(),"kind":"file","path":"/tmp/notes.txt","isDirectory":false,"sizeBytes":22,"previewText":"First line · Second line"});
+        assert_eq!(preview(&file), "TXT · 22 B · First line · Second line");
+        let details = details(&file).unwrap();
+        assert_eq!(details.title, "notes.txt");
+        assert_eq!(
+            details.subtitle.as_deref(),
+            Some("First line · Second line")
+        );
+        let folder =
+            json!({"id":Uuid::new_v4(),"kind":"file","path":"/tmp/project","isDirectory":true});
+        assert_eq!(preview(&folder), "Folder · local reference");
     }
     #[::core::prelude::v1::test]
     fn full_unicode_window_text_respects_byte_limit_without_preview_truncation() {

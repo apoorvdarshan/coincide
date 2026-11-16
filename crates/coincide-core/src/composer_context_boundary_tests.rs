@@ -229,10 +229,35 @@ fn provider_boundary_fixture_child() {
     assert!(std::env::var_os("COINCIDE_CLAUDE_EXECUTABLE").is_some());
     rejected_context_never_launches_or_mutates(&root.join("rejected"));
     valid_context_reaches_provider_and_historical_handoff(&root.join("valid"));
+    picked_paths_reach_provider_and_remain_on_the_message(&root.join("picked-paths"));
     failed_send_persistence_never_launches_or_clears(&root.join("failed-save"));
     background_dispatch_keeps_unrelated_draft_context(&root.join("background"));
     remote_dispatch_keeps_unrelated_draft_context(&root.join("remote"));
     remote_image_dispatch_keeps_unrelated_draft_context(&root.join("remote-image"));
+}
+
+#[cfg(unix)]
+fn picked_paths_reach_provider_and_remain_on_the_message(root: &Path) {
+    let (mut engine, id) = fixture(root);
+    let file = root.join("notes.txt");
+    fs::write(&file, "Selected document text\nmore details").unwrap();
+    let picked_file = crate::composer_context::PickedPath::inspect(&file).unwrap();
+    let picked_folder = crate::composer_context::PickedPath::inspect(root).unwrap();
+    let file_card = engine.attach_picked_path(&id, &picked_file).unwrap();
+    let folder_card = engine.attach_picked_path(&id, &picked_folder).unwrap();
+    let captured = engine.store.thread(&id).unwrap();
+    // An attachment-only message must be admitted and reach the provider too.
+    engine.send_captured_native_turn(&captured, "").unwrap();
+    let admitted = engine.store.thread(&id).unwrap();
+    let item = admitted["items"].as_array().unwrap().last().unwrap();
+    assert_eq!(item["context"], json!([file_card, folder_card]));
+    assert!(admitted["draftContext"].is_null());
+    wait_done(&mut engine);
+    let wire = prompts(root);
+    assert_eq!(wire.len(), 1);
+    assert!(wire[0].contains(file.to_str().unwrap()));
+    assert!(wire[0].contains(root.to_str().unwrap()));
+    assert!(wire[0].contains("Selected document text"));
 }
 
 #[cfg(unix)]

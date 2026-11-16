@@ -6,6 +6,19 @@ enum IncomingImage {
     Path(PathBuf),
     Clipboard(Arc<Image>),
 }
+struct ImportedReference {
+    card: Value,
+}
+pub(super) fn path_looks_like_image(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "png" | "jpg" | "jpeg" | "gif" | "webp"
+            )
+        })
+}
 
 #[derive(Clone)]
 pub(super) enum ImportPreview {
@@ -17,6 +30,48 @@ pub(super) enum ImportPreview {
 mod tests {
     use super::*;
     use crate::composer_follow_up_mount::PendingSend;
+
+    #[::core::prelude::v1::test]
+    fn mixed_selected_items_have_independent_previews_and_cancellation() {
+        let mut imports = ImageImports::default();
+        let mut jobs = Vec::new();
+        for path in ["/tmp/photo.png", "/tmp/report.pdf", "/tmp/project"] {
+            let job = imports.reserve("chat").unwrap();
+            imports
+                .ready(job, vec![IncomingImage::Path(PathBuf::from(path))])
+                .unwrap();
+            jobs.push(job);
+        }
+        assert_eq!(imports.visible_count("chat"), 3);
+        assert_eq!(imports.previews("chat").len(), 3);
+        imports.cancel(jobs[1]);
+        assert_eq!(imports.visible_count("chat"), 2);
+        assert_eq!(
+            imports
+                .take_ready()
+                .iter()
+                .map(|item| item.0)
+                .collect::<Vec<_>>(),
+            vec![jobs[0], jobs[2]]
+        );
+        assert!(path_looks_like_image(std::path::Path::new("photo.PNG")));
+        assert!(!path_looks_like_image(std::path::Path::new("report.pdf")));
+    }
+
+    #[::core::prelude::v1::test]
+    fn selected_file_joins_only_the_send_that_claimed_its_import() {
+        let thread = json!({"id":"chat","selection":{"provider":"codex"},"draftContext":[]});
+        let mut first = PendingSend::new(&thread, "first".into(), false);
+        let mut second = PendingSend::new(&thread, "second".into(), false);
+        first.add_imports(vec![1]);
+        second.add_imports(vec![2]);
+        let card = json!({"id":"file-1","kind":"file","path":"/tmp/report.pdf"});
+        assert!(!second.complete_attachment_import(1, &[], std::slice::from_ref(&card), false));
+        assert!(first.complete_attachment_import(1, &[], std::slice::from_ref(&card), false));
+        assert_eq!(first.captured["draftContext"], json!([card]));
+        assert_eq!(second.captured["draftContext"], json!([]));
+        assert!(!first.waiting_for_import && second.waiting_for_import);
+    }
 
     #[::core::prelude::v1::test]
     fn pastes_are_claimed_by_the_send_that_owned_them_even_when_they_finish_out_of_order() {
@@ -241,6 +296,14 @@ impl ImageImports {
             .filter_map(|job| job.preview.clone().map(|preview| (job.id, preview)))
             .collect()
     }
+    pub fn visible_count(&self, thread: &str) -> usize {
+        self.jobs
+            .iter()
+            .filter(|job| {
+                job.thread == thread && !job.claimed && !job.cancelled && job.preview.is_some()
+            })
+            .count()
+    }
     fn cancel(&mut self, id: u64) {
         if let Some(job) = self
             .jobs
@@ -318,11 +381,10 @@ impl Coincide {
         cx.notify();
     }
 
-    fn reserve_image_import(&mut self, cx: &mut Context<Self>) -> Option<(String, u64)> {
-        let id = self.selected.as_ref().map(|thread| text(thread, "id"))?;
-        let Some(job) = self.attachment_imports.reserve(&id) else {
+    fn reserve_import_for_thread(&mut self, id: &str, cx: &mut Context<Self>) -> Option<u64> {
+        let Some(job) = self.attachment_imports.reserve(id) else {
             self.show_local_error(
-                "Too many images are waiting to import; paste again after these finish.",
+                "Too many attachments are being added; try again when they finish.",
             );
             cx.notify();
             return None;
@@ -334,6 +396,12 @@ impl Coincide {
             pending.add_imports(vec![job]);
             self.attachment_imports.claim_one(job);
         }
+        Some(job)
+    }
+
+    fn reserve_image_import(&mut self, cx: &mut Context<Self>) -> Option<(String, u64)> {
+        let id = self.selected.as_ref().map(|thread| text(thread, "id"))?;
+        let job = self.reserve_import_for_thread(&id, cx)?;
         Some((id, job))
     }
 
@@ -343,11 +411,11 @@ impl Coincide {
         };
         let picker = cx.prompt_for_paths(PathPromptOptions {
             files: true,
-            directories: false,
+            directories: true,
             multiple: true,
-            prompt: Some("Attach images".into()),
+            prompt: Some("Attach files or folders".into()),
         });
-        self.status = "Choose PNG, JPEG, GIF, or WebP images to attach.".into();
+        self.status = "Choose files or folders to attach.".into();
         cx.notify();
         cx.spawn(async move |this, cx| {
             let paths: Result<_> = async { picker.await? }.await;
@@ -412,13 +480,13 @@ impl Coincide {
                     ClipboardEntry::ExternalPaths(paths) => {
                         anyhow::ensure!(
                             incoming.len() + paths.0.len() <= 20,
-                            "Attach at most 20 images at a time"
+                            "Attach at most 20 items at a time"
                         );
                         incoming.extend(paths.0.iter().cloned().map(IncomingImage::Path));
                     }
                     ClipboardEntry::String(_) => {}
                 }
-                anyhow::ensure!(incoming.len() <= 20, "Attach at most 20 images at a time");
+                anyhow::ensure!(incoming.len() <= 20, "Attach at most 20 items at a time");
             }
             Ok(incoming)
         })();
@@ -438,7 +506,7 @@ impl Coincide {
                 job,
                 &thread,
                 Vec::new(),
-                Some(anyhow::anyhow!("Drop at most 20 images at a time")),
+                Some(anyhow::anyhow!("Drop at most 20 attachments at a time")),
                 cx,
             );
             return;
@@ -463,14 +531,37 @@ impl Coincide {
                 job,
                 &thread,
                 Vec::new(),
-                Some(anyhow::anyhow!("Choose 1–20 images to attach")),
+                Some(anyhow::anyhow!("Choose 1–20 attachments at a time")),
                 cx,
             );
             return;
         }
-        if let Err(error) = self.attachment_imports.ready(job, images) {
-            self.finish_image_import(job, &thread, Vec::new(), Some(error), cx);
+        // Each item owns its own preview and cancel action, including when a
+        // single picker selection contains both images and other paths.
+        if self.attachment_imports.jobs.len() + images.len().saturating_sub(1) > 32 {
+            self.finish_image_import(
+                job,
+                &thread,
+                Vec::new(),
+                Some(anyhow::anyhow!(
+                    "Too many attachments are being added; try again when they finish"
+                )),
+                cx,
+            );
             return;
+        }
+        for (index, image) in images.into_iter().enumerate() {
+            let current = if index == 0 {
+                job
+            } else {
+                match self.reserve_import_for_thread(&thread, cx) {
+                    Some(id) => id,
+                    None => break,
+                }
+            };
+            if let Err(error) = self.attachment_imports.ready(current, vec![image]) {
+                self.finish_image_import(current, &thread, Vec::new(), Some(error), cx);
+            }
         }
         self.pump_image_imports(cx);
     }
@@ -491,10 +582,11 @@ impl Coincide {
         // cached for image previews. Clipboard staging must not wait for the
         // agent's shared engine merely to rediscover that same path.
         let cached_root = self.attachment_root.clone();
-        self.status = "Importing images into the draft…".into();
+        self.status = "Adding attachments to the draft…".into();
         cx.notify();
         cx.spawn(async move |this, cx| {
             let mut imported = Vec::new();
+            let mut references = Vec::new();
             let outcome: Result<()> = async {
                 let data_directory = if let Some(root) = cached_root {
                     root
@@ -515,6 +607,32 @@ impl Coincide {
                     let (path, _owned_stage) = match image {
                         IncomingImage::Path(path) => {
                             anyhow::ensure!(path.is_absolute(), "Image file path must be absolute");
+                            let inspected_path = path.clone();
+                            let picked = cx
+                                .background_executor()
+                                .spawn(async move {
+                                    coincide_core::composer_context::PickedPath::inspect(
+                                        &inspected_path,
+                                    )
+                                })
+                                .await?;
+                            if !picked.is_supported_image() {
+                                let reference_engine = engine.clone();
+                                let owner = thread.clone();
+                                let card = cx
+                                    .background_executor()
+                                    .spawn(async move {
+                                        reference_engine
+                                            .lock()
+                                            .map_err(|_| {
+                                                anyhow::anyhow!("Application state is unavailable")
+                                            })?
+                                            .attach_picked_path(&owner, &picked)
+                                    })
+                                    .await?;
+                                references.push(ImportedReference { card });
+                                continue;
+                            }
                             (path, None)
                         }
                         IncomingImage::Clipboard(image) => {
@@ -577,9 +695,16 @@ impl Coincide {
             .await;
             let _ = this.update(cx, |this, cx| {
                 if this.attachment_imports.cancelled(job) {
-                    this.cleanup_cancelled_import(job, thread, imported, cx);
+                    this.cleanup_cancelled_import(job, thread, imported, references, cx);
                 } else {
-                    this.finish_image_import(job, &thread, imported, outcome.err(), cx);
+                    this.finish_attachment_import(
+                        job,
+                        &thread,
+                        imported,
+                        references,
+                        outcome.err(),
+                        cx,
+                    );
                 }
             });
         })
@@ -597,9 +722,10 @@ impl Coincide {
         job: u64,
         thread: String,
         imported: Vec<Value>,
+        references: Vec<ImportedReference>,
         cx: &mut Context<Self>,
     ) {
-        if imported.is_empty() {
+        if imported.is_empty() && references.is_empty() {
             self.finish_image_import(job, &thread, Vec::new(), None, cx);
             return;
         }
@@ -616,6 +742,12 @@ impl Coincide {
                             "attachments.remove",
                             json!({"threadId":owner,"attachmentId":id}),
                         )?;
+                    }
+                    for reference in references {
+                        engine
+                            .lock()
+                            .map_err(|_| anyhow::anyhow!("Application state is unavailable"))?
+                            .remove_cancelled_picked_path(&owner, &reference.card)?;
                     }
                     Ok::<(), anyhow::Error>(())
                 })
@@ -635,15 +767,31 @@ impl Coincide {
         error: Option<anyhow::Error>,
         cx: &mut Context<Self>,
     ) {
+        self.finish_attachment_import(job, thread, imported, Vec::new(), error, cx);
+    }
+
+    fn finish_attachment_import(
+        &mut self,
+        job: u64,
+        thread: &str,
+        imported: Vec<Value>,
+        references: Vec<ImportedReference>,
+        error: Option<anyhow::Error>,
+        cx: &mut Context<Self>,
+    ) {
         self.attachment_imports.finish(job);
         let import_failed = error.is_some();
+        let cards: Vec<Value> = references
+            .iter()
+            .map(|reference| reference.card.clone())
+            .collect();
         let mut claimed = false;
         for pending in self
             .pending_follow_up
             .iter_mut()
             .chain(self.pending_follow_up_backlog.iter_mut())
         {
-            if pending.complete_import(job, &imported, import_failed) {
+            if pending.complete_attachment_import(job, &imported, &cards, import_failed) {
                 claimed = true;
                 if pending.import_failed {
                     if let Some(sequence) = pending.image_send.take() {
@@ -678,20 +826,25 @@ impl Coincide {
             "the original conversation's draft"
         };
         self.status = match error {
-            None if imported.is_empty() => "Image selection cancelled.".into(),
-            None => format!("Attached {} image(s) to {destination}.", imported.len()),
+            None if imported.is_empty() && cards.is_empty() => "Attachment updated.".into(),
+            None => format!(
+                "Added {} attachment(s) to {destination}.",
+                imported.len() + cards.len()
+            ),
             Some(error) => format!(
-                "Image import stopped: {error}. Any earlier successful imports remain in {destination}."
+                "Attachment change could not be completed: {error}. Other attachments remain in {destination}."
             ),
         };
         if import_failed && is_selected && claimed {
-            self.show_local_error("The image could not be attached. Your message has not been sent; attach the image again to continue.");
+            self.show_local_error(
+                "The attachment change failed. Your message has not been sent; please try again.",
+            );
         } else if import_failed && is_selected {
             self.show_local_error(
-                "The image could not be processed. Your draft is preserved; please try again.",
+                "The attachment change failed. Your draft is preserved; please try again.",
             );
         }
-        if is_selected && !imported.is_empty() {
+        if is_selected && (!imported.is_empty() || !cards.is_empty()) {
             if let Some(selected) = self.selected.as_mut() {
                 if selected["rustDraftImages"].is_null() {
                     selected["rustDraftImages"] = json!([]);
@@ -700,6 +853,18 @@ impl Coincide {
                     for image in &imported {
                         if !images.iter().any(|existing| existing["id"] == image["id"]) {
                             images.push(image.clone());
+                        }
+                    }
+                }
+                if !cards.is_empty() {
+                    if selected["draftContext"].is_null() {
+                        selected["draftContext"] = json!([]);
+                    }
+                    if let Some(context) = selected["draftContext"].as_array_mut() {
+                        for card in &cards {
+                            if !context.iter().any(|existing| existing["id"] == card["id"]) {
+                                context.push(card.clone());
+                            }
                         }
                     }
                 }

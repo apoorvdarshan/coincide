@@ -42,6 +42,8 @@ mod composer_scope_store;
 pub(crate) use composer_scope_store::same_scope as same_composer_scope;
 #[path = "composer_file_reference_store.rs"]
 mod composer_file_reference_store;
+#[path = "store_picked_paths.rs"]
+mod store_picked_paths;
 #[path = "terminal_context_store.rs"]
 mod terminal_context_store;
 #[path = "thread_bulk_store.rs"]
