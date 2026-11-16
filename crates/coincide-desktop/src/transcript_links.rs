@@ -273,21 +273,8 @@ impl Coincide {
             .map(|v| text(v, "id"))
             .unwrap_or_default();
         if destination == Destination::BrowserNewTab {
-            let queued = try_state(&self.engine)
-                .and_then(|mut engine| engine.open_browser_link_in_new_tab(&thread, &url));
-            match queued {
-                Ok(queued) => {
-                    if self.status.starts_with("Browser:") {
-                        self.status.clear();
-                    }
-                    self.browser_ui_operations
-                        .insert(queued.tab_operation, queued.thread.clone());
-                    self.browser_ui_operations
-                        .insert(queued.show_operation, queued.thread);
-                }
-                Err(error) => self.status = format!("Browser: {error}"),
-            }
-            cx.notify();
+            self.reveal_selected_browser(cx);
+            self.enqueue_browser_ui(browser_ui_queue::Intent::Link { thread, url }, cx);
             return;
         }
         if !self.browser_panels.contains(&thread) {

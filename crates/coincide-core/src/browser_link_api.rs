@@ -23,7 +23,13 @@ impl Engine {
             !self.store.is_closed(),
             "Store is closed; link was not opened"
         );
-        let thread = text(&self.store.thread(thread_id)?, "id");
+        // A browser link only needs the owning thread's identity. Loading its
+        // transcript here blocks the desktop on long conversations.
+        ensure!(
+            self.store.contains_thread(thread_id)?,
+            "Conversation not found"
+        );
+        let thread = thread_id.to_owned();
         let tab_operation = Uuid::new_v4().to_string();
         let show_operation = Uuid::new_v4().to_string();
         let requests = [
@@ -112,6 +118,35 @@ mod tests {
     }
 
     #[test]
+    fn browser_admission_does_not_read_a_large_transcript() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut engine = Engine::fixture(Store::open(&dir.path().join("state.sqlite")).unwrap());
+        let id = text(&engine.execute("threads.create", &json!({})).unwrap(), "id");
+        engine.ui_available = true;
+        let db = rusqlite::Connection::open(dir.path().join("state.sqlite")).unwrap();
+        db.execute(
+            "UPDATE threads SET document=json_set(document,'$.syntheticPayload',?1) WHERE id=?2",
+            rusqlite::params!["x".repeat(1_000_000), id],
+        )
+        .unwrap();
+        // An actual transcript read now fails with SQLITE_TOOBIG. An identity
+        // lookup still succeeds, without timing-dependent performance limits.
+        drop(db);
+        engine.store.limit_value_size_for_test(4096).unwrap();
+        assert!(engine.store.thread(&id).is_err());
+        assert!(
+            engine
+                .execute("browser.request", &json!({"threadId":id,"action":"tabs"}))
+                .is_ok()
+        );
+        assert!(
+            engine
+                .open_browser_link_in_new_tab(&id, "https://example.com")
+                .is_ok()
+        );
+    }
+
+    #[test]
     fn unavailable_invalid_or_full_queue_never_admits_half_a_link() {
         let dir = tempfile::tempdir().unwrap();
         let mut engine = Engine::fixture(Store::open(&dir.path().join("state.sqlite")).unwrap());
@@ -128,6 +163,20 @@ mod tests {
         assert!(
             engine
                 .open_browser_link_in_new_tab(&id, "file:///private/data")
+                .is_err()
+        );
+        assert!(engine.browser_requests.is_empty());
+        assert!(
+            engine
+                .open_browser_link_in_new_tab("missing", "https://example.com")
+                .is_err()
+        );
+        assert!(
+            engine
+                .execute(
+                    "browser.request",
+                    &json!({"threadId":"missing","action":"tabs"})
+                )
                 .is_err()
         );
         assert!(engine.browser_requests.is_empty());

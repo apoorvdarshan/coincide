@@ -178,6 +178,31 @@ fn desktop_snapshots_leave_provider_events_for_the_background_poller() {
     assert!(!engine.is_thread_running(&id));
 }
 
+#[test]
+fn desktop_browser_admission_and_receipts_leave_provider_events_for_the_poller() {
+    let (_directory, mut engine, id, send, ready) = fixture();
+    engine.ui_available = true;
+    deliver(&send, &ready, Event::Finished);
+    let request = engine.dispatch_desktop(json!({
+        "method":"browser.request", "params":{"threadId":id,"action":"tabs"}
+    }));
+    let operation = text(&request["result"], "operationId");
+    assert!(!operation.is_empty(), "{request}");
+    assert!(engine.is_thread_running(&id));
+    engine.browser_reply(crate::browser_protocol::BrowserReply {
+        id: operation.clone(),
+        thread_id: id.clone(),
+        result: json!({"tabs":[]}),
+    });
+    let result = engine.dispatch_desktop(json!({
+        "method":"browser.result", "params":{"threadId":id,"operationId":operation}
+    }));
+    assert_eq!(result["result"]["ready"], true);
+    assert!(engine.is_thread_running(&id));
+    engine.poll();
+    assert!(!engine.is_thread_running(&id));
+}
+
 #[cfg(unix)]
 #[test]
 fn background_poller_advances_turns_even_when_command_line_control_is_off() {

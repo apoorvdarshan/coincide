@@ -152,6 +152,19 @@ impl Store {
     fn connection(&self) -> Result<&Connection> {
         self.db.as_ref().context("Store is closed")
     }
+    /// Bound values in tests so a whole-transcript read fails deterministically.
+    #[cfg(test)]
+    pub(crate) fn limit_value_size_for_test(&self, limit: i32) -> Result<()> {
+        // SAFETY: the connection remains live and is used only by this test.
+        unsafe {
+            rusqlite::ffi::sqlite3_limit(
+                self.connection()?.handle(),
+                rusqlite::ffi::SQLITE_LIMIT_LENGTH,
+                limit,
+            );
+        }
+        Ok(())
+    }
     fn connection_mut(&mut self) -> Result<&mut Connection> {
         self.db.as_mut().context("Store is closed")
     }
