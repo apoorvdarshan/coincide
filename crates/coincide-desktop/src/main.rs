@@ -5351,10 +5351,12 @@ impl Coincide {
                     .update(cx, |cache, cx| cache.remove(&resource, window, cx));
             }
         }
+        let (picture_width, picture_height) =
+            chat_layout::thumbnail_size(dimensions, (width, height));
         let picture = img(path.clone())
             .image_cache(&self.image_assets)
-            .w(px(width))
-            .h(px(height))
+            .w(px(picture_width))
+            .h(px(picture_height))
             .flex_shrink_0()
             .object_fit(ObjectFit::Contain)
             .rounded_md()
@@ -5377,32 +5379,66 @@ impl Coincide {
                     .into_any_element()
             })
             .into_any_element();
+        // Keep the clickable wrapper the same size while the image loads and
+        // after it resolves. The virtualized message row can then reserve its
+        // full height and the image cannot paint outside its bubble.
+        let tile = div()
+            .w(px(width))
+            .h(px(height))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_md()
+            .overflow_hidden()
+            .child(picture);
         if width < 60. {
-            return picture;
+            return tile.into_any_element();
         }
         let Some(thread_id) = self.selected.as_ref().map(|thread| text(thread, "id")) else {
-            return picture;
+            return tile.into_any_element();
         };
         let metadata = metadata.clone();
         let name = text(&metadata, "originalName");
         let image_id = text(&metadata, "id");
-        div().id(SharedString::from(format!("open-image-{}-{image_id}", row.map_or("draft".into(), |row| row.to_string()))))
-            .role(Role::Button).aria_label("Open image preview").cursor_pointer()
-            .child(picture)
-            .on_click(cx.listener(move |this, _, window, cx| {
-                let present = this.selected.as_ref().filter(|thread| thread["id"] == thread_id)
-                    .is_some_and(|thread| match row {
-                        Some(index) => thread["items"].as_array().and_then(|items| items.get(index))
-                            .and_then(|item| item["rustImages"].as_array())
-                            .is_some_and(|images| images.contains(&metadata)),
-                        None => thread["rustDraftImages"].as_array()
-                            .is_some_and(|images| this.pending_images.visible(&thread_id, images).contains(&metadata)),
-                    });
-                let validated = this.image_previews.get(&key).is_some_and(|entry| matches!(&entry.state, PreviewState::Ready(current) if current == &path));
-                if present && validated {
-                    this.open_attachment_image(&thread_id, name.clone(), legacy_media_mount::AttachmentImage::Path(path.clone(), Some(dimensions)), window, cx);
-                }
-            })).into_any_element()
+        tile.id(SharedString::from(format!(
+            "open-image-{}-{image_id}",
+            row.map_or("draft".into(), |row| row.to_string())
+        )))
+        .role(Role::Button)
+        .aria_label("Open image preview")
+        .cursor_pointer()
+        .on_click(cx.listener(move |this, _, window, cx| {
+            let present = this
+                .selected
+                .as_ref()
+                .filter(|thread| thread["id"] == thread_id)
+                .is_some_and(|thread| match row {
+                    Some(index) => thread["items"]
+                        .as_array()
+                        .and_then(|items| items.get(index))
+                        .and_then(|item| item["rustImages"].as_array())
+                        .is_some_and(|images| images.contains(&metadata)),
+                    None => thread["rustDraftImages"].as_array().is_some_and(|images| {
+                        this.pending_images
+                            .visible(&thread_id, images)
+                            .contains(&metadata)
+                    }),
+                });
+            let validated = this.image_previews.get(&key).is_some_and(
+                |entry| matches!(&entry.state, PreviewState::Ready(current) if current == &path),
+            );
+            if present && validated {
+                this.open_attachment_image(
+                    &thread_id,
+                    name.clone(),
+                    legacy_media_mount::AttachmentImage::Path(path.clone(), Some(dimensions)),
+                    window,
+                    cx,
+                );
+            }
+        }))
+        .into_any_element()
     }
     /// Images a reply points at: its Markdown images and image links, then any
     /// generated files it lists in `attachments`, resolved against the thread's
@@ -6651,7 +6687,8 @@ impl Coincide {
                 card.max_w(px((presentation::CONTENT_WIDTH
                     - presentation::RAIL_GUTTER)
                     * 0.75))
-                    .rounded(px(16.))
+                    .p_4()
+                    .rounded(px(18.))
                     .bg(self.color(0x181d28))
                     .border_1()
                     .border_color(self.color(0x29303d).opacity(0.65))
@@ -7711,8 +7748,8 @@ impl Render for Coincide {
                                         .flex()
                                         .flex_col()
                                         .max_w(px(presentation::CONTENT_WIDTH))
-                                        .p_3()
-                                        .rounded(px(18.))
+                                        .p_4()
+                                        .rounded(px(20.))
                                         .bg(self.color(0x181d28))
                                         .border_1()
                                         .border_color(if self.composer.read(cx).focus_handle(cx).is_focused(window) {
@@ -7812,7 +7849,7 @@ impl Render for Coincide {
                                         })
                                         .child(
                                             div().mt_2().pt_2().border_t_1()
-                                            .border_color(self.color(0x29303d).opacity(0.7))
+                                            .border_color(self.color(0x29303d).opacity(0.55))
                                             .child(chat_layout::composer_actions(
                                                 self.composer_selection_footer(window, implement_button.is_some(), cx),
                                                 div()

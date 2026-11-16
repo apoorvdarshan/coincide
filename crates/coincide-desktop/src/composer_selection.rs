@@ -4023,11 +4023,11 @@ impl Coincide {
             .flex().items_center().justify_center().px_5()
             .child(
                 div().w_full().max_w(px(440.)).flex().flex_col().items_center().text_center().gap_3()
-                    .child(div().size(px(60.)).rounded(px(18.))
+                    .child(div().size(px(68.)).rounded(px(21.))
                         .border_1().border_color(self.color(0x29303d))
                         .bg(self.color(0x111722)).flex().items_center().justify_center()
                         .child(Icon::new(gpui_kit::assets::IconName::MessagesSquare)
-                            .text_color(self.color(0xe4e9f2).opacity(0.8))))
+                            .size(px(27.)).text_color(self.color(0x98b1d4))))
                     .child(div().text_2xl().font_weight(FontWeight::SEMIBOLD).child("Your agents, together"))
                     .child(div().text_sm().text_color(self.color(0xe4e9f2).opacity(0.65))
                         .child("Start a conversation or choose from the agents installed on this computer."))
@@ -4078,6 +4078,7 @@ impl Coincide {
         } else {
             format!("Using {} · {model}", provider_name)
         };
+        let mark = chat_layout::provider_mark(&provider, 15.);
         div()
             .flex()
             .flex_col()
@@ -4097,8 +4098,18 @@ impl Coincide {
             )
             .child(
                 div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .px_3()
+                    .py_1()
+                    .rounded_full()
+                    .border_1()
+                    .border_color(self.color(0x29303d).opacity(0.8))
+                    .bg(self.color(0x111722))
                     .text_sm()
-                    .text_color(self.color(0xe4e9f2).opacity(0.6))
+                    .text_color(self.color(0xe4e9f2).opacity(0.7))
+                    .when_some(mark, |badge, mark| badge.child(mark))
                     .child(using),
             )
             .into_any_element()

@@ -102,6 +102,28 @@ fn create_and_update_keep_uuid_and_stale_saves_leave_state_and_revision_intact()
 }
 
 #[test]
+fn jam_character_can_be_saved_and_restored() {
+    let (root, mut engine) = fixture();
+    let baseline = engine.execute("bots.list", &json!({})).unwrap()["baseline"].clone();
+    let created = engine
+        .execute(
+            "bots.save",
+            &json!({
+                "baseline": baseline,
+                "patch": {"name":"Jam", "avatar":{"shape":"jam","tint":"caramel"},
+                          "personality":{"preset":"cheerful","custom":""}}
+            }),
+        )
+        .unwrap();
+    let id = created["bot"]["id"].as_str().unwrap().to_owned();
+    drop(engine);
+    let mut reopened = Engine::new(Store::open(&root.path().join("rust.sqlite")).unwrap());
+    let bot = reopened.execute("bots.read", &json!({"botId":id})).unwrap()["bot"].clone();
+    assert_eq!(bot["name"], "Jam");
+    assert_eq!(bot["avatar"], json!({"shape":"jam","tint":"caramel"}));
+}
+
+#[test]
 fn store_compare_and_save_guards_a_writer_between_api_read_and_write() {
     let (root, mut engine) = fixture();
     let mut other = Store::open(&root.path().join("rust.sqlite")).unwrap();

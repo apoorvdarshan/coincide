@@ -7,6 +7,16 @@ pub(super) fn modal_backdrop() -> Div {
     div().absolute().inset_0().occlude()
 }
 
+/// Fit an image inside its reserved thumbnail without changing its aspect ratio.
+pub(super) fn thumbnail_size(image: (u32, u32), bounds: (f32, f32)) -> (f32, f32) {
+    if image.0 == 0 || image.1 == 0 {
+        return bounds;
+    }
+    let (width, height) = (image.0 as f32, image.1 as f32);
+    let scale = (bounds.0 / width).min(bounds.1 / height);
+    (width * scale, height * scale)
+}
+
 // Provider marks stay local and embedded. The monochrome PDFs and their SVG
 // equivalents come from the Swift app's original template assets; Claude and
 // Antigravity retain their original colored artwork. Lithos uses its official mark.
@@ -338,8 +348,16 @@ impl Coincide {
 mod tests {
     use super::{
         ComposerSizing, PROVIDER_LOGOS, composer_height, is_synthetic_turn_end, notice_label,
-        provider_known, provider_template,
+        provider_known, provider_template, thumbnail_size,
     };
+
+    #[test]
+    fn thumbnails_fit_the_reserved_tile_for_square_landscape_and_portrait_images() {
+        assert_eq!(thumbnail_size((96, 96), (104., 78.)), (78., 78.));
+        assert_eq!(thumbnail_size((400, 200), (104., 78.)), (104., 52.));
+        assert_eq!(thumbnail_size((200, 400), (104., 78.)), (39., 78.));
+        assert_eq!(thumbnail_size((0, 400), (104., 78.)), (104., 78.));
+    }
 
     #[test]
     fn provider_marks_render_their_original_templates_and_colors() {

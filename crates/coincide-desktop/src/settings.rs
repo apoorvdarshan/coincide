@@ -696,7 +696,7 @@ impl Coincide {
                     .px_1()
                     .text_sm()
                     .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(self.color(0xe4e9f2).opacity(0.9))
+                    .text_color(self.color(0xe4e9f2).opacity(0.88))
                     .child(title.into()),
             )
             .child(self.settings_card(body))
@@ -706,9 +706,9 @@ impl Coincide {
         div()
             .w_full()
             .min_w_0()
-            .rounded(px(12.))
+            .rounded(px(16.))
             .border_1()
-            .border_color(self.color(0x29303d).opacity(0.72))
+            .border_color(self.color(0x29303d).opacity(0.85))
             .bg(self.color(0x111722))
             .overflow_hidden()
             .child(body)
@@ -1148,6 +1148,21 @@ impl Coincide {
         done_id: &'static str,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let icon = match title {
+            "General" => Some(SettingsSection::General),
+            "Models" => Some(SettingsSection::Models),
+            "Usage" => Some(SettingsSection::Usage),
+            "Instructions" => Some(SettingsSection::Instructions),
+            "Archive" => Some(SettingsSection::Archive),
+            "Keyboard" => Some(SettingsSection::Keyboard),
+            "Voice" => Some(SettingsSection::Voice),
+            "Browser" => Some(SettingsSection::Browser),
+            "Computer Use" => Some(SettingsSection::ComputerUse),
+            "Appshots" => Some(SettingsSection::Appshots),
+            "Providers" => Some(SettingsSection::Accounts),
+            "About" => Some(SettingsSection::About),
+            _ => None,
+        };
         let subtitle = match title {
             "General" => Some("Appearance, workspace, and everyday preferences"),
             "Models" => Some("Choose defaults and organize your models"),
@@ -1172,29 +1187,46 @@ impl Coincide {
             .gap_3()
             .px_5()
             .py_4()
+            .bg(self.color(0x151922))
             .border_b_1()
-            .border_color(self.color(0x29303d))
+            .border_color(self.color(0x29303d).opacity(0.7))
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
                     .flex()
-                    .flex_col()
-                    .gap_1()
+                    .items_center()
+                    .gap_3()
+                    .when_some(icon, |heading, section| {
+                        heading.child(settings_navigation::icon_tile(
+                            section,
+                            36.,
+                            self.color(0x202a3b),
+                            self.color(0x98b1d4),
+                        ))
+                    })
                     .child(
                         div()
-                            .text_xl()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(title),
-                    )
-                    .when_some(subtitle, |heading, subtitle| {
-                        heading.child(
-                            div()
-                                .text_xs()
-                                .text_color(self.color(0xe4e9f2).opacity(0.62))
-                                .child(subtitle),
-                        )
-                    }),
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_xl()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(title),
+                            )
+                            .when_some(subtitle, |heading, subtitle| {
+                                heading.child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(self.color(0xe4e9f2).opacity(0.66))
+                                        .child(subtitle),
+                                )
+                            }),
+                    ),
             )
             .child(
                 Button::new(done_id)

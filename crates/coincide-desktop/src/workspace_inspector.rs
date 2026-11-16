@@ -60,9 +60,21 @@ impl Coincide {
             .border_color(self.color(0x29303d).opacity(0.7))
             .child(
                 div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
                     .text_sm()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(self.color(0xe4e9f2).opacity(0.85))
+                    .child(
+                        Icon::new(match active {
+                            0 => gpui_kit::assets::IconName::Diff,
+                            1 => gpui_kit::assets::IconName::GitBranch,
+                            2 => gpui_kit::assets::IconName::GitPullRequest,
+                            _ => gpui_kit::assets::IconName::MessagesSquare,
+                        })
+                        .xsmall(),
+                    )
                     .child(title),
             )
             .child(

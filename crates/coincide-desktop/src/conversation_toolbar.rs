@@ -77,6 +77,11 @@ impl Coincide {
             .unwrap_or("Conversation")
             .to_owned();
         let bot = bot_heading(self.selected.as_ref(), &self.sidebar_bots);
+        let provider_mark = self
+            .selected
+            .as_ref()
+            .and_then(|thread| thread["selection"]["provider"].as_str())
+            .and_then(|provider| chat_layout::provider_mark(provider, 16.));
         let (title, subtitle) = match bot.clone() {
             Some((name, conversation)) => (name, Some(conversation).filter(|c| !c.is_empty())),
             None => (
@@ -126,11 +131,28 @@ impl Coincide {
                         .child(IconName::Bot),
                 )
             })
+            .when(bot.is_none(), |heading| {
+                heading.when_some(provider_mark, |heading, mark| {
+                    heading.pl(px(36.)).relative().child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .top(px(4.))
+                            .size(px(28.))
+                            .rounded(px(9.))
+                            .bg(self.color(0x202a3b))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(mark),
+                    )
+                })
+            })
             .child(
                 div()
                     .min_w_0()
                     .truncate()
-                    .text_size(px(13.))
+                    .text_size(px(14.))
                     .line_height(px(16.))
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(title),

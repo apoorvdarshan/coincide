@@ -82,7 +82,7 @@ fn section_icon(section: Section) -> gpui_kit::assets::IconName {
     }
 }
 
-fn icon_tile(section: Section, size: f32, surface: Rgba, ink: Rgba) -> AnyElement {
+pub(super) fn icon_tile(section: Section, size: f32, surface: Rgba, ink: Rgba) -> AnyElement {
     if let Section::Provider(provider) = section
         && let Some(logo) = chat_layout::provider_mark(provider_key(provider), size)
     {
@@ -98,7 +98,7 @@ fn icon_tile(section: Section, size: f32, surface: Rgba, ink: Rgba) -> AnyElemen
         .flex()
         .items_center()
         .justify_center()
-        .child(Icon::new(section_icon(section)).xsmall())
+        .child(Icon::new(section_icon(section)).size(px(size * 0.55)))
         .into_any_element()
 }
 
@@ -506,8 +506,8 @@ impl Coincide {
             None => label.into(),
         })
         .w_full()
-        .h(px(40.))
-        .rounded(px(10.))
+        .h(px(42.))
+        .rounded(px(12.))
         .ghost()
         .when(selected, |button| button.bg(self.color(0x202a3b)))
         .child(
@@ -517,15 +517,23 @@ impl Coincide {
                 .w_full()
                 .gap_2()
                 .child(
-                    div().w(px(2.)).h(px(18.)).rounded_full().bg(self
-                        .color(0xe4e9f2)
-                        .opacity(if selected { 0.8 } else { 0.0 })),
+                    div().w(px(3.)).h(px(18.)).rounded_full().bg(self
+                        .color(0x98b1d4)
+                        .opacity(if selected { 1.0 } else { 0.0 })),
                 )
                 .child(icon_tile(
                     section,
                     22.,
-                    self.color(0x202a3b),
-                    self.color(0xe4e9f2).opacity(0.78),
+                    if selected {
+                        self.color(0x98b1d4).opacity(0.16)
+                    } else {
+                        self.color(0x202a3b)
+                    },
+                    if selected {
+                        self.color(0x98b1d4)
+                    } else {
+                        self.color(0xe4e9f2).opacity(0.78)
+                    },
                 ))
                 .child(
                     div()
@@ -533,6 +541,7 @@ impl Coincide {
                         .min_w_0()
                         .truncate()
                         .text_color(self.color(0xe4e9f2).opacity(if enabled { 1. } else { 0.5 }))
+                        .when(selected, |label| label.font_weight(FontWeight::SEMIBOLD))
                         .child(label),
                 )
                 .when_some(status, |row, (headline, tint)| {
