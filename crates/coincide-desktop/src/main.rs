@@ -1176,7 +1176,7 @@ impl Coincide {
             self.submitted_drafts.project(thread);
         }
     }
-    pub(crate) fn replace_selected_thread(&mut self, thread: Option<Value>) {
+    pub(crate) fn replace_selected_thread(&mut self, mut thread: Option<Value>) {
         let old_id = self
             .selected
             .as_ref()
@@ -1184,6 +1184,13 @@ impl Coincide {
         let new_id = thread.as_ref().and_then(|value| value["id"].as_str());
         if old_id != new_id {
             self.prepare_inspector_thread_change();
+        }
+        if let (Some(current), Some(next)) = (&self.selected, &mut thread) {
+            composer_pending_images::preserve_inflight_draft(
+                current,
+                next,
+                self.attachment_imports.contains(&text(current, "id")),
+            );
         }
         self.selected_generation = self.selected_generation.wrapping_add(1);
         self.selected.replace(thread);

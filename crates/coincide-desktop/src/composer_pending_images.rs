@@ -2,6 +2,20 @@
 use serde_json::Value;
 use std::collections::HashMap;
 
+/// A store refresh may observe an import before its local job has finished.
+/// Keep the visible draft authoritative until the job resolves, so cancelling
+/// that job cannot accidentally place the image in a newly captured send.
+pub(super) fn preserve_inflight_draft(current: &Value, next: &mut Value, in_flight: bool) {
+    if !in_flight || current["id"] != next["id"] {
+        return;
+    }
+    if let Some(images) = current.get("rustDraftImages") {
+        next["rustDraftImages"] = images.clone();
+    } else if let Some(object) = next.as_object_mut() {
+        object.remove("rustDraftImages");
+    }
+}
+
 #[derive(Default)]
 pub(super) struct PendingImages {
     sends: HashMap<u64, (String, Vec<Value>)>,
@@ -41,6 +55,17 @@ impl PendingImages {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn refresh_does_not_reintroduce_a_cancelled_inflight_image() {
+        let current = json!({"id":"one", "rustDraftImages":[]});
+        let mut refreshed = json!({"id":"one", "rustDraftImages":[{"id":"still-importing"}]});
+        preserve_inflight_draft(&current, &mut refreshed, true);
+        assert_eq!(refreshed["rustDraftImages"], json!([]));
+        let mut other = json!({"id":"two", "rustDraftImages":[{"id":"other"}]});
+        preserve_inflight_draft(&current, &mut other, true);
+        assert_eq!(other["rustDraftImages"], json!([{"id":"other"}]));
+    }
 
     #[test]
     fn submitted_images_hide_immediately_and_failure_restores_them() {

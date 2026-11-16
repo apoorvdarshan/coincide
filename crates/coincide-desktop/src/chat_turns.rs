@@ -970,10 +970,12 @@ mod tests {
             show_reasoning: true,
             expanded: &expanded,
         };
+        let before = coincide_core::store::swift_timestamp();
         let Some(Header::Working { started_at }) = turns.plan(0).header else {
             panic!("missing working header")
         };
-        assert!(coincide_core::store::swift_timestamp() - started_at < 1.);
+        let after = coincide_core::store::swift_timestamp();
+        assert!(started_at >= before - 1. && started_at <= after + 1.);
     }
 
     #[::core::prelude::v1::test]
