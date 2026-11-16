@@ -100,6 +100,9 @@ icon_assets!(
         CircleX,
         Close,
         Copy,
+        // Message actions in the transcript.
+        Reply,
+        GitFork,
         Cpu,
         Dash,
         Delete,
@@ -240,6 +243,9 @@ mod tests {
             "icons/arrow-up.svg",
             "icons/arrow-up-right.svg",
             "icons/arrow-down-right.svg",
+            // Reply and fork controls must render in message footers.
+            "icons/reply.svg",
+            "icons/git-fork.svg",
             "icons/square.svg",
             "icons/bug.svg",
             "icons/lightbulb.svg",
