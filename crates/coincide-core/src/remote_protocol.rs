@@ -325,6 +325,9 @@ pub enum Request {
     NewThread {
         project_id: Option<Uuid>,
     },
+    NewBotConversation {
+        bot_id: Uuid,
+    },
     SetProjectExpanded {
         project_id: Uuid,
         expanded: bool,
@@ -512,6 +515,9 @@ impl ClientMessage {
                     None | Some(Value::Null) => None,
                     some => Some(uuid(some)?),
                 },
+            },
+            "newBotConversation" => Request::NewBotConversation {
+                bot_id: uuid(fields.get("botID"))?,
             },
             "setProjectExpanded" => Request::SetProjectExpanded {
                 project_id: uuid(fields.get("projectID"))?,
@@ -706,9 +712,42 @@ impl PairingPayload {
 pub struct Workspace {
     pub projects: Vec<Project>,
     pub threads: Vec<ThreadSummary>,
+    pub bots: Vec<Bot>,
+    pub can_edit_bots: bool,
     pub providers: Vec<Provider>,
     pub sections: Vec<String>,
     pub pinned_order: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Bot {
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "projectID")]
+    pub project_id: String,
+    #[serde(rename = "threadIDs")]
+    pub thread_ids: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avatar: Option<BotAvatar>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub persona: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selection: Option<Selection>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub access_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interaction_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub personality: Option<Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct BotAvatar {
+    pub character: String,
+    pub tint: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

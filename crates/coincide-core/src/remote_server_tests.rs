@@ -220,6 +220,95 @@ fn pair(fixture: &mut Fixture) -> (Client, String, String) {
 }
 
 #[test]
+fn paired_phone_can_list_and_open_bot_conversations_without_navigating_the_mac() {
+    let mut fixture = fixture();
+    let bot = Uuid::new_v4().to_string().to_uppercase();
+    {
+        let mut engine = fixture.engine.lock().unwrap();
+        engine
+            .store
+            .save_document(
+                "bots.json",
+                &json!({"bots":[{
+                    "id":bot,"name":"Fixture bot","persona":"Be concise",
+                    "avatar":{"shape":"alien","tint":"mint"},
+                    "selection":{"provider":"codex","modelID":"default"},
+                    "accessMode":"approval","interactionMode":"build","folder":fixture._dir.path()
+                }]}),
+            )
+            .unwrap();
+        engine.requested_open = None;
+    }
+    fixture.server.set_enabled(true);
+    let (mut phone, _, _) = pair(&mut fixture);
+    request(&mut phone, "workspace-before", "workspace", None);
+    let workspace = reply(&mut phone, "workspace-before");
+    assert_eq!(workspace["body"]["bots"][0]["id"], bot);
+    assert_eq!(workspace["body"]["bots"][0]["avatar"]["character"], "alien");
+    assert_eq!(workspace["body"]["canEditBots"], false);
+
+    request(
+        &mut phone,
+        "new-bot",
+        "newBotConversation",
+        Some(json!({"botID":bot})),
+    );
+    let created = reply(&mut phone, "new-bot");
+    assert_eq!(created["type"], "thread", "{created}");
+    let thread = created["body"]["value"].as_str().unwrap().to_owned();
+    assert!(fixture.engine.lock().unwrap().requested_open.is_none());
+    request(
+        &mut phone,
+        "reuse-bot",
+        "newBotConversation",
+        Some(json!({"botID":bot})),
+    );
+    assert_eq!(reply(&mut phone, "reuse-bot")["body"]["value"], thread);
+    request(&mut phone, "workspace-after", "workspace", None);
+    let workspace = reply(&mut phone, "workspace-after");
+    assert_eq!(workspace["body"]["bots"][0]["threadIDs"][0], thread);
+    assert!(
+        workspace["body"]["threads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["id"] == thread)
+    );
+    request(
+        &mut phone,
+        "open-bot",
+        "openThread",
+        Some(json!({"threadID":thread,"limit":20})),
+    );
+    assert_eq!(reply(&mut phone, "open-bot")["type"], "transcript");
+    assert!(fixture.engine.lock().unwrap().requested_open.is_none());
+    {
+        let mut engine = fixture.engine.lock().unwrap();
+        let mut saved = engine.store.thread(&thread).unwrap();
+        saved["draft"] = json!("Unsent text");
+        engine.store.save(&saved).unwrap();
+    }
+    request(
+        &mut phone,
+        "new-after-draft",
+        "newBotConversation",
+        Some(json!({"botID":bot})),
+    );
+    let next = reply(&mut phone, "new-after-draft");
+    assert_ne!(next["body"]["value"], thread);
+    assert_eq!(
+        fixture
+            .engine
+            .lock()
+            .unwrap()
+            .store
+            .thread(&thread)
+            .unwrap()["draft"],
+        "Unsent text"
+    );
+}
+
+#[test]
 fn paired_devices_sync_project_disclosure_without_changing_special_groups() {
     let mut fixture = fixture();
     let (project_id, chats_id, bots_id) = {
