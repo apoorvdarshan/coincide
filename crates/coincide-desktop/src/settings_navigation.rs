@@ -808,6 +808,7 @@ impl Coincide {
             pane = pane.child(
                 div()
                     .flex()
+                    .flex_shrink_0()
                     .items_center()
                     .gap_3()
                     .p_4()
@@ -868,6 +869,11 @@ impl Coincide {
             let id = text(&agent, "id");
             let name = text(&agent, "name");
             let registered = agent["registered"] == true;
+            let action_label = if registered {
+                format!("{name} added")
+            } else {
+                format!("Add {name}")
+            };
             let detail = if registered {
                 "Added"
             } else {
@@ -892,12 +898,14 @@ impl Coincide {
                         .child(
                             Button::new(SharedString::from(format!("provider-add-{id}")))
                                 .label(if registered { "Added" } else { "Add" })
+                                .accessibility_label(action_label)
                                 .disabled(registered || self.settings_navigation.agent_add_pending)
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.add_registry_agent_in_settings(id.clone(), cx)
                                 })),
                         ),
-                ),
+                )
+                .flex_shrink_0(),
             );
         }
         if registry.is_null() || (registry["loading"] == true && registry["agents"].is_null()) {
@@ -911,6 +919,7 @@ impl Coincide {
         pane = pane.child(
             div()
                 .flex()
+                .flex_shrink_0()
                 .items_center()
                 .gap_2()
                 .mt_2()
@@ -991,11 +1000,13 @@ impl Coincide {
                                         );
                                     })),
                                 ),
-                        ),
+                        )
+                        .flex_shrink_0(),
                     );
             }
             pane = pane.child(
                 Button::new("providers-custom-agent")
+                    .flex_shrink_0()
                     .label(if self.settings_navigation.show_custom_agent {
                         "Close custom agent"
                     } else {
@@ -1020,7 +1031,7 @@ impl Coincide {
                         .child(Button::new("providers-custom-agent-add").label("Add agent")
                             .disabled(self.settings_navigation.agent_add_pending)
                             .on_click(cx.listener(|this, _, _, cx| this.add_custom_agent_in_settings(cx))))
-                ));
+                ).flex_shrink_0());
             }
             for agent in registry_agent_rows(registry, true, "")
                 .into_iter()
@@ -1031,6 +1042,11 @@ impl Coincide {
                 let website = agent["website"].as_str().map(str::to_owned);
                 let link = website.clone();
                 let fallback_name = name.clone();
+                let action_label = if link.is_some() {
+                    format!("Install {name}")
+                } else {
+                    format!("Add {name} manually")
+                };
                 pane = pane.child(
                     self.settings_card(
                         div()
@@ -1058,6 +1074,7 @@ impl Coincide {
                                     } else {
                                         "Add manually…"
                                     })
+                                    .accessibility_label(action_label)
                                     .on_click(cx.listener(move |this, _, window, cx| {
                                         if let Some(url) = &link {
                                             cx.open_url(url);
@@ -1070,7 +1087,8 @@ impl Coincide {
                                         }
                                     })),
                             ),
-                    ),
+                    )
+                    .flex_shrink_0(),
                 );
             }
         }
@@ -1078,6 +1096,7 @@ impl Coincide {
             .child(
                 div()
                     .flex()
+                    .flex_shrink_0()
                     .items_center()
                     .justify_between()
                     .child(panel.last_checked())
