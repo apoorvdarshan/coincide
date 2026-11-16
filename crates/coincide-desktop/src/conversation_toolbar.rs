@@ -153,9 +153,9 @@ impl Coincide {
             .flex_shrink_0()
             .w_full()
             .min_w_0()
-            .bg(self.color(0x10141c))
+            .bg(self.color(0x151922))
             .border_b_1()
-            .border_color(self.color(0x29303d))
+            .border_color(self.color(0x29303d).opacity(0.7))
             .child(
                 div()
                     .id("conversation-toolbar-primary")

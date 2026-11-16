@@ -51,6 +51,8 @@ fn provider_template(provider: &str) -> Option<&'static [u8]> {
 
 pub(super) fn provider_known(provider: &str) -> bool {
     PROVIDER_LOGOS.iter().any(|(name, _)| *name == provider)
+        || coincide_core::acp_registry::registry_id(provider)
+            .is_some_and(|id| agent_logo_assets::logo(id).is_some())
 }
 
 fn provider_color_logo(provider: &str) -> Option<Arc<Image>> {
@@ -79,6 +81,25 @@ struct ProviderTemplate {
     size: f32,
 }
 
+#[derive(IntoElement)]
+struct RegistryTemplate {
+    svg: Arc<[u8]>,
+    size: f32,
+}
+impl RenderOnce for RegistryTemplate {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let ink = if cx.theme().is_dark() {
+            0xf4f4f4
+        } else {
+            0x171717
+        };
+        Icon::default()
+            .data(&self.svg)
+            .size(px(self.size))
+            .text_color(rgb(ink))
+    }
+}
+
 impl RenderOnce for ProviderTemplate {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let ink = if cx.theme().is_dark() {
@@ -98,6 +119,12 @@ impl RenderOnce for ProviderTemplate {
 pub(super) fn provider_mark(provider: &str, size: f32) -> Option<Div> {
     let mark = if let Some(svg) = provider_template(provider) {
         ProviderTemplate { svg, size }.into_any_element()
+    } else if let Some(id) = coincide_core::acp_registry::registry_id(provider) {
+        RegistryTemplate {
+            svg: agent_logo_assets::logo(id)?,
+            size,
+        }
+        .into_any_element()
     } else {
         img(provider_color_logo(provider)?)
             .size(px(size))

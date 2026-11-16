@@ -923,10 +923,17 @@ impl DiffPanel {
                     .role(Role::Group)
                     .aria_label(label)
                     .child(
-                        Icon::new(icon)
-                            .size(px(28.))
-                            .text_color(tertiary)
-                            .mb(px(4.)),
+                        div()
+                            .size(px(40.))
+                            .rounded(px(12.))
+                            .bg(cx.theme().muted)
+                            .border_1()
+                            .border_color(cx.theme().border.opacity(0.7))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .mb(px(4.))
+                            .child(Icon::new(icon).size(px(20.)).text_color(tertiary)),
                     )
                     .child(
                         div()

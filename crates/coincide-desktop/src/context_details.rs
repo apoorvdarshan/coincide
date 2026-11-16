@@ -141,7 +141,11 @@ pub fn details(card: &Value) -> Result<Details> {
                         }
                     )
                 })
-                .unwrap_or_else(|| "Quote".into());
+                .unwrap_or_else(|| match card["sourceKind"].as_str() {
+                    Some("user") => "Replying to you".into(),
+                    Some(_) => "Replying to message".into(),
+                    None => "Quote".into(),
+                });
             (title, None, None, read("text"), false, false)
         }
         "terminal" => {

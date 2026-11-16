@@ -372,13 +372,15 @@ impl ReplyProjection {
     }
     pub fn into_native(
         self,
+        kind: &str,
     ) -> anyhow::Result<coincide_core::reply_selection::NativeReplySelection> {
-        coincide_core::reply_selection::NativeReplySelection::from_native_projection(
+        coincide_core::reply_selection::NativeReplySelection::from_native_message_projection(
             &self.item,
             self.rendered.source().into(),
             self.source_range,
             self.rendered.as_str().into(),
             self.rendered_range,
+            kind,
         )
     }
 }

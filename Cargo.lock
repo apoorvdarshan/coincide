@@ -1253,6 +1253,7 @@ dependencies = [
  "portable-pty",
  "qrcodegen",
  "ring",
+ "roxmltree 0.21.2",
  "rusqlite",
  "rustls",
  "serde",

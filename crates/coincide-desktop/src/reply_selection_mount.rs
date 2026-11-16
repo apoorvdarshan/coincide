@@ -2,6 +2,128 @@
 //! another renderer, a background window, or an agent supplied JSON argument.
 use super::*;
 impl Coincide {
+    fn browser_owns_reply_focus(&self, window: &Window, cx: &App) -> bool {
+        let Some(id) = self.selected.as_ref().map(|thread| text(thread, "id")) else {
+            return false;
+        };
+        if !self.browser_panels.contains(&id) {
+            return false;
+        }
+        self.browser_focus.contains_focused(window, cx)
+            || self.browser.as_ref().is_some_and(|browser| {
+                browser
+                    .shortcut_source(&id, cx)
+                    .is_some_and(|source| browser.native_shortcut_focused(&source, cx))
+            })
+    }
+    pub(super) fn reply_to_message(
+        &mut self,
+        source: &str,
+        item: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.selection_to_composer_available(window, cx)
+            && transcript::focused_reply_projection(window, cx)
+                .is_some_and(|selection| selection.thread == source && selection.item == item)
+        {
+            self.add_selection_to_composer(window, cx);
+            return;
+        }
+        let capture = (|| -> Result<_> {
+            let thread = self
+                .selected
+                .as_ref()
+                .filter(|thread| thread["id"] == source)
+                .ok_or_else(|| anyhow::anyhow!("Conversation changed"))?;
+            let rows = thread["items"]
+                .as_array()
+                .ok_or_else(|| anyhow::anyhow!("Message unavailable"))?;
+            let mut matches = rows.iter().filter(|row| row["id"] == item);
+            let row = matches
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("Message unavailable"))?;
+            anyhow::ensure!(matches.next().is_none(), "Message identity is ambiguous");
+            let body = row["text"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("Message has no text"))?;
+            anyhow::ensure!(
+                body.len() <= 16_000,
+                "Select the part of this message you want to reply to"
+            );
+            let kind = row["kind"].as_str().unwrap_or("");
+            let selection = coincide_core::reply_selection::NativeReplySelection::from_native_message_projection(
+                item, body.into(), 0..body.len(), body.into(), 0..body.len(), kind,
+            )?;
+            Ok((
+                source.to_owned(),
+                coincide_core::composer_context::ExpectedContext::from_thread(thread),
+                selection,
+            ))
+        })();
+        match capture {
+            Ok((id, context, selection)) => {
+                self.submit_reply_reference(id, context, selection, window, cx)
+            }
+            Err(error) => {
+                self.status = error.to_string();
+                self.show_local_error(&format!("Could not attach reply: {error}"));
+                cx.notify();
+            }
+        }
+    }
+
+    fn submit_reply_reference(
+        &mut self,
+        id: String,
+        context: coincide_core::composer_context::ExpectedContext,
+        selection: coincide_core::reply_selection::NativeReplySelection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(job) = self.attachment_imports.reserve_reference(&id) else {
+            self.show_local_error(
+                "Too many attachment changes are in progress. Try again shortly.",
+            );
+            cx.notify();
+            return;
+        };
+        self.composer.read(cx).focus_handle(cx).focus(window, cx);
+        let engine = self.engine.clone();
+        cx.spawn(async move |this, cx| {
+            let owner = id.clone();
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut engine = engine
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("App engine is unavailable"))?;
+                    engine.native_attach_reply_selection_preserve_draft(&id, context, selection)
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(saved) => {
+                        this.composer_files.invalidate();
+                        let card = saved["draftContext"]
+                            .as_array()
+                            .and_then(|rows| rows.last())
+                            .cloned();
+                        let error = card
+                            .is_none()
+                            .then(|| anyhow::anyhow!("Saved reply reference was unavailable"));
+                        this.finish_reply_reference(job, &owner, card, error, cx);
+                    }
+                    Err(error) => {
+                        this.finish_reply_reference(job, &owner, None, Some(error), cx);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
     pub(super) fn selection_to_composer_available(&self, window: &Window, cx: &App) -> bool {
         if self.media.close_requested
             || self.media.shutdown_requested
@@ -21,11 +143,7 @@ impl Coincide {
                     .focused_context_selection_available(window);
             }
         }
-        if self
-            .selected
-            .as_ref()
-            .is_some_and(|thread| self.browser_panels.contains(&text(thread, "id")))
-        {
+        if self.browser_owns_reply_focus(window, cx) {
             return false;
         }
         let Some(projection) = transcript::focused_reply_projection(window, cx) else {
@@ -38,7 +156,9 @@ impl Coincide {
                 thread["items"].as_array().is_some_and(|items| {
                     let mut matching = items.iter().filter(|item| item["id"] == projection.item);
                     matching.next().is_some_and(|item| {
-                        item["kind"] == "assistant"
+                        item["kind"]
+                            .as_str()
+                            .is_some_and(coincide_core::composer_context::quotable_kind)
                             && item["text"].as_str() == Some(projection.source())
                     }) && matching.next().is_none()
                 })
@@ -76,41 +196,34 @@ impl Coincide {
         }
         // A native web view can retain OS input outside GPUI's text focus. Do
         // not borrow an old registered reply selection while that pane is open.
-        if self
-            .selected
-            .as_ref()
-            .is_some_and(|thread| self.browser_panels.contains(&text(thread, "id")))
-        {
+        if self.browser_owns_reply_focus(window, cx) {
             return;
         }
         let Some(projection) = transcript::focused_reply_projection(window, cx) else {
             return;
         };
-        let admitted = self
+        let kind = self
             .selected
             .as_ref()
             .filter(|thread| thread["id"] == projection.thread)
-            .is_some_and(|thread| {
+            .and_then(|thread| {
                 let Some(items) = thread["items"].as_array() else {
-                    return false;
+                    return None;
                 };
                 let mut matching = items.iter().filter(|item| item["id"] == projection.item);
-                matching.next().is_some_and(|item| {
-                    item["kind"] == "assistant"
-                        && item["text"].as_str() == Some(projection.source())
-                }) && matching.next().is_none()
+                let item = matching.next()?;
+                let kind = item["kind"].as_str()?;
+                (matching.next().is_none()
+                    && coincide_core::composer_context::quotable_kind(kind)
+                    && item["text"].as_str() == Some(projection.source()))
+                .then(|| kind.to_owned())
             });
-        if !admitted {
+        let Some(kind) = kind else {
             self.status = "The selected reply changed; select its text again.".into();
             cx.notify();
             return;
-        }
-        if !self.flush_pending_drafts() {
-            self.status = "Save the current draft before attaching a reply selection.".into();
-            cx.notify();
-            return;
-        }
-        let result = (|| -> Result<Value> {
+        };
+        let capture = (|| -> Result<_> {
             anyhow::ensure!(
                 projection.current(window, cx),
                 "Reply selection changed; select its text again"
@@ -120,31 +233,19 @@ impl Coincide {
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("Conversation changed"))?;
             let id = text(thread, "id");
-            let draft = self.composer.read(cx).value().to_string();
-            anyhow::ensure!(
-                text(thread, "draft") == draft && !self.pending_drafts.contains_key(&id),
-                "Draft changed; retry after saving"
-            );
             let context = coincide_core::composer_context::ExpectedContext::from_thread(thread);
-            let selection = projection.into_native()?;
-            try_state(&self.engine)?.native_attach_reply_selection(&id, &draft, context, selection)
+            let selection = projection.into_native(&kind)?;
+            Ok((id, context, selection))
         })();
-        match result {
-            Ok(saved) => {
-                if let Some(thread) = self
-                    .selected
-                    .as_mut()
-                    .filter(|thread| thread["id"] == saved["threadId"])
-                {
-                    thread["draftContext"] = saved["draftContext"].clone();
-                }
-                self.composer_files.invalidate();
-                self.composer.read(cx).focus_handle(cx).focus(window, cx);
-                self.status = "Selected reply attached. Your message has not been sent.".into();
+        let (id, context, selection) = match capture {
+            Ok(value) => value,
+            Err(error) => {
+                self.status = error.to_string();
+                cx.notify();
+                return;
             }
-            Err(error) => self.status = error.to_string(),
-        }
-        cx.notify();
+        };
+        self.submit_reply_reference(id, context, selection, window, cx);
     }
     pub(super) fn reply_selection_shortcut(
         &mut self,

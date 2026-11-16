@@ -1689,7 +1689,9 @@ fn footer_compaction(widths: [f32; 6], available: f32) -> [bool; 6] {
 /// Reserve the action buttons and their gaps before sizing the model controls.
 /// The plan action is wider than the ordinary round Send button.
 fn footer_trailing_width(meters: f32, voice: bool, running: bool, primary: f32) -> f32 {
-    92. + meters
+    // Include both attachment actions, the primary action and their gaps,
+    // with a little room for font and platform-specific button padding.
+    110. + meters
         + if voice { 30. } else { 0. }
         + if running { 30. } else { 0. }
         + (primary - 28.).max(0.)
@@ -4507,6 +4509,7 @@ impl Coincide {
             }
         };
         let agent = coincide_core::acp_registry::Agent {
+            icon: None,
             id: format!("custom-{}", uuid::Uuid::new_v4().simple()),
             name,
             website: None,

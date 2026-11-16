@@ -72,7 +72,7 @@ fn headless_exact_owned_native_reply_selection_and_core_projection(cx: &mut Test
     assert!(text.contains("repeat and repeat"));
     assert!(!text.contains("**bold**"));
     assert!(vcx.update(|window, cx| projection.current(window, cx)));
-    assert!(projection.into_native().is_ok());
+    assert!(projection.into_native("assistant").is_ok());
 }
 #[gpui_kit::test]
 #[ignore = "private-child wrapper only"]

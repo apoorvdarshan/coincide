@@ -168,6 +168,7 @@ write({'id':r['id'],'result':{'stopReason':'end_turn'}})
         Engine::new(Store::open(&directory.path().join("private/state.sqlite")).unwrap());
     engine
         .register_native_acp_agent(&coincide_core::acp_registry::Agent {
+            icon: None,
             id: "fixture".into(),
             name: "Fixture".into(),
             website: None,

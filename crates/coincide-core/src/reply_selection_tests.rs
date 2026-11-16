@@ -50,6 +50,60 @@ fn selected_quote_preserves_entire_draft_history_context_and_unknown_fields() {
     assert!(engine.runs.is_empty());
 }
 #[test]
+fn selected_user_text_in_large_thread_keeps_a_newer_draft_and_tags_source() {
+    let (_directory, mut engine, id, item, mut thread) = fixture();
+    thread["items"][0]["kind"] = json!("user");
+    thread["items"].as_array_mut().unwrap().push(json!({
+        "id":Uuid::new_v4(), "kind":"assistant", "text":"x".repeat(9 * 1024 * 1024)
+    }));
+    let context = ExpectedContext::from_thread(&thread);
+    thread["draft"] = json!("A different draft typed while selecting");
+    engine.store.save(&thread).unwrap();
+    let selected = NativeReplySelection::from_native_message_projection(
+        &item,
+        "A **bold** fixture reply".into(),
+        4..8,
+        "A bold fixture reply".into(),
+        2..6,
+        "user",
+    )
+    .unwrap();
+    let result = engine
+        .native_attach_reply_selection_preserve_draft(&id, context, selected)
+        .unwrap();
+    assert_eq!(result["draftContext"][0]["text"], "bold");
+    assert_eq!(result["draftContext"][0]["sourceItemID"], item);
+    assert_eq!(result["draftContext"][0]["sourceKind"], "user");
+    assert_eq!(engine.store.thread(&id).unwrap()["draft"], thread["draft"]);
+}
+
+#[test]
+fn selection_remains_valid_if_a_streamed_reply_only_appends_text() {
+    let (_directory, mut engine, id, item, mut thread) = fixture();
+    let selection = selection(&item);
+    let expected = ExpectedContext::from_thread(&thread);
+    thread["items"][0]["text"] = json!("A **bold** fixture reply, with a streamed continuation");
+    engine.store.save(&thread).unwrap();
+    let result = engine
+        .native_attach_reply_selection_preserve_draft(&id, expected, selection)
+        .unwrap();
+    assert_eq!(result["draftContext"][0]["text"], "bold");
+}
+
+#[test]
+fn reference_finishes_in_its_original_thread_after_navigation() {
+    let (_directory, mut engine, id, item, thread) = fixture();
+    let expected = ExpectedContext::from_thread(&thread);
+    let selected = selection(&item);
+    engine.set_active_thread(None).unwrap();
+    engine
+        .native_attach_reply_selection_preserve_draft(&id, expected, selected)
+        .unwrap();
+    let saved = engine.store.thread(&id).unwrap();
+    assert_eq!(saved["draft"], thread["draft"]);
+    assert_eq!(saved["draftContext"][0]["text"], "bold");
+}
+#[test]
 fn late_item_text_kind_duplicate_identity_context_or_draft_change_is_refused() {
     for change in ["text", "kind", "duplicate", "context", "draft"] {
         let (_directory, mut engine, id, item, thread) = fixture();

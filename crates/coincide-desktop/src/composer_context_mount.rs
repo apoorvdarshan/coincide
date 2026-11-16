@@ -35,16 +35,6 @@ impl Coincide {
         }
         cx.notify();
     }
-    pub(super) fn quote_message(&mut self, source: &str, item: &str, cx: &mut Context<Self>) {
-        self.edit_context(
-            source,
-            Edit::Quote {
-                item_id: item.into(),
-            },
-            cx,
-        );
-    }
-
     fn remove_file_reference(&mut self, source: String, card: Value, cx: &mut Context<Self>) {
         let Some(job) = self.attachment_imports.reserve_removal(&source) else {
             self.show_local_error(

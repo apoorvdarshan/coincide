@@ -255,6 +255,11 @@ impl Engine {
         alternate: bool,
     ) -> Result<CapturedNativeSend> {
         let id = required(captured, "id")?;
+        // A stop already owns this turn. Admit the captured message after its
+        // completion rather than sending a second stop or a stale steer.
+        if self.is_thread_stopping(id) {
+            return Ok(CapturedNativeSend::Waiting);
+        }
         let current = self.store.thread(id)?;
         let provider = text(&captured["selection"], "provider");
         let chosen = if alternate {
@@ -348,7 +353,7 @@ impl Engine {
             captured,
             false,
             true,
-            Some("Image import failed; edit this message and attach the image again."),
+            Some("Attachment or reference failed; edit this message and try again."),
         )?;
         Ok(())
     }

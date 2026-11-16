@@ -14,6 +14,7 @@ pub(super) enum SendRoute {
 }
 
 /// A follow-up is bound to composer metadata, not the entire transcript.
+#[cfg(test)]
 fn follow_up_source(thread: &Value) -> Value {
     let mut source = serde_json::Map::new();
     for key in [
@@ -84,6 +85,8 @@ pub(super) struct PendingSend {
     pub buffer_id: Option<String>,
     /// Keeps this submission's previews hidden while it is being saved.
     pub image_send: Option<u64>,
+    admission:
+        Option<Arc<std::sync::Mutex<Option<Result<coincide_core::api::CapturedNativeSend>>>>>,
 }
 impl PendingSend {
     pub fn new(thread: &Value, draft: String, alternate: bool) -> Self {
@@ -108,6 +111,7 @@ impl PendingSend {
             original_visible: true,
             buffer_id: None,
             image_send: None,
+            admission: None,
         }
     }
     pub fn with_behavior(mut self, behavior: Behavior) -> Self {
@@ -190,15 +194,6 @@ impl PendingSend {
             && self.selection == pending_scope(thread, self.waiting_for_import)
     }
 }
-
-#[derive(Debug)]
-struct TurnStopping;
-impl std::fmt::Display for TurnStopping {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("The previous turn is stopping")
-    }
-}
-impl std::error::Error for TurnStopping {}
 
 /// If the previous submission is still visible, retain only newly appended
 /// text as the next message. A deliberately retyped identical message remains
@@ -292,6 +287,50 @@ pub(super) fn init(cx: &mut App) {
     ]);
 }
 impl Coincide {
+    /// A captured send may require reading a very long transcript and writing
+    /// the queue. Keep that work off the window thread and submit it once.
+    pub(super) fn poll_captured_admission(
+        &mut self,
+        pending: &mut PendingSend,
+        clear_original: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<Result<coincide_core::api::CapturedNativeSend>> {
+        if let Some(slot) = &pending.admission {
+            let result = slot.lock().ok()?.take();
+            if result.is_some() {
+                pending.admission = None;
+            }
+            return result;
+        }
+        let slot = Arc::new(std::sync::Mutex::new(None));
+        pending.admission = Some(slot.clone());
+        let engine = self.engine.clone();
+        let captured = pending.captured.clone();
+        let behavior = pending.behavior;
+        let alternate = pending.alternate;
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut engine = engine
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("App engine is unavailable"))?;
+                    engine.admit_captured_native_send(
+                        &captured,
+                        clear_original,
+                        behavior,
+                        alternate,
+                    )
+                })
+                .await;
+            if let Ok(mut value) = slot.lock() {
+                *value = Some(result);
+            }
+            let _ = this.update(cx, |_, cx| cx.notify());
+        })
+        .detach();
+        None
+    }
     pub(super) fn has_buffered_selection_send(&self, thread_id: &str) -> bool {
         self.pending_follow_up
             .iter()
@@ -800,104 +839,9 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.voice.preview.is_some() {
-            self.cancel_composer_dictation(cx);
-        }
-
-        self.record_composer_draft(cx);
-        let Some(thread) = self.selected.as_ref().map(follow_up_source) else {
-            return;
-        };
-        let id = text(&thread, "id");
-        if self.attachment_imports.contains(&id) {
-            self.show_local_error("Wait for image imports to finish before sending a follow-up.");
-            cx.notify();
-            return;
-        }
-        let draft = self.composer.read(cx).value().to_string();
-        // The Engine validates the saved draft and selection atomically. Keep
-        // the visible draft until that exact payload has been saved and admitted.
-        // In particular, never retry by replacing text the user typed meanwhile.
-        if self
-            .pending_drafts
-            .get(&id)
-            .is_some_and(|draft| draft.failed)
-        {
-            self.pending_follow_up = None;
-            self.show_local_error("The draft could not be saved. It remains in the composer; retry saving before sending.");
-            cx.notify();
-            return;
-        }
-        if self.pending_drafts.contains_key(&id) && self.draft_saver.available() {
-            self.draft_saver.record_now(&id, &draft);
-        } else if !self.draft_saver.available() {
-            self.save_pending_draft(&id);
-        }
-        if self.pending_drafts.contains_key(&id)
-            || self
-                .pending_follow_up_choice
-                .as_ref()
-                .is_some_and(|(owner, _)| owner == &id)
-        {
-            let mut pending = PendingSend::new(&thread, draft, alternate)
-                .with_behavior(self.captured_follow_up_behavior(&thread));
-            self.exclude_submitted_images(&mut pending);
-            self.pending_follow_up = Some(pending);
-            cx.notify();
-            return;
-        }
-        // The saved source is now owned by the follow-up operation. Revoke
-        // its debounced write before the provider can acknowledge and clear it.
-        self.draft_saver.invalidate();
-        let result = self
-            .engine
-            .try_lock()
-            .map_err(|_| anyhow::anyhow!(EngineBusy))
-            .and_then(|mut engine| {
-                if engine.is_thread_stopping(&id) {
-                    anyhow::bail!(TurnStopping);
-                }
-                engine.send_native_follow_up(&thread, alternate)
-            });
-        match result {
-            Ok(ticket) => {
-                self.pending_follow_up = None;
-                let image_send = self.show_pending_send(&id, &draft, &thread["draftContext"]);
-                self.pending_drafts.remove(&id);
-                if let Some(thread) = self.selected.as_mut()
-                    && text(thread, "id") == id
-                {
-                    thread["draft"] = json!("");
-                }
-                self.composer
-                    .update(cx, |input, cx| input.set_value("", window, cx));
-                self.follow_up_deliveries.push(PendingDelivery {
-                    ticket: Some(ticket),
-                    thread: id,
-                    draft,
-                    queued: false,
-                    image_send,
-                });
-            }
-            Err(error)
-                if engine_busy(&error)
-                    || error.is::<TurnStopping>()
-                    || error.to_string().contains("Collect the previous follow-up") =>
-            {
-                let mut pending = PendingSend::new(&thread, draft, alternate)
-                    .with_behavior(self.captured_follow_up_behavior(&thread));
-                pending.wait_for_stopped_turn = error.is::<TurnStopping>();
-                self.exclude_submitted_images(&mut pending);
-                self.pending_follow_up = Some(pending);
-            }
-            Err(error) => {
-                self.pending_follow_up = None;
-                let reason = error.to_string();
-                self.show_local_error(&send_error_message(&reason));
-                self.status = reason;
-            }
-        }
-        cx.notify();
+        // Own the exact submission before waiting for draft persistence or the
+        // provider. The buffer preserves mode, order, attachments and edits.
+        self.buffer_composer_send(alternate, window, cx);
     }
     /// Put a follow-up back in the composer after the engine withheld it, but
     /// never over text the user has started typing since.

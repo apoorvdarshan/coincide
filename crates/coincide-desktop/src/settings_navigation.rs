@@ -14,6 +14,8 @@ pub(super) struct State {
     last_agent_scan: Option<Instant>,
     agent_read_pending: bool,
     agent_add_pending: bool,
+    logo_requests: std::collections::HashMap<String, Instant>,
+    logo_pending: bool,
     show_more_agents: bool,
     show_custom_agent: bool,
 }
@@ -248,6 +250,69 @@ impl Coincide {
                     this.settings_navigation.agent_view = view;
                     cx.notify();
                 }
+                this.refresh_new_agent_logos(cx);
+            });
+        })
+        .detach();
+    }
+
+    fn refresh_new_agent_logos(&mut self, cx: &mut Context<Self>) {
+        if self.settings_navigation.logo_pending {
+            return;
+        }
+        let now = Instant::now();
+        // Keep an unexpectedly large registry from creating unbounded network
+        // requests or in-memory image state during a single app run.
+        let remaining = 128usize.saturating_sub(self.settings_navigation.logo_requests.len());
+        let ids = self.settings_navigation.agent_view["agents"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|agent| {
+                let id = agent["id"].as_str()?;
+                if agent["icon"].as_str().is_none()
+                    || agent_logo_assets::logo(id).is_some()
+                    || (remaining == 0 && !self.settings_navigation.logo_requests.contains_key(id))
+                    || self
+                        .settings_navigation
+                        .logo_requests
+                        .get(id)
+                        .is_some_and(|at| at.elapsed() < Duration::from_secs(300))
+                {
+                    return None;
+                }
+                Some(id.to_owned())
+            })
+            .take(4)
+            .collect::<Vec<_>>();
+        if ids.is_empty() {
+            return;
+        }
+        for id in &ids {
+            self.settings_navigation
+                .logo_requests
+                .insert(id.clone(), now);
+        }
+        self.settings_navigation.logo_pending = true;
+        cx.spawn(async move |this, cx| {
+            let fetched = cx
+                .background_executor()
+                .spawn(async move {
+                    ids.into_iter()
+                        .filter_map(|id| {
+                            coincide_core::acp_registry::fetch_icon(&id)
+                                .ok()
+                                .map(|bytes| (id, bytes))
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.settings_navigation.logo_pending = false;
+                for (id, bytes) in fetched {
+                    agent_logo_assets::remember(id, bytes);
+                }
+                cx.notify();
             });
         })
         .detach();
@@ -329,6 +394,7 @@ impl Coincide {
                     let arguments =
                         shell_words::split(&args).context("Check the agent arguments")?;
                     let agent = coincide_core::acp_registry::Agent {
+                        icon: None,
                         id: format!("custom-{}", uuid::Uuid::new_v4().simple()),
                         name,
                         website: None,
@@ -440,7 +506,7 @@ impl Coincide {
             None => label.into(),
         })
         .w_full()
-        .h(px(38.))
+        .h(px(40.))
         .rounded(px(10.))
         .ghost()
         .when(selected, |button| button.bg(self.color(0x202a3b)))
@@ -450,6 +516,11 @@ impl Coincide {
                 .items_center()
                 .w_full()
                 .gap_2()
+                .child(
+                    div().w(px(2.)).h(px(18.)).rounded_full().bg(self
+                        .color(0xe4e9f2)
+                        .opacity(if selected { 0.8 } else { 0.0 })),
+                )
                 .child(icon_tile(
                     section,
                     22.,
@@ -886,7 +957,15 @@ impl Coincide {
                         .items_center()
                         .gap_3()
                         .p_4()
-                        .child(Icon::new(gpui_kit::assets::IconName::Cpu).small())
+                        .child(
+                            chat_layout::provider_mark(&format!("acp-{id}"), 24.)
+                                .map(|mark| mark.into_any_element())
+                                .unwrap_or_else(|| {
+                                    Icon::new(gpui_kit::assets::IconName::Cpu)
+                                        .small()
+                                        .into_any_element()
+                                }),
+                        )
                         .child(
                             div().flex_1().child(name).child(
                                 div()
@@ -1054,7 +1133,15 @@ impl Coincide {
                             .items_center()
                             .gap_3()
                             .p_4()
-                            .child(Icon::new(gpui_kit::assets::IconName::Cpu).small())
+                            .child(
+                                chat_layout::provider_mark(&format!("acp-{id}"), 24.)
+                                    .map(|mark| mark.into_any_element())
+                                    .unwrap_or_else(|| {
+                                        Icon::new(gpui_kit::assets::IconName::Cpu)
+                                            .small()
+                                            .into_any_element()
+                                    }),
+                            )
                             .child(
                                 div().flex_1().child(name).child(
                                     div()
