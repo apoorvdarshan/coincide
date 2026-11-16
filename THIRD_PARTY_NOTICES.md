@@ -5,6 +5,14 @@ Computer Use runs Cua Driver, bundled unmodified in `Coincide.app/Contents/Helpe
 Dictation with Whisper on the Mac uses WhisperKit. Passkey sign-in checks sites against the Public Suffix List.
 Coincide Remote on iPhone and iPad uses RevenueCat's purchases-ios for Coincide Pro and tips.
 
+## ACP Registry
+
+The bundled offline agent metadata is adapted from the
+[ACP Registry](https://github.com/agentclientprotocol/registry) under the Apache
+License 2.0. The snapshot and license are in
+`crates/coincide-core/third_party/acp-registry/`. Coincide also reads updated
+registry metadata at runtime.
+
 ## T3 Code
 
 https://github.com/pingdotgg/t3code

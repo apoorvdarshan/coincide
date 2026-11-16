@@ -176,7 +176,7 @@ fn platform() -> Option<&'static str> {
         _ => None,
     }
 }
-fn search_path() -> Option<std::ffi::OsString> {
+pub(crate) fn search_path() -> Option<std::ffi::OsString> {
     let mut paths: Vec<_> = std::env::var_os("PATH")
         .as_deref()
         .map(std::env::split_paths)
@@ -194,9 +194,11 @@ fn search_path() -> Option<std::ffi::OsString> {
             }
         }
         if let Some(home) = std::env::var_os("HOME") {
-            let path = PathBuf::from(home).join(".local/bin");
-            if path.is_absolute() && !paths.contains(&path) {
-                paths.push(path);
+            for relative in [".local/bin", ".cargo/bin", ".bun/bin"] {
+                let path = PathBuf::from(&home).join(relative);
+                if path.is_absolute() && !paths.contains(&path) {
+                    paths.push(path);
+                }
             }
         }
     }
@@ -301,9 +303,15 @@ pub fn fetch() -> Result<Vec<Agent>> {
     parse(&bytes, platform(), search_path().as_deref())
 }
 
-/// Local fallbacks remain available even when the remote registry is offline.
+/// The bundled snapshot allows discovery and browsing before the network
+/// responds and on a new installation that has never fetched the registry.
 pub fn local_agents() -> Vec<Agent> {
-    parse(br#"{"agents":[]}"#, platform(), search_path().as_deref()).unwrap_or_default()
+    parse(
+        include_bytes!("../third_party/acp-registry/registry.json"),
+        platform(),
+        search_path().as_deref(),
+    )
+    .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -343,6 +351,38 @@ mod tests {
             registry_id(&provider_id("future-agent").unwrap()),
             Some("future-agent")
         );
+    }
+    #[test]
+    fn bundled_registry_detects_installed_agents_without_network() {
+        let root = tempfile::tempdir().unwrap();
+        let binary = root.path().join(if cfg!(windows) {
+            "copilot.exe"
+        } else {
+            "copilot"
+        });
+        std::fs::write(&binary, b"fixture").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let agents = parse(
+            include_bytes!("../third_party/acp-registry/registry.json"),
+            platform(),
+            Some(root.path().as_os_str()),
+        )
+        .unwrap();
+        let copilot = agents
+            .iter()
+            .find(|agent| agent.id == "github-copilot-cli")
+            .unwrap();
+        assert_eq!(copilot.executable.as_deref(), Some(binary.as_path()));
+        assert!(
+            agents
+                .iter()
+                .any(|agent| agent.id == "gemini" && agent.executable.is_none())
+        );
+        assert!(agents.len() > 30);
     }
     #[test]
     fn rejects_unsafe_metadata_and_never_interprets_shell() {

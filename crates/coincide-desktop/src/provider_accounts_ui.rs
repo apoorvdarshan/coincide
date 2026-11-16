@@ -1127,7 +1127,7 @@ impl Panel {
                 .gap_2()
                 .py_2()
                 .border_t_1()
-                .border_color(rgb(0x29303d))
+                .border_color(cx.theme().border)
                 .child(
                     div()
                         .flex()

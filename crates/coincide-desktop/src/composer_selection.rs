@@ -987,6 +987,7 @@ pub(super) struct ComposerSelection {
     /// The agent tab the picker lists; nil while searching across every agent.
     tab_provider: Option<String>,
     acp_custom_open: bool,
+    acp_show_more: bool,
     /// Where the footer chip was clicked, in window coordinates.
     popover_anchor: Option<Point<Pixels>>,
 }
@@ -4309,6 +4310,20 @@ impl Coincide {
                     .as_str()
                     .is_none_or(|id| coincide_core::acp_registry::registry_id(id).is_none())
             })
+            .filter(|provider| {
+                let id = text(provider, "provider");
+                coincide_core::provider_catalog::PROVIDERS
+                    .iter()
+                    .find(|entry| settings_navigation::provider_key(entry.id) == id)
+                    .is_none_or(|entry| {
+                        settings_navigation::provider_is_shown(
+                            &self.settings,
+                            &self.settings_navigation.agent_view,
+                            entry.id,
+                            Some(&saved_provider),
+                        )
+                    })
+            })
         {
             let id = text(provider, "provider");
             let label = text(provider, "displayName");
@@ -4365,9 +4380,7 @@ impl Coincide {
                     this.selection_ui.tab_provider = Some(ACP_REGISTRY_TAB.into());
                     this.selection_ui.favorites_only = false;
                     this.selection_ui.facet = PickerFacet::Model;
-                    if let Ok(mut engine) = try_state(&this.engine) {
-                        let _ = engine.refresh_native_acp_registry();
-                    }
+                    this.refresh_agent_discovery(cx);
                     cx.notify();
                 })),
         );
@@ -4493,34 +4506,10 @@ impl Coincide {
     }
 
     fn composer_acp_registry(&self, providers: AnyElement, cx: &mut Context<Self>) -> AnyElement {
-        let view = try_state(&self.engine)
-            .map(|mut engine| engine.native_acp_registry_view())
-            .unwrap_or(Value::Null);
+        let view = &self.settings_navigation.agent_view;
         let query = self.model_picker_search.read(cx).value().to_lowercase();
-        let mut rows = view["agents"].as_array().cloned().unwrap_or_default();
-        for registered in view["registered"].as_array().into_iter().flatten() {
-            let Some(id) = registered["provider"]
-                .as_str()
-                .and_then(coincide_core::acp_registry::registry_id)
-            else {
-                continue;
-            };
-            if let Some(row) = rows.iter_mut().find(|row| row["id"] == id) {
-                if row["executable"].is_null() {
-                    row["executable"] = json!("registered");
-                }
-            } else {
-                rows.push(
-                    json!({"id":id,"name":registered["displayName"],"executable":"registered"}),
-                );
-            }
-        }
-        rows.sort_by_key(|row| {
-            (
-                row["executable"].is_null(),
-                text(row, "name").to_lowercase(),
-            )
-        });
+        let rows =
+            settings_navigation::registry_agent_rows(view, self.selection_ui.acp_show_more, &query);
         let mut list = div()
             .id("selection-acp-agents")
             .max_h(px(264.))
@@ -4528,14 +4517,11 @@ impl Coincide {
             .flex()
             .flex_col();
         let mut count = 0usize;
-        for agent in rows
-            .into_iter()
-            .filter(|row| query.is_empty() || text(row, "name").to_lowercase().contains(&query))
-            .take(200)
-        {
+        for agent in rows.into_iter().take(200) {
             let id = text(&agent, "id");
             let name = text(&agent, "name");
-            let installed = agent["executable"].as_str().is_some();
+            let installed = agent["executable"].as_str().is_some() || agent["registered"] == true;
+            let website = agent["website"].as_str().map(str::to_owned);
             count += 1;
             list = list.child(
                 self.picker_menu_row(
@@ -4545,14 +4531,20 @@ impl Coincide {
                         if installed {
                             "Installed"
                         } else {
-                            "Install and sign in to use"
+                            "Open installation instructions"
                         }
                         .into(),
                     ),
                     None,
                     false,
-                    !installed,
-                    move |this, _, cx| this.choose_registry_agent(id.clone(), cx),
+                    !installed && website.is_none(),
+                    move |this, _, cx| {
+                        if installed {
+                            this.choose_registry_agent(id.clone(), cx);
+                        } else if let Some(url) = &website {
+                            cx.open_url(url);
+                        }
+                    },
                     cx,
                 ),
             );
@@ -4564,8 +4556,10 @@ impl Coincide {
                     .py_3()
                     .text_sm()
                     .text_color(cx.theme().muted_foreground)
-                    .child(if view["loading"] == true {
-                        "Loading agents…"
+                    .child(if view.is_null() || view["loading"] == true {
+                        "Detecting installed agents…"
+                    } else if !self.selection_ui.acp_show_more {
+                        "No extra agents detected. Browse more to install or add one."
                     } else {
                         "No agents found."
                     }),
@@ -4604,6 +4598,21 @@ impl Coincide {
             .p_2()
             .child(providers)
             .child(self.model_picker_filter_bar(cx))
+            .child(
+                Button::new("acp-browse-extra")
+                    .label(if self.selection_ui.acp_show_more {
+                        "Show installed agents"
+                    } else {
+                        "Browse more agents"
+                    })
+                    .compact()
+                    .ghost()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.selection_ui.acp_show_more = !this.selection_ui.acp_show_more;
+                        this.refresh_agent_discovery(cx);
+                        cx.notify();
+                    })),
+            )
             .when(view["error"].is_string(), |panel| {
                 panel.child(
                     Button::new("acp-registry-retry")
@@ -4611,9 +4620,7 @@ impl Coincide {
                         .compact()
                         .ghost()
                         .on_click(cx.listener(|this, _, _, cx| {
-                            if let Ok(mut engine) = try_state(&this.engine) {
-                                let _ = engine.refresh_native_acp_registry();
-                            }
+                            this.refresh_agent_discovery(cx);
                             cx.notify();
                         })),
                 )

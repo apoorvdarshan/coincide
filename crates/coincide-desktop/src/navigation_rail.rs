@@ -28,7 +28,7 @@ impl Coincide {
                 .w(px(38.))
                 .h(px(38.))
                 .flex_shrink_0()
-                .rounded(px(10.))
+                .rounded(px(11.))
         };
         div()
             .id("navigation-rail")
@@ -42,7 +42,7 @@ impl Coincide {
             .h_full()
             .pt(px(if cfg!(target_os = "macos") { 56. } else { 6. }))
             .pb(px(12.))
-            .gap(px(6.))
+            .gap(px(7.))
             .bg(self.color(0x151922))
             .border_r_1()
             .border_color(self.color(0x29303d).opacity(0.7))

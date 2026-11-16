@@ -667,7 +667,7 @@ impl Coincide {
                     .px_1()
                     .text_sm()
                     .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(self.color(0xe4e9f2).opacity(0.72))
+                    .text_color(self.color(0xe4e9f2).opacity(0.8))
                     .child(title.into()),
             )
             .child(self.settings_card(body))
@@ -677,9 +677,9 @@ impl Coincide {
         div()
             .w_full()
             .min_w_0()
-            .rounded(px(12.))
+            .rounded(px(14.))
             .border_1()
-            .border_color(self.color(0x29303d))
+            .border_color(self.color(0x29303d).opacity(0.85))
             .bg(self.color(0x111722))
             .overflow_hidden()
             .child(body)
@@ -1119,6 +1119,21 @@ impl Coincide {
         done_id: &'static str,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let subtitle = match title {
+            "General" => Some("Appearance, workspace, and everyday preferences"),
+            "Models" => Some("Choose defaults and organize your models"),
+            "Usage" => Some("Activity and limits across your agents"),
+            "Instructions" => Some("Manage the guidance your agents follow"),
+            "Archive" => Some("Find and manage archived conversations"),
+            "Keyboard" => Some("Shortcuts for navigating and working faster"),
+            "Voice" => Some("Dictation, audio, and microphone preferences"),
+            "Browser" => Some("Browsing, profiles, passwords, and privacy"),
+            "Computer Use" => Some("Control and permissions for native apps"),
+            "Appshots" => Some("Capture and manage app screenshots"),
+            "Providers" => Some("Your installed agents and other available integrations"),
+            "About" => Some("Coincide, updates, and helpful links"),
+            _ => None,
+        };
         div()
             .flex_none()
             .min_w_0()
@@ -1126,16 +1141,31 @@ impl Coincide {
             .items_center()
             .justify_between()
             .gap_3()
-            .p_4()
+            .px_5()
+            .py_4()
             .border_b_1()
             .border_color(self.color(0x29303d))
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
-                    .text_xl()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(title),
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_xl()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(title),
+                    )
+                    .when_some(subtitle, |heading, subtitle| {
+                        heading.child(
+                            div()
+                                .text_xs()
+                                .text_color(self.color(0xe4e9f2).opacity(0.62))
+                                .child(subtitle),
+                        )
+                    }),
             )
             .child(
                 Button::new(done_id)
@@ -1873,7 +1903,17 @@ impl Coincide {
                         .min_w_0()
                         .min_h_0()
                         .overflow_y_scroll()
-                        .child(div().px_4().pt_4().pb_6().child(content)),
+                        .child(
+                            div().w_full().flex().justify_center().child(
+                                div()
+                                    .w_full()
+                                    .max_w(px(960.))
+                                    .px_5()
+                                    .pt_5()
+                                    .pb_6()
+                                    .child(content),
+                            ),
+                        ),
                 ),
             )
             .when(!self.settings_status.is_empty(), |view| {

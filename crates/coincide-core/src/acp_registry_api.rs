@@ -2,6 +2,25 @@
 use super::*;
 
 impl Engine {
+    /// Re-scan local executables after the user installs a provider. Metadata
+    /// checks are kept off the UI thread and do not start a provider process.
+    pub fn refresh_native_provider_discovery(&mut self) -> Result<()> {
+        self.require_background_admission()?;
+        if self.provider_discovery_pending {
+            return Ok(());
+        }
+        self.provider_discovery_pending = true;
+        let tx = self.workspace_tx.clone();
+        let worker = std::thread::spawn(move || {
+            workspace_api::publish_completion(
+                tx,
+                "provider-discovery".into(),
+                json!(crate::provider_catalog::discover_installed_tools()),
+            );
+        });
+        self.background_workers.track(worker);
+        Ok(())
+    }
     pub(super) fn append_native_acp_capabilities(&self, capabilities: &mut Value) -> Result<()> {
         let rows = capabilities["providers"]
             .as_array_mut()
@@ -15,17 +34,24 @@ impl Engine {
     }
     pub fn native_acp_registry_view(&mut self) -> Value {
         self.poll_workspace_completions();
+        let configured = self.native_configured_providers().unwrap_or_default();
         json!({"agents":self.acp_registry,"registered":self.native_acp_agents().unwrap_or_default(),
-            "loading":self.acp_registry_pending,"error":self.acp_registry_error})
+            "loading":self.acp_registry_pending,"error":self.acp_registry_error,
+            "discovery":self.provider_discovery,"configured":configured})
     }
     pub fn refresh_native_acp_registry(&mut self) -> Result<()> {
-        self.require_admissions()?;
+        self.require_background_admission()?;
         if self.acp_registry_pending {
             return Ok(());
         }
         self.acp_registry_pending = true;
         let tx = self.workspace_tx.clone();
         let worker = std::thread::spawn(move || {
+            workspace_api::publish_completion(
+                tx.clone(),
+                "acp-registry-local".into(),
+                json!({"agents":crate::acp_registry::local_agents()}),
+            );
             let result = match crate::acp_registry::fetch() {
                 Ok(agents) => json!({"agents":agents}),
                 Err(error) => {
@@ -111,6 +137,37 @@ mod tests {
                 .provider_launch_configuration(provider)
                 .unwrap()
                 .is_some()
+        );
+    }
+
+    #[test]
+    fn local_rescan_refreshes_installation_without_overwriting_live_registry_metadata() {
+        let (_root, mut engine, binary) = crate::provider_configuration::tests::fixture();
+        let live = crate::acp_registry::Agent {
+            id: "fixture".into(),
+            name: "Updated agent".into(),
+            website: None,
+            executable: None,
+            arguments: vec!["--new-acp".into()],
+            environment: Default::default(),
+        };
+        engine.acp_registry = vec![live.clone()];
+        let local = crate::acp_registry::Agent {
+            name: "Older agent".into(),
+            executable: Some(binary.clone()),
+            arguments: vec!["--old-acp".into()],
+            ..live
+        };
+        engine
+            .workspace_tx
+            .send(("acp-registry-local".into(), json!({"agents":[local]})))
+            .unwrap();
+        engine.poll_workspace_completions();
+        assert_eq!(engine.acp_registry[0].name, "Updated agent");
+        assert_eq!(engine.acp_registry[0].arguments, ["--new-acp"]);
+        assert_eq!(
+            engine.acp_registry[0].executable.as_deref(),
+            Some(binary.as_path())
         );
     }
 }

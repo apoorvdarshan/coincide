@@ -1,11 +1,12 @@
 //! Swift QuitShortcutGuard parity. Only exact native keyboard events are gated;
 //! admitted requests enter the existing menu signal and normal quit/drain path.
 //! The GPUI interceptor runs before key bindings (vendor/window.rs dispatch_key_event).
+use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::{
     AnyElement, App, BorrowAppContext, Context, Empty, Global, InteractiveElement, IntoElement,
     KeyUpEvent, Modifiers, ParentElement, Render, Styled, Window, WindowId,
     base::{Root, RootPlugin},
-    div, px, relative, rgb,
+    div, px, relative,
 };
 use serde_json::Value;
 use std::{
@@ -288,8 +289,10 @@ impl Render for Hint {
             .w(px(280.))
             .p_4()
             .rounded_lg()
-            .bg(rgb(0x232733))
-            .text_color(rgb(0xffffff))
+            .bg(cx.theme().popover)
+            .border_1()
+            .border_color(cx.theme().border)
+            .text_color(cx.theme().popover_foreground)
             .child(if cfg!(target_os = "macos") {
                 "Hold ⌘Q to quit"
             } else {
@@ -300,8 +303,15 @@ impl Render for Hint {
                     .mt_2()
                     .h(px(3.))
                     .w_full()
-                    .bg(rgb(0x454b59))
-                    .child(div().h_full().w(relative(progress)).bg(rgb(0x8caaff))),
+                    .rounded_full()
+                    .bg(cx.theme().muted)
+                    .child(
+                        div()
+                            .h_full()
+                            .w(relative(progress))
+                            .rounded_full()
+                            .bg(cx.theme().primary),
+                    ),
             )
             .child(div().mt_2().text_sm().child("Or press it again to quit"))
             .into_any_element()
