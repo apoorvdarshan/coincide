@@ -193,7 +193,9 @@ struct ProjectsView: View {
         }
         .sidebarList(theme)
         .overlay {
-            if !search.isEmpty, shown.isEmpty, pinned.isEmpty {
+            if client.showsConnected, !client.hasWorkspace {
+                WorkspaceLoadingView()
+            } else if !search.isEmpty, shown.isEmpty, pinned.isEmpty {
                 ContentUnavailableView.search(text: query)
             } else if projects.isEmpty, pinned.isEmpty, client.showsConnected {
                 ContentUnavailableView {
@@ -369,7 +371,9 @@ struct ChatsView: View {
         }
         .sidebarList(theme)
         .overlay {
-            if !search.isEmpty, threads.isEmpty {
+            if client.showsConnected, !client.hasWorkspace {
+                WorkspaceLoadingView()
+            } else if !search.isEmpty, threads.isEmpty {
                 ContentUnavailableView.search(text: query)
             } else if threads.isEmpty, client.showsConnected {
                 ContentUnavailableView {
@@ -398,6 +402,21 @@ struct ChatsView: View {
 
     private func newChat() async {
         if let id = await client.newThread(in: nil) { navigator.push(.thread(id)) }
+    }
+}
+
+/// A connected Mac may still be loading its workspace. Don't describe it as
+/// empty until the Mac has actually sent a workspace.
+struct WorkspaceLoadingView: View {
+    @Environment(RemoteClient.self) private var client
+
+    var body: some View {
+        VStack(spacing: 16) {
+            ProgressView()
+            if client.workspaceLoadFailed {
+                Button("Try Again") { Task { await client.refreshWorkspace() } }
+            }
+        }
     }
 }
 

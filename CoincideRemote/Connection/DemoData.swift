@@ -10,6 +10,10 @@ import UIKit
 /// - **Screenshots**: a Debug build launched with `-CoincideRemoteDemo` opens on it, with sample prices, and the
 ///   `-CoincideRemoteDemo…` flags below set the scene. Release builds ignore launch arguments.
 enum DemoData {
+    #if DEBUG
+    /// UI test: the first workspace request is busy, then the Mac answers.
+    static var workspaceAttempts = 0
+    #endif
     /// Whether the app shows the sample Mac, in either way.
     static var isEnabled: Bool { isExploring || isLaunchArgument }
 
@@ -559,6 +563,15 @@ enum DemoData {
     /// Pro's paywall comes first, as with a Mac.
     static func result(for request: RemoteRequest) throws -> RemoteResult {
         switch request {
+        case .workspace:
+            #if DEBUG
+            if has("WorkspaceBusy") {
+                workspaceAttempts += 1
+                if workspaceAttempts == 1 { throw RemoteError(.failed, "The computer is busy. Try again.") }
+                return .workspace(workspace)
+            }
+            #endif
+            throw RemoteError(.failed, actionNote)
         case .diff(_, let turnID):
             return .diff(diff(isTurn: turnID != nil))
         case .projectDefaults(let projectID):

@@ -677,6 +677,31 @@ impl Store {
         Ok(serde_json::from_str(&document)?)
     }
 
+    /// Remote's sidebar needs a few fields, not a copy of the transcript.
+    /// SQLite extracts them while the large `items` array stays in the store.
+    pub(crate) fn remote_thread_metadata(&self, id: &str) -> Result<(Value, usize)> {
+        let (document, count): (String, Option<i64>) = self.connection()?.query_row(
+            "SELECT json_object(
+                'createdAt', document -> '$.createdAt',
+                'updatedAt', document -> '$.updatedAt',
+                'selection', document -> '$.selection',
+                'accessMode', document -> '$.accessMode',
+                'interactionMode', document -> '$.interactionMode',
+                'branch', document -> '$.branch',
+                'worktreePath', document -> '$.worktreePath',
+                'draft', document -> '$.draft',
+                'botID', document -> '$.botID',
+                'rustMessageQueue', document -> '$.rustMessageQueue'
+            ), json_array_length(document, '$.items') FROM threads WHERE id=?1",
+            [id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        Ok((
+            serde_json::from_str(&document)?,
+            usize::try_from(count.unwrap_or(0))?,
+        ))
+    }
+
     /// Read the thread and its draft-write identity in one SQLite snapshot.
     pub(crate) fn thread_with_draft_revision(&self, id: &str) -> Result<(Value, Option<Vec<u8>>)> {
         let (document, revision): (String, Option<Vec<u8>>) = self.connection()?.query_row(
