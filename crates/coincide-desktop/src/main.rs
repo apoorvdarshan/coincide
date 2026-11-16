@@ -2454,6 +2454,9 @@ impl Coincide {
             .iter()
             .any(|request| matches!(request.action, BrowserAction::Viewport { .. }));
         for request in requests {
+            // Once the native owner executes NewTab it is no longer a pending
+            // creation, even if the engine has not collected its receipt yet.
+            self.browser_ui_pending_tabs.remove(&request.id);
             browser.execute(request, window, cx);
         }
         // The panel lays out a fixed viewport only on its next render.
