@@ -253,10 +253,10 @@ impl Adapter {
         &self.engine
     }
 
-    // Workspace reads run on a Remote worker, not the desktop UI thread.
-    // Wait briefly for an in-progress save instead of immediately failing an
-    // entire 80+ conversation snapshot on a single moment of contention.
-    fn read_engine_until(&self, deadline: Instant) -> Result<MutexGuard<'_, Engine>, RemoteError> {
+    // Explicit Remote requests run on a worker, not the desktop UI thread.
+    // Wait briefly for an in-progress save before starting the operation; an
+    // operation that has already started is never retried here.
+    fn lock_engine_until(&self, deadline: Instant) -> Result<MutexGuard<'_, Engine>, RemoteError> {
         loop {
             match self.engine.try_lock() {
                 Ok(engine) => return Ok(engine),
@@ -280,7 +280,7 @@ impl Adapter {
         deadline: Instant,
     ) -> Result<Value, RemoteError> {
         let response = self
-            .read_engine_until(deadline)?
+            .lock_engine_until(deadline)?
             .dispatch_remote_snapshot(method, params);
         if let Some(error) = response.get("error") {
             return Err(RemoteError::failed(
@@ -308,7 +308,7 @@ impl Adapter {
     }
 
     fn snapshot_providers(&self, deadline: Instant) -> Result<Vec<Provider>, RemoteError> {
-        let mut engine = self.read_engine_until(deadline)?;
+        let mut engine = self.lock_engine_until(deadline)?;
         if engine.admissions_frozen() {
             return Err(RemoteError::failed("The computer is closing."));
         }
@@ -381,7 +381,7 @@ impl Adapter {
         // One nonblocking engine snapshot prevents a temporary busy state from
         // masquerading as an idle run or empty set of approvals on the phone.
         let mut engine = if let Some(deadline) = deadline {
-            self.read_engine_until(deadline)?
+            self.lock_engine_until(deadline)?
         } else {
             self.engine
                 .try_lock()
@@ -510,7 +510,7 @@ impl Adapter {
         // the phone can retry rather than replacing its sidebar with a partial
         // list. Fields already read stay cached for the next attempt.
         let (document, item_count) = self
-            .read_engine_until(deadline)?
+            .lock_engine_until(deadline)?
             .remote_thread_metadata(id)
             .map_err(|_| RemoteError::failed("A conversation is temporarily unavailable."))?;
         let fields = Self::fields_with_item_count(&document, item_count);
@@ -1002,7 +1002,7 @@ impl Adapter {
     }
 
     fn markers_until(&self, deadline: Instant) -> Result<ThreadMarkers, RemoteError> {
-        let engine = self.read_engine_until(deadline)?;
+        let engine = self.lock_engine_until(deadline)?;
         let state = engine
             .store
             .document("ui-state.json")
@@ -1554,10 +1554,9 @@ impl Adapter {
     /// the Mac or starting a provider. Both reads and creation share the same
     /// engine lock, while the Store repeats its source check transactionally.
     pub fn new_bot_conversation(&self, bot: Uuid) -> Result<String, RemoteError> {
-        let mut engine = self
-            .engine
-            .try_lock()
-            .map_err(|_| RemoteError::failed("The computer is busy. Try again."))?;
+        // Wait only for admission. The transaction below runs at most once,
+        // so brief contention cannot drop a phone tap or duplicate a thread.
+        let mut engine = self.lock_engine_until(Instant::now() + Duration::from_secs(8))?;
         if engine.admissions_frozen() {
             return Err(RemoteError::failed("The computer is closing."));
         }

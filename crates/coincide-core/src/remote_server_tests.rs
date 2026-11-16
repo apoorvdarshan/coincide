@@ -283,6 +283,16 @@ fn paired_phone_can_list_and_open_bot_conversations_without_navigating_the_mac()
     assert_eq!(workspace["body"]["bots"][0]["avatar"]["character"], "alien");
     assert_eq!(workspace["body"]["canEditBots"], false);
 
+    // A normal desktop save can briefly own the engine when the phone taps a
+    // bot. The one request should wait for that save, then create only once.
+    let engine = fixture.engine.clone();
+    let (ready, wait_until_locked) = std::sync::mpsc::channel();
+    let busy = std::thread::spawn(move || {
+        let _held = engine.lock().unwrap();
+        ready.send(()).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(150));
+    });
+    wait_until_locked.recv().unwrap();
     request(
         &mut phone,
         "new-bot",
@@ -290,6 +300,7 @@ fn paired_phone_can_list_and_open_bot_conversations_without_navigating_the_mac()
         Some(json!({"botID":bot})),
     );
     let created = reply(&mut phone, "new-bot");
+    busy.join().unwrap();
     assert_eq!(created["type"], "thread", "{created}");
     let thread = created["body"]["value"].as_str().unwrap().to_owned();
     assert!(fixture.engine.lock().unwrap().requested_open.is_none());
