@@ -4,10 +4,10 @@
 //! desktop's own controls use. The engine stays the only source of truth; the
 //! adapter keeps only a cache of per-thread fields the sidebar summary needs.
 use super::protocol::{
-    Approval, ApprovalOption, Delivery, ErrorCode, Item, ItemPage, Media, MediaData, Project,
-    Question, QuestionOption, QuestionSet, QueuedMessage, RemoteError, Script, Selection,
-    SendRequest, ServerInfo, ThemeInfo, ThreadAction, ThreadSummary, Transcript, TurnState,
-    Workspace,
+    Approval, ApprovalOption, Delivery, ErrorCode, Item, ItemPage, Media, MediaData, Model,
+    Project, Provider, Question, QuestionOption, QuestionSet, QueuedMessage, RemoteError, Script,
+    Selection, SendRequest, ServerInfo, Speed, ThemeInfo, ThreadAction, ThreadSettings,
+    ThreadSummary, Transcript, TurnState, Workspace,
 };
 use crate::api::SharedEngine;
 use serde_json::{Value, json};
@@ -103,6 +103,90 @@ fn upper(id: &str) -> String {
     id.to_uppercase()
 }
 
+fn picker_text(value: &Value, max: usize) -> Option<&str> {
+    value
+        .as_str()
+        .filter(|text| !text.is_empty() && text.len() <= max && !text.chars().any(char::is_control))
+}
+
+/// Catalog rows are only display metadata. Discovery does not prove that an
+/// executable is authenticated, so the phone receives `unknown`, not `ready`.
+fn remote_providers(capabilities: &Value, catalog: &Value) -> Vec<Provider> {
+    capabilities["providers"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|row| {
+            if row["enabled"] == false {
+                return None;
+            }
+            let id = picker_text(&row["provider"], 128)?;
+            let name = picker_text(&row["displayName"], 256).unwrap_or(id);
+            let mut models = vec![Model {
+                id: "default".into(),
+                name: "Provider default".into(),
+                efforts: vec![],
+                default_effort: None,
+                speeds: vec![],
+                supports_images: true,
+            }];
+            let mut seen = HashSet::from(["default".to_owned()]);
+            for model in catalog["providers"][id]["models"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .take(2048)
+            {
+                let Some(model_id) = picker_text(&model["id"], 512) else {
+                    continue;
+                };
+                if !seen.insert(model_id.to_owned()) {
+                    continue;
+                }
+                let efforts = model["reportedEfforts"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|item| picker_text(item, 128).map(str::to_owned))
+                    .take(64)
+                    .collect();
+                let speeds = model["reportedSpeeds"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .take(32)
+                    .filter_map(|speed| {
+                        let id = picker_text(&speed["id"], 128)?;
+                        Some(Speed {
+                            id: id.into(),
+                            name: picker_text(&speed["name"], 256).unwrap_or(id).into(),
+                            detail: picker_text(&speed["detail"], 2048).map(str::to_owned),
+                        })
+                    })
+                    .collect();
+                models.push(Model {
+                    id: model_id.into(),
+                    name: picker_text(&model["displayName"], 512)
+                        .unwrap_or(model_id)
+                        .into(),
+                    efforts,
+                    default_effort: picker_text(&model["reportedDefaultEffort"], 128)
+                        .map(str::to_owned),
+                    speeds,
+                    supports_images: model["supportsImages"].as_bool().unwrap_or(true),
+                });
+            }
+            Some(Provider {
+                id: id.into(),
+                name: name.into(),
+                state: "unknown".into(),
+                accounts: vec![],
+                models,
+            })
+        })
+        .collect()
+}
+
 #[derive(Debug, PartialEq, Eq)]
 enum SteeringReceipt {
     Accepted,
@@ -183,6 +267,22 @@ impl Adapter {
             ));
         }
         Ok(response["result"].clone())
+    }
+
+    fn providers(&self) -> Result<Vec<Provider>, RemoteError> {
+        let mut engine = self
+            .engine
+            .try_lock()
+            .map_err(|_| RemoteError::failed("The computer is busy. Try again."))?;
+        if engine.admissions_frozen() {
+            return Err(RemoteError::failed("The computer is closing."));
+        }
+        let result = engine.dispatch(json!({"method":"agent.selection.capabilities","params":{}}));
+        if result.get("error").is_some() {
+            return Err(RemoteError::failed("Provider settings are unavailable."));
+        }
+        let models = engine.remote_discovered_models();
+        Ok(remote_providers(&result["result"], &models))
     }
 
     pub(super) fn enabled_usage(
@@ -504,7 +604,7 @@ impl Adapter {
         Ok(Workspace {
             projects,
             threads,
-            providers: Vec::new(),
+            providers: self.providers()?,
             sections: vec!["pinned".into(), "projects".into(), "chats".into()],
             pinned_order,
         })
@@ -541,6 +641,154 @@ impl Adapter {
 
     pub fn require_thread(&self, thread: Uuid) -> Result<(), RemoteError> {
         self.document(thread).map(|_| ())
+    }
+
+    /// The same selection policy used by the desktop composer also validates
+    /// phone changes, under the same engine lock as the thread read.
+    pub fn update_thread_settings(&self, requested: &ThreadSettings) -> Result<(), RemoteError> {
+        let mut engine = self
+            .engine
+            .try_lock()
+            .map_err(|_| RemoteError::failed("The computer is busy. Try again."))?;
+        if engine.admissions_frozen() {
+            return Err(RemoteError::failed("The computer is closing."));
+        }
+        let id = engine
+            .store
+            .resolve_thread_id(requested.thread_id)
+            .map_err(|_| RemoteError::failed("The conversation is temporarily unavailable."))?
+            .ok_or_else(RemoteError::thread_not_found)?;
+        let thread = engine
+            .store
+            .thread(&id)
+            .map_err(|_| RemoteError::failed("The conversation is temporarily unavailable."))?;
+        let current = &thread["selection"];
+        let current_provider = current["provider"]
+            .as_str()
+            .ok_or_else(RemoteError::bad_request)?;
+        let provider = requested.provider.as_deref().unwrap_or(current_provider);
+        let same_provider = provider == current_provider;
+        let model = requested
+            .model_id
+            .as_deref()
+            .filter(|id| !id.is_empty())
+            .unwrap_or_else(|| {
+                if same_provider {
+                    current["modelID"].as_str().unwrap_or("default")
+                } else {
+                    "default"
+                }
+            });
+        let account = requested
+            .account_id
+            .as_ref()
+            .map(|value| json!(value))
+            .unwrap_or_else(|| {
+                if same_provider {
+                    current["accountID"].clone()
+                } else {
+                    Value::Null
+                }
+            });
+        let same_account = current["accountID"] == account
+            || (crate::composer_selection::default_account(&current["accountID"])
+                && crate::composer_selection::default_account(&account));
+        let same_selection = same_provider && current["modelID"] == model && same_account;
+        let effort = requested
+            .effort
+            .as_ref()
+            .map(|value| json!(value))
+            .unwrap_or_else(|| {
+                if same_selection {
+                    current["effort"].clone()
+                } else {
+                    Value::Null
+                }
+            });
+        let speed = match requested.speed.as_deref() {
+            Some("standard") => Value::Null,
+            Some(value) => json!(value),
+            None if same_selection => current["speed"].clone(),
+            None => Value::Null,
+        };
+        let settings = engine
+            .store
+            .document("settings.json")
+            .map_err(|_| RemoteError::failed("Settings are temporarily unavailable."))?
+            .unwrap_or_else(|| json!({}));
+        if !crate::provider_preferences::enabled(&settings, provider).unwrap_or(false) {
+            return Err(RemoteError::new(
+                ErrorCode::NotAllowed,
+                "That provider is not available.",
+            ));
+        }
+        let mut params = json!({"threadId":id,"provider":provider,"model":model,
+            "accountId":account,"effort":effort,"speed":speed});
+        if let Some(mode) = &requested.access_mode {
+            params["accessMode"] = json!(mode);
+        }
+        if let Some(mode) = &requested.interaction_mode {
+            params["interactionMode"] = json!(mode);
+        }
+        let response = engine.dispatch(json!({"method":"agent.select","params":params}));
+        if let Some(error) = response.get("error") {
+            return Err(RemoteError::failed(
+                error["message"]
+                    .as_str()
+                    .unwrap_or("The settings could not be changed."),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Keep a project's disclosure in sync with the phone without changing
+    /// either of the app's special sidebar groups.
+    pub fn set_project_expanded(&self, project: Uuid, expanded: bool) -> Result<(), RemoteError> {
+        let mut engine = self
+            .engine
+            .try_lock()
+            .map_err(|_| RemoteError::failed("The computer is busy. Try again."))?;
+        if engine.admissions_frozen() {
+            return Err(RemoteError::failed("The computer is closing."));
+        }
+        let projects = engine
+            .store
+            .projects()
+            .map_err(|_| RemoteError::failed("Projects are temporarily unavailable."))?;
+        let missing = || RemoteError::new(ErrorCode::NotFound, "That project no longer exists.");
+        let project = projects
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|row| {
+                row["id"]
+                    .as_str()
+                    .is_some_and(|id| Uuid::parse_str(id).ok() == Some(project))
+            })
+            .filter(|row| {
+                row["isChats"] != true
+                    && row["isBots"] != true
+                    && !row["id"].as_str().is_some_and(|id| {
+                        id.eq_ignore_ascii_case(crate::bot_runtime::BOTS_PROJECT_ID)
+                    })
+            })
+            .ok_or_else(missing)?;
+        let current = match project.get("isExpanded") {
+            None | Some(Value::Null) => true,
+            Some(Value::Bool(value)) => *value,
+            Some(_) => return Err(RemoteError::failed("Saved project settings are invalid.")),
+        };
+        if current == expanded {
+            return Ok(());
+        }
+        let id = project["id"].as_str().ok_or_else(missing)?;
+        let response = engine.dispatch(json!({"method":"projects.patch", "params":{
+            "projectId":id, "patch":{"isExpanded":expanded}
+        }}));
+        if response.get("error").is_some() {
+            return Err(RemoteError::failed("The project could not be updated."));
+        }
+        Ok(())
     }
 
     /// Mark the actual stored conversation, without changing other sidebar
@@ -1508,6 +1756,63 @@ pub fn remote_item(item: &Value, index: usize, pending: &[PendingRequest]) -> It
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn phone_picker_uses_only_enabled_providers_and_reported_default_account_models() {
+        let capabilities = json!({"providers":[
+            {"provider":"codex","displayName":"Codex"},
+            {"provider":"claude","displayName":"Claude Code","enabled":false}
+        ]});
+        let catalog = json!({"providers":{"codex":{"models":[
+            {"id":"default","displayName":"Duplicate"},
+            {"id":"example","displayName":"Example", "reportedEfforts":["low","high"],
+             "reportedDefaultEffort":"low", "reportedSpeeds":[{"id":"fast","name":"Fast","detail":"Quick"}],
+             "supportsImages":false},
+            {"id":"example","displayName":"Duplicate"},
+            {"id":"bad\nmodel"}
+        ]}}});
+        let providers = remote_providers(&capabilities, &catalog);
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].id, "codex");
+        assert_eq!(providers[0].state, "unknown");
+        assert!(providers[0].accounts.is_empty());
+        assert_eq!(providers[0].models.len(), 2);
+        assert_eq!(providers[0].models[1].id, "example");
+        assert_eq!(providers[0].models[1].efforts, ["low", "high"]);
+        assert_eq!(providers[0].models[1].speeds[0].id, "fast");
+        assert!(!providers[0].models[1].supports_images);
+    }
+
+    #[test]
+    fn phone_selection_rejects_disabled_or_invalid_targets_without_partial_changes() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut engine = crate::api::Engine::fixture(
+            crate::store::Store::open(&directory.path().join("state.sqlite")).unwrap(),
+        );
+        engine
+            .store
+            .save_document(
+                "settings.json",
+                &json!({"providers":{
+                    "claude":{"isEnabled":false}
+                }}),
+            )
+            .unwrap();
+        let mut thread = engine.store.new_thread(NO_PROJECT).unwrap();
+        thread["draft"] = json!("do not modify");
+        engine.store.save(&thread).unwrap();
+        let id = thread["id"].as_str().unwrap();
+        let engine = std::sync::Arc::new(std::sync::Mutex::new(engine));
+        let adapter = Adapter::new(engine.clone(), "fixture");
+        for request in [
+            json!({"threadID":id,"provider":"claude","modelID":"default"}),
+            json!({"threadID":id,"modelID":"bad\nmodel","accessMode":"fullAccess"}),
+        ] {
+            let settings: ThreadSettings = serde_json::from_value(request).unwrap();
+            assert!(adapter.update_thread_settings(&settings).is_err());
+            assert_eq!(engine.lock().unwrap().store.thread(id).unwrap(), thread);
+        }
+    }
 
     #[test]
     fn dates_paths_and_options_convert_as_the_mac_sends_them() {

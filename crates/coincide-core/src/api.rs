@@ -377,6 +377,13 @@ impl Engine {
         let _ = self.store.save_document(SAVED_MODEL_CATALOG, &saved);
     }
 
+    pub(crate) fn remote_discovered_models(&mut self) -> Value {
+        if self.model_catalog.poll() {
+            self.revision += 1;
+        }
+        self.model_catalog.remote_default_models()
+    }
+
     pub fn new(store: Store) -> Self {
         Self::initialize(store, true)
     }

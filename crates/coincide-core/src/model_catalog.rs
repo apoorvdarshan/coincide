@@ -499,6 +499,32 @@ impl ModelCatalog {
         }
         json!({"version": 1, "providers": providers})
     }
+
+    /// Read-only picker metadata for Remote. Named-account catalogs are never
+    /// substituted for the default account; selection still needs the normal
+    /// runtime proof and authorization when a phone chooses an option.
+    pub(crate) fn remote_default_models(&self) -> Value {
+        let mut providers = serde_json::Map::new();
+        for id in self.order.iter().rev() {
+            let Some(job) = self.jobs.get(id) else {
+                continue;
+            };
+            let Some(provider) = job.response["provider"].as_str() else {
+                continue;
+            };
+            if job.named.is_some()
+                || job.response["accountID"] != "default"
+                || job.response["state"] != "ready"
+                || providers.contains_key(provider)
+            {
+                continue;
+            }
+            if let Some(models) = job.response["models"].as_array() {
+                providers.insert(provider.to_owned(), json!({"models": models}));
+            }
+        }
+        json!({"providers":providers})
+    }
     /// Install a saved document as ready catalogs. These rows carry no binding
     /// and no proof: they let the UI show what was already discovered, and
     /// every effort/speed decision still needs a live discovery of its own.
@@ -1729,6 +1755,29 @@ mod saved_catalog_tests {
             "reportedEfforts":efforts,
             "reportedDefaultEffort":default
         }]}}})
+    }
+
+    #[test]
+    fn remote_model_metadata_never_uses_another_accounts_catalog() {
+        let mut catalog = ModelCatalog::default();
+        catalog.restore_saved(&saved("opencode", "default-model", &["low"], "low"));
+        catalog.jobs.insert(
+            "other".into(),
+            Job {
+                named: None,
+                binding: None,
+                response: json!({"provider":"opencode","accountID":"other-account","state":"ready",
+                "models":[{"id":"other-account-model"}]}),
+                cancelled: Arc::new(AtomicBool::new(false)),
+            },
+        );
+        catalog.order.push_back("other".into());
+        let result = catalog.remote_default_models();
+        assert_eq!(
+            result["providers"]["opencode"]["models"][0]["id"],
+            "default-model"
+        );
+        assert!(!result.to_string().contains("other-account-model"));
     }
 
     #[test]
