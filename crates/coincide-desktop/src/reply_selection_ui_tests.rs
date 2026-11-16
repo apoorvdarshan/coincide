@@ -103,6 +103,7 @@ fn headless_native_focus_selection_reparse_and_semantic_rebind_revoke_the_projec
         draw(window, cx);
     });
     assert!(!vcx.update(|window, cx| selected.current(window, cx)));
+    assert!(vcx.update(|window, cx| selected.current_in_menu(window, cx)));
     assert!(
         vcx.update(|window, cx| focused_reply_projection(window, cx))
             .is_none()

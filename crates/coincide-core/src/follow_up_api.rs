@@ -31,6 +31,7 @@ pub enum CapturedNativeSend {
     Saved {
         enabled: bool,
         cleared: bool,
+        queue_id: String,
         ticket: Option<NativeFollowUpTicket>,
         error: Option<String>,
     },
@@ -316,10 +317,12 @@ impl Engine {
             });
         let (enabled, cleared, message) =
             self.queue_captured_native_send_inner(captured, clear_original, !auto, None)?;
+        let queue_id = message.id.clone();
         if !auto {
             return Ok(CapturedNativeSend::Saved {
                 enabled,
                 cleared,
+                queue_id,
                 ticket: None,
                 error: None,
             });
@@ -342,6 +345,7 @@ impl Engine {
         Ok(CapturedNativeSend::Saved {
             enabled,
             cleared,
+            queue_id,
             ticket,
             error,
         })

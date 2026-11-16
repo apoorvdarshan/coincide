@@ -2,17 +2,19 @@
 use serde_json::Value;
 use std::collections::HashMap;
 
-/// A store refresh may observe an import before its local job has finished.
-/// Keep the visible draft authoritative until the job resolves, so cancelling
-/// that job cannot accidentally place the image in a newly captured send.
+/// A store refresh may observe an attachment change before its local job has
+/// finished. Keep the visible draft authoritative until the job resolves, so
+/// a removed image or reference cannot reappear during a background save.
 pub(super) fn preserve_inflight_draft(current: &Value, next: &mut Value, in_flight: bool) {
     if !in_flight || current["id"] != next["id"] {
         return;
     }
-    if let Some(images) = current.get("rustDraftImages") {
-        next["rustDraftImages"] = images.clone();
-    } else if let Some(object) = next.as_object_mut() {
-        object.remove("rustDraftImages");
+    for key in ["rustDraftImages", "draftContext"] {
+        if let Some(value) = current.get(key) {
+            next[key] = value.clone();
+        } else if let Some(object) = next.as_object_mut() {
+            object.remove(key);
+        }
     }
 }
 
@@ -40,12 +42,6 @@ impl PendingImages {
         }
     }
 
-    pub(super) fn images(&self, sequence: u64) -> Option<&[Value]> {
-        self.sends
-            .get(&sequence)
-            .map(|(_, images)| images.as_slice())
-    }
-
     pub(super) fn finish(&mut self, sequence: u64) -> Option<(String, Vec<Value>)> {
         self.sends.remove(&sequence)
     }
@@ -65,6 +61,17 @@ mod tests {
         let mut other = json!({"id":"two", "rustDraftImages":[{"id":"other"}]});
         preserve_inflight_draft(&current, &mut other, true);
         assert_eq!(other["rustDraftImages"], json!([{"id":"other"}]));
+    }
+
+    #[::core::prelude::v1::test]
+    fn refresh_keeps_removed_reference_hidden_until_its_save_finishes() {
+        let current = json!({"id":"one", "draftContext":[]});
+        let mut old = json!({"id":"one", "draftContext":[{"id":"removed","kind":"quote"}]});
+        preserve_inflight_draft(&current, &mut old, true);
+        assert_eq!(old["draftContext"], json!([]));
+        let mut finished = json!({"id":"one", "draftContext":[{"id":"new","kind":"quote"}]});
+        preserve_inflight_draft(&current, &mut finished, false);
+        assert_eq!(finished["draftContext"][0]["id"], "new");
     }
 
     #[test]

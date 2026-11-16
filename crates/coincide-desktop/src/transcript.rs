@@ -336,6 +336,7 @@ pub fn managed_markdown(
 /// An opaque selection from exactly one focused, registered reply renderer.
 /// Holding the parse snapshot is not permission to apply it after focus, source
 /// or the native selection changes; current() rechecks all three.
+#[derive(Clone)]
 pub struct ReplyProjection {
     owner: WindowId,
     pub thread: String,
@@ -350,6 +351,15 @@ impl ReplyProjection {
         self.rendered.source()
     }
     pub fn current(&self, window: &Window, cx: &App) -> bool {
+        self.current_in_menu(window, cx)
+            && self
+                .state
+                .upgrade()
+                .is_some_and(|state| state.read(cx).focus_handle().is_focused(window))
+    }
+    /// A context menu owns focus while open. The message, parse and selected
+    /// range must still be identical to the focused selection it captured.
+    pub fn current_in_menu(&self, window: &Window, cx: &App) -> bool {
         if !window.is_window_active() || window.window_handle().window_id() != self.owner {
             return false;
         }
@@ -364,11 +374,13 @@ impl ReplyProjection {
             return false;
         }
         let state = state.read(cx);
-        state.focus_handle().is_focused(window)
-            && state.rendered_text() == self.rendered
+        state.rendered_text() == self.rendered
             && state.selected_source_range() == Some(self.source_range.clone())
             && self.rendered.range_for_source(self.source_range.clone())
                 == Some(self.rendered_range.clone())
+    }
+    pub fn selected_text(&self) -> &str {
+        &self.rendered.as_str()[self.rendered_range.clone()]
     }
     pub fn into_native(
         self,

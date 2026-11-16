@@ -338,6 +338,88 @@ struct ImagePreview {
     rows: Vec<(String, usize)>,
 }
 
+#[derive(Clone)]
+struct PendingSent {
+    thread: String,
+    draft: String,
+    baseline_user_messages: usize,
+    row: Value,
+}
+impl PendingSent {
+    /// Keep the complete optimistic row until the corresponding saved message
+    /// appears, even when the user visits another conversation in between.
+    fn reconcile(&self, thread: &mut Value) -> bool {
+        if text(thread, "id") != self.thread {
+            return false;
+        }
+        let Some(items) = thread["items"].as_array_mut() else {
+            return false;
+        };
+        let stored = items
+            .iter()
+            .filter(|item| {
+                item["kind"] == "user"
+                    && item["pendingSend"] != true
+                    && item["bufferedSend"] != true
+            })
+            .skip(self.baseline_user_messages)
+            .any(|item| {
+                let same_context = item["context"] == self.row["context"]
+                    || (!coincide_core::composer_context::has_context(&item["context"])
+                        && !coincide_core::composer_context::has_context(&self.row["context"]));
+                let images = item["rustImages"]
+                    .as_array()
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]);
+                let submitted = self.row["rustImages"]
+                    .as_array()
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]);
+                item["text"].as_str() == Some(self.draft.as_str())
+                    && same_context
+                    && images == submitted
+            });
+        if stored {
+            items.retain(|item| item["id"] != self.row["id"]);
+        } else if !items.iter().any(|item| item["id"] == self.row["id"]) {
+            items.push(self.row.clone());
+        }
+        stored
+    }
+}
+
+#[cfg(test)]
+mod pending_sent_tests {
+    use super::*;
+
+    #[test]
+    fn preview_survives_refresh_and_thread_switch_until_its_full_message_is_saved() {
+        let pending = PendingSent {
+            thread: "one".into(),
+            draft: "repeat".into(),
+            baseline_user_messages: 1,
+            row: json!({"id":"pending", "kind":"user", "text":"repeat", "pendingSend":true,
+                "context":[{"id":"quote"}], "rustImages":[{"id":"image"}]}),
+        };
+        let mut other = json!({"id":"two", "items":[]});
+        assert!(!pending.reconcile(&mut other));
+        assert_eq!(other["items"], json!([]));
+        let mut stale = json!({"id":"one", "items":[{"kind":"user", "text":"repeat"}]});
+        assert!(!pending.reconcile(&mut stale));
+        assert_eq!(stale["items"][1], pending.row);
+        assert!(!pending.reconcile(&mut stale));
+        assert_eq!(stale["items"].as_array().unwrap().len(), 2);
+        stale["items"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id":"saved", "kind":"user", "text":"repeat",
+            "context":[{"id":"quote"}], "rustImages":[{"id":"image"}]}));
+        assert!(pending.reconcile(&mut stale));
+        assert_eq!(stale["items"].as_array().unwrap().len(), 2);
+        assert_eq!(stale["items"][1]["id"], "saved");
+    }
+}
+
 fn terminal_rgb(value: &Value, fallback: u32) -> Rgba {
     let Some(parts) = value.as_array().filter(|v| v.len() == 3) else {
         return rgb(fallback);
@@ -496,6 +578,7 @@ struct Coincide {
     follow_up_picker: bool,
     follow_up_anchor: Option<Point<Pixels>>,
     follow_up_deliveries: Vec<composer_follow_up_mount::PendingDelivery>,
+    admitted_previews: Vec<composer_follow_up_mount::AdmittedPreview>,
     pending_inputs: std::collections::HashMap<(String, String, String), Entity<InputState>>,
     pending_choices: std::collections::HashMap<(String, String, String), Vec<String>>,
     pending_question_step: std::collections::HashMap<String, usize>,
@@ -710,9 +793,8 @@ struct Coincide {
     /// A Queue/Steer choice made while the engine was busy, written later.
     pending_follow_up_choice: Option<(String, coincide_core::composer_follow_up::Behavior)>,
     follow_up_choice_inflight: bool,
-    /// A just-sent message drawn before the stored thread contains it, with
-    /// the item count it was sent from.
-    pending_sent: Option<(String, String, usize, u64)>,
+    /// Just-sent messages remain visible until each conversation has its saved row.
+    pending_sent: std::collections::HashMap<String, PendingSent>,
     ordinary_sends_inflight: usize,
     pending_images: composer_pending_images::PendingImages,
     /// Identity for the optimistic row, so a refresh keeps the same element.
@@ -1797,6 +1879,7 @@ impl Coincide {
             follow_up_picker: false,
             follow_up_anchor: None,
             follow_up_deliveries: Vec::new(),
+            admitted_previews: Vec::new(),
             pending_inputs: Default::default(),
             pending_choices: Default::default(),
             pending_question_step: Default::default(),
@@ -2006,7 +2089,7 @@ impl Coincide {
             quit_after_pending_sends: false,
             pending_follow_up_choice: None,
             follow_up_choice_inflight: false,
-            pending_sent: None,
+            pending_sent: Default::default(),
             ordinary_sends_inflight: 0,
             pending_images: Default::default(),
             pending_seq: 0,
@@ -5823,7 +5906,14 @@ impl Coincide {
         let Some(items) = thread["items"].as_array_mut() else {
             return None;
         };
-        let baseline = items.len();
+        let baseline_user_messages = items
+            .iter()
+            .filter(|item| {
+                item["kind"] == "user"
+                    && item["pendingSend"] != true
+                    && item["bufferedSend"] != true
+            })
+            .count();
         let seq = self.pending_seq.wrapping_add(1);
         self.pending_seq = seq;
         let mut pending = json!({
@@ -5841,8 +5931,16 @@ impl Coincide {
         }
         self.pending_images.begin(seq, id, images);
         self.submitted_drafts.begin(seq, id, message);
-        items.push(pending);
-        self.pending_sent = Some((id.to_owned(), message.to_owned(), baseline, seq));
+        items.push(pending.clone());
+        self.pending_sent.insert(
+            id.to_owned(),
+            PendingSent {
+                thread: id.to_owned(),
+                draft: message.to_owned(),
+                baseline_user_messages,
+                row: pending,
+            },
+        );
         let count = items.len();
         let start = self.transcript_count.min(count);
         self.splice_transcript(start..self.transcript_count, count - start);
@@ -5916,15 +6014,14 @@ impl Coincide {
     }
     /// Take the optimistic row away again when the engine refuses the send.
     pub(crate) fn drop_pending_send(&mut self, id: &str) {
-        if !self
-            .pending_sent
-            .as_ref()
-            .is_some_and(|(thread, ..)| thread == id)
-        {
+        if self.pending_sent.remove(id).is_none() {
             return;
         }
-        self.pending_sent = None;
-        let Some(thread) = self.selected.as_mut() else {
+        let Some(thread) = self
+            .selected
+            .as_mut()
+            .filter(|thread| text(thread, "id") == id)
+        else {
             return;
         };
         let Some(items) = thread["items"].as_array_mut() else {
@@ -5938,45 +6035,22 @@ impl Coincide {
     }
     /// Keep the optimistic row until the stored thread contains that message.
     fn reconcile_pending_send(&mut self) {
-        let Some((id, message, baseline, seq)) = self.pending_sent.clone() else {
+        let Some(id) = self.selected.as_ref().map(|thread| text(thread, "id")) else {
+            return;
+        };
+        let Some(pending) = self.pending_sent.get(&id).cloned() else {
             return;
         };
         let Some(thread) = self
             .selected
             .as_mut()
-            .filter(|thread| text(thread, "id") == id)
+            .filter(|thread| text(thread, "id") == pending.thread)
         else {
-            self.pending_sent = None;
             return;
         };
-        let Some(items) = thread["items"].as_array_mut() else {
-            return;
-        };
-        let stored = items
-            .iter()
-            .skip(baseline)
-            .any(|item| item["kind"] == "user" && item["text"].as_str() == Some(message.as_str()));
-        if stored {
-            self.pending_sent = None;
-            return;
+        if pending.reconcile(thread) {
+            self.pending_sent.remove(&id);
         }
-        if items
-            .iter()
-            .any(|item| item["id"] == format!("pending-send-{seq}"))
-        {
-            return;
-        }
-        let mut pending = json!({
-            "id": format!("pending-send-{seq}"),
-            "kind": "user",
-            "text": message,
-            "createdAt": coincide_core::store::swift_timestamp(),
-            "pendingSend": true
-        });
-        if let Some(images) = self.pending_images.images(seq) {
-            pending["rustImages"] = json!(images);
-        }
-        items.push(pending);
     }
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.send_selected(false, window, cx);
@@ -6326,6 +6400,17 @@ impl Coincide {
         if kind == "plan" && !find_revealed {
             let item = item.clone();
             let row = self.plan_transcript_card(&source_id, &item_id, &item, window, cx);
+            let row = self.message_reply_context_menu(
+                div()
+                    .id(SharedString::from(format!(
+                        "plan-context-{source_id}-{item_id}"
+                    )))
+                    .w_full()
+                    .child(row),
+                &source_id,
+                &item_id,
+                cx,
+            );
             return self.turn_decorated(index, row, plan.header, cx);
         }
         if let Some(group) = plan.group.clone()
@@ -6460,7 +6545,11 @@ impl Coincide {
         let media = self.reply_media(item);
         let media_cards = self.media_cards(&media, &source_id, &item_id, cx);
         let pending_send = item["pendingSend"] == true || item["bufferedSend"] == true;
-        let pending_label = if item["bufferedSend"] == true {
+        let delivering_buffer = item["bufferedSend"] == true
+            && self.admitted_previews.iter().any(|preview| {
+                preview.direct && preview.pending.buffer_id.as_deref() == item["id"].as_str()
+            });
+        let pending_label = if item["bufferedSend"] == true && !delivering_buffer {
             "Preparing…"
         } else {
             "Sending…"
@@ -6765,6 +6854,11 @@ impl Coincide {
                 )
             })
             .when_some(footer, |view, footer| view.child(footer));
+        let card = if coincide_core::composer_context::quotable_kind(&kind) && !pending_send {
+            self.message_reply_context_menu(card, &source_id, &item_id, cx)
+        } else {
+            card.into_any_element()
+        };
         // Swift's user card has no permanent author header. Keep both real
         // actions together below the bubble at its outer edge. They stay
         // reachable for keyboard/AX use without adding hover-only state.
@@ -6862,7 +6956,7 @@ impl Coincide {
                 )
                 .into_any_element()
         } else {
-            card.into_any_element()
+            card
         };
         let row = div()
             .flex()
@@ -7344,6 +7438,7 @@ impl Render for Coincide {
                         Some(Ok(coincide_core::api::CapturedNativeSend::Saved {
                             enabled,
                             cleared,
+                            queue_id,
                             ticket,
                             error,
                         })) => {
@@ -7380,8 +7475,16 @@ impl Render for Coincide {
                                     .update(cx, |input, cx| input.set_value("", window, cx));
                             }
                             self.finish_pending_images(pending.image_send, true);
-                            self.remove_buffered_send(&pending);
                             let delivering = ticket.is_some();
+                            if pending.buffer_id.is_some() {
+                                self.admitted_previews.push(
+                                    composer_follow_up_mount::AdmittedPreview {
+                                        pending: pending.clone(),
+                                        queue_id,
+                                        direct: delivering,
+                                    },
+                                );
+                            }
                             if let Some(ticket) = ticket {
                                 self.track_queued_delivery(ticket, pending.thread.clone());
                             }
@@ -7445,6 +7548,7 @@ impl Render for Coincide {
                     Some(Ok(coincide_core::api::CapturedNativeSend::Saved {
                         enabled,
                         cleared,
+                        queue_id,
                         ticket,
                         error,
                     })) => {
@@ -7457,6 +7561,15 @@ impl Render for Coincide {
                             self.pending_drafts.remove(&pending.thread);
                         }
                         self.finish_pending_images(pending.image_send, true);
+                        if pending.buffer_id.is_some() {
+                            self.admitted_previews.push(
+                                composer_follow_up_mount::AdmittedPreview {
+                                    pending: pending.clone(),
+                                    queue_id,
+                                    direct: ticket.is_some(),
+                                },
+                            );
+                        }
                         if let Some(ticket) = ticket {
                             self.track_queued_delivery(ticket, pending.thread.clone());
                         }

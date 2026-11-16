@@ -63,6 +63,62 @@ pub(super) struct PendingDelivery {
     queued: bool,
     image_send: Option<u64>,
 }
+/// Retain a local bubble until the saved queue or transcript can replace it.
+pub(super) struct AdmittedPreview {
+    pub pending: PendingSend,
+    pub queue_id: String,
+    pub direct: bool,
+}
+fn preview_handed_off(preview: &AdmittedPreview, thread: &Value, visible_queue: &[Value]) -> bool {
+    if text(thread, "id") != preview.pending.thread {
+        return false;
+    }
+    let visible = visible_queue
+        .iter()
+        .find(|row| row["id"] == preview.queue_id);
+    if visible.is_some_and(|row| {
+        matches!(row["state"].as_str(), Some("failed" | "interrupted"))
+            || (!preview.direct && row["state"] != "completed")
+    }) {
+        return true;
+    }
+    let completed = thread["rustMessageQueue"].as_array().is_some_and(|rows| {
+        rows.iter()
+            .any(|row| row["id"] == preview.queue_id && row["state"] == "completed")
+    });
+    if !completed {
+        return false;
+    }
+    thread["items"].as_array().is_some_and(|items| {
+        items
+            .iter()
+            .filter(|item| {
+                item["kind"] == "user"
+                    && item["bufferedSend"] != true
+                    && item["pendingSend"] != true
+            })
+            .skip(preview.pending.baseline_user_messages)
+            .any(|item| {
+                let captured = &preview.pending.captured;
+                let same_context = item["context"] == captured["draftContext"]
+                    || (!coincide_core::composer_context::has_context(&item["context"])
+                        && !coincide_core::composer_context::has_context(
+                            &captured["draftContext"],
+                        ));
+                let images = item["rustImages"]
+                    .as_array()
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]);
+                let captured_images = captured["rustDraftImages"]
+                    .as_array()
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]);
+                item["text"].as_str() == Some(preview.pending.draft.as_str())
+                    && same_context
+                    && images == captured_images
+            })
+    })
+}
 /// A send waiting for a local prerequisite, bound to the original settings.
 #[derive(Clone)]
 pub(super) struct PendingSend {
@@ -83,6 +139,8 @@ pub(super) struct PendingSend {
     pub original_visible: bool,
     /// Local-only row shown until this buffered message reaches the queue.
     pub buffer_id: Option<String>,
+    /// Number of actual user messages visible when this send was captured.
+    pub baseline_user_messages: usize,
     /// Keeps this submission's previews hidden while it is being saved.
     pub image_send: Option<u64>,
     admission:
@@ -110,6 +168,16 @@ impl PendingSend {
             last_error: None,
             original_visible: true,
             buffer_id: None,
+            baseline_user_messages: thread["items"].as_array().map_or(0, |items| {
+                items
+                    .iter()
+                    .filter(|item| {
+                        item["kind"] == "user"
+                            && item["bufferedSend"] != true
+                            && item["pendingSend"] != true
+                    })
+                    .count()
+            }),
             image_send: None,
             admission: None,
         }
@@ -514,6 +582,23 @@ impl Coincide {
     }
 
     pub(super) fn reconcile_buffered_sends(&mut self) {
+        let finished = self
+            .selected
+            .as_ref()
+            .map(|thread| {
+                self.admitted_previews
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, preview)| {
+                        preview_handed_off(preview, thread, &self.queued_messages).then_some(index)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        for index in finished.into_iter().rev() {
+            let preview = self.admitted_previews.remove(index);
+            self.remove_buffered_send(&preview.pending);
+        }
         let Some(thread) = self.selected.as_mut() else {
             return;
         };
@@ -525,6 +610,11 @@ impl Coincide {
             .pending_follow_up
             .iter()
             .chain(self.pending_follow_up_backlog.iter())
+            .chain(
+                self.admitted_previews
+                    .iter()
+                    .map(|preview| &preview.pending),
+            )
         {
             let Some(buffer_id) = entry.buffer_id.as_ref().filter(|_| entry.thread == id) else {
                 continue;
@@ -920,9 +1010,9 @@ impl Coincide {
                     if (restored || queued)
                         && self
                             .pending_sent
-                            .as_ref()
-                            .is_some_and(|(thread, draft, ..)| {
-                                thread == &delivery.thread && draft == &delivery.draft
+                            .get(&delivery.thread)
+                            .is_some_and(|pending| {
+                                pending.thread == delivery.thread && pending.draft == delivery.draft
                             })
                     {
                         self.drop_pending_send(&delivery.thread);
@@ -1026,10 +1116,40 @@ fn behavior_help(behavior: Behavior) -> &'static str {
 #[cfg(test)]
 mod send_route_tests {
     use super::{
-        PendingSend, SelectionWait, SendRoute, buffered_text, follow_up_source, send_route,
-        separate_buffered_payload,
+        AdmittedPreview, PendingSend, SelectionWait, SendRoute, buffered_text, follow_up_source,
+        preview_handed_off, send_route, separate_buffered_payload,
     };
     use serde_json::json;
+
+    #[test]
+    fn submitted_bubble_stays_until_queue_or_transcript_is_visible() {
+        let thread = json!({"id":"t","selection":{"provider":"codex"},
+            "items":[{"kind":"user","text":"same"}], "draftContext":[]});
+        let preview = AdmittedPreview {
+            pending: PendingSend::new(&thread, "same".into(), false),
+            queue_id: "queue-1".into(),
+            direct: true,
+        };
+        let mut snapshot = thread.clone();
+        snapshot["rustMessageQueue"] = json!([{"id":"queue-1","state":"dispatching"}]);
+        let queue = vec![json!({"id":"queue-1","state":"dispatching"})];
+        assert!(!preview_handed_off(&preview, &snapshot, &queue));
+        snapshot["rustMessageQueue"][0]["state"] = json!("completed");
+        assert!(
+            !preview_handed_off(&preview, &snapshot, &[]),
+            "an earlier identical message is not the new one"
+        );
+        snapshot["items"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"kind":"user","text":"same"}));
+        assert!(preview_handed_off(&preview, &snapshot, &[]));
+        let queued = AdmittedPreview {
+            direct: false,
+            ..preview
+        };
+        assert!(preview_handed_off(&queued, &thread, &queue));
+    }
 
     #[test]
     fn follow_up_capture_preserves_scope_without_copying_history() {

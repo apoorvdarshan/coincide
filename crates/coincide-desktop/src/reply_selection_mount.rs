@@ -1,7 +1,116 @@
 //! Native Add Selection to Composer. It never obtains text from the clipboard,
 //! another renderer, a background window, or an agent supplied JSON argument.
 use super::*;
+use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenuItem};
 impl Coincide {
+    /// Keep the captured native selection bound to the clicked message while
+    /// the popup temporarily owns focus.
+    pub(super) fn message_reply_context_menu(
+        &self,
+        card: Stateful<Div>,
+        source: &str,
+        item: &str,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let owner = cx.entity().downgrade();
+        let source = source.to_owned();
+        let item = item.to_owned();
+        card.context_menu(move |mut menu, window, cx| {
+            let selection = transcript::focused_reply_projection(window, cx).filter(|projection| {
+                projection.thread == source
+                    && projection.item == item
+                    && projection.current(window, cx)
+            });
+            if let Some(projection) = selection {
+                let selected = projection.clone();
+                let target = owner.clone();
+                menu = menu.item(
+                    PopupMenuItem::new("Reply to selection")
+                        .icon(gpui_kit::assets::IconName::Reply)
+                        .on_click(move |_, window, cx| {
+                            let _ = target.update(cx, |this, cx| {
+                                this.reply_to_menu_selection(selected.clone(), window, cx)
+                            });
+                        }),
+                );
+                menu = menu.item(
+                    PopupMenuItem::new("Copy selection")
+                        .icon(gpui_kit::assets::IconName::Copy)
+                        .on_click(move |_, window, cx| {
+                            if projection.current_in_menu(window, cx) {
+                                cx.write_to_clipboard(ClipboardItem::new_string(
+                                    projection.selected_text().to_owned(),
+                                ));
+                            }
+                        }),
+                );
+                menu = menu.separator();
+            }
+            let target = owner.clone();
+            let source = source.clone();
+            let item = item.clone();
+            menu.item(
+                PopupMenuItem::new("Reply to message").on_click(move |_, window, cx| {
+                    let _ = target.update(cx, |this, cx| {
+                        this.reply_to_message(&source, &item, window, cx)
+                    });
+                }),
+            )
+        })
+        .into_any_element()
+    }
+
+    fn reply_to_menu_selection(
+        &mut self,
+        projection: transcript::ReplyProjection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.media.close_requested || self.media.shutdown_requested || !self.chat_visible() {
+            return;
+        }
+        let captured = (|| -> Result<_> {
+            anyhow::ensure!(
+                projection.current_in_menu(window, cx),
+                "The selection changed"
+            );
+            let thread = self
+                .selected
+                .as_ref()
+                .filter(|thread| thread["id"] == projection.thread)
+                .ok_or_else(|| anyhow::anyhow!("Conversation changed"))?;
+            let mut matches = thread["items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|item| item["id"] == projection.item);
+            let item = matches
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("Message unavailable"))?;
+            let kind = item["kind"].as_str().unwrap_or("");
+            anyhow::ensure!(
+                matches.next().is_none()
+                    && coincide_core::composer_context::quotable_kind(kind)
+                    && item["text"].as_str() == Some(projection.source()),
+                "Message changed"
+            );
+            Ok((
+                text(thread, "id"),
+                coincide_core::composer_context::ExpectedContext::from_thread(thread),
+                projection.into_native(kind)?,
+            ))
+        })();
+        match captured {
+            Ok((id, context, selection)) => {
+                self.submit_reply_reference(id, context, selection, window, cx)
+            }
+            Err(error) => {
+                self.status = format!("Could not attach reply: {error}");
+                self.show_local_error(&self.status.clone());
+                cx.notify();
+            }
+        }
+    }
     fn browser_owns_reply_focus(&self, window: &Window, cx: &App) -> bool {
         let Some(id) = self.selected.as_ref().map(|thread| text(thread, "id")) else {
             return false;
