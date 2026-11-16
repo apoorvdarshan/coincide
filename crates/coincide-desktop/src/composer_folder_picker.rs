@@ -144,6 +144,9 @@ impl Coincide {
             input.set_value(value, window, cx);
             input.focus(window, cx);
         });
+        // Programmatic InputState changes do not emit the same Change event as
+        // typing, so explicitly load the selected folder's children.
+        self.composer_folder_path_changed(cx);
     }
 
     fn attach_composer_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
