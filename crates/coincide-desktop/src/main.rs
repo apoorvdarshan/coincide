@@ -1585,6 +1585,11 @@ impl Coincide {
             cx.subscribe(&usage_history.panel, |this, _, event, cx| {
                 this.usage_history.load(event, cx);
             }),
+            cx.observe(&browser_settings_panel, |this, _, cx| {
+                if this.browser_settings_visible() {
+                    cx.notify();
+                }
+            }),
             cx.observe(&provider_configuration_panel, |_, _, cx| cx.notify()),
             cx.subscribe_in(&github_panel, window, |this, _, event: &github_review::CheckoutOpened, window, cx| {
                 this.open_github_checkout(event, window, cx);
@@ -4499,6 +4504,7 @@ impl Coincide {
             panel.poll_instruction_git(cx);
         });
         self.poll_sidebar_lifecycle(window, cx);
+        self.poll_archive_mutation(window, cx);
         self.poll_inspector_follow(cx);
         self.poll_composer_file_picker(window, cx);
         self.remote_panel.update(cx, |panel, cx| panel.poll(cx));
@@ -8029,33 +8035,11 @@ impl Render for Coincide {
                         ),
                 )
             });
-        let conversation_content = if self.session_import_open {
-            div()
-                .id("session-import-surface")
-                .flex_1()
-                .flex_basis(px(0.))
-                .min_h_0()
-                .min_w_0()
-                .overflow_hidden()
-                .child(self.session_import_panel.clone())
-                .into_any_element()
-        } else if self.settings_in_main_window() {
+        let route = self.chat_route();
+        let changing_conversation = route.navigating && !route.settings;
+        let conversation_content = if route.settings {
             self.settings_surface(cx)
-        } else if (self.thread_navigation.target().is_some() || self.pending_new_thread.is_some())
-            && self.selected.is_some()
-        {
-            // Keep the existing transcript in place while loading the target.
-            // A separate interaction guard prevents actions against the old chat.
-            div()
-                .relative()
-                .flex()
-                .flex_col()
-                .flex_1()
-                .min_h_0()
-                .child(transcript)
-                .child(chat_layout::modal_backdrop())
-                .into_any_element()
-        } else if self.thread_navigation.target().is_some() || self.pending_new_thread.is_some() {
+        } else if changing_conversation && !route.selected {
             div()
                 .flex_1()
                 .min_h_0()
@@ -8083,22 +8067,22 @@ impl Render for Coincide {
         self.github_panel
             .update(cx, |panel, cx| panel.set_visible(pull_requests_visible, cx));
         let inspector_pane = self.chat_inspector_surface(window, cx);
-        let pending_pane = if self.chat_visible() {
+        let show_composer = route.shows_composer();
+        let pending_pane = if show_composer {
             self.pending_pane(window, cx)
         } else {
             None
         };
-        let draft_images = if self.chat_visible() {
+        let draft_images = if show_composer {
             self.draft_images(window, cx)
         } else {
             None
         };
         let attachment_count = self.draft_attachment_count();
-        let show_composer = self.chat_visible();
         let importing_images = self.attachment_imports.contains(&selected_id);
         let queue_pane = self.queue_pane(cx);
         let local_error_notice = self.local_error_notice.clone();
-        let plan_card = if self.chat_visible() {
+        let plan_card = if show_composer {
             self.plan_card(window, cx)
         } else {
             None
@@ -8106,8 +8090,6 @@ impl Render for Coincide {
         let implement_button = self.implement_button(cx);
         let historical_image = self.historical_image_overlay(cx);
         let terminal_bottom = self.terminal_surface(false, window, cx);
-        let changing_conversation =
-            self.thread_navigation.target().is_some() || self.pending_new_thread.is_some();
         let empty_conversation = show_composer
             && self.selected.as_ref().is_some_and(|thread| {
                 thread["items"]
@@ -8116,19 +8098,15 @@ impl Render for Coincide {
             });
 
         let chat_column = div()
+                    .relative()
                     .flex()
                     .flex_col()
                     .flex_1()
                     .min_w_0()
                     .h_full()
                     .when_some(cookie_recovery, |view, recovery| view.child(recovery))
-                    .when(!changing_conversation, |view| view.child(self.conversation_toolbar(title.clone(), cx)))
-                    .when(changing_conversation, |view| view.child(
-                        div().flex().items_center().min_h(px(50.)).px_3()
-                            .border_b_1().border_color(self.color(0x29303d).opacity(0.7))
-                            .child(title)
-                    ))
-                    .when_some((!changing_conversation).then(|| self.thread_management(cx)).flatten(), |view, management| {
+                    .child(self.conversation_toolbar(title, cx))
+                    .when_some(self.thread_management(cx), |view, management| {
                         view.child(management)
                     })
                     .when(
@@ -8381,6 +8359,12 @@ impl Render for Coincide {
                         )
                     })
                     .when_some(terminal_bottom, |view, pane| view.child(pane))
+                    // Keep the old column intact until the new draft and
+                    // transcript are ready. The sidebar can still change the destination.
+                    .when(changing_conversation && route.selected, |view| {
+                        view.capture_key_down(|_, _, cx| cx.stop_propagation())
+                            .child(chat_layout::modal_backdrop())
+                    })
                     .into_any_element();
         div()
             .relative()
@@ -8392,8 +8376,13 @@ impl Render for Coincide {
             )
             .capture_key_down(
                 cx.listener(|this, event: &gpui_kit::KeyDownEvent, window, cx| {
-                    // The bot sheet owns its keyboard input and Escape/Save shortcuts.
-                    if this.bot_editor_panel.is_some() {
+                    // Modal content handles Escape and its own keyboard shortcuts.
+                    if this.session_import_open
+                        || (this.settings_in_main_window()
+                            && this.browser_settings_visible()
+                            && this.browser_settings_panel.read(cx).import_dialog_open())
+                        || this.bot_editor_panel.is_some()
+                    {
                         return;
                     }
                     if this.sidebar_lifecycle.review_visible() {
@@ -8480,6 +8469,9 @@ impl Render for Coincide {
             )
             .when_some(self.composer_popover(window, cx), |view, popover| {
                 view.child(popover)
+            })
+            .when(self.session_import_open, |view| {
+                view.child(self.session_import_panel.clone())
             })
             .when_some(historical_image, |view, image| view.child(image))
             .when_some(self.project_defaults_form(cx), |view, form| {

@@ -7,6 +7,7 @@
 use super::*;
 use coincide_core::api::{PreparedThreadDeletion, ThreadDeletionUndo};
 use coincide_core::store::ArchivedConversation;
+use std::sync::mpsc;
 const PAGE: usize = 50;
 pub(super) struct ArchiveSettings {
     query: Entity<InputState>,
@@ -16,7 +17,8 @@ pub(super) struct ArchiveSettings {
     /// The threads the pending review deletes.
     reviewing: Vec<String>,
     review: Option<PreparedThreadDeletion>,
-    undo: Option<ThreadDeletionUndo>,
+    undo: Option<Arc<ThreadDeletionUndo>>,
+    mutation: Option<(ArchiveAction, mpsc::Receiver<Result<ArchiveResult>>)>,
     status: String,
     loaded: bool,
     refresh_pending: bool,
@@ -31,6 +33,7 @@ impl ArchiveSettings {
             reviewing: Vec::new(),
             review: None,
             undo: None,
+            mutation: None,
             status: String::new(),
             loaded: false,
             refresh_pending: false,
@@ -67,11 +70,48 @@ fn visible_selection(rows: &[ArchivedConversation], ids: &[String]) -> Result<Ve
     );
     Ok(ids.to_vec())
 }
-fn prepare_delete(engine: &SharedEngine, ids: &[String]) -> Result<PreparedThreadDeletion> {
-    try_state(engine)?.prepare_native_thread_deletion(ids)
+#[derive(Clone, Copy)]
+enum ArchiveAction {
+    Review { confirm: bool },
+    Delete,
+    Restore,
+    Undo,
 }
-fn restore(engine: &SharedEngine, id: &str) -> Result<()> {
-    try_state(engine)?.restore_native_archived_conversation(id)
+impl ArchiveAction {
+    fn progress(self) -> &'static str {
+        match self {
+            Self::Review { .. } => "Preparing deletion…",
+            Self::Delete => "Deleting threads…",
+            Self::Restore => "Unarchiving thread…",
+            Self::Undo => "Restoring deleted threads…",
+        }
+    }
+
+    fn failed(self) -> &'static str {
+        match self {
+            Self::Review { .. } | Self::Delete => "Nothing was deleted",
+            Self::Restore => "The thread could not be unarchived",
+            Self::Undo => "Deletion could not be undone",
+        }
+    }
+}
+enum ArchiveResult {
+    Review(PreparedThreadDeletion),
+    Deleted(ThreadDeletionUndo),
+    Restored,
+    Undone,
+}
+fn mutate_archive<T>(
+    engine: &SharedEngine,
+    mutate: impl FnOnce(&mut Engine) -> Result<T>,
+) -> Result<T> {
+    // Wait for the store owner on the worker. Other conversations can keep
+    // running; Core still checks admission and the exact reviewed rows.
+    let mut owner = engine
+        .lock()
+        .map_err(|_| anyhow::anyhow!("The store is unavailable"))?;
+    anyhow::ensure!(!owner.admissions_frozen(), "App is closing");
+    mutate(&mut owner)
 }
 /// Swift's named relative date: "now", "5 minutes ago", "yesterday", "last week".
 fn last_active(updated: f64, now: f64) -> String {
@@ -193,131 +233,190 @@ impl Coincide {
         }
         cx.notify();
     }
-    /// Delete for one row, or every row shown. One thread follows the
-    /// confirmation setting unless it is running; several always ask.
-    fn delete_archived(
+    fn start_archive_mutation(
         &mut self,
-        ids: Vec<String>,
-        always_confirm: bool,
-        window: &mut Window,
+        action: ArchiveAction,
+        mutate: impl FnOnce(&mut Engine) -> Result<ArchiveResult> + Send + 'static,
         cx: &mut Context<Self>,
     ) {
-        let result = (|| -> Result<_> {
-            anyhow::ensure!(self.archive_settings.loaded, "The archive is still loading");
-            let ids = visible_selection(&self.archive_settings.rows, &ids)?;
-            anyhow::ensure!(
-                !ids.iter().any(|id| self.pending_drafts.contains_key(id)),
-                "Save this thread's pending draft before deleting it"
-            );
-            Ok((prepare_delete(&self.engine, &ids)?, ids))
-        })();
-        match result {
-            Ok((review, ids)) => {
-                let running = ids.iter().any(|id| {
-                    self.running
-                        .iter()
-                        .any(|other| other.eq_ignore_ascii_case(id))
-                });
-                let confirm = always_confirm
-                    || running
-                    || self.settings["confirmBeforeDeletingThreads"]
-                        .as_bool()
-                        .unwrap_or(true);
-                self.archive_settings.status.clear();
-                self.archive_settings.review = Some(review);
-                self.archive_settings.reviewing = ids;
-                if !confirm {
-                    return self.confirm_archive_deletion(window, cx);
-                }
-            }
-            Err(error) => {
-                self.archive_settings.status = format!("Nothing was deleted: {error}");
-                self.refresh_archive_settings(cx);
-            }
-        };
+        let (send, receive) = mpsc::channel();
+        let engine = self.engine.clone();
+        self.archive_settings.status.clear();
+        self.archive_settings.mutation = Some((action, receive));
+        cx.background_executor()
+            .spawn(async move {
+                let _ = send.send(mutate_archive(&engine, mutate));
+            })
+            .detach();
         cx.notify();
     }
-    fn confirm_archive_deletion(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(review) = self.archive_settings.review.take() else {
+
+    pub(super) fn poll_archive_mutation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((action, receive)) = &self.archive_settings.mutation else {
             return;
         };
-        let ids = std::mem::take(&mut self.archive_settings.reviewing);
-        let result = (|| -> Result<_> {
-            anyhow::ensure!(
-                !ids.iter().any(|id| self.pending_drafts.contains_key(id)),
-                "A thread has a pending draft"
-            );
-            try_state(&self.engine)?.apply_native_thread_deletion(review)
-        })();
+        let action = *action;
+        let result = match receive.try_recv() {
+            Ok(result) => result,
+            Err(mpsc::TryRecvError::Empty) => return,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                Err(anyhow::anyhow!("The store operation ended unexpectedly"))
+            }
+        };
+        self.archive_settings.mutation = None;
         match result {
-            Ok(undo) => {
+            Ok(ArchiveResult::Review(plan)) => {
+                if !self.archive_settings.reviewing.is_empty() {
+                    self.archive_settings.review = Some(plan);
+                    if matches!(action, ArchiveAction::Review { confirm: false }) {
+                        self.confirm_archive_deletion(cx);
+                    }
+                }
+                cx.notify();
+                return;
+            }
+            Ok(ArchiveResult::Deleted(undo)) => {
                 let deleted = undo.thread_ids();
                 if self
                     .selected
                     .as_ref()
-                    .and_then(|t| t["id"].as_str())
+                    .and_then(|thread| thread["id"].as_str())
                     .is_some_and(|id| deleted.iter().any(|other| other.eq_ignore_ascii_case(id)))
                 {
                     self.replace_selected_thread(None);
+                    self.pending_native_selection = Some(None);
                     self.transcript_count = 0;
                     self.transcript_list.reset(0);
                     self.expanded.clear();
                     self.composer
                         .update(cx, |input, cx| input.set_value("", window, cx));
+                    self.invalidate_native_conversation_view();
                     self.sync_workspace_context(cx);
                 }
                 self.archive_settings.status = match undo.count() {
-                    1 => "Deleted 1 thread. You can undo this until Coincide quits or you delete again.".into(),
-                    count => format!("Deleted {count} threads. You can undo this until Coincide quits or you delete again."),
+                    1 => "Deleted 1 thread.".into(),
+                    count => format!("Deleted {count} threads."),
                 };
-                self.archive_settings.undo = Some(undo);
-                self.refresh(cx);
-                self.refresh_archive_settings(cx);
+                self.archive_settings.undo = Some(Arc::new(undo));
             }
-            Err(error) => {
-                self.archive_settings.status = format!("Nothing was deleted: {error}");
-                self.refresh_archive_settings(cx);
-                cx.notify();
-            }
-        }
-    }
-    fn unarchive(&mut self, id: String, cx: &mut Context<Self>) {
-        self.archive_settings.close_review();
-        match restore(&self.engine, &id) {
-            Ok(()) => {
+            Ok(ArchiveResult::Restored) => {
                 self.archive_settings.status = "Conversation moved back to the sidebar.".into();
-                self.refresh(cx);
-                self.refresh_archive_settings(cx);
             }
-            Err(error) => {
-                self.archive_settings.status =
-                    format!("The thread could not be unarchived: {error}");
-                self.refresh_archive_settings(cx);
-                cx.notify();
-            }
-        }
-    }
-    fn undo_archive_deletion(&mut self, cx: &mut Context<Self>) {
-        self.archive_settings.close_review();
-        let result = (|| -> Result<()> {
-            let undo = self
-                .archive_settings
-                .undo
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("No deletion to undo"))?;
-            try_state(&self.engine)?.undo_native_thread_deletion(undo)
-        })();
-        match result {
-            Ok(()) => {
+            Ok(ArchiveResult::Undone) => {
                 self.archive_settings.undo = None;
                 self.archive_settings.status = "Deletion undone.".into();
-                self.refresh(cx);
-                self.refresh_archive_settings(cx);
             }
             Err(error) => {
-                self.archive_settings.status = format!("Deletion could not be undone: {error}");
-                cx.notify();
+                let cancelled_review = matches!(action, ArchiveAction::Review { .. })
+                    && self.archive_settings.reviewing.is_empty();
+                self.archive_settings.close_review();
+                if !cancelled_review {
+                    self.archive_settings.status = format!("{}: {error}", action.failed());
+                }
             }
+        }
+        self.refresh(cx);
+        if self.settings_open && self.settings_section == settings::SettingsSection::Archive {
+            self.refresh_archive_settings(cx);
+        }
+        cx.notify();
+    }
+
+    fn delete_archived(&mut self, ids: Vec<String>, always_confirm: bool, cx: &mut Context<Self>) {
+        if self.archive_settings.mutation.is_some() || !self.archive_settings.loaded {
+            return;
+        }
+        self.collect_draft_results();
+        let ids = match visible_selection(&self.archive_settings.rows, &ids) {
+            Ok(ids) => ids,
+            Err(error) => {
+                self.archive_settings.status = error.to_string();
+                self.refresh_archive_settings(cx);
+                return;
+            }
+        };
+        if ids.iter().any(|id| self.pending_drafts.contains_key(id)) {
+            self.archive_settings.status =
+                "A selected thread has a draft that is still saving.".into();
+            cx.notify();
+            return;
+        }
+        let confirm = always_confirm
+            || ids.iter().any(|id| {
+                self.running
+                    .iter()
+                    .any(|other| other.eq_ignore_ascii_case(id))
+            })
+            || self.settings["confirmBeforeDeletingThreads"]
+                .as_bool()
+                .unwrap_or(true);
+        self.archive_settings.reviewing = ids.clone();
+        self.start_archive_mutation(
+            ArchiveAction::Review { confirm },
+            move |owner| {
+                owner
+                    .prepare_native_thread_deletion(&ids)
+                    .map(ArchiveResult::Review)
+            },
+            cx,
+        );
+    }
+
+    fn confirm_archive_deletion(&mut self, cx: &mut Context<Self>) {
+        if self.archive_settings.mutation.is_some() {
+            return;
+        }
+        let Some(review) = self.archive_settings.review.take() else {
+            return;
+        };
+        self.collect_draft_results();
+        let ids = std::mem::take(&mut self.archive_settings.reviewing);
+        if ids.iter().any(|id| self.pending_drafts.contains_key(id)) {
+            self.archive_settings.status =
+                "A selected thread has a draft that is still saving.".into();
+            cx.notify();
+            return;
+        }
+        self.start_archive_mutation(
+            ArchiveAction::Delete,
+            move |owner| {
+                owner
+                    .apply_native_thread_deletion(review)
+                    .map(ArchiveResult::Deleted)
+            },
+            cx,
+        );
+    }
+
+    fn unarchive(&mut self, id: String, cx: &mut Context<Self>) {
+        if self.archive_settings.mutation.is_none() {
+            self.archive_settings.close_review();
+            self.start_archive_mutation(
+                ArchiveAction::Restore,
+                move |owner| {
+                    owner
+                        .restore_native_archived_conversation(&id)
+                        .map(|()| ArchiveResult::Restored)
+                },
+                cx,
+            );
+        }
+    }
+
+    fn undo_archive_deletion(&mut self, cx: &mut Context<Self>) {
+        if self.archive_settings.mutation.is_none()
+            && let Some(undo) = self.archive_settings.undo.clone()
+        {
+            self.archive_settings.close_review();
+            self.start_archive_mutation(
+                ArchiveAction::Undo,
+                move |owner| {
+                    owner
+                        .undo_native_thread_deletion(&undo)
+                        .map(|()| ArchiveResult::Undone)
+                },
+                cx,
+            );
         }
     }
     fn archive_review(
@@ -371,9 +470,9 @@ impl Coincide {
                         Button::new("archive-delete-confirm")
                             .label("Delete")
                             .danger()
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.confirm_archive_deletion(window, cx)
-                            })),
+                            .on_click(
+                                cx.listener(|this, _, _, cx| this.confirm_archive_deletion(cx)),
+                            ),
                     ),
             )
             .into_any_element()
@@ -382,7 +481,11 @@ impl Coincide {
         let state = &self.archive_settings;
         let filtering = !state.query.read(cx).value().trim().is_empty();
         let partial = state.total > state.rows.len();
-        let reviewing = state.review.is_some();
+        let reviewing = state.review.is_some() || state.mutation.is_some();
+        let status = state
+            .mutation
+            .as_ref()
+            .map_or(state.status.as_str(), |(action, _)| action.progress());
         let shown = state
             .rows
             .iter()
@@ -403,8 +506,8 @@ impl Coincide {
                         })
                         .danger()
                         .disabled(state.rows.is_empty() || reviewing)
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.delete_archived(shown.clone(), true, window, cx)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.delete_archived(shown.clone(), true, cx)
                         })),
                 ),
         );
@@ -413,13 +516,13 @@ impl Coincide {
         {
             pane = pane.child(self.archive_review(review, cx));
         }
-        if state.undo.is_some() || !state.status.is_empty() {
+        if state.undo.is_some() || !status.is_empty() {
             pane = pane.child(
                 div()
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(div().flex_1().text_sm().child(state.status.clone()))
+                    .child(div().flex_1().text_sm().child(status.to_owned()))
                     .when(state.undo.is_some(), |row| {
                         row.child(
                             Button::new("archive-undo-delete")
@@ -510,8 +613,8 @@ impl Coincide {
                                 .ghost()
                                 .compact()
                                 .disabled(reviewing)
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.delete_archived(vec![delete.clone()], false, window, cx)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.delete_archived(vec![delete.clone()], false, cx)
                                 })),
                         ),
                 );
@@ -656,17 +759,22 @@ mod tests {
         let engine = Arc::new(std::sync::Mutex::new(coincide_core::api::Engine::new(
             store,
         )));
-        // The UI adapter never waits on an owner already processing work.
+        // A store operation that already owns the lock must never make a
+        // requested review fail. The worker can wait without blocking GPUI.
         let held = try_state(&engine).unwrap();
-        assert!(
-            prepare_delete(&engine, std::slice::from_ref(&id))
-                .err()
-                .unwrap()
-                .to_string()
-                .contains("busy")
-        );
+        let (started, ready) = mpsc::channel();
+        let worker = std::thread::spawn({
+            let engine = engine.clone();
+            let id = id.clone();
+            move || {
+                started.send(()).unwrap();
+                mutate_archive(&engine, |owner| owner.prepare_native_thread_deletion(&[id]))
+            }
+        });
+        ready.recv().unwrap();
+        assert!(!worker.is_finished());
         drop(held);
-        let plan = prepare_delete(&engine, std::slice::from_ref(&id)).unwrap();
+        let plan = worker.join().unwrap().unwrap();
         assert_eq!(plan.count(), 1);
         assert!(try_state(&engine).unwrap().store.thread(&id).is_ok());
         let undo = try_state(&engine)
@@ -688,7 +796,10 @@ mod tests {
                 .undo_native_thread_deletion(&undo)
                 .is_err()
         );
-        restore(&engine, &id).unwrap();
+        mutate_archive(&engine, |owner| {
+            owner.restore_native_archived_conversation(&id)
+        })
+        .unwrap();
         let restored = try_state(&engine).unwrap().store.thread(&id).unwrap();
         let mut expected = thread.clone();
         expected["isArchived"] = json!(false);

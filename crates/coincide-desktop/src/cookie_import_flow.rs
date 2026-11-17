@@ -551,15 +551,17 @@ impl BrowserSettings {
         let mut view = div()
             .flex()
             .flex_col()
-            .gap_2()
-            .child("Import cookies")
-            .child("Choose a Cookie-Editor JSON export from Chrome, Safari, Edge, Brave, Arc, Vivaldi, Opera, or Firefox. Firefox also supports a standalone cookies.sqlite snapshot.")
-            .child("Export as JSON for the site you want to move. Keep the file private because it can contain sign-ins.")
+            .gap_3()
+            .child("Choose a Cookie-Editor JSON export or a Firefox cookies.sqlite snapshot. Keep exports private because they can contain sign-ins.")
+            .child(super::import_view::browser_import_sources(cx))
             .child(
-                Button::new("cookie-choose")
-                    .label("Choose cookie file…")
-                    .disabled(disabled || flow.context.is_none())
-                    .on_click(cx.listener(|this, _, _, cx| this.choose_cookie_source(cx))),
+                div().flex().items_center().child(
+                    Button::new("cookie-choose")
+                        .label(if flow.plan.is_some() { "Choose another file…" } else { "Choose file…" })
+                        .small()
+                        .disabled(disabled)
+                        .on_click(cx.listener(|this, _, _, cx| this.choose_cookie_source(cx))),
+                )
             );
         if !supported {
             view = view.child("Cookie import requires macOS 14 or later and an open conversation.");
@@ -568,59 +570,92 @@ impl BrowserSettings {
             let preview = plan.preview();
             let pages = preview.hosts.len().div_ceil(10).max(1);
             let page = flow.page.min(pages - 1);
-            view = view.child(format!(
-                "{} host(s); {} expired, {} unsupported. Host page {}/{}",
-                preview.hosts.len(),
-                preview.expired,
-                preview.unsupported,
-                page + 1,
-                pages
-            ));
+            let selected = flow.selected.len();
+            view = view.child(format!("Select the sites to import. {selected} selected."));
+            if preview.expired != 0 || preview.unsupported != 0 {
+                view = view.child(div().text_xs().child(format!(
+                    "{} expired and {} unsupported cookies skipped",
+                    preview.expired, preview.unsupported,
+                )));
+            }
             for row in preview.hosts.iter().skip(page * 10).take(10) {
                 let host = row.host.clone();
                 let chosen = flow.selected.contains(&host);
                 view = view.child(
-                    Button::new(SharedString::from(format!("cookie-host-{host}")))
-                        .label(format!(
-                            "{} {} — {} cookie(s)",
-                            if chosen { "Selected" } else { "Select" },
-                            host,
-                            row.cookies
-                        ))
-                        .disabled(disabled)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            if !this.cookie_flow.selected.remove(&host) {
-                                this.cookie_flow.selected.insert(host.clone());
-                            }
-                            cx.notify();
-                        })),
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div().flex_1().min_w_0().child(
+                                gpui_kit::component::checkbox::Checkbox::new(SharedString::from(
+                                    format!("cookie-host-{host}"),
+                                ))
+                                .label(host.clone())
+                                .checked(chosen)
+                                .disabled(disabled)
+                                .on_click(cx.listener(
+                                    move |this, checked, _, cx| {
+                                        if *checked {
+                                            this.cookie_flow.selected.insert(host.clone());
+                                        } else {
+                                            this.cookie_flow.selected.remove(&host);
+                                        }
+                                        cx.notify();
+                                    },
+                                )),
+                            ),
+                        )
+                        .child(div().text_xs().child(format!("{} cookies", row.cookies))),
                 );
             }
-            view = view.child(
-                div()
-                    .flex()
-                    .gap_2()
+            if pages > 1 {
+                view = view.child(import_view::page_controls(
+                    "cookie-review-pages",
+                    page,
+                    pages,
+                    disabled,
+                    cx.listener(|this, _, _, cx| {
+                        this.cookie_flow.page = this.cookie_flow.page.saturating_sub(1);
+                        cx.notify();
+                    }),
+                    cx.listener(|this, _, _, cx| {
+                        this.cookie_flow.page += 1;
+                        cx.notify();
+                    }),
+                ));
+            }
+            if !preview.hosts.is_empty() {
+                let name_empty = self.cookie_profile_name.read(cx).value().trim().is_empty();
+                view = view
                     .child(
-                        Button::new("cookie-prev")
-                            .label("Previous hosts")
-                            .disabled(page == 0)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.cookie_flow.page = this.cookie_flow.page.saturating_sub(1);
-                                cx.notify();
-                            })),
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child("Import into a new profile")
+                            .child(
+                                Input::new(&self.cookie_profile_name)
+                                    .small()
+                                    .disabled(disabled),
+                            ),
                     )
                     .child(
-                        Button::new("cookie-next")
-                            .label("Next hosts")
-                            .disabled(page + 1 >= pages)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.cookie_flow.page += 1;
-                                cx.notify();
-                            })),
-                    ),
-            );
-            view=view.child("Destination uses the new profile name above, remains unselected, and may contain a partial import. No page opens automatically.")
-                .child(Button::new("cookie-import").label("Import selected hosts into NEW profile").disabled(disabled||flow.selected.is_empty()).on_click(cx.listener(|this,_,_,cx|{let name=this.name.read(cx).value().to_string();this.cookie_flow.request_import(name);cx.notify();})));
+                        div().flex().justify_end().child(
+                            Button::new("cookie-import")
+                                .label("Import selected sites")
+                                .small()
+                                .primary()
+                                .disabled(disabled || selected == 0 || name_empty)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    let name =
+                                        this.cookie_profile_name.read(cx).value().to_string();
+                                    this.cookie_flow.request_import(name);
+                                    cx.notify();
+                                })),
+                        ),
+                    );
+            }
         }
         if flow.cleanup_count() != 0 {
             view=view.child(format!("{} private snapshot cleanup owner(s) remain. Closing waits until cleanup is confirmed.",flow.cleanup_count()));
@@ -634,9 +669,21 @@ impl BrowserSettings {
             );
         }
         if !flow.status.name.is_empty() {
-            view=view.child(format!("New unselected profile: {} · callback-stored {} · readback-matched {} · expired {} · refused {} · undispatched {}",flow.status.name,flow.status.applied,flow.status.verified,flow.status.expired,flow.status.refused,flow.status.undispatched));
+            view = view.child(format!(
+                "New profile: {} · {} verified",
+                flow.status.name, flow.status.verified
+            ));
+            if flow.status.expired + flow.status.refused + flow.status.undispatched > 0 {
+                view = view.child(format!(
+                    "{} expired, {} refused, {} skipped",
+                    flow.status.expired, flow.status.refused, flow.status.undispatched,
+                ));
+            }
         }
-        view.child(flow.status.message.clone()).child("Per-cookie operations are not atomic. Callback completion and readback do not prove disk persistence; interrupted profiles remain marked incomplete/uncertain and never resume automatically.").into_any_element()
+        view.when(!flow.status.message.is_empty(), |view| {
+            view.child(div().text_xs().child(flow.status.message.clone()))
+        })
+        .into_any_element()
     }
 }
 

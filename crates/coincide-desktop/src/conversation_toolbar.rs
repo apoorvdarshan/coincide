@@ -282,10 +282,8 @@ impl Coincide {
                         selected,
                         |this, window, cx| this.request_archive(window, cx),
                     ),
-                    ("Import CLI session…", true, |this, _, cx| {
-                        this.session_import_open = true;
-                        this.sync_transcription_binding(cx);
-                        this.sync_credentials(cx);
+                    ("Import CLI session…", true, |this, window, cx| {
+                        this.open_session_import(window, cx);
                     }),
                     ("Passwords…", true, |this, window, cx| {
                         this.open_settings_panel(window, cx);

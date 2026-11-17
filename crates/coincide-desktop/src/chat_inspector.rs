@@ -24,6 +24,10 @@ impl ChatRoute {
     pub fn visible(self) -> bool {
         self.selected && self.available() && !self.navigating
     }
+
+    pub fn shows_composer(self) -> bool {
+        self.selected && !self.settings
+    }
 }
 
 /// The composer can submit while Settings is open in its own window. The
@@ -249,6 +253,10 @@ mod tests {
             secondary: false,
             shift: false,
         };
+        assert!(
+            loading.shows_composer(),
+            "keep the old draft visible during navigation"
+        );
         assert!(!composer_enter_sends(&enter, true, loading));
         assert!(composer_enter_sends(&enter, true, route));
         assert_eq!(
@@ -269,6 +277,21 @@ mod tests {
             assert!(!unavailable.visible());
             assert_eq!(panel(unavailable, true, true, true, true), None);
         }
+        assert!(
+            !ChatRoute {
+                settings: true,
+                ..route
+            }
+            .shows_composer()
+        );
+        assert!(
+            ChatRoute {
+                importing: true,
+                ..route
+            }
+            .shows_composer()
+        );
+        assert!(!ChatRoute::default().shows_composer());
         let schedules = ChatRoute {
             global_schedules: true,
             ..route

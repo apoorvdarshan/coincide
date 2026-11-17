@@ -302,8 +302,7 @@ impl Coincide {
                 }
             }
             AppAction::ImportSession => {
-                self.session_import_open = true;
-                self.sync_credentials(cx);
+                self.open_session_import(window, cx);
             }
             AppAction::OpenIn(id) => {
                 if let Some(target) = self

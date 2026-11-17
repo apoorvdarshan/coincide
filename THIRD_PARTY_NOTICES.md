@@ -192,6 +192,10 @@ or works with, when the product's own app isn't installed; it isn't affiliated w
 64 and 128 px PNG made from the file below, trimmed and centred without other changes. Comet's square App Store icon
 was given macOS's rounded corners.
 
+The Rust Browser Settings import dialog uses the 64 px product marks for Chrome, Safari, Edge, Brave, Vivaldi,
+Opera and Firefox from the [Browser Logos collection](https://github.com/alrra/browser-logos/tree/58881b84c4d73adc03c06fa2c275a7abee02d935/src).
+The Arc mark is the [Arc website favicon](https://arc.net/favicon.png).
+
 - Google Chrome: [Commons, Google Chrome icon (February 2022)](https://commons.wikimedia.org/wiki/File:Google_Chrome_icon_(February_2022).svg).
   Beta, Dev and Canary: google.com/chrome
   ([Beta](https://www.google.com/chrome/static/images/beta/chrome-beta-logo.svg),

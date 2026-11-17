@@ -242,6 +242,7 @@ pub struct SessionImportPanel {
     search: Entity<InputState>,
     /// Keeps Return and Escape with the sheet after a row is clicked.
     focus: FocusHandle,
+    restore_focus: Option<FocusHandle>,
     candidates: Vec<Candidate>,
     selected: Option<PathBuf>,
     /// The latest preview asked for while the worker was busy.
@@ -294,6 +295,7 @@ impl SessionImportPanel {
             choosing: false,
             search,
             focus: cx.focus_handle(),
+            restore_focus: None,
             candidates: Vec::new(),
             selected: None,
             queued: None,
@@ -304,6 +306,10 @@ impl SessionImportPanel {
             _poll: Some(poll),
             _search: subscription,
         }
+    }
+    pub(super) fn present(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.restore_focus = window.focused(cx);
+        self.search.read(cx).focus_handle(cx).focus(window, cx);
     }
     /// Each time the sheet opens, list the local sessions again, as Swift's
     /// sheet does when it appears.
@@ -423,11 +429,14 @@ impl SessionImportPanel {
         }
         self.start(Action::Import(preview), cx);
     }
-    fn cancel(&mut self, cx: &mut Context<Self>) {
+    fn cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.generation = self.generation.wrapping_add(1);
         self.preview = None;
         self.selected = None;
         self.queued = None;
+        if let Some(focus) = self.restore_focus.take() {
+            focus.focus(window, cx);
+        }
         cx.emit(SessionImportEvent::Cancelled);
     }
     fn start(&mut self, action: Action, cx: &mut Context<Self>) {
@@ -562,7 +571,8 @@ impl Render for SessionImportPanel {
         let rows = self.filtered(cx);
         let mut list = div()
             .id("session-import-list")
-            .w(px(290.))
+            .w_1_3()
+            .max_w(px(290.))
             .flex_none()
             .h_full()
             .min_h_0()
@@ -662,14 +672,25 @@ impl Render for SessionImportPanel {
             }
         }
         let existing = self.preview.as_ref().is_some_and(|p| p.existing.is_some());
-        div()
+        let panel = div()
             .id("session-import-panel")
+            .role(Role::Dialog)
+            .aria_label("Import CLI session")
             .size_full()
+            .max_w(px(880.))
+            .max_h(px(610.))
+            .min_h_0()
+            .rounded_lg()
+            .border_1()
+            .border_color(border)
+            .bg(cx.theme().background)
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .flex()
             .flex_col()
             .gap_2p5()
             .p_5()
             .track_focus(&self.focus)
+            .tab_group()
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 let modifiers = event.keystroke.modifiers;
                 if modifiers.platform || modifiers.control || modifiers.alt || modifiers.shift {
@@ -678,7 +699,7 @@ impl Render for SessionImportPanel {
                 // As Swift's sheet: Escape cancels and Return imports. The search
                 // field reports its own Return as PressEnter.
                 match event.keystroke.key.as_str() {
-                    "escape" => this.cancel(cx),
+                    "escape" => this.cancel(window, cx),
                     "enter" | "return"
                         if !this.search.read(cx).focus_handle(cx).is_focused(window) =>
                     {
@@ -689,9 +710,9 @@ impl Render for SessionImportPanel {
                 cx.stop_propagation();
             }))
             .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child("Import CLI Session"))
-            .child(div().text_color(muted).child("Preview a Claude Code or Codex conversation before importing. The original file stays unchanged; Coincide keeps a private copy. Imported threads are read-only until you fork them."))
+            .child(div().text_color(muted).child("Preview a Claude Code or Codex session. Imported conversations are read-only and can be forked."))
             .child(Input::new(&self.search).disabled(closed))
-            .child(div().flex_1().min_h(px(260.)).flex().gap_3().child(list).child(reading))
+            .child(div().flex_1().min_h_0().flex().gap_3().child(list).child(reading))
             .child(details)
             .child(div().text_xs().text_color(muted).child(format!(
                 "{} · Destination: {}",
@@ -709,13 +730,41 @@ impl Render for SessionImportPanel {
                         .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))))
                     .child(div().flex_1())
                     .child(Button::new("session-import-cancel").label("Cancel")
-                        .on_click(cx.listener(|this, _, _, cx| this.cancel(cx))))
+                        .on_click(cx.listener(|this, _, window, cx| this.cancel(window, cx))))
                     .child(Button::new("session-import-confirm")
                         .label(if existing { "Open Existing Thread" } else { "Import" })
                         .primary()
                         .disabled(disabled || self.preview.is_none())
                         .on_click(cx.listener(|this, _, _, cx| this.import_selected(cx)))),
+            );
+        crate::chat_layout::modal_backdrop()
+            .id("session-import-overlay")
+            .flex()
+            .items_center()
+            .justify_center()
+            .p_4()
+            .bg(rgba(0x00000066))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    this.cancel(window, cx);
+                    cx.stop_propagation();
+                }),
             )
+            .child(panel)
+    }
+}
+
+impl crate::Coincide {
+    pub(super) fn open_session_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.session_import_open {
+            self.session_import_open = true;
+            self.session_import_panel
+                .update(cx, |panel, cx| panel.present(window, cx));
+            self.sync_transcription_binding(cx);
+            self.sync_credentials(cx);
+            cx.notify();
+        }
     }
 }
 

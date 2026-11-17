@@ -75,6 +75,8 @@ pub(super) struct State {
     wait: ReviewWait,
     retry_at: Option<Instant>,
     confirm_retry: bool,
+    stop_pending: bool,
+    undo_retry: Option<(u64, Instant)>,
     auto_apply: bool,
     notice_visible: bool,
     notice_undo: bool,
@@ -99,6 +101,7 @@ impl State {
         self.wait = ReviewWait::Blocked;
         self.retry_at = None;
         self.confirm_retry = false;
+        self.stop_pending = false;
         self.auto_apply = false;
         self.notice_visible = false;
         self.notice_undo = false;
@@ -248,6 +251,7 @@ impl Coincide {
             return;
         }
         let previously_waiting = !self.sidebar_lifecycle.initial_delete();
+        self.sidebar_lifecycle.stop_pending = false;
         self.sidebar_lifecycle.auto_apply = false;
         self.sidebar_lifecycle.notice_visible = false;
         self.sidebar_lifecycle.archive_notice_undo = None;
@@ -312,7 +316,9 @@ impl Coincide {
         let Some(Review::Waiting(intent)) = &self.sidebar_lifecycle.review else {
             return;
         };
-        if self.sidebar_lifecycle.wait != ReviewWait::Running {
+        if self.sidebar_lifecycle.wait != ReviewWait::Running
+            && !self.sidebar_lifecycle.stop_pending
+        {
             return;
         }
         let intent = intent.clone();
@@ -331,6 +337,7 @@ impl Coincide {
             }
             Ok(())
         })();
+        self.sidebar_lifecycle.stop_pending = false;
         match result {
             Ok(()) => {
                 self.sidebar_lifecycle.stopping = true;
@@ -339,8 +346,18 @@ impl Coincide {
                 self.sidebar_lifecycle.status =
                     "Waiting for the selected conversations to stop…".into();
             }
-            Err(error) => self.sidebar_lifecycle.status = error.to_string(),
-        };
+            Err(error) if engine_busy(&error) => {
+                self.sidebar_lifecycle.stop_pending = true;
+                self.sidebar_lifecycle.wait = ReviewWait::Retry;
+                self.sidebar_lifecycle.retry_at = Some(Instant::now() + Duration::from_millis(180));
+                self.sidebar_lifecycle.status =
+                    "Requesting stop for the selected conversations…".into();
+            }
+            Err(error) => {
+                self.sidebar_lifecycle.wait = ReviewWait::Running;
+                self.sidebar_lifecycle.status = error.to_string();
+            }
+        }
         cx.notify();
     }
     pub(super) fn poll_sidebar_lifecycle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -353,7 +370,16 @@ impl Coincide {
         }
         if self.media.shutdown_requested || self.media.close_requested {
             self.sidebar_lifecycle.cancel_review();
+            self.sidebar_lifecycle.undo_retry = None;
             return;
+        }
+        if let Some((stamp, at)) = self.sidebar_lifecycle.undo_retry
+            && Instant::now() >= at
+        {
+            self.sidebar_lifecycle.undo_retry = None;
+            if self.sidebar_lifecycle.undo_stamp() == Some(stamp) {
+                self.undo_sidebar_lifecycle(window, cx);
+            }
         }
         if self
             .sidebar_lifecycle
@@ -363,6 +389,8 @@ impl Coincide {
             self.sidebar_lifecycle.retry_at = None;
             if self.sidebar_lifecycle.confirm_retry {
                 self.apply_sidebar_lifecycle(window, cx);
+            } else if self.sidebar_lifecycle.stop_pending {
+                self.stop_sidebar_lifecycle(cx);
             } else if let Some(Review::Waiting(intent)) = &self.sidebar_lifecycle.review {
                 self.prepare_sidebar_lifecycle(intent.clone(), cx);
             }
@@ -477,6 +505,7 @@ impl Coincide {
         if self.media.shutdown_requested || self.media.close_requested {
             return;
         }
+        self.sidebar_lifecycle.undo_retry = None;
         self.collect_draft_results();
         let affected = self
             .sidebar_lifecycle
@@ -518,6 +547,13 @@ impl Coincide {
                 {
                     self.select(&id, window, cx);
                 }
+            }
+            Err(error) if engine_busy(&error) => {
+                self.sidebar_lifecycle.undo_retry = Some((
+                    self.sidebar_lifecycle.undo_stamp,
+                    Instant::now() + Duration::from_millis(180),
+                ));
+                self.sidebar_lifecycle.status = "Restoring conversations…".into();
             }
             Err(error) => self.sidebar_lifecycle.status = format!("Undo was refused: {error}"),
         };
@@ -802,6 +838,7 @@ impl Coincide {
                                 .ghost()
                                 .compact()
                                 .label("Undo")
+                                .disabled(self.sidebar_lifecycle.undo_retry.is_some())
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     if let Some(id) = &archive_undo {
                                         this.undo_archive_from_notice(id, cx);
