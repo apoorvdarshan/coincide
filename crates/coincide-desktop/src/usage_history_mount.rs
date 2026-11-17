@@ -101,13 +101,11 @@ pub struct Mount {
     reader: Reader<Report>,
     dashboard_reader: Reader<Data>,
     cli_reader: Reader<(
-        Vec<coincide_core::cli_usage_logs::Source>,
-        std::path::PathBuf,
+        crate::usage_dashboard::UsageSources,
         coincide_core::cli_usage_logs::Scan,
     )>,
     cli_pending: Option<(
-        Vec<coincide_core::cli_usage_logs::Source>,
-        std::path::PathBuf,
+        crate::usage_dashboard::UsageSources,
         coincide_core::cli_usage_logs::Scan,
     )>,
     cli_cached: Option<Arc<coincide_core::cli_usage_logs::Scan>>,
@@ -232,7 +230,7 @@ impl Mount {
         let engine = self.engine.clone();
         let _ = self.cli_reader.start_cancellable(move |admission| {
             let deadline = std::time::Instant::now() + Duration::from_secs(3);
-            let (sources, database) = loop {
+            let sources = loop {
                 if !admission.allowed() {
                     return Err("Local usage scan was cancelled.".into());
                 }
@@ -250,8 +248,9 @@ impl Mount {
                 }
             };
             let cancelled = || !admission.allowed();
-            let owners = coincide_core::cli_usage_logs::session_owners(&database, &cancelled)
-                .map_err(|_| "Local usage could not match saved sessions.".to_owned())?;
+            let owners =
+                coincide_core::cli_usage_logs::session_owners(&sources.database, &cancelled)
+                    .map_err(|_| "Local usage could not match saved sessions.".to_owned())?;
             let lock = SCANNER.get_or_init(|| Mutex::new(Default::default()));
             let mut scanner = loop {
                 if cancelled() {
@@ -270,19 +269,43 @@ impl Mount {
                     }
                 }
             };
-            let scan = scanner
-                .scan(&sources, &owners, &cancelled)
+            let mut scan = scanner
+                .scan(&sources.cli, &owners, &cancelled)
                 .map_err(|_| "Local usage logs could not be read completely.".to_owned())?;
-            Ok((sources, database, scan))
+            drop(scanner);
+            if let Some(path) = &sources.opencode_database {
+                match std::fs::symlink_metadata(path) {
+                    Ok(_) => match coincide_core::opencode_usage::scan(path, &owners, &cancelled) {
+                        Ok(extra) => {
+                            scan.events.extend(extra.events);
+                            scan.supplemental_providers
+                                .extend(extra.supplemental_providers);
+                            scan.incomplete_providers.extend(extra.incomplete_providers);
+                        }
+                        Err(_) if cancelled() => {
+                            return Err("Local usage scan was cancelled.".into());
+                        }
+                        Err(_) => scan.incomplete_providers.push("opencode"),
+                    },
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(_) => scan.incomplete_providers.push("opencode"),
+                }
+            }
+            Ok((sources, scan))
         });
     }
     /// Fetch each enabled default account independently, so a slow provider
     /// never blocks another or the desktop's engine lock.
     pub fn refresh_external(&mut self, settings: &serde_json::Value) {
         self.external_settings = Some(settings.clone());
-        for provider in ["grok", "opencode", "cursor", "antigravity"] {
+        for provider in ["grok", "opencode", "cursor", "antigravity", "lithos"] {
             self.start_external(provider, settings);
         }
+    }
+    pub fn refresh_lithos(&mut self, settings: &serde_json::Value) {
+        self.external_settings = Some(settings.clone());
+        self.dashboard.external.remove("lithos");
+        self.start_external("lithos", settings);
     }
     fn start_external(&mut self, provider: &'static str, settings: &serde_json::Value) {
         if !crate::usage_dashboard_ui::provider_id(provider)
@@ -299,13 +322,16 @@ impl Mount {
             return;
         }
         self.external_retry.remove(provider);
-        let browser_cookie = if provider == "opencode"
-            && coincide_core::provider_usage::browser_fallback_enabled(settings)
-        {
-            usage_browser_fallback::opencode(&self.engine)
-        } else {
-            None
-        };
+        let browser_cookie =
+            if provider == "lithos" && settings["usageLithosBrowserFallbackEnabled"] == true {
+                usage_browser_fallback::lithos(&self.engine)
+            } else if provider == "opencode"
+                && coincide_core::provider_usage::browser_fallback_enabled(settings)
+            {
+                usage_browser_fallback::opencode(&self.engine)
+            } else {
+                None
+            };
         let chrome_default = provider == "opencode"
             && coincide_core::provider_usage::browser_fallback_enabled(settings)
             && usage_browser_fallback::chrome_is_default();
@@ -406,11 +432,9 @@ impl Mount {
             && let Ok(engine) = self.engine.try_lock()
         {
             let current = crate::usage_dashboard::cli_sources(&engine);
-            let (sources, database, scan) = self.cli_pending.take().expect("checked above");
+            let (sources, scan) = self.cli_pending.take().expect("checked above");
             match current {
-                Ok((current_sources, current_database))
-                    if current_sources == sources && current_database == database =>
-                {
+                Ok(current_sources) if current_sources == sources => {
                     let scan = Arc::new(scan);
                     self.cli_error = None;
                     self.cli_cached = Some(scan.clone());

@@ -5,7 +5,7 @@
 use super::*;
 use crate::native_menu::AccessibleMenuExt as _;
 use crate::usage_dashboard::{Account, LimitState};
-use chrono::{Local, NaiveDate, Utc};
+use chrono::{Local, Utc};
 use coincide_core::{
     provider_catalog::ProviderId,
     usage_limits::{DisplayMode, Limits, most_constrained, warning_text},
@@ -14,7 +14,8 @@ use coincide_core::{
 };
 use gpui_kit::component::menu::PopupMenuItem;
 
-const PERIODS: [u32; 3] = [7, 30, 90];
+// Zero selects all locally available history.
+const PERIODS: [u32; 5] = [7, 30, 90, 365, 0];
 
 /// Large changes stay readable within a narrow tile; the underlying value is unchanged.
 fn compact_trend(trend: f64) -> String {
@@ -45,6 +46,10 @@ fn chart_ceiling(highest: f64) -> f64 {
         }
 }
 
+fn chart_bucket_days(days: u32) -> u32 {
+    days.max(1).div_ceil(90)
+}
+
 pub(super) fn provider_id(provider: &str) -> Option<ProviderId> {
     Some(match provider {
         "claude" => ProviderId::Claude,
@@ -60,6 +65,19 @@ pub(super) fn provider_id(provider: &str) -> Option<ProviderId> {
 pub(super) fn provider_name(provider: &str) -> &'static str {
     provider_id(provider).map_or("Agent", |id| {
         coincide_core::provider_catalog::provider(id).display_name
+    })
+}
+
+fn provider_site(provider: &str) -> Option<&'static str> {
+    Some(match provider {
+        "claude" => "https://claude.ai/",
+        "codex" => "https://chatgpt.com/codex",
+        "cursor" => "https://cursor.com/dashboard",
+        "grok" => "https://x.ai/cli",
+        "opencode" => "https://opencode.ai/console",
+        "lithos" => "https://console.lithosai.cloud/",
+        "antigravity" => "https://antigravity.google/",
+        _ => return None,
     })
 }
 /// Where the Swift wording says "this Mac".
@@ -194,7 +212,10 @@ pub(super) fn cards_for(
                         .into(),
                 )
             } else if account.is_default()
-                && matches!(provider, "grok" | "opencode" | "cursor" | "antigravity")
+                && matches!(
+                    provider,
+                    "grok" | "opencode" | "cursor" | "antigravity" | "lithos"
+                )
             {
                 dashboard
                     .external
@@ -218,6 +239,35 @@ pub(super) fn cards_for(
 }
 
 impl Coincide {
+    fn usage_provider_name(&self, provider: &str) -> String {
+        self.usage_history
+            .dashboard
+            .data
+            .as_ref()
+            .and_then(|data| {
+                data.registered
+                    .iter()
+                    .find(|agent| agent.provider == provider)
+            })
+            .map(|agent| agent.name.clone())
+            .unwrap_or_else(|| provider_name(provider).to_owned())
+    }
+
+    fn usage_site_button(&self, id: String, site: String, cx: &mut Context<Self>) -> AnyElement {
+        Button::new(SharedString::from(id))
+            .label("Open provider website")
+            .small()
+            .on_click(cx.listener(move |this, _, _, cx| {
+                let destination = if this.opens_links_in_default_browser() {
+                    crate::transcript_links::Destination::Default
+                } else {
+                    crate::transcript_links::Destination::BrowserNewTab
+                };
+                this.open_web_link(site.clone(), destination, cx);
+            }))
+            .into_any_element()
+    }
+
     fn usage_provider_enabled(&self, provider: &str) -> bool {
         provider_id(provider)
             .is_some_and(|id| settings_navigation::provider_enabled(&self.settings, id))
@@ -490,6 +540,7 @@ impl Coincide {
         &self,
         title: &str,
         totals: &Totals,
+        partial: bool,
         trend: Option<f64>,
         compared: &str,
         cx: &App,
@@ -513,12 +564,13 @@ impl Coincide {
                     .flex_wrap()
                     .items_baseline()
                     .gap_1()
-                    .child(
-                        div()
-                            .text_xl()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(format::tokens(totals.tokens.total())),
-                    )
+                    .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child(
+                        if partial && totals.tokens.is_empty() {
+                            "—".into()
+                        } else {
+                            format::tokens(totals.tokens.total())
+                        },
+                    ))
                     .child(div().text_xs().text_color(muted).child("tokens")),
             )
             .child(
@@ -531,7 +583,7 @@ impl Coincide {
                         "No cost estimate".into()
                     }),
             )
-            .when_some(trend, |view, trend| {
+            .when_some((!partial).then_some(trend).flatten(), |view, trend| {
                 view.child(
                     div()
                         .flex()
@@ -669,8 +721,8 @@ impl Coincide {
             .into_any_element()
     }
 
-    /// Tokens or estimated cost per day, stacked by provider in its color.
-    fn usage_chart(&self, report: &Report, cx: &mut Context<Self>) -> AnyElement {
+    /// Tokens or estimated cost, grouped into at most 90 time buckets.
+    fn usage_chart(&self, report: &Report, chart_days: u32, cx: &mut Context<Self>) -> AnyElement {
         let dashboard = &self.usage_history.dashboard;
         let muted = self.usage_muted(cx);
         let cost = dashboard.cost;
@@ -682,14 +734,25 @@ impl Coincide {
             }
         };
         let today = Utc::now().with_timezone(&Local).date_naive();
-        let start = report::days_back(today, dashboard.days);
-        let dates = (0..dashboard.days)
+        let start = report::days_back(today, chart_days);
+        let bucket_days = chart_bucket_days(chart_days);
+        let dates = (0..chart_days)
+            .step_by(bucket_days as usize)
             .map(|offset| start + chrono::Duration::days(i64::from(offset)))
             .collect::<Vec<_>>();
-        let rows_for = |day: NaiveDate| report.days.iter().filter(move |row| row.day == day);
-        let highest = dates
+        let mut buckets = vec![std::collections::BTreeMap::<&str, f64>::new(); dates.len()];
+        for row in &report.days {
+            let offset = (row.day - start).num_days();
+            if offset >= 0 && row.day <= today {
+                let index = (offset as u64 / u64::from(bucket_days)) as usize;
+                if let Some(bucket) = buckets.get_mut(index) {
+                    *bucket.entry(row.provider.as_str()).or_default() += value(&row.totals);
+                }
+            }
+        }
+        let highest = buckets
             .iter()
-            .map(|day| rows_for(*day).map(|row| value(&row.totals)).sum::<f64>())
+            .map(|bucket| bucket.values().sum::<f64>())
             .fold(0., f64::max);
         let scale = chart_ceiling(highest);
         let label = |amount: f64| {
@@ -724,16 +787,15 @@ impl Coincide {
                     cx.notify();
                 }));
             // The first provider sits at the bottom of the stack.
-            let rows = rows_for(day).collect::<Vec<_>>();
-            for row in rows.iter().rev() {
-                let share = (value(&row.totals) / scale) as f32;
+            for (provider, amount) in buckets[index].iter().rev() {
+                let share = (amount / scale) as f32;
                 if share > 0. {
                     column = column.child(
                         div()
                             .w_full()
                             .h(relative(share))
                             .min_h(px(1.))
-                            .bg(self.provider_ink(&row.provider)),
+                            .bg(self.provider_ink(provider)),
                     );
                 }
             }
@@ -778,9 +840,15 @@ impl Coincide {
                 .child(
                     div()
                         .font_weight(FontWeight::SEMIBOLD)
-                        .child(format::weekday_label(day)),
+                        .child(if bucket_days == 1 {
+                            format::weekday_label(day)
+                        } else {
+                            let end = (day + chrono::Duration::days(i64::from(bucket_days - 1)))
+                                .min(today);
+                            format!("{} – {}", format::day_label(day), format::day_label(end))
+                        }),
                 );
-            for row in rows_for(day) {
+            for (provider, amount) in &buckets[index] {
                 tooltip = tooltip.child(
                     div()
                         .flex()
@@ -791,21 +859,21 @@ impl Coincide {
                                 .w(px(6.))
                                 .h(px(6.))
                                 .rounded_full()
-                                .bg(self.provider_ink(&row.provider)),
+                                .bg(self.provider_ink(provider)),
                         )
-                        .child(div().flex_1().child(provider_name(&row.provider)))
+                        .child(div().flex_1().child(self.usage_provider_name(provider)))
                         .child(if cost {
-                            format::exact_cost(&row.totals)
+                            format!("≈ {}", format::cost(*amount))
                         } else {
-                            format::exact_tokens(row.totals.tokens.total())
+                            format::exact_tokens(amount.round().max(0.) as u64)
                         }),
                 );
             }
             plot = plot.child(tooltip);
         }
-        let stride = match dashboard.days {
-            days if days > 30 => 14,
-            days if days > 7 => 7,
+        let stride = match dates.len() {
+            count if count > 30 => 14,
+            count if count > 7 => 7,
             _ => 1,
         };
         let mut axis = div().relative().h(px(16.)).ml(px(52.));
@@ -822,10 +890,12 @@ impl Coincide {
                 );
             }
         }
-        let shown = PROVIDERS
-            .iter()
-            .filter(|provider| report.days.iter().any(|row| row.provider == **provider))
-            .collect::<Vec<_>>();
+        let mut shown = Vec::new();
+        for row in &report.days {
+            if !shown.contains(&row.provider.as_str()) {
+                shown.push(row.provider.as_str());
+            }
+        }
         let mut legend = div().flex().flex_wrap().gap_3().text_xs();
         for provider in shown {
             legend = legend.child(
@@ -840,7 +910,7 @@ impl Coincide {
                             .rounded_full()
                             .bg(self.provider_ink(provider)),
                     )
-                    .child(provider_name(provider)),
+                    .child(self.usage_provider_name(provider)),
             );
         }
         div()
@@ -967,7 +1037,7 @@ impl Coincide {
         tracked: Option<&Report>,
         period_name: &str,
         mode: DisplayMode,
-        cx: &App,
+        cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         let now = Utc::now();
         let muted = self.usage_muted(cx);
@@ -1064,7 +1134,7 @@ impl Coincide {
         body.push(
             self.usage_labeled(
                 period_name,
-                Some("Turns run in Coincide whose agent reported its token use."),
+                Some("Reported local tokens; may include other sessions if enabled."),
                 match totals {
                     Some(totals) => div()
                         .flex()
@@ -1080,6 +1150,13 @@ impl Coincide {
                 cx,
             ),
         );
+        if let Some(site) = provider_site(provider) {
+            body.push(self.usage_site_button(
+                format!("usage-site-{provider}-{}", card.account.id),
+                site.into(),
+                cx,
+            ));
+        }
         body
     }
 
@@ -1088,12 +1165,42 @@ impl Coincide {
         let dashboard = &self.usage_history.dashboard;
         let muted = self.usage_muted(cx);
         let mode = DisplayMode::saved(&self.settings["usageDisplayMode"]);
-        let period_name = format!("Last {} days", dashboard.days);
+        let days = if dashboard.days == 0 {
+            dashboard
+                .data
+                .as_ref()
+                .map(|data| data.history_days(now))
+                .unwrap_or(1)
+        } else {
+            dashboard.days
+        };
+        let period_name = if dashboard.days == 0 {
+            "All available".to_owned()
+        } else {
+            format!("Last {days} days")
+        };
         let cards = self.usage_cards(cx);
-        let enabled = PROVIDERS
+        let mut enabled = PROVIDERS
             .into_iter()
             .filter(|provider| cards.iter().any(|card| card.account.provider == *provider))
             .collect::<Vec<_>>();
+        let registered = dashboard
+            .data
+            .as_ref()
+            .map(|data| {
+                data.registered
+                    .iter()
+                    .filter(|agent| {
+                        coincide_core::provider_preferences::enabled(
+                            &self.settings,
+                            &agent.provider,
+                        )
+                        .unwrap_or(false)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        enabled.extend(registered.iter().map(|agent| agent.provider.as_str()));
         let records = dashboard
             .data
             .as_ref()
@@ -1115,11 +1222,22 @@ impl Coincide {
                     &enabled,
                     filter_provider,
                     filter_account.as_deref(),
-                    dashboard.days,
+                    days,
                     now,
                 )
             })
             .unwrap_or_default();
+        let partial = |days| {
+            dashboard.data.as_ref().is_none_or(|data| {
+                data.history_partial(
+                    &enabled,
+                    filter_provider,
+                    filter_account.as_deref(),
+                    days,
+                    now,
+                )
+            })
+        };
         let shown = cards
             .iter()
             .filter(|card| {
@@ -1229,7 +1347,10 @@ impl Coincide {
 
         // Filters.
         let owner = cx.entity().downgrade();
-        let provider_choices = enabled.clone();
+        let provider_choices = PROVIDERS
+            .into_iter()
+            .filter(|provider| cards.iter().any(|card| card.account.provider == *provider))
+            .collect::<Vec<_>>();
         let providers = Button::new("usage-provider-filter")
             .label(filter_provider.map(provider_name).unwrap_or("All agents"))
             .accessibility_label("Show usage for agent")
@@ -1277,7 +1398,7 @@ impl Coincide {
         let owner = cx.entity().downgrade();
         let selected_days = dashboard.days;
         let periods = Button::new("usage-period-filter")
-            .label(format!("Last {selected_days} days"))
+            .label(period_name.clone())
             .accessibility_label("Usage period")
             .compact()
             .dropdown_caret(true)
@@ -1285,15 +1406,19 @@ impl Coincide {
                 for days in PERIODS {
                     let owner = owner.clone();
                     menu = menu.item(
-                        PopupMenuItem::new(format!("Last {days} days"))
-                            .checked(selected_days == days)
-                            .on_click(move |_, _, cx| {
-                                let _ = owner.update(cx, |this, cx| {
-                                    this.usage_history.dashboard.days = days;
-                                    this.usage_history.dashboard.hovered = None;
-                                    cx.notify();
-                                });
-                            }),
+                        PopupMenuItem::new(if days == 0 {
+                            "All available".into()
+                        } else {
+                            format!("Last {days} days")
+                        })
+                        .checked(selected_days == days)
+                        .on_click(move |_, _, cx| {
+                            let _ = owner.update(cx, |this, cx| {
+                                this.usage_history.dashboard.days = days;
+                                this.usage_history.dashboard.hovered = None;
+                                cx.notify();
+                            });
+                        }),
                     );
                 }
                 menu
@@ -1363,6 +1488,7 @@ impl Coincide {
                 .child(self.usage_tile(
                     "Today",
                     &report.today,
+                    partial(1),
                     report::trend(&report.today, &report.yesterday),
                     "yesterday",
                     cx,
@@ -1370,6 +1496,7 @@ impl Coincide {
                 .child(self.usage_tile(
                     "Last 7 days",
                     &report.last_week,
+                    partial(7),
                     report::trend(&report.last_week, &report.previous_week),
                     "preceding 7 days",
                     cx,
@@ -1377,6 +1504,7 @@ impl Coincide {
                 .child(self.usage_tile(
                     "Last 30 days",
                     &report.last_month,
+                    partial(30),
                     report::trend(&report.last_month, &report.previous_month),
                     "preceding 30 days",
                     cx,
@@ -1385,6 +1513,16 @@ impl Coincide {
             self.usage_divider(),
             self.usage_token_mix(&report.period, &period_name, cx),
         ];
+        if partial(30) {
+            overview.insert(
+                1,
+                div()
+                    .text_xs()
+                    .text_color(muted)
+                    .child("Local history is loading or incomplete; totals may be partial.")
+                    .into_any_element(),
+            );
+        }
         let current = shown
             .iter()
             .map(|card| card.limits().map(|l| l.current(now)))
@@ -1443,7 +1581,16 @@ impl Coincide {
                     .flex()
                     .flex_col()
                     .child(div().font_weight(FontWeight::SEMIBOLD).child("Daily usage"))
-                    .child(div().text_xs().text_color(muted).child(period_name.clone())),
+                    .child(div().text_xs().text_color(muted).child(
+                        if chart_bucket_days(days) > 1 {
+                            format!(
+                                "{period_name} · grouped by {} days",
+                                chart_bucket_days(days)
+                            )
+                        } else {
+                            period_name.clone()
+                        },
+                    )),
             )
             .child(metric)
             .into_any_element();
@@ -1456,12 +1603,14 @@ impl Coincide {
                 .text_color(muted)
                 .child(if dashboard.loading {
                     "Reading saved usage…"
+                } else if partial(days) {
+                    "Local usage is incomplete for this period."
                 } else {
-                    "No usage in this period."
+                    "No reported usage in this period."
                 })
                 .into_any_element()
         } else {
-            self.usage_chart(&report, cx)
+            self.usage_chart(&report, days, cx)
         };
 
         let mut content = div()
@@ -1559,7 +1708,7 @@ impl Coincide {
         }
 
         // Plan limits, one section per enabled account.
-        if shown.is_empty() {
+        if shown.is_empty() && registered.is_empty() {
             content = content.child(self.usage_section(
                 Some("Plan Limits".into_any_element()),
                 vec![div().text_color(muted).child("No provider is turned on.").into_any_element()],
@@ -1591,13 +1740,64 @@ impl Coincide {
                 cx,
             ));
         }
+        if filter_provider.is_none() {
+            for agent in registered {
+                let agent_report = dashboard
+                    .data
+                    .as_ref()
+                    .map(|data| {
+                        data.report(
+                            includes_other_sessions,
+                            &enabled,
+                            Some(&agent.provider),
+                            None,
+                            days,
+                            now,
+                        )
+                    })
+                    .unwrap_or_default();
+                let mut body = vec![div().text_color(muted)
+                    .child("This agent has no standard account-limit report. Its own account may show more.")
+                    .into_any_element()];
+                let tracked = &agent_report.period;
+                body.push(
+                    div()
+                        .child(if tracked.tokens.is_empty() {
+                            "No additive token usage reported in Coincide for this period."
+                                .to_owned()
+                        } else {
+                            format!(
+                                "{} tracked tokens · {}",
+                                format::tokens(tracked.tokens.total()),
+                                format::cost_of(tracked)
+                            )
+                        })
+                        .into_any_element(),
+                );
+                if let Some(site) = &agent.website {
+                    body.push(self.usage_site_button(
+                        format!("usage-site-{}", agent.provider),
+                        site.clone(),
+                        cx,
+                    ));
+                }
+                let header = div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(self.usage_logo(&agent.provider, 16.))
+                    .child(agent.name.clone())
+                    .into_any_element();
+                content = content.child(self.usage_section(Some(header), body, None, cx));
+            }
+        }
 
         // Activity in Coincide.
         let activity = report::activity_filtered(
             records
                 .iter()
                 .filter(|record| enabled.contains(&record.provider.as_str())),
-            dashboard.days,
+            days,
             filter_provider,
             filter_account.as_deref(),
             now,
@@ -1690,10 +1890,23 @@ impl Coincide {
                         "usage-browser-fallback",
                         cx,
                     ))
-                    .child(Button::new("usage-open-opencode-console")
-                        .label("Open OpenCode in default browser")
-                        .small()
-                        .on_click(|_, _, cx| cx.open_url("https://opencode.ai/console"))),
+                    .child(self.usage_site_button("usage-open-opencode-console".into(), "https://opencode.ai/console".into(), cx)),
+            ));
+        }
+
+        if cfg!(target_os = "macos")
+            && enabled.contains(&"lithos")
+            && filter_provider.is_none_or(|provider| provider == "lithos")
+        {
+            content = content.child(self.settings_group("Lithos console", div().flex().flex_col().gap_2()
+                .child(self.setting_toggle(
+                    "Show Lithos console usage",
+                    "Read balance and recent spend from the active organization signed in to Coincide’s default browser profile. It may differ from your agent’s inference key.",
+                    "usageLithosBrowserFallbackEnabled",
+                    self.settings["usageLithosBrowserFallbackEnabled"] == true,
+                    "usage-lithos-browser-fallback", cx,
+                ))
+                .child(self.usage_site_button("usage-open-lithos-console".into(), "https://console.lithosai.cloud/".into(), cx)),
             ));
         }
 
@@ -1717,15 +1930,21 @@ impl Coincide {
         let logs = dashboard.data.as_ref().and_then(|data| data.logs.as_ref());
         notes = notes.child(match logs {
             Some(logs) if !logs.incomplete_providers.is_empty() => format!(
-                "Some CLI logs couldn’t be read completely. Saved Coincide usage is shown for {}.",
+                "Some local usage could not be read completely for {}. Figures may be partial.",
                 logs.incomplete_providers.join(" and ")
             ),
-            Some(logs) if !logs.complete_providers.is_empty() =>
-                "Claude Code and Codex usage is read locally where logs are available. Other agents use reported Coincide turns. Nothing is uploaded.".into(),
+            Some(logs) if !logs.complete_providers.is_empty() || !logs.supplemental_providers.is_empty() =>
+                "Agent history and reported Coincide turns are read on this computer.".into(),
             _ if self.usage_history.cli_error.is_some() =>
                 "Local CLI usage is unavailable; saved Coincide usage is shown.".into(),
             _ => format!("Coincide turns with reported usage are counted. CLI logs on {} have not been read yet.", this_computer()),
         });
+        if logs.is_some_and(|logs| !logs.supplemental_providers.is_empty()) {
+            notes = notes.child("OpenCode history adds days without saved Coincide totals; overlapping days are left out to avoid double-counting.");
+        }
+        if logs.is_some_and(|logs| !logs.complete_providers.is_empty()) {
+            notes = notes.child("For Claude and Codex, local logs replace saved totals on overlapping days; older saved days remain available.");
+        }
         if let Some(skipped) = dashboard
             .data
             .as_ref()
@@ -1737,6 +1956,13 @@ impl Coincide {
                 format::integer(skipped as u64)
             ));
         }
+        if dashboard
+            .data
+            .as_ref()
+            .is_some_and(|data| data.registered_unavailable)
+        {
+            notes = notes.child("Registered agents could not be read; their usage may be missing. Refresh to try again.");
+        }
         content = content.child(notes);
         content.into_any_element()
     }
@@ -1744,7 +1970,7 @@ impl Coincide {
 
 #[cfg(test)]
 mod presentation_tests {
-    use super::{Card, cards_for, chart_ceiling, compact_trend, remote_usage};
+    use super::{Card, cards_for, chart_bucket_days, chart_ceiling, compact_trend, remote_usage};
     use crate::usage_dashboard::{Account, Dashboard, LimitState};
     use chrono::{TimeZone, Utc};
     use coincide_core::usage_limits::{Limits, Window, WindowKind};
@@ -1757,6 +1983,10 @@ mod presentation_tests {
         assert_eq!(chart_ceiling(842_000_000.), 1_000_000_000.);
         assert_eq!(chart_ceiling(0.12), 0.2);
         assert_eq!(chart_ceiling(0.), 1.);
+        assert_eq!(chart_bucket_days(7), 1);
+        assert_eq!(chart_bucket_days(90), 1);
+        assert_eq!(chart_bucket_days(91), 2);
+        assert_eq!(chart_bucket_days(365), 5);
     }
 
     #[test]

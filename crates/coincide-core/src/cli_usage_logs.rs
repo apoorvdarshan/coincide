@@ -35,6 +35,9 @@ pub struct Scan {
     pub events: Vec<LoggedEvent>,
     /// Only providers scanned without an IO/bounds failure and with log files.
     pub complete_providers: Vec<&'static str>,
+    /// Supplemental sources are merged conservatively with saved turns rather
+    /// than replacing all of a provider's existing history.
+    pub supplemental_providers: Vec<&'static str>,
     pub incomplete_providers: Vec<&'static str>,
     pub files_read: usize,
     pub bytes_read: u64,
@@ -59,7 +62,7 @@ pub type SessionOwners = HashMap<(String, String), Option<SessionOwner>>;
 /// database open without FILE_SHARE_DELETE there, so it cannot be replaced or
 /// renamed while SQLite opens and reads it. Other platforms use their normal
 /// no-follow handle plus SQLite's own moved-file check.
-fn open_usage_database(path: &Path) -> anyhow::Result<fs::File> {
+pub(crate) fn open_usage_database(path: &Path) -> anyhow::Result<fs::File> {
     #[cfg(windows)]
     {
         use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
@@ -92,7 +95,7 @@ fn owner(
     project: &Option<String>,
     fallback_account: Option<&str>,
 ) {
-    if !matches!(provider, "codex" | "claude") {
+    if !matches!(provider, "codex" | "claude" | "opencode" | "lithos") {
         return;
     }
     let Some(session) = name(&reference["sessionID"]) else {
@@ -439,16 +442,66 @@ impl Codex {
     }
 }
 
+/// Track the same byte markers used by the ordinary relevance filter while an
+/// oversized line is discarded. The overlap catches markers split across two
+/// reader buffers without retaining the line's private contents.
+struct OversizedMarkers {
+    provider: ImportProvider,
+    found: u8,
+    tail: Vec<u8>,
+}
+impl OversizedMarkers {
+    fn new(provider: ImportProvider) -> Self {
+        Self {
+            provider,
+            found: 0,
+            tail: Vec::new(),
+        }
+    }
+    fn observe(&mut self, bytes: &[u8]) {
+        const OVERLAP: usize = 32;
+        let markers: &[&[u8]] = match self.provider {
+            ImportProvider::Claude => &[b"\"assistant\"", b"\"usage\""],
+            ImportProvider::Codex => {
+                &[b"\"token_count\"", b"\"turn_context\"", b"\"session_meta\""]
+            }
+        };
+        let mut boundary = self.tail.clone();
+        boundary.extend_from_slice(&bytes[..bytes.len().min(OVERLAP)]);
+        for (index, marker) in markers.iter().enumerate() {
+            if contains(bytes, marker) || contains(&boundary, marker) {
+                self.found |= 1 << index;
+            }
+        }
+        if bytes.len() >= OVERLAP {
+            self.tail.clear();
+            self.tail.extend_from_slice(&bytes[bytes.len() - OVERLAP..]);
+        } else {
+            self.tail.extend_from_slice(bytes);
+            if self.tail.len() > OVERLAP {
+                self.tail.drain(..self.tail.len() - OVERLAP);
+            }
+        }
+    }
+    fn may_contain_usage(&self) -> bool {
+        match self.provider {
+            ImportProvider::Claude => self.found & 0b11 == 0b11,
+            ImportProvider::Codex => self.found != 0,
+        }
+    }
+}
+
 /// Read one complete line without ever allocating more than MAX_LINE. A final
 /// unfinished line stays unread logically so the next scan can pick it up.
 fn line(
     reader: &mut impl BufRead,
     output: &mut Vec<u8>,
+    provider: ImportProvider,
     cancelled: &dyn Fn() -> bool,
-) -> std::io::Result<(usize, bool, bool)> {
+) -> std::io::Result<(usize, bool, bool, bool)> {
     output.clear();
     let mut consumed = 0;
-    let mut oversized = false;
+    let mut oversized: Option<OversizedMarkers> = None;
     loop {
         if cancelled() {
             return Err(std::io::Error::new(
@@ -458,19 +511,32 @@ fn line(
         }
         let bytes = reader.fill_buf()?;
         if bytes.is_empty() {
-            return Ok((consumed, false, oversized));
+            return Ok((consumed, false, oversized.is_some(), false));
         }
         let end = bytes.iter().position(|byte| *byte == b'\n');
         let take = end.map_or(bytes.len(), |position| position + 1);
         if output.len().saturating_add(take) > MAX_LINE {
-            oversized = true;
-        } else if !oversized {
+            if oversized.is_none() {
+                let mut markers = OversizedMarkers::new(provider);
+                markers.observe(output);
+                oversized = Some(markers);
+            }
+            oversized
+                .as_mut()
+                .expect("initialized above")
+                .observe(&bytes[..take]);
+        } else if let Some(markers) = &mut oversized {
+            markers.observe(&bytes[..take]);
+        } else {
             output.extend_from_slice(&bytes[..take]);
         }
         reader.consume(take);
         consumed += take;
         if end.is_some() {
-            return Ok((consumed, true, oversized));
+            let relevant = oversized
+                .as_ref()
+                .is_some_and(OversizedMarkers::may_contain_usage);
+            return Ok((consumed, true, oversized.is_some(), relevant));
         }
     }
 }
@@ -546,13 +612,17 @@ fn read_file(
         if cancelled() {
             anyhow::bail!("Usage scan was cancelled");
         }
-        let (length, complete, oversized) = line(&mut reader, &mut bytes, cancelled)?;
+        let (length, complete, oversized, potentially_relevant) =
+            line(&mut reader, &mut bytes, provider, cancelled)?;
         if !complete {
             break;
         }
         entry.offset = entry.offset.saturating_add(length as u64);
         if oversized {
-            entry.incomplete = true;
+            // Irrelevant large records, such as Codex compaction payloads,
+            // cannot contribute usage; only a possibly relevant one prevents
+            // the scan from replacing saved history.
+            entry.incomplete |= potentially_relevant;
             continue;
         }
         let relevant = match provider {
@@ -1098,10 +1168,47 @@ mod tests {
     }
 
     #[test]
-    fn oversized_logs_and_cancellation_never_claim_complete_usage() {
+    fn oversized_unrelated_codex_compaction_preserves_usage_deltas() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rollout.jsonl");
+        let mut file = fs::File::create(&path).unwrap();
+        writeln!(
+            file,
+            "{}",
+            json!({"type":"session_meta","payload":{"id":"session","originator":"coincide"}})
+        )
+        .unwrap();
+        writeln!(file, "{}", codex_total("2026-11-17T01:00:00Z", 100, 30, 10)).unwrap();
+        file.write_all(b"{\"type\":\"compacted\",\"payload\":\"")
+            .unwrap();
+        file.write_all(&vec![b'x'; MAX_LINE + 1]).unwrap();
+        writeln!(file, "\"}}").unwrap();
+        writeln!(file, "{}", codex_total("2026-11-17T01:01:00Z", 120, 40, 15)).unwrap();
+        drop(file);
+
+        let scan = Scanner::default()
+            .scan(
+                &[source(ImportProvider::Codex, dir.path())],
+                &SessionOwners::new(),
+                &|| false,
+            )
+            .unwrap();
+        assert_eq!(scan.complete_providers, vec!["codex"]);
+        assert!(scan.incomplete_providers.is_empty());
+        assert_eq!(scan.events.len(), 2);
+        assert_eq!(scan.events[0].event.tokens.total(), 110);
+        assert_eq!(scan.events[1].event.tokens.total(), 25);
+    }
+
+    #[test]
+    fn oversized_relevant_logs_and_cancellation_never_claim_complete_usage() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("one.jsonl");
-        let mut bytes = vec![b'x'; MAX_LINE + 1];
+        let mut bytes = vec![b'x'; MAX_LINE + 65_536 + 16];
+        bytes[..11].copy_from_slice(b"\"assistant\"");
+        // Split the second marker across a 64 KiB reader-buffer boundary.
+        let boundary = MAX_LINE + 65_536 - 3;
+        bytes[boundary..boundary + 7].copy_from_slice(b"\"usage\"");
         bytes.push(b'\n');
         fs::write(&path, bytes).unwrap();
         let sources = [source(ImportProvider::Claude, dir.path())];

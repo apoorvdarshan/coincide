@@ -119,9 +119,16 @@ impl Bar {
     fn receive_settings(&mut self, settings: Value, now: Instant) {
         if self.settings != settings {
             let was_visible = self.visible();
+            if self.settings["usageLithosBrowserFallbackEnabled"]
+                != settings["usageLithosBrowserFallbackEnabled"]
+            {
+                self.history.dashboard.external.remove("lithos");
+            }
             if self.settings["providers"] != settings["providers"]
                 || self.settings["usageBrowserFallbackEnabled"]
                     != settings["usageBrowserFallbackEnabled"]
+                || self.settings["usageLithosBrowserFallbackEnabled"]
+                    != settings["usageLithosBrowserFallbackEnabled"]
                 || self.settings["usageBrowserSignIn"] != settings["usageBrowserSignIn"]
                 || self.settings["cursorKeychainUsageEnabled"]
                     != settings["cursorKeychainUsageEnabled"]

@@ -77,24 +77,39 @@ impl Engine {
     /// can run network I/O on a worker without blocking the app.
     pub fn prepare_default_usage(&self, provider: &'static str) -> anyhow::Result<Prepared> {
         anyhow::ensure!(
-            matches!(provider, "grok" | "opencode" | "cursor" | "antigravity"),
+            matches!(
+                provider,
+                "grok" | "opencode" | "cursor" | "antigravity" | "lithos"
+            ),
             "Unsupported usage reader"
         );
         anyhow::ensure!(!self.admissions_frozen(), "Usage is closing");
         self.require_provider_enabled(provider)?;
         Ok(Prepared {
             provider,
-            config: self.provider_launch_configuration(provider)?,
+            // Lithos console usage is independent of the local coding
+            // executable and its inference key.
+            config: if provider == "lithos" {
+                None
+            } else {
+                self.provider_launch_configuration(provider)?
+            },
             cursor_keychain: provider == "cursor"
                 && self
                     .store
                     .document("settings.json")?
                     .is_some_and(|settings| settings["cursorKeychainUsageEnabled"] == true),
-            browser_fallback: provider == "opencode"
-                && self
-                    .store
+            browser_fallback: if matches!(provider, "opencode" | "lithos") {
+                self.store
                     .document("settings.json")?
-                    .is_some_and(|settings| browser_fallback_enabled(&settings)),
+                    .is_some_and(|settings| {
+                        (provider == "opencode" && browser_fallback_enabled(&settings))
+                            || (provider == "lithos"
+                                && settings["usageLithosBrowserFallbackEnabled"] == true)
+                    })
+            } else {
+                false
+            },
         })
     }
 }
@@ -109,7 +124,7 @@ impl Completed {
         {
             return false;
         }
-        if matches!(self.prepared.provider, "cursor" | "opencode") {
+        if matches!(self.prepared.provider, "cursor" | "opencode" | "lithos") {
             let Ok(settings) = engine.store.document("settings.json") else {
                 return false;
             };
@@ -127,6 +142,17 @@ impl Completed {
             {
                 return false;
             }
+            if self.prepared.provider == "lithos"
+                && settings
+                    .as_ref()
+                    .is_some_and(|s| s["usageLithosBrowserFallbackEnabled"] == true)
+                    != self.prepared.browser_fallback
+            {
+                return false;
+            }
+        }
+        if self.prepared.provider == "lithos" {
+            return true;
         }
         match engine.provider_launch_configuration(self.prepared.provider) {
             Ok(current) => {
@@ -144,6 +170,17 @@ impl Prepared {
         chrome_default: bool,
     ) -> Completed {
         let _scope = provider_configuration::enter(self.config.clone());
+        if self.provider == "lithos" {
+            let result = if self.browser_fallback {
+                crate::lithos_usage::read(browser_cookie)
+            } else {
+                Err("Enable Lithos console usage and sign in to see its balance and spend.")
+            };
+            return Completed {
+                prepared: self,
+                result,
+            };
+        }
         let result = (|| {
             let first = match credential(self.provider, self.cursor_keychain) {
                 Ok(credential) => credential,
