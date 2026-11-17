@@ -82,6 +82,24 @@ pub(super) fn create(
     engine.apply_native_new_thread(intent).map(Some)
 }
 
+/// Bound cached views without allocating another copy to measure them.
+fn fits_recent(view: &Value) -> bool {
+    struct Budget(usize);
+    impl std::io::Write for Budget {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 = self.0.checked_sub(bytes.len()).ok_or_else(|| {
+                std::io::Error::other("Conversation view exceeds its cache budget")
+            })?;
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    serde_json::to_writer(Budget(2 * 1024 * 1024), view).is_ok()
+}
+
 #[derive(Default)]
 pub(super) struct State {
     generation: Arc<AtomicU64>,
@@ -107,6 +125,7 @@ impl State {
             || thread["items"]
                 .as_array()
                 .is_none_or(|items| items.len() > 4_000)
+            || !fits_recent(&thread)
         {
             return;
         }
@@ -311,6 +330,14 @@ mod tests {
         assert!(state.take_recent("a", &[changed]).is_none());
         state.remember(thread);
         assert!(state.take_recent("a", &[]).is_none());
+    }
+
+    #[test]
+    fn recent_navigation_does_not_retain_large_single_items() {
+        let view = json!({"id":"a", "items":[{"id":"item", "text":"x".repeat(2*1024*1024)}]});
+        let mut state = State::default();
+        state.remember(view);
+        assert!(state.recent.is_empty());
     }
 
     #[test]

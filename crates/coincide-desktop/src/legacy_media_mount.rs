@@ -600,6 +600,26 @@ impl Coincide {
                 {
                     return;
                 }
+                if entries.is_empty() {
+                    // Empty results cannot install an image and need
+                    // no transcript clone or freshness round-trip.
+                    self.media.pending_render = None;
+                    self.remove_media_images(cx);
+                    if !failures.is_empty() {
+                        self.media.status = format!(
+                            "Some historical images are unavailable: {}",
+                            failures
+                                .iter()
+                                .map(|failure| {
+                                    format!("{}: {}", failure.candidate_id, failure.error)
+                                })
+                                .collect::<Vec<_>>()
+                                .join("; ")
+                        );
+                        cx.notify();
+                    }
+                    return;
+                }
                 self.media.pending_render = Some(RenderRequest {
                     thread: thread_id.clone(),
                     generation: *generation,
