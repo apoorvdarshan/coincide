@@ -16,6 +16,7 @@ use std::{
 };
 
 const MAX_OUTPUT: usize = 3 * 1024 * 1024;
+const RESULT_RETENTION: Duration = Duration::from_secs(120);
 // Swift PullRequestCommands.listFields: rows show author, age, checks and review.
 const SUMMARY: &str = "number,title,url,state,isDraft,headRefOid,headRefName,baseRefName,author,updatedAt,reviewDecision,latestReviews,statusCheckRollup";
 const DETAIL: &str = "number,title,url,state,isDraft,headRefOid,headRefName,baseRefName,body,author,updatedAt,additions,deletions,changedFiles,mergeable,mergeStateStatus,reviewDecision,latestReviews,reviews,statusCheckRollup";
@@ -452,7 +453,7 @@ impl GithubService {
     fn collect(&mut self) {
         self.workers.status();
         self.operations.retain(|_, op| {
-            if op.started.elapsed() >= Duration::from_secs(120) {
+            if op.started.elapsed() >= RESULT_RETENTION {
                 op.cancel.store(true, Ordering::Release);
                 return false;
             }
@@ -1170,15 +1171,22 @@ mod tests {
         (dir, runner)
     }
     fn wait(service: &mut GithubService, owner: &str, root: &Path, id: &str) -> Value {
-        let deadline = Instant::now() + Duration::from_secs(3);
-        loop {
-            let value = service.result(owner, root, root, id).unwrap();
-            if value["ready"] == true {
-                return value["result"].clone();
-            }
-            assert!(Instant::now() < deadline);
-            std::thread::sleep(Duration::from_millis(5));
+        let operation = service.operations.get_mut(id).expect("fixture operation");
+        if operation.result.is_none() {
+            // The result itself is the signal. A slow runner need not meet an
+            // unrelated three-second test deadline; the operation's actual
+            // retention still bounds the wait and a stopped worker fails it.
+            let remaining = RESULT_RETENTION.saturating_sub(operation.started.elapsed());
+            operation.result = Some(
+                operation
+                    .receiver
+                    .recv_timeout(remaining)
+                    .expect("GitHub fixture did not finish within its retained lifetime"),
+            );
         }
+        let value = service.result(owner, root, root, id).unwrap();
+        assert_eq!(value["ready"], json!(true));
+        value["result"].clone()
     }
     #[cfg(unix)]
     #[test]
