@@ -29,12 +29,12 @@ pub(super) fn opens_turn(item: &Value) -> bool {
     item["kind"] == "user" && item["steered"] != true
 }
 
-/// Find the active turn once for a transcript layout, including steered
-/// messages in that turn rather than treating them as a new opener.
-pub(super) fn running_opener(items: &[Value], running: bool) -> Option<usize> {
-    running
-        .then(|| items.iter().rposition(opens_turn))
-        .flatten()
+/// Runtime status can arrive before the transcript carrying its user message.
+/// Only the matching opener gives permission to lay out an expanded live turn.
+fn running_opener(items: &[Value], opener_id: &str) -> Option<usize> {
+    items.iter().rposition(opens_turn).filter(|&index| {
+        items[index]["id"] == opener_id && items[index]["rustAwaitingQueueDelivery"] != true
+    })
 }
 
 fn blank(item: &Value) -> bool {
@@ -112,8 +112,7 @@ pub(super) struct GroupPlan {
 pub(super) struct Turns<'a> {
     pub items: &'a [Value],
     pub recorded_durations: Option<&'a serde_json::Map<String, Value>>,
-    /// The selected thread runs a turn, which is its last opening message.
-    pub running: bool,
+    pub active_opener: Option<usize>,
     pub running_started_at: Option<f64>,
     pub show_reasoning: bool,
     /// Whether the user opened the header anchored at this item ID.
@@ -121,14 +120,10 @@ pub(super) struct Turns<'a> {
 }
 
 impl Turns<'_> {
-    pub(super) fn running_opener(&self) -> Option<usize> {
-        running_opener(self.items, self.running)
-    }
-
     /// A persisted running status is only live while its own turn is active.
     #[cfg(test)]
     pub(super) fn is_running_item(&self, index: usize) -> bool {
-        index < self.items.len() && self.running_opener().is_some_and(|opener| index >= opener)
+        index < self.items.len() && self.active_opener.is_some_and(|opener| index >= opener)
     }
 
     /// The turn holding `index`: its opening message, and its items through
@@ -154,7 +149,7 @@ impl Turns<'_> {
         let terminal = range.clone().rev().find(|&i| {
             self.items[i]["kind"] == "assistant" && visible(&self.items[i], self.show_reasoning)
         });
-        let (hidden, headers, groups) = self.turn_plan(opener, range, self.running_opener());
+        let (hidden, headers, groups) = self.turn_plan(opener, range, self.active_opener);
         RowPlan {
             hidden: hidden.contains(&index),
             terminal_reply: terminal == Some(index),
@@ -504,26 +499,29 @@ pub(super) struct State {
     // Reuse turn plans while the selected transcript and display options are
     // unchanged, including during continuous trackpad or mouse scrolling.
     plans: std::cell::RefCell<BTreeMap<usize, CachedTurnPlan>>,
-    plan_context: std::cell::Cell<Option<(u64, bool, bool, Option<u64>)>>,
-    opener_cache: std::cell::Cell<Option<(u64, bool, Option<usize>)>>,
+    plan_context: std::cell::Cell<Option<(u64, Option<usize>, bool, Option<u64>)>>,
+    opener_cache: std::cell::Cell<Option<(u64, uuid::Uuid, Option<usize>)>>,
     tick: Option<(String, String)>,
     pub starting: HashSet<String>,
 }
 
 impl State {
-    pub(super) fn running_opener(
+    fn running_opener(
         &self,
         revision: u64,
         items: &[Value],
-        running: bool,
+        run: Option<uuid::Uuid>,
+        opener_id: &str,
     ) -> Option<usize> {
-        if let Some((cached_revision, cached_running, opener)) = self.opener_cache.get()
-            && (cached_revision, cached_running) == (revision, running)
+        if let Some((cached_revision, cached_run, opener)) = self.opener_cache.get()
+            && revision == cached_revision
+            && run == Some(cached_run)
         {
             return opener;
         }
-        let opener = running_opener(items, running);
-        self.opener_cache.set(Some((revision, running, opener)));
+        let opener = running_opener(items, opener_id);
+        self.opener_cache
+            .set(run.map(|run| (revision, run, opener)));
         opener
     }
 
@@ -544,11 +542,7 @@ impl State {
         let terminal = range.clone().rev().find(|&i| {
             turns.items[i]["kind"] == "assistant" && visible(&turns.items[i], turns.show_reasoning)
         });
-        let active_opener = self.plan_context.get().map_or_else(
-            || turns.running_opener(),
-            |(revision, _, _, _)| self.running_opener(revision, turns.items, turns.running),
-        );
-        let (hidden, headers, groups) = turns.turn_plan(opener, range.clone(), active_opener);
+        let (hidden, headers, groups) = turns.turn_plan(opener, range.clone(), turns.active_opener);
         let mut indexed_headers = HashMap::new();
         for (anchor, header) in headers {
             indexed_headers.entry(anchor).or_insert(header);
@@ -568,13 +562,13 @@ impl State {
     pub(super) fn begin_render(
         &self,
         revision: u64,
-        running: bool,
+        active_opener: Option<usize>,
         show_reasoning: bool,
         started_at: Option<f64>,
     ) {
         let context = (
             revision,
-            running,
+            active_opener,
             show_reasoning,
             started_at.map(f64::to_bits),
         );
@@ -597,6 +591,31 @@ impl State {
 }
 
 impl super::Coincide {
+    pub(super) fn running_opener_for(&self, thread: &Value) -> Option<usize> {
+        let id = thread["id"].as_str()?;
+        if !self.running.contains(id) {
+            return None;
+        }
+        running_opener(
+            thread["items"].as_array()?,
+            self.window_chrome.run_opener(id)?,
+        )
+    }
+
+    pub(super) fn selected_running_opener(&self) -> Option<usize> {
+        let thread = self.selected.as_ref()?;
+        let id = thread["id"].as_str()?;
+        if !self.running.contains(id) {
+            return None;
+        }
+        self.chat_turns.running_opener(
+            self.selected.transcript_revision(),
+            thread["items"].as_array()?,
+            self.window_chrome.run_id(id),
+            self.window_chrome.run_opener(id)?,
+        )
+    }
+
     fn selected_turns<R>(&self, f: impl FnOnce(&Turns<'_>, &str) -> R) -> Option<R> {
         let thread = self.selected.as_ref()?;
         let id = thread["id"].as_str()?;
@@ -605,7 +624,7 @@ impl super::Coincide {
         let turns = Turns {
             items,
             recorded_durations: thread["rustTurnDurations"].as_object(),
-            running: self.running.iter().any(|running| running == id),
+            active_opener: self.selected_running_opener(),
             running_started_at: self.window_chrome.run_started_at(id),
             show_reasoning: self.settings["showReasoning"].as_bool().unwrap_or(true),
             expanded: &expanded,
@@ -631,17 +650,16 @@ impl super::Coincide {
                     .iter()
                     .any(|request| request["requestId"] == *external)
         };
+        let opener = self.selected_running_opener();
         let status = live(
-            items,
-            self.running.iter().any(|running| running == id),
+            opener.map_or(&[][..], |opener| &items[opener..]),
+            self.running.contains(id),
             self.chat_turns.starting.contains(id),
             self.settings["showReasoning"].as_bool().unwrap_or(true),
             waiting,
         )?;
-        let provider = items
-            .iter()
-            .rfind(|item| opens_turn(item))
-            .and_then(|item| item["provider"].as_str())
+        let provider = opener
+            .and_then(|opener| items[opener]["provider"].as_str())
             .or_else(|| thread["selection"]["provider"].as_str())
             .unwrap_or_default()
             .to_owned();
@@ -677,7 +695,7 @@ impl super::Coincide {
         let now = coincide_core::store::swift_timestamp();
         let tick = self
             .selected_turns(|turns, id| {
-                let opener = turns.running_opener()?;
+                let opener = turns.active_opener?;
                 let started = turns
                     .running_started_at
                     .or_else(|| turns.time(opener, "createdAt"))
@@ -944,16 +962,16 @@ mod tests {
         let turns = Turns {
             items: &items,
             recorded_durations: None,
-            running: false,
+            active_opener: None,
             running_started_at: None,
             show_reasoning: true,
             expanded: &expanded,
         };
-        state.begin_render(1, false, true, None);
+        state.begin_render(1, None, true, None);
         assert_eq!(state.plan(&turns, 1), turns.plan(1));
-        state.begin_render(1, false, true, None);
+        state.begin_render(1, None, true, None);
         assert_eq!(state.plans.borrow().len(), 1);
-        state.begin_render(2, false, true, None);
+        state.begin_render(2, None, true, None);
         assert!(state.plans.borrow().is_empty());
         state.plan(&turns, 0);
         state.toggle("thread", "anchor");
@@ -971,13 +989,13 @@ mod tests {
         let turns = Turns {
             items: &items,
             recorded_durations: None,
-            running: false,
+            active_opener: None,
             running_started_at: None,
             show_reasoning: true,
             expanded: &expanded,
         };
         let state = State::default();
-        state.begin_render(1, false, true, None);
+        state.begin_render(1, None, true, None);
         for index in [0, 1, 2500, 5000, 5001, 5002, 5003] {
             assert_eq!(state.plan(&turns, index), turns.plan(index), "row {index}");
         }
@@ -1007,13 +1025,13 @@ mod tests {
                     let turns = Turns {
                         items: &items,
                         recorded_durations: None,
-                        running,
+                        active_opener: running.then_some(7),
                         running_started_at: Some(10.),
                         show_reasoning,
                         expanded: &expanded,
                     };
                     let state = State::default();
-                    state.begin_render(1, running, show_reasoning, Some(10.));
+                    state.begin_render(1, turns.active_opener, show_reasoning, Some(10.));
                     for index in 0..items.len() {
                         assert_eq!(state.plan(&turns, index), turns.plan(index), "row {index}");
                     }
@@ -1023,14 +1041,57 @@ mod tests {
     }
 
     #[::core::prelude::v1::test]
-    fn running_opener_follows_transcript_and_running_changes() {
-        let mut items = vec![item("first", "user", 1.), item("work", "tool", 2.)];
+    fn a_new_run_leaves_previous_continued_work_folded_until_its_own_message_arrives() {
+        let mut steer = item("steer", "user", 3.);
+        steer["steered"] = json!(true);
+        let mut items = vec![
+            item("old", "user", 1.),
+            item("work", "tool", 2.),
+            steer,
+            item("continued-work", "tool", 4.),
+            item("reply", "assistant", 5.),
+        ];
+        let collapsed = |_: &str| false;
         let state = State::default();
-        assert_eq!(state.running_opener(1, &items, true), Some(0));
-        assert_eq!(state.running_opener(1, &items, false), None);
-        items.push(item("next", "user", 3.));
-        assert_eq!(state.running_opener(2, &items, true), Some(2));
-        assert_eq!(state.running_opener(2, &items, false), None);
+        let old_run = Some(uuid::Uuid::new_v4());
+        let new_run = Some(uuid::Uuid::new_v4());
+        assert_eq!(state.running_opener(1, &items, old_run, "old"), Some(0));
+
+        for revision in 1..=4 {
+            if revision == 2 {
+                let mut new = item("new", "user", 6.);
+                new["rustAwaitingQueueDelivery"] = json!(true);
+                items.push(new);
+            }
+            if revision == 3 {
+                items[5]["rustAwaitingQueueDelivery"] = json!(false);
+            }
+            let opener = state.running_opener(revision, &items, new_run, "new");
+            assert_eq!(opener, (revision > 2).then_some(5));
+            let turns = Turns {
+                items: &items,
+                recorded_durations: None,
+                active_opener: opener,
+                running_started_at: Some(6.),
+                show_reasoning: true,
+                expanded: &collapsed,
+            };
+            state.begin_render(revision, opener, true, Some(6.));
+            assert!(state.plan(&turns, 3).hidden, "revision {revision}");
+            assert!(matches!(
+                state.plan(&turns, 2).header,
+                Some(Header::Continued {
+                    expanded: false,
+                    ..
+                })
+            ));
+            if opener.is_some() {
+                assert!(matches!(
+                    state.plan(&turns, 5).header,
+                    Some(Header::Working { .. })
+                ));
+            }
+        }
     }
 
     #[::core::prelude::v1::test]
@@ -1050,7 +1111,7 @@ mod tests {
         let turns = Turns {
             items: &items,
             recorded_durations: recorded.as_object(),
-            running: false,
+            active_opener: None,
             running_started_at: None,
             show_reasoning: true,
             expanded: &expanded,
@@ -1071,7 +1132,7 @@ mod tests {
         let turns = Turns {
             items: &items,
             recorded_durations: None,
-            running: true,
+            active_opener: Some(0),
             running_started_at: Some(200.),
             show_reasoning: true,
             expanded: &expanded,
@@ -1089,7 +1150,7 @@ mod tests {
         let turns = Turns {
             items: &items,
             recorded_durations: None,
-            running: true,
+            active_opener: Some(0),
             running_started_at: None,
             show_reasoning: true,
             expanded: &expanded,
@@ -1118,7 +1179,7 @@ mod tests {
         let mut turns = Turns {
             items: &items,
             recorded_durations: None,
-            running: true,
+            active_opener: Some(2),
             running_started_at: None,
             show_reasoning: true,
             expanded: &expanded,
@@ -1127,7 +1188,7 @@ mod tests {
         assert!(turns.is_running_item(3));
         assert!(turns.is_running_item(5));
         assert!(!turns.is_running_item(6));
-        turns.running = false;
+        turns.active_opener = None;
         assert!(!turns.is_running_item(3));
         assert!(!turns.is_running_item(5));
     }
@@ -1145,7 +1206,9 @@ mod tests {
         let turns = Turns {
             items,
             recorded_durations: None,
-            running,
+            active_opener: running
+                .then(|| items.iter().rposition(opens_turn))
+                .flatten(),
             running_started_at: None,
             show_reasoning: true,
             expanded: &expanded,
@@ -1367,7 +1430,7 @@ mod tests {
         let turns = Turns {
             items: &items,
             recorded_durations: None,
-            running: false,
+            active_opener: None,
             running_started_at: None,
             show_reasoning: false,
             expanded: &hide_reasoning,
@@ -1390,7 +1453,7 @@ mod tests {
         let turns = Turns {
             items: &items,
             recorded_durations: None,
-            running: true,
+            active_opener: Some(3),
             running_started_at: None,
             show_reasoning: true,
             expanded: &expanded,
@@ -1398,7 +1461,7 @@ mod tests {
         assert_eq!(turns.turn(0), (None, 0..1));
         assert_eq!(turns.turn(2), (Some(1), 1..3));
         assert_eq!(turns.turn(3), (Some(3), 3..4));
-        assert_eq!(turns.running_opener(), Some(3));
+        assert_eq!(turns.active_opener, Some(3));
     }
 
     #[::core::prelude::v1::test]

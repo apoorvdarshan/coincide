@@ -2086,7 +2086,12 @@ impl Engine {
                     let clock = self.run_clocks.get(id)?;
                     Some((
                         id.clone(),
-                        json!({"startedAt":clock.started_at,"runId":clock.run_id.to_string(),"connecting":!clock.connected}),
+                        json!({
+                            "startedAt":clock.started_at,
+                            "runId":clock.run_id.to_string(),
+                            "connecting":!clock.connected,
+                            "openerId":clock.opener,
+                        }),
                     ))
                 })
                 .collect(),

@@ -4668,6 +4668,7 @@ impl Coincide {
         // an answered question can stay visible while a turn keeps running.
         self.refresh_pending(window, cx);
         if let Ok(status) = call(&self.engine, "app.status", json!({})) {
+            let previous_opener = self.selected_running_opener();
             self.window_chrome.observe_status(&status);
             let selected_thread = self.selected.as_ref().map(|thread| text(thread, "id"));
             let was_running = selected_thread
@@ -4693,9 +4694,20 @@ impl Coincide {
                 })
                 .unwrap_or_default();
             self.set_starting_runs(starting, cx);
-            if was_running != is_running {
-                self.splice_transcript(0..self.transcript_count, self.transcript_count);
-                cx.notify();
+            let active_opener = self.selected_running_opener();
+            if previous_opener != active_opener {
+                let start = previous_opener
+                    .into_iter()
+                    .chain(active_opener)
+                    .min()
+                    .unwrap();
+                if start < self.transcript_count {
+                    self.transcript_list
+                        .remeasure_items(start..self.transcript_count);
+                    cx.notify();
+                }
+            } else if was_running != is_running {
+                self.redraw_live_row(cx);
             }
             let staged_goal_selection = selected_thread.as_ref().is_some_and(|id| {
                 status["stagedGoalSelections"]
@@ -5416,6 +5428,13 @@ impl Coincide {
         let id = text(&thread, "id");
         let count = thread["items"].as_array().map_or(0, Vec::len);
         let mut start = self.transcript_count.saturating_sub(1).min(count);
+        let previous_opener = self.selected_running_opener();
+        let active_opener = self.running_opener_for(&thread);
+        if previous_opener != active_opener
+            && let Some(opener) = previous_opener.into_iter().chain(active_opener).min()
+        {
+            start = start.min(opener);
+        }
         // A provider ACK can release a previously hidden opener above the
         // most recent streaming row. Invalidate its measured height too.
         if let Ok(queue) = &queue {
@@ -6283,7 +6302,7 @@ impl Coincide {
             return div().into_any_element();
         };
         if item["rustAwaitingQueueDelivery"] == true {
-            return div().into_any_element();
+            return self.turn_decorated(index, div().into_any_element(), None, cx);
         }
         let kind = text(item, "kind");
         let item_id = text(item, "id");
@@ -7516,15 +7535,7 @@ impl Render for Coincide {
         let entity = cx.entity();
         // A long active turn may contain thousands of tool events. Resolve its
         // opener once instead of rescanning the tail for every visible row.
-        let running_start = self.selected.as_ref().and_then(|thread| {
-            let id = thread["id"].as_str()?;
-            let items = thread["items"].as_array()?;
-            self.chat_turns.running_opener(
-                self.selected.transcript_revision(),
-                items,
-                self.running.iter().any(|running| running == id),
-            )
-        });
+        let running_start = self.selected_running_opener();
         // Ask where the list is, not whether it is following: the follow flag
         // only re-engages in a fully measured layout, so rows that are still
         // measuring left the pill up even at the bottom of the transcript.
@@ -7538,14 +7549,9 @@ impl Render for Coincide {
                     .as_array()
                     .is_some_and(|items| !items.is_empty())
             });
-        let selected_running = self.selected.as_ref().is_some_and(|thread| {
-            self.running
-                .iter()
-                .any(|id| thread["id"].as_str() == Some(id.as_str()))
-        });
         self.chat_turns.begin_render(
             self.selected.transcript_revision(),
-            selected_running,
+            running_start,
             self.settings["showReasoning"].as_bool().unwrap_or(true),
             self.selected
                 .as_ref()
