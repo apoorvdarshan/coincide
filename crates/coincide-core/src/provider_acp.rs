@@ -7,6 +7,10 @@ fn rpc(id: u64, method: &str, params: Value) -> Value {
     json!({"jsonrpc":"2.0","id":id,"method":method,"params":params})
 }
 
+fn requires_sign_in(frame: &Value) -> bool {
+    frame["error"]["code"].as_i64() == Some(-32000)
+}
+
 fn selected_option<'a>(options: &'a [Value], kind: &str) -> Option<&'a Value> {
     options
         .iter()
@@ -130,9 +134,12 @@ pub(super) fn model_catalog(
         if frame["id"].as_u64() != Some(stage) {
             continue;
         }
+        if requires_sign_in(&frame) {
+            bail!("{}", crate::acp_registry::SIGN_IN_REQUIRED);
+        }
         ensure!(
             frame.get("error").is_none(),
-            "ACP model discovery was rejected; check the agent sign-in"
+            "The agent could not provide its models"
         );
         let result = frame
             .get("result")
@@ -444,8 +451,16 @@ fn run_flavored(
             Err(error) => return Err(error),
         };
         // Authentication responses can contain credential material; never persist them.
-        if !is_grok || (stage != 5 && frame["error"]["code"] != -32000) {
-            raw(events, if is_grok { "grok" } else { "acp" }, &frame)?;
+        if !requires_sign_in(&frame) && !(is_grok && stage == 5) {
+            if stage == 1 && frame["id"] == 1 && frame["result"].get("authMethods").is_some() {
+                let mut diagnostic = frame.clone();
+                if let Some(result) = diagnostic["result"].as_object_mut() {
+                    result.remove("authMethods");
+                }
+                raw(events, if is_grok { "grok" } else { "acp" }, &diagnostic)?;
+            } else {
+                raw(events, if is_grok { "grok" } else { "acp" }, &frame)?;
+            }
         }
         if is_grok
             && stage == 4
@@ -571,6 +586,9 @@ fn run_flavored(
                 bail!(
                     "Grok authentication failed; sign in with the configured Grok CLI account first"
                 );
+            }
+            if requires_sign_in(&frame) {
+                bail!("{}", crate::acp_registry::SIGN_IN_REQUIRED);
             }
             bail!("ACP rejected request: {}", frame["error"]);
         }

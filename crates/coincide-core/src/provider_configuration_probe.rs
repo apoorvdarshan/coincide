@@ -135,6 +135,13 @@ impl Probe {
                     }
                 }
             }
+            "acp-devin" => {
+                if let Ok((true, out, _)) =
+                    capture(&["auth", "status", "--process-model", "in-process"])
+                {
+                    report.authenticated = devin_auth_status(&out);
+                }
+            }
             "cursor" => {
                 if let Ok((true, out, _)) = capture(&["status", "--format", "json"])
                     && let Ok(value) = serde_json::from_slice::<Value>(&out)
@@ -322,6 +329,25 @@ fn bounded_text(value: &Value) -> Option<String> {
         })
         .map(str::to_owned)
 }
+fn devin_auth_status(output: &[u8]) -> Option<bool> {
+    let status = std::str::from_utf8(output)
+        .ok()?
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())?;
+    if status == "Not logged in." {
+        Some(false)
+    } else if status == "Logged in."
+        || ["Logged in as ", "Logged in with ", "Logged in ("]
+            .iter()
+            .any(|prefix| status.starts_with(prefix))
+    {
+        Some(true)
+    } else {
+        None
+    }
+}
+
 fn version(bytes: &[u8]) -> Option<String> {
     let text = std::str::from_utf8(bytes).ok()?;
     text.split(|character: char| {
@@ -341,6 +367,22 @@ fn version(bytes: &[u8]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn devin_sign_in_status_only_interprets_the_cli_status_line() {
+        assert_eq!(
+            devin_auth_status(b"Not logged in.\n  Credentials path: fixture"),
+            Some(false)
+        );
+        assert_eq!(
+            devin_auth_status(b"Logged in as sample@example.invalid"),
+            Some(true)
+        );
+        assert_eq!(
+            devin_auth_status(b"Could not read status\nLogged in as an example"),
+            None
+        );
+    }
+
     #[test]
     fn codex_key_configuration_and_failed_catalog_do_not_claim_authentication() {
         let snapshot = |kind: &str, models_read| crate::agent::codex_metadata::Snapshot {
