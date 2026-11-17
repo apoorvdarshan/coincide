@@ -607,6 +607,35 @@ r=sys.stdin.readline();assert not r
 }
 
 #[test]
+fn acp_sign_in_failure_reports_setup_without_retaining_authentication_data() {
+    let (_dir, session) = fixture(
+        r#"
+r=read();write({'id':r['id'],'result':{'protocolVersion':1,'authMethods':[{'id':'fixture','_meta':{'value':'private-fixture-init'}}]}})
+r=read();assert r['method']=='session/new'
+write({'id':r['id'],'error':{'code':-32000,'message':'Authentication required.','data':{'value':'private-fixture-error'}}})
+r=sys.stdin.readline();assert not r
+"#,
+        Provider::AcpV1 { arguments: vec![] },
+        None,
+        None,
+    );
+    loop {
+        let event = receive(&session);
+        assert!(!format!("{event:?}").contains("private-fixture"));
+        match event {
+            Event::Failed(error) => {
+                assert_eq!(error, coincide_core::acp_registry::SIGN_IN_REQUIRED);
+                break;
+            }
+            Event::Session(_) | Event::Finished => {
+                panic!("sign-in failure must not start a session")
+            }
+            _ => {}
+        }
+    }
+}
+
+#[test]
 fn acp_resume_failure_never_starts_replacement_session() {
     let (_dir, session) = fixture(
         r#"

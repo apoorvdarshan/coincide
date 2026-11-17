@@ -8,7 +8,16 @@ fn rpc(id: u64, method: &str, params: Value) -> Value {
 }
 
 fn requires_sign_in(frame: &Value) -> bool {
-    frame["error"]["code"].as_i64() == Some(-32000)
+    let error = &frame["error"];
+    // Some agents also use -32000 for generic failures, including failed
+    // session restores. The code alone does not establish a sign-in problem.
+    error["code"].as_i64() == Some(-32000)
+        && error["message"].as_str().is_some_and(|message| {
+            message
+                .trim()
+                .trim_end_matches('.')
+                .eq_ignore_ascii_case("authentication required")
+        })
 }
 
 fn selected_option<'a>(options: &'a [Value], kind: &str) -> Option<&'a Value> {
@@ -451,7 +460,7 @@ fn run_flavored(
             Err(error) => return Err(error),
         };
         // Authentication responses can contain credential material; never persist them.
-        if !requires_sign_in(&frame) && !(is_grok && stage == 5) {
+        if !(frame["error"]["code"] == -32000 || is_grok && stage == 5) {
             if stage == 1 && frame["id"] == 1 && frame["result"].get("authMethods").is_some() {
                 let mut diagnostic = frame.clone();
                 if let Some(result) = diagnostic["result"].as_object_mut() {
@@ -589,6 +598,15 @@ fn run_flavored(
             }
             if requires_sign_in(&frame) {
                 bail!("{}", crate::acp_registry::SIGN_IN_REQUIRED);
+            }
+            if frame["error"]["code"] == -32000 {
+                let message = frame["error"]["message"]
+                    .as_str()
+                    .unwrap_or("The agent rejected the request");
+                bail!(
+                    "ACP rejected request: {}",
+                    json!({"code":-32000,"message":message})
+                );
             }
             bail!("ACP rejected request: {}", frame["error"]);
         }
