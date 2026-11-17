@@ -1,7 +1,4 @@
-//! Settings › Usage, laid out as Swift's `UsageSettingsView`: header, filters,
-//! the overview tiles, the daily chart, top models and projects, every enabled
-//! account's plan limits, Activity in Coincide and the notes. Tokens come from
-//! saved turns whose agent reported them; plan limits are read on Refresh.
+//! Settings › Usage surfaces reported token activity and provider plan limits.
 use super::*;
 use crate::native_menu::AccessibleMenuExt as _;
 use crate::usage_dashboard::{Account, LimitState};
@@ -345,7 +342,7 @@ impl Coincide {
                         .px_1()
                         .text_sm()
                         .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(self.usage_muted(cx))
+                        .text_color(cx.theme().foreground)
                         .child(header),
                 )
             })
@@ -357,7 +354,7 @@ impl Coincide {
                     .p(px(16.))
                     .rounded(px(12.))
                     .border_1()
-                    .border_color(self.color(0x29303d).opacity(0.8))
+                    .border_color(cx.theme().border)
                     .bg(self.color(0x111722))
                     .children(body),
             )
@@ -392,6 +389,7 @@ impl Coincide {
             .child(
                 div()
                     .text_xs()
+                    .text_color(self.color(0x98a6ba))
                     .font_weight(FontWeight::NORMAL)
                     .child(detail.to_owned()),
             )
@@ -548,14 +546,16 @@ impl Coincide {
         let muted = self.usage_muted(cx);
         div()
             .flex_1()
-            .min_w(px(140.))
+            .min_w(px(148.))
             .flex()
             .flex_col()
-            .gap(px(3.))
-            .pl(px(12.))
-            .py(px(2.))
-            .border_l_1()
-            .border_color(self.color(0x29303d))
+            .gap(px(4.))
+            .px_3()
+            .py_3()
+            .rounded(px(10.))
+            .border_1()
+            .border_color(cx.theme().border)
+            .bg(self.color(0x111722))
             .overflow_hidden()
             .child(div().text_xs().text_color(muted).child(title.to_owned()))
             .child(
@@ -601,15 +601,14 @@ impl Coincide {
                             })
                             .xsmall(),
                         )
-                        .child(compact_trend(trend))
-                        .child(format!("vs {compared}")),
+                        .child(format!("{} vs {compared}", compact_trend(trend))),
                 )
             })
             .into_any_element()
     }
 
     /// How the period's tokens split into fresh input, cache reads, cache writes and output.
-    fn usage_token_mix(&self, totals: &Totals, title: &str, cx: &App) -> AnyElement {
+    fn usage_token_mix(&self, totals: &Totals, cx: &App) -> AnyElement {
         let muted = self.usage_muted(cx);
         let tokens = &totals.tokens;
         let parts = [
@@ -623,22 +622,13 @@ impl Coincide {
             ("Output", tokens.output, self.provider_ink("claude")),
         ];
         let total = tokens.total().max(1) as f32;
-        let summary = if totals.has_priced_tokens() {
-            format!(
-                "{} tokens · ≈ {}",
-                format::tokens(tokens.total()),
-                format::cost(totals.cost)
-            )
-        } else {
-            format!("{} tokens", format::tokens(tokens.total()))
-        };
         let mut bar = div()
             .w_full()
-            .h(px(8.))
+            .h(px(6.))
             .rounded_full()
             .overflow_hidden()
             .flex()
-            .gap(px(2.))
+            .gap(px(1.))
             .bg(self.color(0x98a6ba).opacity(0.2));
         for (_, count, color) in parts.iter().filter(|part| part.1 > 0) {
             bar = bar.child(
@@ -705,17 +695,6 @@ impl Coincide {
             .flex()
             .flex_col()
             .gap(px(10.))
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap_1()
-                    .justify_between()
-                    .text_xs()
-                    .text_color(muted)
-                    .child(format!("Token breakdown · {title}"))
-                    .child(summary),
-            )
             .child(bar)
             .child(legend)
             .into_any_element()
@@ -1257,25 +1236,6 @@ impl Coincide {
             })
             .filter(|choices| choices.len() > 1)
             .unwrap_or_default();
-        let scope_title = match filter_provider {
-            None => "All Agents".to_owned(),
-            Some(provider) => filter_account
-                .as_deref()
-                .and_then(|account| {
-                    cards.iter().find(|card| {
-                        card.account.provider == provider && card.account.id == account
-                    })
-                })
-                .map(|card| {
-                    format::account_title(
-                        provider_name(provider),
-                        &card.account.name,
-                        card.account.is_default(),
-                        true,
-                    )
-                })
-                .unwrap_or_else(|| provider_name(provider).to_owned()),
-        };
         let loading = dashboard.loading
             || matches!(dashboard.claude.state, Some(LimitState::Reading))
             || dashboard
@@ -1287,63 +1247,21 @@ impl Coincide {
                 crate::codex_limits_view::Phase::Loading
             );
 
-        // Keep the introduction light so the numbers remain the focus.
-        let header = div()
-            .flex()
-            .items_center()
-            .gap(px(12.))
-            .child(
-                div()
-                    .w(px(38.))
-                    .h(px(38.))
-                    .flex_shrink_0()
-                    .rounded(px(10.))
-                    .bg(self.provider_ink("codex").opacity(0.16))
-                    .text_color(self.provider_ink("codex"))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(Icon::new(gpui_kit::assets::IconName::ChartColumn)),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap(px(2.))
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child("Your usage"))
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(muted)
-                            .child(format!("Plan limits and activity on {}", this_computer())),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .items_end()
-                    .gap_1()
-                    .child(
-                        Button::new("usage-refresh")
-                            .label("Refresh")
-                            .compact()
-                            .loading(loading)
-                            .disabled(loading)
-                            .on_click(cx.listener(|this, _, _, cx| this.refresh_usage(cx))),
-                    )
-                    .child(div().text_xs().text_color(muted).child(
-                        match (&dashboard.data, dashboard.loading) {
-                            (None, true) => "Reading saved usage…".to_owned(),
-                            (Some(data), _) => {
-                                format!("Updated {}", format::relative(data.read_at, now))
-                            }
-                            (None, false) => String::new(),
-                        },
-                    )),
-            );
+        let refresh = Button::new("usage-refresh")
+            .icon(gpui_kit::assets::IconName::RefreshCw)
+            .accessibility_label("Refresh usage and limits")
+            .tooltip("Refresh usage and limits")
+            .compact()
+            .loading(loading)
+            .disabled(loading)
+            .on_click(cx.listener(|this, _, _, cx| this.refresh_usage(cx)));
+        let updated = if loading {
+            "Refreshing…".to_owned()
+        } else if let Some(data) = &dashboard.data {
+            format!("Updated {}", format::relative(data.read_at, now))
+        } else {
+            String::new()
+        };
 
         // Filters.
         let owner = cx.entity().downgrade();
@@ -1460,101 +1378,78 @@ impl Coincide {
             .flex_wrap()
             .items_center()
             .gap_2()
-            .child(div().text_xs().text_color(muted).child("Viewing"))
             .child(providers)
-            .child(div().text_xs().text_color(muted).child("for"))
             .child(periods)
-            .child(div().flex_1().min_w(px(8.)))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(div().text_xs().text_color(muted).child("Limits"))
-                    .child(display_mode),
-            )
-            .into_any_element();
-        let mut introduction = vec![header.into_any_element(), filters];
-        if let Some(accounts) = accounts_filter {
-            introduction.push(accounts);
-        }
+            .child(div().flex_1())
+            .child(div().text_xs().text_color(muted).child(updated))
+            .child(refresh);
 
-        // Overview.
-        let mut overview = vec![
-            div()
-                .flex()
-                .flex_wrap()
-                .gap(px(16.))
-                .child(self.usage_tile(
-                    "Today",
-                    &report.today,
-                    partial(1),
-                    report::trend(&report.today, &report.yesterday),
-                    "yesterday",
-                    cx,
-                ))
-                .child(self.usage_tile(
-                    "Last 7 days",
-                    &report.last_week,
-                    partial(7),
-                    report::trend(&report.last_week, &report.previous_week),
-                    "preceding 7 days",
-                    cx,
-                ))
-                .child(self.usage_tile(
-                    "Last 30 days",
-                    &report.last_month,
-                    partial(30),
-                    report::trend(&report.last_month, &report.previous_month),
-                    "preceding 30 days",
-                    cx,
-                ))
-                .into_any_element(),
-            self.usage_divider(),
-            self.usage_token_mix(&report.period, &period_name, cx),
-        ];
-        if partial(30) {
-            overview.insert(
-                1,
-                div()
-                    .text_xs()
-                    .text_color(muted)
-                    .child("Local history is loading or incomplete; totals may be partial.")
-                    .into_any_element(),
-            );
-        }
+        let comparisons = div()
+            .flex()
+            .flex_wrap()
+            .gap_2()
+            .child(self.usage_tile(
+                "Today",
+                &report.today,
+                partial(1),
+                report::trend(&report.today, &report.yesterday),
+                "yesterday",
+                cx,
+            ))
+            .child(self.usage_tile(
+                "Last 7 days",
+                &report.last_week,
+                partial(7),
+                report::trend(&report.last_week, &report.previous_week),
+                "prior week",
+                cx,
+            ))
+            .child(self.usage_tile(
+                "Last 30 days",
+                &report.last_month,
+                partial(30),
+                report::trend(&report.last_month, &report.previous_month),
+                "prior 30 days",
+                cx,
+            ));
+
         let current = shown
             .iter()
             .map(|card| card.limits().map(|l| l.current(now)))
             .collect::<Vec<_>>();
-        if let Some((index, window)) = most_constrained(current.iter().map(Option::as_ref)) {
-            let card = shown[index];
-            overview.push(self.usage_divider());
-            overview.push(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(6.))
-                    .child(
+        let plan_header = div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_2()
+            .child(div().font_weight(FontWeight::SEMIBOLD).child("Plan limits"))
+            .child(display_mode);
+        let closest =
+            most_constrained(current.iter().map(Option::as_ref)).map(|(index, window)| {
+                let card = shown[index];
+                self.usage_section(
+                    None,
+                    vec![
                         div()
                             .flex()
                             .items_center()
-                            .gap(px(6.))
-                            .text_xs()
-                            .text_color(muted)
-                            .child("Closest limit")
+                            .gap_2()
+                            .text_sm()
+                            .child(self.usage_logo(card.account.provider, 16.))
+                            .child(div().font_weight(FontWeight::SEMIBOLD).child(card.title()))
                             .child(div().flex_1())
-                            .child(self.usage_logo(card.account.provider, 14.))
-                            .child(card.title()),
-                    )
-                    .child(self.usage_row(
-                        &format::window_row(window, mode, now, &Local),
-                        card.account.provider,
-                        cx,
-                    ))
-                    .into_any_element(),
-            );
-        }
+                            .child(div().text_xs().text_color(muted).child("Closest limit"))
+                            .into_any_element(),
+                        self.usage_row(
+                            &format::window_row(window, mode, now, &Local),
+                            card.account.provider,
+                            cx,
+                        ),
+                    ],
+                    None,
+                    cx,
+                )
+            });
 
         // Daily usage.
         let mut metric = div().flex().gap_1();
@@ -1580,7 +1475,11 @@ impl Coincide {
                 div()
                     .flex()
                     .flex_col()
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child("Daily usage"))
+                    .child(
+                        div()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("Usage over time"),
+                    )
                     .child(div().text_xs().text_color(muted).child(
                         if chart_bucket_days(days) > 1 {
                             format!(
@@ -1613,104 +1512,89 @@ impl Coincide {
             self.usage_chart(&report, days, cx)
         };
 
-        let mut content = div()
+        let selected_total = if partial(days) && report.period.tokens.is_empty() {
+            "—".to_owned()
+        } else {
+            format::tokens(report.period.tokens.total())
+        };
+        let summary = div()
             .flex()
-            .flex_col()
-            .gap_4()
+            .flex_wrap()
+            .items_end()
+            .justify_between()
+            .gap_3()
             .child(
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(12.))
-                    .px_1()
-                    .children(introduction),
-            )
-            .child(self.usage_section(
-                Some(self.usage_header_detail("Overview", &scope_title)),
-                overview,
-                None,
-                cx,
-            ))
-            .child(self.usage_section(None, vec![chart_header, chart], None, cx));
-
-        if !report.models.is_empty() {
-            let rows = report
-                .models
-                .iter()
-                .take(8)
-                .map(|row| {
-                    self.usage_totals_row(
+                    .gap_1()
+                    .child(div().text_sm().text_color(muted).child(period_name.clone()))
+                    .child(
                         div()
                             .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(self.usage_logo(&row.provider, 18.))
-                            .child(div().min_w_0().truncate().child(if row.model.is_empty() {
-                                "Unknown model".to_owned()
-                            } else {
-                                row.model.clone()
-                            }))
-                            .into_any_element(),
-                        &row.totals,
-                        &report.period,
-                        cx,
-                    )
-                })
-                .collect();
-            content = content.child(self.usage_section(
-                Some(self.usage_header_detail("Top Models", &period_name)),
-                rows,
-                None,
-                cx,
-            ));
-        }
-        if !report.projects.is_empty() {
-            let rows = report
-                .projects
-                .iter()
-                .take(8)
-                .map(|row| {
-                    let name = self
-                        .projects
-                        .iter()
-                        .find(|project| text(project, "id").eq_ignore_ascii_case(&row.project_id))
-                        .map(|project| text(project, "name"))
-                        .filter(|name| !name.is_empty())
-                        .unwrap_or_else(|| "Removed project".into());
-                    self.usage_totals_row(
-                        div()
-                            .flex()
-                            .items_center()
+                            .items_baseline()
                             .gap_2()
                             .child(
                                 div()
-                                    .w(px(18.))
-                                    .text_color(muted)
-                                    .child(Icon::new(gpui_kit::assets::IconName::Folder).xsmall()),
+                                    .text_size(px(34.))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(selected_total),
                             )
-                            .child(div().min_w_0().truncate().child(name))
-                            .into_any_element(),
-                        &row.totals,
-                        &report.period,
-                        cx,
+                            .child(div().text_sm().text_color(muted).child("tokens")),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .child("Estimated API cost"),
                     )
-                })
-                .collect();
-            content = content.child(self.usage_section(
-                Some(self.usage_header_detail("Top Projects", &period_name)),
-                rows,
-                Some(
-                    "Coincide’s threads only: sessions run elsewhere belong to no project here."
-                        .into_any_element(),
-                ),
-                cx,
-            ));
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(format::cost_of(&report.period)),
+                    ),
+            );
+        let mut activity = vec![summary.into_any_element()];
+        if partial(days) && dashboard.data.is_some() {
+            activity.push(
+                div()
+                    .text_xs()
+                    .text_color(muted)
+                    .child("Usage history is incomplete for this range.")
+                    .into_any_element(),
+            );
         }
+        activity.extend([self.usage_divider(), chart_header, chart]);
+        let mut content = div()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .child(filters)
+            .when_some(accounts_filter, |view, accounts| view.child(accounts))
+            .child(self.usage_section(None, activity, None, cx))
+            .child(comparisons)
+            .when(!report.period.tokens.is_empty(), |view| {
+                view.child(self.usage_section(
+                    Some(self.usage_header_detail("Token breakdown", &period_name)),
+                    vec![self.usage_token_mix(&report.period, cx)],
+                    None,
+                    cx,
+                ))
+            })
+            .child(plan_header)
+            .when_some(closest, |view, card| view.child(card));
 
         // Plan limits, one section per enabled account.
         if shown.is_empty() && registered.is_empty() {
             content = content.child(self.usage_section(
-                Some("Plan Limits".into_any_element()),
+                None,
                 vec![div().text_color(muted).child("No provider is turned on.").into_any_element()],
                 None,
                 cx,
@@ -1790,6 +1674,80 @@ impl Coincide {
                     .into_any_element();
                 content = content.child(self.usage_section(Some(header), body, None, cx));
             }
+        }
+
+        if !report.models.is_empty() {
+            let rows = report
+                .models
+                .iter()
+                .take(8)
+                .map(|row| {
+                    self.usage_totals_row(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(self.usage_logo(&row.provider, 18.))
+                            .child(div().min_w_0().truncate().child(if row.model.is_empty() {
+                                "Unknown model".to_owned()
+                            } else {
+                                row.model.clone()
+                            }))
+                            .into_any_element(),
+                        &row.totals,
+                        &report.period,
+                        cx,
+                    )
+                })
+                .collect();
+            content = content.child(self.usage_section(
+                Some(self.usage_header_detail("Top Models", &period_name)),
+                rows,
+                None,
+                cx,
+            ));
+        }
+        if !report.projects.is_empty() {
+            let rows = report
+                .projects
+                .iter()
+                .take(8)
+                .map(|row| {
+                    let name = self
+                        .projects
+                        .iter()
+                        .find(|project| text(project, "id").eq_ignore_ascii_case(&row.project_id))
+                        .map(|project| text(project, "name"))
+                        .filter(|name| !name.is_empty())
+                        .unwrap_or_else(|| "Removed project".into());
+                    self.usage_totals_row(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .w(px(18.))
+                                    .text_color(muted)
+                                    .child(Icon::new(gpui_kit::assets::IconName::Folder).xsmall()),
+                            )
+                            .child(div().min_w_0().truncate().child(name))
+                            .into_any_element(),
+                        &row.totals,
+                        &report.period,
+                        cx,
+                    )
+                })
+                .collect();
+            content = content.child(self.usage_section(
+                Some(self.usage_header_detail("Top Projects", &period_name)),
+                rows,
+                Some(
+                    "Coincide’s threads only: sessions run elsewhere belong to no project here."
+                        .into_any_element(),
+                ),
+                cx,
+            ));
         }
 
         // Activity in Coincide.

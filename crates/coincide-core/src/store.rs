@@ -354,6 +354,7 @@ impl Store {
             tx.commit()?;
         }
         navigation_cache::install(&mut db)?;
+        store_thread_delete::install_thread_review_revisions(&db)?;
         // A follow-up can be acknowledged after the user has started the next
         // draft. Track draft writes separately from transcript and attachment
         // updates, including an explicit rewrite to identical text.
@@ -2558,6 +2559,8 @@ mod tests {
                 INSERT INTO patch_write_audit VALUES ('thread_summaries','update'); END;
             CREATE TEMP TRIGGER audit_draft_revision AFTER UPDATE ON main.native_draft_revisions BEGIN
                 INSERT INTO patch_write_audit VALUES ('native_draft_revisions','update'); END;
+            CREATE TEMP TRIGGER audit_thread_review_revision AFTER UPDATE ON main.thread_review_revisions BEGIN
+                INSERT INTO patch_write_audit VALUES ('thread_review_revisions','update'); END;
             CREATE TEMP TRIGGER audit_patch_navigation_delete AFTER DELETE ON main.thread_navigation BEGIN
                 INSERT INTO patch_write_audit VALUES ('thread_navigation','delete'); END;
             CREATE TEMP TRIGGER audit_patch_navigation_insert AFTER INSERT ON main.thread_navigation BEGIN
@@ -2583,13 +2586,14 @@ mod tests {
                 ("native_draft_revisions".into(), "update".into()),
                 ("thread_navigation".into(), "delete".into()),
                 ("thread_navigation".into(), "insert".into()),
+                ("thread_review_revisions".into(), "update".into()),
                 ("thread_summaries".into(), "update".into()),
                 ("threads".into(), "update".into()),
             ]
         );
-        // Five observed writes plus their five temporary audit rows. Search
+        // Six observed writes plus their six temporary audit rows. Search
         // maintenance would add unaccounted writes and violate this assertion.
-        assert_eq!(db.connection().unwrap().total_changes() - before, 10);
+        assert_eq!(db.connection().unwrap().total_changes() - before, 12);
         assert_eq!(changed["items"], v["items"]);
         assert_eq!(changed["sessions"], v["sessions"]);
         assert_eq!(changed["draftContext"], v["draftContext"]);

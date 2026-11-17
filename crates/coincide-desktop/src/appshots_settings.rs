@@ -448,7 +448,7 @@ impl Coincide {
             );
         }
         let privacy = div().p_4().flex().flex_col().gap_2()
-            .child("Appshots wait in the composer until you send them. A recently used writable chat receives the picture; otherwise Coincide opens a new chat.")
+            .child("Appshots go to the selected conversation’s composer. With no conversation selected, Coincide starts a new chat.")
             .child(div().text_sm().text_color(self.color(0xe4e9f2).opacity(0.7)).child("Only the frontmost eligible window is captured. Coincide’s windows, protected windows and detected password entry are skipped. Pictures stay in local attachments until you send them."));
         let content = div()
             .w_full()
@@ -461,7 +461,24 @@ impl Coincide {
         let content = match self.settings_navigation.appshots_page {
             Page::Capture => content.child(hero).child(self.settings_card(capture)),
             Page::Permissions => content.child(self.settings_card(permissions)),
-            Page::Privacy => content.child(self.settings_card(privacy)),
+            Page::Privacy => content.child(self.settings_card(privacy)).child(
+                self.settings_group(
+                    "Recovery",
+                    self.labeled_row(
+                        "Restore historical images",
+                        Some("Recover attachments from a previous Coincide library.".into()),
+                        Button::new("appshots-open-image-recovery")
+                            .label("Open Recovery…")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.navigate_settings_section(
+                                    settings::SettingsSection::Media,
+                                    window,
+                                    cx,
+                                )
+                            })),
+                    ),
+                ),
+            ),
         };
         let content = content
             .when(self.appshots.private_cleanup_pending(), |pane| {

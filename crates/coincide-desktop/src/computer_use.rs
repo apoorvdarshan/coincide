@@ -42,7 +42,7 @@ pub fn native_compiled() -> bool {
         feature = "native-computer-use"
     ))
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Status {
     pub enabled: bool,
     pub native_compiled: bool,

@@ -24,6 +24,8 @@ pub struct ComputerUseSettingsPanel {
     in_use: Vec<Uuid>,
     save_error: Option<String>,
     notice: Option<String>,
+    visible: bool,
+    check_on_open: bool,
     _poll: Task<()>,
 }
 const COMPUTER: &str = if cfg!(target_os = "macos") {
@@ -37,6 +39,12 @@ fn state_description(status: &Status, in_use: Option<&str>) -> String {
     if !status.enabled {
         return "Off".into();
     }
+    if status.stopped {
+        return "Stopped".into();
+    }
+    if status.permissions.accessibility == Permission::Unknown {
+        return "Accessibility hasn’t been checked".into();
+    }
     if status.permissions.accessibility != Permission::Granted {
         return if cfg!(target_os = "macos") {
             "Waiting for Accessibility access"
@@ -44,9 +52,6 @@ fn state_description(status: &Status, in_use: Option<&str>) -> String {
             "Waiting for app accessibility"
         }
         .into();
-    }
-    if status.stopped {
-        return "Stopped".into();
     }
     match in_use {
         Some(title) => format!("In use by “{title}”"),
@@ -105,8 +110,16 @@ impl ComputerUseSettingsPanel {
                 if this
                     .update(cx, |this, cx| {
                         if let Some(status) = this.handle.try_status() {
-                            this.status = status;
-                            cx.notify();
+                            if this.check_on_open && status.enabled && !status.busy {
+                                this.check_on_open = matches!(
+                                    this.handle.native_refresh(),
+                                    Err(Failure::Busy | Failure::Off)
+                                );
+                            }
+                            if this.status != status {
+                                this.status = status;
+                                cx.notify();
+                            }
                         }
                         let (_, in_use) = this.handle.activity();
                         if this.in_use != in_use {
@@ -128,7 +141,15 @@ impl ComputerUseSettingsPanel {
             in_use: Vec::new(),
             save_error: None,
             notice: None,
+            visible: false,
+            check_on_open: false,
             _poll: poll,
+        }
+    }
+    pub fn set_visible(&mut self, visible: bool) {
+        if self.visible != visible {
+            self.visible = visible;
+            self.check_on_open = visible;
         }
     }
     pub fn set_activity(
@@ -151,7 +172,10 @@ impl ComputerUseSettingsPanel {
     }
     fn set_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.notice = match self.handle.native_set_saved(enabled) {
-            Ok(()) => None,
+            Ok(()) => {
+                self.check_on_open = enabled;
+                None
+            }
             Err(Failure::Unsupported) => Some("Computer Use isn’t available in this build.".into()),
             Err(error) => Some(failure_text(error).into()),
         };
@@ -271,6 +295,10 @@ mod tests {
     }
     #[::core::prelude::v1::test]
     fn state_reads_like_swift_from_off_to_in_use() {
+        assert_eq!(
+            state_description(&status(true, Permission::Unknown, false), None),
+            "Accessibility hasn’t been checked"
+        );
         assert_eq!(
             state_description(&status(false, Permission::Granted, false), None),
             "Off"

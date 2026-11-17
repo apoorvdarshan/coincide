@@ -134,6 +134,19 @@ impl Coincide {
         }
         self.review_project_form(window, cx);
     }
+    fn project_has_pending_draft(&self) -> bool {
+        let target = self.project_management.session.target.as_deref();
+        self.pending_drafts.keys().any(|id| {
+            if let Some(thread) = self.selected.as_ref().filter(|thread| thread["id"] == *id) {
+                return thread["projectID"].as_str() == target;
+            }
+            self.sidebar_all_threads
+                .iter()
+                .find(|thread| thread.id == *id)
+                .is_none_or(|thread| Some(thread.project_id.as_str()) == target)
+        })
+    }
+
     fn review_project_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.project_ui_admitted() {
             return;
@@ -157,9 +170,9 @@ impl Coincide {
             cx.notify();
             return;
         };
-        if !self.pending_drafts.is_empty() && matches!(mode, Mode::Relocate | Mode::Remove) {
+        if matches!(mode, Mode::Relocate | Mode::Remove) && self.project_has_pending_draft() {
             self.project_management.session.error =
-                "Wait for unsaved drafts to finish saving before changing this project.".into();
+                "Wait for this project’s drafts to finish saving.".into();
             cx.notify();
             return;
         }
@@ -248,9 +261,9 @@ impl Coincide {
             self.add_project(window, cx);
             return;
         }
-        if !self.pending_drafts.is_empty() && matches!(mode, Mode::Remove | Mode::Relocate) {
+        if matches!(mode, Mode::Remove | Mode::Relocate) && self.project_has_pending_draft() {
             self.project_management.session.error =
-                "Unsaved drafts remain in this window; no project changes were sent.".into();
+                "Save this project’s drafts before confirming.".into();
             cx.notify();
             return;
         }

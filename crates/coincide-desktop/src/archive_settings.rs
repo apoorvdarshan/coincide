@@ -5,7 +5,7 @@
 //! Permanent deletion uses opaque Core plans/Undo; no deletion intent or
 //! confirmation can be supplied through JSON settings.
 use super::*;
-use coincide_core::api::{PreparedThreadDeletion, ThreadDeletionUndo, ThreadFlagAction};
+use coincide_core::api::{PreparedThreadDeletion, ThreadDeletionUndo};
 use coincide_core::store::ArchivedConversation;
 const PAGE: usize = 50;
 pub(super) struct ArchiveSettings {
@@ -19,6 +19,7 @@ pub(super) struct ArchiveSettings {
     undo: Option<ThreadDeletionUndo>,
     status: String,
     loaded: bool,
+    refresh_pending: bool,
 }
 impl ArchiveSettings {
     pub(super) fn new(window: &mut Window, cx: &mut Context<Coincide>) -> Self {
@@ -32,6 +33,7 @@ impl ArchiveSettings {
             undo: None,
             status: String::new(),
             loaded: false,
+            refresh_pending: false,
         }
     }
     pub(super) fn subscriptions(&self, cx: &mut Context<Coincide>) -> Vec<Subscription> {
@@ -68,11 +70,8 @@ fn visible_selection(rows: &[ArchivedConversation], ids: &[String]) -> Result<Ve
 fn prepare_delete(engine: &SharedEngine, ids: &[String]) -> Result<PreparedThreadDeletion> {
     try_state(engine)?.prepare_native_thread_deletion(ids)
 }
-fn restore(engine: &SharedEngine, ids: &[String]) -> Result<()> {
-    let mut owner = try_state(engine)?;
-    let prepared = owner.prepare_thread_flags(ids, ThreadFlagAction::Restore)?;
-    owner.apply_thread_flags(&prepared)?;
-    Ok(())
+fn restore(engine: &SharedEngine, id: &str) -> Result<()> {
+    try_state(engine)?.restore_native_archived_conversation(id)
 }
 /// Swift's named relative date: "now", "5 minutes ago", "yesterday", "last week".
 fn last_active(updated: f64, now: f64) -> String {
@@ -144,6 +143,15 @@ fn grouped<'a>(
         .collect()
 }
 impl Coincide {
+    pub(super) fn poll_archive_settings(&mut self, cx: &mut Context<Self>) {
+        if self.archive_settings.refresh_pending
+            && self.settings_open
+            && self.settings_section == settings::SettingsSection::Archive
+        {
+            self.refresh_archive_settings(cx);
+        }
+    }
+
     pub(super) fn refresh_archive_settings(&mut self, cx: &mut Context<Self>) {
         let state = &self.archive_settings;
         let query = state.query.read(cx).value().to_string();
@@ -155,6 +163,7 @@ impl Coincide {
         match result {
             Ok(page) => {
                 let state = &mut self.archive_settings;
+                state.refresh_pending = false;
                 if page.rows.is_empty() && page.offset > 0 && page.total > 0 {
                     // Deleting the last thread of a later page shows the one before.
                     state.offset = (page.total - 1) / PAGE * PAGE;
@@ -162,7 +171,7 @@ impl Coincide {
                 }
                 state.rows = page.rows;
                 state.total = page.total;
-                state.offset = page.offset;
+                state.offset = if page.total == 0 { 0 } else { page.offset };
                 state.loaded = true;
                 if !state
                     .reviewing
@@ -172,12 +181,14 @@ impl Coincide {
                     state.close_review();
                 }
             }
+            Err(error) if engine_busy(&error) => {
+                self.archive_settings.refresh_pending = true;
+                return;
+            }
             Err(error) => {
-                // Keep showing the last rows; a busy engine retries on the next change.
-                if !engine_busy(&error) {
-                    self.archive_settings.loaded = false;
-                    self.archive_settings.status = format!("Archive could not be loaded: {error}");
-                }
+                self.archive_settings.refresh_pending = false;
+                self.archive_settings.loaded = false;
+                self.archive_settings.status = format!("Archive could not be loaded: {error}");
             }
         }
         cx.notify();
@@ -219,7 +230,10 @@ impl Coincide {
                     return self.confirm_archive_deletion(window, cx);
                 }
             }
-            Err(error) => self.archive_settings.status = format!("Nothing was deleted: {error}"),
+            Err(error) => {
+                self.archive_settings.status = format!("Nothing was deleted: {error}");
+                self.refresh_archive_settings(cx);
+            }
         };
         cx.notify();
     }
@@ -262,21 +276,23 @@ impl Coincide {
             }
             Err(error) => {
                 self.archive_settings.status = format!("Nothing was deleted: {error}");
+                self.refresh_archive_settings(cx);
                 cx.notify();
             }
         }
     }
     fn unarchive(&mut self, id: String, cx: &mut Context<Self>) {
         self.archive_settings.close_review();
-        match restore(&self.engine, std::slice::from_ref(&id)) {
+        match restore(&self.engine, &id) {
             Ok(()) => {
-                self.archive_settings.status.clear();
+                self.archive_settings.status = "Conversation moved back to the sidebar.".into();
                 self.refresh(cx);
                 self.refresh_archive_settings(cx);
             }
             Err(error) => {
                 self.archive_settings.status =
                     format!("The thread could not be unarchived: {error}");
+                self.refresh_archive_settings(cx);
                 cx.notify();
             }
         }
@@ -365,37 +381,56 @@ impl Coincide {
     pub(super) fn archive_settings_panel(&self, cx: &mut Context<Self>) -> AnyElement {
         let state = &self.archive_settings;
         let filtering = !state.query.read(cx).value().trim().is_empty();
+        let partial = state.total > state.rows.len();
         let reviewing = state.review.is_some();
         let shown = state
             .rows
             .iter()
             .map(|row| row.id.clone())
             .collect::<Vec<_>>();
-        let mut pane = div()
-            .flex()
-            .flex_col()
-            .gap_3()
-            .child(div().text_sm().text_color(self.color(0x98a6ba).opacity(0.8)).child(
-                "Threads you archive with a thread's archive button wait here. Unarchive one to bring it back to the sidebar.",
-            ))
-            .child(
+        let mut pane = div().flex().flex_col().gap_3().child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(div().flex_1().child(Input::new(&state.query)))
+                .child(
+                    Button::new("archive-delete-all")
+                        .label(if filtering || partial {
+                            "Delete Shown…"
+                        } else {
+                            "Delete All…"
+                        })
+                        .danger()
+                        .disabled(state.rows.is_empty() || reviewing)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.delete_archived(shown.clone(), true, window, cx)
+                        })),
+                ),
+        );
+        if state.reviewing.len() != 1
+            && let Some(review) = &state.review
+        {
+            pane = pane.child(self.archive_review(review, cx));
+        }
+        if state.undo.is_some() || !state.status.is_empty() {
+            pane = pane.child(
                 div()
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(div().flex_1().child(Input::new(&state.query)))
-                    .child(
-                        Button::new("archive-delete-all")
-                            .label(if filtering { "Delete Shown…" } else { "Delete All…" })
-                            .danger()
-                            .disabled(state.rows.is_empty() || reviewing)
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.delete_archived(shown.clone(), true, window, cx)
-                            })),
-                    ),
+                    .child(div().flex_1().text_sm().child(state.status.clone()))
+                    .when(state.undo.is_some(), |row| {
+                        row.child(
+                            Button::new("archive-undo-delete")
+                                .label("Undo Delete")
+                                .disabled(reviewing)
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.undo_archive_deletion(cx)),
+                                ),
+                        )
+                    }),
             );
-        if let Some(review) = &state.review {
-            pane = pane.child(self.archive_review(review, cx));
         }
         if state.rows.is_empty() {
             let query = state.query.read(cx).value().trim().to_owned();
@@ -462,6 +497,7 @@ impl Coincide {
                         )
                         .child(
                             Button::new(SharedString::from(format!("archive-unarchive-{id}")))
+                                .compact()
                                 .label("Unarchive")
                                 .disabled(reviewing)
                                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -471,13 +507,19 @@ impl Coincide {
                         .child(
                             Button::new(SharedString::from(format!("archive-delete-{delete}")))
                                 .label("Delete")
-                                .danger()
+                                .ghost()
+                                .compact()
                                 .disabled(reviewing)
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.delete_archived(vec![delete.clone()], false, window, cx)
                                 })),
                         ),
                 );
+                if state.reviewing == [row.id.as_str()]
+                    && let Some(review) = &state.review
+                {
+                    group = group.child(div().px_3().pb_3().child(self.archive_review(review, cx)));
+                }
             }
             pane = pane.child(
                 div()
@@ -524,25 +566,6 @@ impl Coincide {
                                 this.refresh_archive_settings(cx);
                             })),
                     ),
-            );
-        }
-        if state.undo.is_some() || !state.status.is_empty() {
-            pane = pane.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(div().flex_1().text_sm().child(state.status.clone()))
-                    .when(state.undo.is_some(), |row| {
-                        row.child(
-                            Button::new("archive-undo-delete")
-                                .label("Undo Delete")
-                                .disabled(reviewing)
-                                .on_click(
-                                    cx.listener(|this, _, _, cx| this.undo_archive_deletion(cx)),
-                                ),
-                        )
-                    }),
             );
         }
         pane.into_any_element()
@@ -626,7 +649,8 @@ mod tests {
         let mut thread = store.new_thread("").unwrap();
         thread["isArchived"] = json!(true);
         thread["draft"] = json!("Exact synthetic café draft\n");
-        thread["future"] = json!({"opaque":7});
+        // The previous archive cap prevented both operations on long threads.
+        thread["future"] = json!({"opaque": "x".repeat(9 * 1024 * 1024)});
         store.save(&thread).unwrap();
         let id = thread["id"].as_str().unwrap().to_owned();
         let engine = Arc::new(std::sync::Mutex::new(coincide_core::api::Engine::new(
@@ -664,7 +688,7 @@ mod tests {
                 .undo_native_thread_deletion(&undo)
                 .is_err()
         );
-        restore(&engine, std::slice::from_ref(&id)).unwrap();
+        restore(&engine, &id).unwrap();
         let restored = try_state(&engine).unwrap().store.thread(&id).unwrap();
         let mut expected = thread.clone();
         expected["isArchived"] = json!(false);

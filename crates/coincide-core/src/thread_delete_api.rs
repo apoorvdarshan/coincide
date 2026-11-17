@@ -47,6 +47,24 @@ impl ThreadDeletionUndo {
         self.rows.iter().map(|row| row.id.clone()).collect()
     }
 }
+#[derive(Debug)]
+pub enum ConversationCleanup {
+    Running,
+    Waiting,
+    Failed,
+}
+impl std::fmt::Display for ConversationCleanup {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Running => "A selected conversation is still running",
+            Self::Waiting => "Waiting for the selected conversation to finish cleanup",
+            Self::Failed => {
+                "Cleanup failed for a selected conversation. Restart Coincide before trying again."
+            }
+        })
+    }
+}
+impl std::error::Error for ConversationCleanup {}
 impl Engine {
     pub(super) fn unrevoked_provider_session(
         &self,
@@ -76,43 +94,33 @@ impl Engine {
     pub(super) fn archive_delete_admitted(&mut self, ids: &[String], deleting: bool) -> Result<()> {
         self.require_admissions()?;
         ensure!(!self.shutdown, "Application is closing");
-        let workers = self.provider_workers_status();
-        ensure!(
-            self.runs.is_empty()
-                && workers.running == 0
-                && workers.panicked == 0
-                && workers.unclassified == 0,
-            "Wait for all provider workers to finish cleanup before deleting or restoring conversations"
-        );
-        ensure!(
-            self.workspace_mutations.is_empty()
-                && self.steering_operations.is_empty()
-                && !self.native_follow_up.has_pending()
-                && self.schedule_completions.is_empty(),
-            "Wait for pending workspace/provider results before deleting or restoring conversations"
-        );
-        ensure!(
-            self.codex_profile_login
-                .as_ref()
-                .is_none_or(|operation| !operation.active()),
-            "Wait for provider sign-in cleanup before deleting conversations"
-        );
-        ensure!(
-            self.notification_events.status()["inFlight"].as_u64() == Some(0),
-            "Wait for native notification delivery before deleting conversations"
-        );
+        self.require_conversation_workers_idle(ids)?;
         for id in ids {
+            let owns = |owner: &str| owner.eq_ignore_ascii_case(id);
             ensure!(
-                !self.unsaved_threads.contains_key(id) && !self.pending_usage.contains_key(id),
-                "A conversation has unsaved transcript or usage changes"
+                !self.unsaved_threads.keys().any(|owner| owns(owner))
+                    && !self.pending_usage.keys().any(|owner| owns(owner)),
+                "A selected conversation has unsaved transcript or usage changes"
+            );
+            ensure!(
+                !self
+                    .steering_operations
+                    .values()
+                    .any(|operation| owns(&operation.thread))
+                    && !self.native_follow_up.pending_thread(id),
+                "Wait for this conversation's provider response before continuing"
+            );
+            ensure!(
+                !self.notification_events.delivery_in_flight(id),
+                "Wait for this conversation's notification delivery"
             );
             ensure!(
                 !self.attachment_operations.contains(id)
                     && !self
                         .workspace_pending
                         .values()
-                        .any(|(owner, _)| owner.eq_ignore_ascii_case(id)),
-                "Wait for this conversation's draft or file import to finish"
+                        .any(|(owner, _)| owns(owner)),
+                "Wait for this conversation's file or workspace operation to finish"
             );
             ensure!(
                 !self
@@ -132,7 +140,7 @@ impl Engine {
                         .any(|request| request.thread_id.eq_ignore_ascii_case(id)),
                 "Wait for this conversation's browser work to finish"
             );
-            if let Ok(thread) = self.store.thread(id) {
+            if let Ok(thread) = self.store.thread_queue_snapshot(id) {
                 ensure!(
                     thread["rustMessageQueue"]
                         .as_array()
@@ -141,18 +149,30 @@ impl Engine {
                 );
             }
         }
-        if deleting {
+        if deleting || !self.schedule_completions.is_empty() {
             let schedules = self
                 .store
                 .document("scheduled-tasks.json")?
                 .unwrap_or(json!({"tasks":[]}));
             let tasks=schedules["tasks"].as_array().context("Scheduled tasks are malformed; repair or remove their configuration before deleting conversations")?;
-            ensure!(
-                !tasks.iter().any(|task| task["threadID"]
+            for task in tasks {
+                if !task["threadID"]
                     .as_str()
-                    .is_some_and(|thread| ids.iter().any(|id| id.eq_ignore_ascii_case(thread)))),
-                "A schedule targets a selected conversation; remove or retarget that schedule before deleting it"
-            );
+                    .is_some_and(|thread| ids.iter().any(|id| id.eq_ignore_ascii_case(thread)))
+                {
+                    continue;
+                }
+                ensure!(
+                    !deleting,
+                    "A schedule targets a selected conversation. Remove or retarget it before deleting the conversation."
+                );
+                ensure!(
+                    !self.schedule_completions.iter().any(|(claim, _, _)| {
+                        task["rustClaim"]["claimId"].as_str() == Some(claim)
+                    }),
+                    "Wait for this conversation's schedule to record its result"
+                );
+            }
         }
         Ok(())
     }
@@ -456,6 +476,36 @@ mod tests {
         assert_eq!(engine.store.thread(&id).unwrap(), before);
     }
     #[test]
+    fn deleting_an_idle_chat_while_another_worker_is_active_keeps_undo_and_other_chat() {
+        let (_dir, mut engine, id) = fixture();
+        let other = engine.store.new_thread("").unwrap();
+        let other_id = text(&other, "id");
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let worker = agent::WorkerCompletion::observe(std::thread::spawn(move || {
+            let _ = held.recv();
+        }));
+        engine
+            .provider_workers
+            .push((Some(other_id.clone()), worker.clone()));
+
+        let original = engine.store.thread(&id).unwrap();
+        let prepared = engine
+            .prepare_native_thread_deletion(std::slice::from_ref(&id))
+            .unwrap();
+        let other = engine
+            .store
+            .patch_thread(&other_id, &json!({"title":"Still working"}))
+            .unwrap();
+        let deleted = engine.apply_native_thread_deletion(prepared).unwrap();
+        assert!(engine.store.thread(&id).is_err());
+        assert_eq!(worker.status(), agent::WorkerThreadStatus::Running);
+        engine.undo_native_thread_deletion(&deleted).unwrap();
+        assert_eq!(engine.store.thread(&id).unwrap(), original);
+        assert_eq!(engine.store.thread(&other_id).unwrap(), other);
+        release.send(()).unwrap();
+    }
+
+    #[test]
     fn semantic_finished_never_allows_delete_before_actual_owned_worker_join() {
         let (_dir, mut engine, id) = fixture();
         let (release, held) = std::sync::mpsc::channel();
@@ -471,7 +521,9 @@ mod tests {
             Event::Finished
         ));
         let worker = session.worker_completion();
-        engine.provider_workers.push(worker.clone());
+        engine
+            .provider_workers
+            .push((Some(id.clone()), worker.clone()));
         assert!(
             engine
                 .prepare_native_thread_deletion(std::slice::from_ref(&id))
@@ -712,7 +764,9 @@ mod tests {
             Event::Finished
         ));
         let worker = session.worker_completion();
-        engine.provider_workers.push(worker.clone());
+        engine
+            .provider_workers
+            .push((Some(id.clone()), worker.clone()));
         assert!(
             engine
                 .prepare_native_sidebar_conversation_deletion(std::slice::from_ref(&id))

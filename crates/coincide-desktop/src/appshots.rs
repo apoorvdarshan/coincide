@@ -3,7 +3,7 @@
 use super::*;
 use coincide_core::{
     api::{AppshotTicket, PreparedAppshot},
-    appshots::{Destination, Settings},
+    appshots::Settings,
 };
 use std::sync::{
     Arc,
@@ -110,7 +110,6 @@ pub(super) struct State {
     pub outcome: String,
     pub recording: bool,
     pub shortcut_focus: FocusHandle,
-    destination: Destination,
     generation: Arc<AtomicU64>,
     workers: worker_owner::WorkerOwner,
     tx: SyncSender<(u64, Delivery, Result<PreparedAppshot>)>,
@@ -128,7 +127,6 @@ impl State {
             outcome: String::new(),
             recording: false,
             shortcut_focus: cx.focus_handle(),
-            destination: Default::default(),
             generation: Arc::new(AtomicU64::new(0)),
             workers: Default::default(),
             tx,
@@ -255,19 +253,6 @@ impl Drop for State {
     }
 }
 impl Coincide {
-    pub(super) fn record_appshot_interaction(&mut self) {
-        if self.settings_open || self.media.close_requested || self.media.shutdown_requested {
-            return;
-        }
-        let target = self
-            .selected
-            .as_ref()
-            .filter(|thread| thread["isArchived"] != true)
-            .map(|thread| text(thread, "id"));
-        self.appshots
-            .destination
-            .interact(target, std::time::Instant::now());
-    }
     pub(super) fn poll_appshots(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.media.shutdown_requested || self.media.close_requested {
             self.appshots.close();
@@ -300,13 +285,26 @@ impl Coincide {
                 Err(error) => Err(error),
             };
             match result {
-                Ok(thread) => {
+                Ok(mut thread) => {
                     let id = text(&thread, "id");
-                    self.appshots
-                        .destination
-                        .interact(Some(id.clone()), std::time::Instant::now());
-                    self.refresh(cx);
-                    self.select(&id, window, cx);
+                    if self.thread_navigation.target().is_none()
+                        && self.pending_select.is_none()
+                        && let Some(selected) =
+                            self.selected.as_mut().filter(|value| value["id"] == id)
+                    {
+                        // Update only the delivered attachments. Reloading the
+                        // open conversation resets its composer and scroll.
+                        for key in ["rustDraftImages", "draftContext"] {
+                            if let Some(value) =
+                                thread.as_object_mut().and_then(|object| object.remove(key))
+                            {
+                                selected[key] = value;
+                            }
+                        }
+                    } else {
+                        self.refresh(cx);
+                        self.select(&id, window, cx);
+                    }
                     if Settings::read(&self.settings).sound {
                         appshots_platform::sound();
                     }
@@ -363,16 +361,30 @@ impl Coincide {
             return;
         }
         let admitted = (|| -> Result<_> {
+            anyhow::ensure!(
+                self.pending_new_thread.is_none(),
+                "Wait for the new conversation to open, then capture again."
+            );
+            let selected = self
+                .thread_navigation
+                .target()
+                .or(self.pending_select.as_deref())
+                .or_else(|| {
+                    self.selected
+                        .as_ref()
+                        .and_then(|thread| thread["id"].as_str())
+                });
             let mut owner = try_state(&self.engine)?;
-            let ticket = owner.native_appshot_admit(
-                self.appshots.destination.target(std::time::Instant::now()),
-            )?;
+            let ticket = owner.native_appshot_admit(selected)?;
             Ok((ticket, owner.store.data_directory()?))
         })();
         let (ticket, root) = match admitted {
             Ok(value) => value,
             Err(error) => {
-                self.appshots.outcome = error.to_string();
+                let outcome = Outcome::Failed(error.to_string());
+                self.appshots.outcome = outcome.message();
+                outcome.show(None);
+                cx.notify();
                 return;
             }
         };

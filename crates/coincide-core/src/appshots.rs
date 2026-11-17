@@ -2,7 +2,6 @@
 //! input devices, permissions, the screen, or an agent.
 use anyhow::{Result, ensure};
 use serde_json::{Value, json};
-use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Settings {
@@ -96,31 +95,6 @@ pub fn patch(current: &Value, field: &str, value: Value) -> Result<Value> {
         raw[field] = value;
     }
     Ok(json!({"appshots":raw}))
-}
-#[derive(Clone, Debug, Default)]
-pub struct Destination {
-    recent: Option<(String, Instant)>,
-}
-impl Destination {
-    pub fn interact(&mut self, thread: Option<String>, now: Instant) {
-        if self
-            .recent
-            .as_ref()
-            .is_some_and(|(_, previous)| now < *previous)
-        {
-            return;
-        }
-        self.recent = thread.map(|id| (id, now));
-    }
-    pub fn target(&self, now: Instant) -> Option<&str> {
-        self.recent
-            .as_ref()
-            .filter(|(_, at)| {
-                now.checked_duration_since(*at)
-                    .is_some_and(|age| age <= Duration::from_secs(60))
-            })
-            .map(|(id, _)| id.as_str())
-    }
 }
 /// Input adapters report only primary modifier transitions and whether another
 /// key intervened. A chord fires once and rearms only after both keys release.
@@ -220,17 +194,6 @@ mod tests {
         assert!(removed["appshots"]["shortcut"].is_null());
         assert_eq!(removed["appshots"]["futureSetting"], "keep");
         assert_eq!(current, before);
-    }
-    #[test]
-    fn exact_recent_window_and_no_clock_reversal() {
-        let now = Instant::now();
-        let mut d = Destination::default();
-        d.interact(Some("one".into()), now);
-        assert_eq!(d.target(now + Duration::from_secs(60)), Some("one"));
-        assert_eq!(d.target(now + Duration::from_secs(61)), None);
-        assert_eq!(d.target(now - Duration::from_secs(1)), None);
-        d.interact(Some("older".into()), now - Duration::from_secs(1));
-        assert_eq!(d.target(now), Some("one"));
     }
     #[test]
     fn chord_is_once_per_release_and_other_keys_block() {

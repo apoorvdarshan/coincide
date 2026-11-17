@@ -2130,7 +2130,6 @@ impl Coincide {
         if self.record_appshot_shortcut(event, window, cx) {
             return;
         }
-        self.record_appshot_interaction();
         if self.edit_last_queued_key(event, window, cx) {
             return;
         }

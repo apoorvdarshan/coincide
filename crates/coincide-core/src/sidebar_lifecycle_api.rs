@@ -56,6 +56,13 @@ pub struct ThreadMoveUndo {
     from: Folder,
     to: Folder,
 }
+impl ThreadMoveUndo {
+    pub fn thread_id(&self) -> &str {
+        self.original["id"]
+            .as_str()
+            .expect("reviewed conversation ID")
+    }
+}
 fn clear_sessions(thread: &mut Value) {
     thread["sessions"] = json!({});
     thread.as_object_mut().unwrap().remove("accountSessions");
@@ -125,7 +132,9 @@ impl Engine {
         self.store.validate_sidebar_row(&prepared.row)?;
         // Park only a real explicit departure, before cancelling the catalog.
         self.park_named_departure(&prepared.original)?;
-        self.cancel_provider_restore();
+        if self.active_thread() == Some(&prepared.row.id) {
+            self.cancel_provider_restore();
+        }
         self.model_catalog
             .invalidate_deleted_threads(std::slice::from_ref(&prepared.row.id));
         self.store.apply_sidebar_row(&prepared.row)?;
@@ -199,7 +208,9 @@ impl Engine {
         }
         let row = self.store.capture_sidebar_row(&current, &next)?;
         self.park_named_departure(&current)?;
-        self.cancel_provider_restore();
+        if self.active_thread() == Some(id) {
+            self.cancel_provider_restore();
+        }
         self.model_catalog.invalidate_deleted_threads(&[id.into()]);
         self.store.apply_sidebar_row(&row)?;
         self.native_move_undos.remove(id);
@@ -280,7 +291,9 @@ mod tests {
         let worker = crate::agent::WorkerCompletion::observe(std::thread::spawn(move || {
             release_rx.recv().unwrap();
         }));
-        engine.provider_workers.push(worker.clone());
+        engine
+            .provider_workers
+            .push((Some(id.clone()), worker.clone()));
         assert!(engine.prepare_native_thread_move(&id, &b).is_err());
         assert!(
             engine

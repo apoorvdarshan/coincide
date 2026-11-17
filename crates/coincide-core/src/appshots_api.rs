@@ -130,7 +130,7 @@ impl Engine {
         );
         Ok(thread)
     }
-    pub fn native_appshot_admit(&mut self, recent: Option<&str>) -> Result<AppshotTicket> {
+    pub fn native_appshot_admit(&mut self, selected: Option<&str>) -> Result<AppshotTicket> {
         self.require_background_admission()?;
         let settings = self
             .store
@@ -140,12 +140,12 @@ impl Engine {
             crate::appshots::Settings::read(&settings).enabled,
             "Appshots are off"
         );
-        // Unavailable recent chats fall back to an ordinary projectless chat.
-        let target = recent.and_then(|id| {
-            self.appshot_writable(id)
-                .ok()
-                .map(|thread| (id.to_owned(), thread))
-        });
+        let target = selected
+            .map(|id| {
+                self.appshot_writable(id)
+                    .map(|thread| (id.to_owned(), thread))
+            })
+            .transpose()?;
         Ok(AppshotTicket {
             owner: self.appshots_owner,
             expected_settings: settings.get("appshots").cloned(),
@@ -338,7 +338,7 @@ mod tests {
         }
     }
     #[test]
-    fn expired_or_unavailable_target_creates_projectless_chat_with_global_defaults() {
+    fn no_selected_conversation_creates_projectless_chat_with_global_defaults() {
         let (_directory, mut engine, id) = fixture();
         engine.execute("settings.patch",&json!({"patch":{"defaultSelection":{"provider":"codex","modelID":"fixture-default"},"defaultAccessMode":"fullAccess"}})).unwrap();
         let ticket = engine.native_appshot_admit(None).unwrap();
@@ -351,6 +351,15 @@ mod tests {
         assert_eq!(saved["accessMode"], "fullAccess");
         assert_eq!(saved["items"], json!([]));
         assert_eq!(saved["draft"], "");
+    }
+    #[test]
+    fn selected_archived_conversation_cannot_silently_create_a_new_one() {
+        let (_directory, mut engine, id) = fixture();
+        engine
+            .store
+            .patch_thread(&id, &json!({"isArchived":true}))
+            .unwrap();
+        assert!(engine.native_appshot_admit(Some(&id)).is_err());
     }
     #[test]
     fn malformed_context_is_retained_and_no_image_partially_attached() {

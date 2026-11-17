@@ -121,9 +121,9 @@ impl State {
             .any(|op| op.status == NativeFollowUpStatus::Pending)
     }
     pub(super) fn pending_thread(&self, thread: &str) -> bool {
-        self.operations
-            .values()
-            .any(|op| op.thread == thread && op.status == NativeFollowUpStatus::Pending)
+        self.operations.values().any(|op| {
+            op.thread.eq_ignore_ascii_case(thread) && op.status == NativeFollowUpStatus::Pending
+        })
     }
 }
 use choice::scope;

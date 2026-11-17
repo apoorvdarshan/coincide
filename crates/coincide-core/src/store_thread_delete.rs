@@ -7,6 +7,10 @@ use std::collections::{BTreeSet, HashSet};
 const ROW_LIMIT: usize = 128;
 const ROW_BYTES: usize = 8 * 1024 * 1024;
 const BATCH_BYTES: usize = 32 * 1024 * 1024;
+// The archive can contain long, completed conversations. Keep Undo bounded,
+// with a higher allowance for explicitly reviewed archived batches.
+const ARCHIVE_ROW_BYTES: usize = 32 * 1024 * 1024;
+const ARCHIVE_BATCH_BYTES: usize = 128 * 1024 * 1024;
 #[derive(Clone)]
 pub(crate) struct DeleteRow {
     pub id: String,
@@ -14,6 +18,7 @@ pub(crate) struct DeleteRow {
     pub raw: String,
     pub imported: bool,
     pub native: BTreeSet<[u8; 32]>,
+    revision: Option<Vec<u8>>,
 }
 impl DeleteRow {
     pub(crate) fn revoke_native(&mut self, native: &str) -> Result<()> {
@@ -68,6 +73,35 @@ pub(super) fn ensure_not_deleted(db: &Connection, id: &str) -> Result<()> {
     }
     Ok(())
 }
+pub(super) fn install_thread_review_revisions(db: &Connection) -> Result<()> {
+    db.execute_batch(
+        "CREATE TABLE IF NOT EXISTS thread_review_revisions(
+            id TEXT PRIMARY KEY COLLATE NOCASE,
+            revision BLOB NOT NULL CHECK(length(revision)=16)
+         );
+         CREATE TRIGGER IF NOT EXISTS thread_review_revision_insert AFTER INSERT ON threads BEGIN
+            INSERT INTO thread_review_revisions(id,revision) VALUES (NEW.id,randomblob(16))
+            ON CONFLICT(id) DO UPDATE SET revision=excluded.revision;
+         END;
+         CREATE TRIGGER IF NOT EXISTS thread_review_revision_update AFTER UPDATE OF document ON threads BEGIN
+            INSERT INTO thread_review_revisions(id,revision) VALUES (NEW.id,randomblob(16))
+            ON CONFLICT(id) DO UPDATE SET revision=excluded.revision;
+         END;
+         CREATE TRIGGER IF NOT EXISTS thread_review_revision_delete AFTER DELETE ON threads BEGIN
+            DELETE FROM thread_review_revisions WHERE id=OLD.id;
+         END;",
+    )?;
+    Ok(())
+}
+pub(super) fn thread_review_revision(db: &Connection, id: &str) -> Result<Option<Vec<u8>>> {
+    Ok(db
+        .query_row(
+            "SELECT revision FROM thread_review_revisions WHERE id=?1",
+            [id],
+            |row| row.get(0),
+        )
+        .optional()?)
+}
 fn version(db: &Connection) -> Result<DeleteVersion> {
     Ok(DeleteVersion {
         changes: db.total_changes(),
@@ -114,7 +148,9 @@ fn rows_match(db: &Connection, rows: &[DeleteRow]) -> Result<()> {
             |row| row.get(0),
         )?;
         ensure!(
-            matches && imported == row.imported,
+            matches
+                && imported == row.imported
+                && thread_review_revision(db, &row.id)? == row.revision,
             "An archived conversation changed after review; review it again"
         );
     }
@@ -241,7 +277,12 @@ impl Store {
             .transpose()?;
         let mut total = 0usize;
         let mut rows = Vec::new();
-        let mut statement=self.connection()?.prepare("SELECT id,substr(title,1,1024),project_id,updated_at FROM thread_summaries WHERE archived=1 ORDER BY updated_at DESC,id")?;
+        let mut statement = self.connection()?.prepare(
+            "SELECT s.id,substr(s.title,1,1024),s.project_id,s.updated_at
+             FROM thread_summaries s
+             WHERE s.archived=1 AND EXISTS (SELECT 1 FROM threads t WHERE t.id=s.id COLLATE NOCASE)
+             ORDER BY s.updated_at DESC,s.id",
+        )?;
         for row in statement.query_map([], |row| {
             Ok(ArchivedConversation {
                 id: row.get(0)?,
@@ -275,6 +316,28 @@ impl Store {
             offset,
         })
     }
+
+    pub(crate) fn restore_archived_conversation(&mut self, id: &str) -> Result<()> {
+        Uuid::parse_str(id)?;
+        let tx = self.connection_mut()?.transaction()?;
+        ensure_not_deleted(&tx, id)?;
+        let changed = tx.execute(
+            "UPDATE threads SET document=json_set(document,'$.isArchived',json('false'))
+             WHERE id=?1 COLLATE NOCASE AND json_type(document,'$.isArchived')='true'
+                 AND json_extract(document,'$.id')=id AND json_type(document,'$.items')='array'",
+            [id],
+        )?;
+        ensure!(changed == 1, "This conversation is no longer archived");
+        ensure!(
+            tx.execute(
+                "UPDATE thread_summaries SET archived=0 WHERE id=?1 COLLATE NOCASE",
+                [id]
+            )? == 1,
+            "The conversation summary is unavailable"
+        );
+        tx.commit()?;
+        Ok(())
+    }
     pub(crate) fn prepare_delete_rows(
         &self,
         ids: &[String],
@@ -300,19 +363,30 @@ impl Store {
         let mut unique = HashSet::new();
         let mut rows = Vec::new();
         let mut bytes = 0usize;
+        let (row_limit, batch_limit) = if archived_only {
+            (ARCHIVE_ROW_BYTES, ARCHIVE_BATCH_BYTES)
+        } else {
+            (ROW_BYTES, BATCH_BYTES)
+        };
         for id in ids {
             ensure!(
                 unique.insert(Uuid::parse_str(id)?),
                 "Duplicate conversation selection"
             );
-            let (stored,raw):(String,Option<String>)=self.connection()?.query_row("SELECT id,CASE WHEN length(CAST(document AS BLOB))<=?2 THEN document ELSE NULL END FROM threads WHERE id=?1 COLLATE NOCASE",params![id,ROW_BYTES as i64],|row|Ok((row.get(0)?,row.get(1)?)))?;
-            let raw = raw.context("An archived conversation exceeds the 8 MiB deletion bound")?;
+            let (stored,raw):(String,Option<String>)=self.connection()?.query_row("SELECT id,CASE WHEN length(CAST(document AS BLOB))<=?2 THEN document ELSE NULL END FROM threads WHERE id=?1 COLLATE NOCASE",params![id,row_limit as i64],|row|Ok((row.get(0)?,row.get(1)?)))?;
+            let raw = raw.with_context(|| {
+                format!(
+                    "A conversation exceeds the {} MiB deletion limit",
+                    row_limit / 1_048_576
+                )
+            })?;
             bytes = bytes
                 .checked_add(raw.len())
                 .context("Archive batch size overflow")?;
             ensure!(
-                bytes <= BATCH_BYTES,
-                "Reviewed conversation data exceeds the 32 MiB Undo bound"
+                bytes <= batch_limit,
+                "These conversations exceed the {} MiB Undo limit. Delete a smaller batch.",
+                batch_limit / 1_048_576
             );
             let value: Value = serde_json::from_str(&raw)?;
             ensure!(
@@ -321,6 +395,7 @@ impl Store {
                 "Only current archived conversations can be deleted here"
             );
             rows.push(DeleteRow {
+                revision: thread_review_revision(self.connection()?, &stored)?,
                 id: stored.clone(),
                 title: text(&value, "title").chars().take(120).collect(),
                 native: native_ids(&value)?,
@@ -341,7 +416,7 @@ impl Store {
         rows: &[DeleteRow],
     ) -> Result<()> {
         ensure!(
-            version(self.connection()?)? == expected,
+            version(self.connection()?)?.external == expected.external,
             "Store changed after deletion review; review the shown conversations again"
         );
         rows_match(self.connection()?, rows)
@@ -356,7 +431,7 @@ impl Store {
             .connection_mut()?
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         ensure!(
-            version(&tx)? == expected,
+            version(&tx)?.external == expected.external,
             "Store changed after deletion review"
         );
         rows_match(&tx, rows)?;
@@ -386,6 +461,20 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn archive_skips_an_orphaned_summary_without_changing_other_conversations() {
+        let (_dir, store, threads) = fixture();
+        let missing = text(&threads[0], "id");
+        store
+            .connection()
+            .unwrap()
+            .execute("DELETE FROM threads WHERE id=?1", [&missing])
+            .unwrap();
+        let page = store.archived_conversations("", 0, 50).unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.rows[0].id, text(&threads[1], "id"));
+        assert_eq!(store.thread(&text(&threads[2], "id")).unwrap(), threads[2]);
+    }
     fn fixture() -> (tempfile::TempDir, Store, Vec<Value>) {
         let dir = tempfile::tempdir().unwrap();
         let mut store = Store::open(&dir.path().join("data/state.sqlite")).unwrap();

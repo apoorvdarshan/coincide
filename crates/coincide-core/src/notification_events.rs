@@ -175,6 +175,13 @@ impl Outbox {
                 || matches!(entry.state, State::InFlight(_))
         });
     }
+    pub(super) fn delivery_in_flight(&self, thread: &str) -> bool {
+        Uuid::parse_str(thread).is_ok_and(|id| {
+            self.entries
+                .iter()
+                .any(|(key, entry)| key.thread == id && matches!(entry.state, State::InFlight(_)))
+        })
+    }
     pub(super) fn discard_deleted_threads(&mut self, threads: &[String]) {
         let deleted = threads
             .iter()

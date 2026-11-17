@@ -485,7 +485,8 @@ impl Coincide {
         label: &'static str,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let selected = self.settings_section == section;
+        let selected = self.settings_section == section
+            || (self.settings_section == Section::Media && section == Section::Appshots);
         let enabled = match section {
             Section::Provider(provider) => provider_enabled(&self.settings, provider),
             _ => true,
@@ -582,7 +583,6 @@ impl Coincide {
             Section::ComputerUse,
             Section::Appshots,
             Section::Archive,
-            Section::Media,
         ] {
             navigation =
                 navigation.child(self.settings_navigation_row(section, section.label(), cx));
