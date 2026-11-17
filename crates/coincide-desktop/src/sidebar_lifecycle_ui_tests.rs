@@ -1,9 +1,9 @@
 //! Exercise the real popup-menu click and anchored review layout on TestPlatform.
 use super::{review_pointer_position, review_popover};
 use gpui_kit::{
-    App, AppContext, ClickEvent, Context, Entity, InteractiveElement, IntoElement, Modifiers,
-    MouseButton, ParentElement, Pixels, Point, Render, Styled, TestAppContext, VisualTestContext,
-    WeakEntity, Window,
+    App, ClickEvent, Context, Entity, InteractiveElement, IntoElement, Modifiers, MouseButton,
+    ParentElement, Pixels, Point, Render, Styled, TestAppContext, VisualTestContext, WeakEntity,
+    Window,
     component::menu::{ContextMenuExt as _, PopupMenuItem},
     div, point,
     prelude::FluentBuilder,
