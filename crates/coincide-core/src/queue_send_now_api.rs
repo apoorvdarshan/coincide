@@ -12,6 +12,34 @@ impl Engine {
             .then_some(Behavior::Steer);
         self.native_send_queued_with_behavior(expected, visible, behavior)
     }
+    pub fn native_interrupt_and_send_queued(
+        &mut self,
+        expected: &Value,
+        visible: &Value,
+    ) -> Result<NativeFollowUpTicket> {
+        ensure!(
+            visible["codexQuestionSession"].is_null(),
+            "A provider answer must stay in its current turn"
+        );
+        self.native_send_queued_with_behavior(expected, visible, Some(Behavior::Interrupt))
+    }
+
+    pub fn native_stop_unaccepted_queued_turn(
+        &mut self,
+        thread: &str,
+        message: &str,
+    ) -> Result<()> {
+        self.require_admissions()?;
+        ensure!(
+            self.runs
+                .get(thread)
+                .and_then(|run| run.queue_claim.as_deref())
+                == Some(message),
+            "This message is no longer waiting for a new turn to accept it"
+        );
+        self.request_provider_stop(thread)
+    }
+
     pub(in crate::api) fn native_send_queued_with_behavior(
         &mut self,
         expected: &Value,

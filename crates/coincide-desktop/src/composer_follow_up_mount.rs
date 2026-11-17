@@ -5,14 +5,6 @@ use coincide_core::{
     api::{NativeFollowUpStatus, NativeFollowUpTicket},
     composer_follow_up::{self as choice, Behavior, Dispatch},
 };
-#[derive(Debug, PartialEq, Eq)]
-pub(super) enum SendRoute {
-    WaitForImages,
-    FollowUp,
-    WaitForSelection,
-    Send,
-}
-
 /// A follow-up is bound to composer metadata, not the entire transcript.
 #[cfg(test)]
 fn follow_up_source(thread: &Value) -> Value {
@@ -39,17 +31,6 @@ fn follow_up_source(thread: &Value) -> Value {
     Value::Object(source)
 }
 
-pub(super) fn send_route(running: bool, importing: bool, changing_selection: bool) -> SendRoute {
-    if !running && changing_selection {
-        SendRoute::WaitForSelection
-    } else if importing {
-        SendRoute::WaitForImages
-    } else if running {
-        SendRoute::FollowUp
-    } else {
-        SendRoute::Send
-    }
-}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum SelectionWait {
     None,
@@ -59,15 +40,11 @@ pub(super) enum SelectionWait {
 pub(super) struct PendingDelivery {
     ticket: Option<NativeFollowUpTicket>,
     thread: String,
-    draft: String,
-    queued: bool,
-    image_send: Option<u64>,
 }
-/// Retain a local bubble until the saved queue or transcript can replace it.
+/// Retain a local queue row until its saved row or accepted transcript is visible.
 pub(super) struct AdmittedPreview {
     pub pending: PendingSend,
     pub queue_id: String,
-    pub direct: bool,
 }
 fn preview_handed_off(preview: &AdmittedPreview, thread: &Value, visible_queue: &[Value]) -> bool {
     if text(thread, "id") != preview.pending.thread {
@@ -76,10 +53,7 @@ fn preview_handed_off(preview: &AdmittedPreview, thread: &Value, visible_queue: 
     let visible = visible_queue
         .iter()
         .find(|row| row["id"] == preview.queue_id);
-    if visible.is_some_and(|row| {
-        matches!(row["state"].as_str(), Some("failed" | "interrupted"))
-            || (!preview.direct && row["state"] != "completed")
-    }) {
+    if visible.is_some_and(|row| row["state"] != "completed") {
         return true;
     }
     let completed = thread["rustMessageQueue"].as_array().is_some_and(|rows| {
@@ -99,6 +73,12 @@ fn preview_handed_off(preview: &AdmittedPreview, thread: &Value, visible_queue: 
             })
             .skip(preview.pending.baseline_user_messages)
             .any(|item| {
+                if item["rustAwaitingQueueDelivery"] == true {
+                    return false;
+                }
+                if let Some(id) = item["rustQueueMessageID"].as_str() {
+                    return id == preview.queue_id;
+                }
                 let captured = &preview.pending.captured;
                 let same_context = item["context"] == captured["draftContext"]
                     || (!coincide_core::composer_context::has_context(&item["context"])
@@ -143,9 +123,23 @@ pub(super) struct PendingSend {
     pub baseline_user_messages: usize,
     /// Keeps this submission's previews hidden while it is being saved.
     pub image_send: Option<u64>,
-    admission:
-        Option<Arc<std::sync::Mutex<Option<Result<coincide_core::api::CapturedNativeSend>>>>>,
+    admission: Option<Arc<CapturedAdmission>>,
 }
+#[derive(Default)]
+struct CapturedAdmission {
+    /// 0 waits for the Engine, 1 owns admission, and 2 was recalled.
+    state: std::sync::atomic::AtomicU8,
+    result: Mutex<Option<Result<coincide_core::api::CapturedNativeSend>>>,
+}
+impl CapturedAdmission {
+    fn claim(&self, next: u8) -> bool {
+        use std::sync::atomic::Ordering;
+        self.state
+            .compare_exchange(0, next, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+}
+
 impl PendingSend {
     pub fn new(thread: &Value, draft: String, alternate: bool) -> Self {
         let mut captured = pending_scope(thread, false);
@@ -181,6 +175,14 @@ impl PendingSend {
             image_send: None,
             admission: None,
         }
+    }
+    pub(super) fn can_recall(&self) -> bool {
+        self.admission
+            .as_ref()
+            .is_none_or(|slot| slot.state.load(std::sync::atomic::Ordering::Acquire) == 0)
+    }
+    pub(super) fn recall(&self) -> bool {
+        self.admission.as_ref().is_none_or(|slot| slot.claim(2))
     }
     pub fn with_behavior(mut self, behavior: Behavior) -> Self {
         self.behavior = behavior;
@@ -364,13 +366,14 @@ impl Coincide {
         cx: &mut Context<Self>,
     ) -> Option<Result<coincide_core::api::CapturedNativeSend>> {
         if let Some(slot) = &pending.admission {
-            let result = slot.lock().ok()?.take();
+            let result = slot.result.lock().ok()?.take();
             if result.is_some() {
                 pending.admission = None;
             }
             return result;
         }
-        let slot = Arc::new(std::sync::Mutex::new(None));
+        let slot = Arc::new(CapturedAdmission::default());
+        let worker_slot = slot.clone();
         pending.admission = Some(slot.clone());
         let engine = self.engine.clone();
         let captured = pending.captured.clone();
@@ -383,6 +386,9 @@ impl Coincide {
                     let mut engine = engine
                         .lock()
                         .map_err(|_| anyhow::anyhow!("App engine is unavailable"))?;
+                    if !worker_slot.claim(1) {
+                        return Ok(coincide_core::api::CapturedNativeSend::Waiting);
+                    }
                     engine.admit_captured_native_send(
                         &captured,
                         clear_original,
@@ -391,7 +397,7 @@ impl Coincide {
                     )
                 })
                 .await;
-            if let Ok(mut value) = slot.lock() {
+            if let Ok(mut value) = slot.result.lock() {
                 *value = Some(result);
             }
             let _ = this.update(cx, |_, cx| cx.notify());
@@ -533,7 +539,9 @@ impl Coincide {
         }
         next.original_visible = false;
         next.edited = true; // The visible composer is now a different draft.
-        next.buffer_id = Some(format!("buffered-send-{}", uuid::Uuid::new_v4()));
+        let queue_id = uuid::Uuid::new_v4().to_string();
+        next.captured["nativeQueueID"] = json!(queue_id);
+        next.buffer_id = Some(queue_id);
         let images = next.captured["rustDraftImages"]
             .as_array()
             .cloned()
@@ -567,15 +575,6 @@ impl Coincide {
         self.composer
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.reconcile_buffered_sends();
-        if let Some(count) = self
-            .selected
-            .as_ref()
-            .and_then(|thread| thread["items"].as_array().map(Vec::len))
-        {
-            let start = self.transcript_count.min(count);
-            self.splice_transcript(start..self.transcript_count, count - start);
-            self.transcript_count = count;
-        }
         self.status = "Preparing your message.".into();
         cx.notify();
     }
@@ -595,75 +594,7 @@ impl Coincide {
             })
             .unwrap_or_default();
         for index in finished.into_iter().rev() {
-            let preview = self.admitted_previews.remove(index);
-            self.remove_buffered_send(&preview.pending);
-        }
-        let Some(thread) = self.selected.as_mut() else {
-            return;
-        };
-        let id = text(thread, "id");
-        let Some(items) = thread["items"].as_array_mut() else {
-            return;
-        };
-        for entry in self
-            .pending_follow_up
-            .iter()
-            .chain(self.pending_follow_up_backlog.iter())
-            .chain(
-                self.admitted_previews
-                    .iter()
-                    .map(|preview| &preview.pending),
-            )
-        {
-            let Some(buffer_id) = entry.buffer_id.as_ref().filter(|_| entry.thread == id) else {
-                continue;
-            };
-            if let Some(item) = items.iter_mut().find(|item| item["id"] == *buffer_id) {
-                if entry.captured["rustDraftImages"]
-                    .as_array()
-                    .is_some_and(|images| !images.is_empty())
-                {
-                    item["rustImages"] = entry.captured["rustDraftImages"].clone();
-                }
-                if coincide_core::composer_context::has_context(&entry.captured["draftContext"]) {
-                    item["context"] = entry.captured["draftContext"].clone();
-                }
-                continue;
-            }
-            let mut item = json!({"id":buffer_id,"kind":"user","text":entry.draft,"createdAt":0,"bufferedSend":true});
-            if entry.captured["rustDraftImages"]
-                .as_array()
-                .is_some_and(|images| !images.is_empty())
-            {
-                item["rustImages"] = entry.captured["rustDraftImages"].clone();
-            }
-            if coincide_core::composer_context::has_context(&entry.captured["draftContext"]) {
-                item["context"] = entry.captured["draftContext"].clone();
-            }
-            items.push(item);
-        }
-    }
-
-    pub(super) fn remove_buffered_send(&mut self, pending: &PendingSend) {
-        let Some(buffer_id) = &pending.buffer_id else {
-            return;
-        };
-        let Some(thread) = self
-            .selected
-            .as_mut()
-            .filter(|thread| text(thread, "id") == pending.thread)
-        else {
-            return;
-        };
-        let Some(items) = thread["items"].as_array_mut() else {
-            return;
-        };
-        if let Some(index) = items.iter().position(|item| item["id"] == *buffer_id) {
-            items.remove(index);
-            if index < self.transcript_count {
-                self.splice_transcript(index..index + 1, 0);
-                self.transcript_count -= 1;
-            }
+            self.admitted_previews.remove(index);
         }
     }
 
@@ -671,9 +602,6 @@ impl Coincide {
         self.follow_up_deliveries.push(PendingDelivery {
             ticket: Some(ticket),
             thread,
-            draft: String::new(),
-            queued: true,
-            image_send: None,
         });
     }
 
@@ -922,41 +850,7 @@ impl Coincide {
         })
         .detach();
     }
-    pub(super) fn send_follow_up(
-        &mut self,
-        alternate: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        // Own the exact submission before waiting for draft persistence or the
-        // provider. The buffer preserves mode, order, attachments and edits.
-        self.buffer_composer_send(alternate, window, cx);
-    }
-    /// Put a follow-up back in the composer after the engine withheld it, but
-    /// never over text the user has started typing since.
-    fn restore_follow_up_draft(
-        &mut self,
-        id: &str,
-        draft: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        if !self
-            .selected
-            .as_ref()
-            .is_some_and(|thread| text(thread, "id") == id)
-            || !self.composer.read(cx).value().is_empty()
-        {
-            return false;
-        }
-        self.composer
-            .update(cx, |input, cx| input.set_value(draft, window, cx));
-        if let Some(thread) = self.selected.as_mut() {
-            thread["draft"] = json!(draft);
-        }
-        true
-    }
-    pub(super) fn poll_composer_follow_ups(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn poll_composer_follow_ups(&mut self, cx: &mut Context<Self>) {
         let mut retained = Vec::new();
         for mut delivery in std::mem::take(&mut self.follow_up_deliveries) {
             let result = match self.engine.try_lock() {
@@ -978,70 +872,20 @@ impl Coincide {
             match result {
                 None | Some(NativeFollowUpStatus::Pending) => retained.push(delivery),
                 Some(status) => {
-                    let delivered = matches!(status, NativeFollowUpStatus::Delivered { .. });
-                    let draft_cleared = matches!(
-                        status,
-                        NativeFollowUpStatus::Delivered {
-                            draft_cleared: true,
-                            ..
+                    self.status = match status {
+                        NativeFollowUpStatus::Retained(reason) => reason,
+                        NativeFollowUpStatus::Delivered { dispatch, .. } => {
+                            dispatch_label(dispatch).into()
                         }
-                    );
-                    self.record_composer_draft(cx);
-                    self.finish_pending_images(delivery.image_send, delivered);
-                    self.finish_submitted_draft(delivery.image_send, delivered && draft_cleared);
-                    let restored = matches!(status, NativeFollowUpStatus::Retained(_))
-                        && !delivery.queued
-                        && self.restore_follow_up_draft(
-                            &delivery.thread,
-                            &delivery.draft,
-                            window,
-                            cx,
-                        );
-                    let queued = matches!(
-                        status,
-                        NativeFollowUpStatus::Delivered {
-                            dispatch: Dispatch::Queue,
-                            ..
-                        }
-                    ) && !delivery.queued;
-                    // Queue entries have their own UI, and a restored draft is
-                    // back in the composer. Remove only this optimistic row.
-                    if (restored || queued)
-                        && self
-                            .pending_sent
-                            .get(&delivery.thread)
-                            .is_some_and(|pending| {
-                                pending.thread == delivery.thread && pending.draft == delivery.draft
-                            })
-                    {
-                        self.drop_pending_send(&delivery.thread);
-                    }
-                    if let NativeFollowUpStatus::Retained(reason) = &status {
-                        if reason.contains("delivery is unknown") {
-                            self.show_local_error(&format!("Delivery status unknown: {reason}"));
-                        } else {
-                            self.show_local_error(&format!("Message not delivered: {reason}"));
-                        }
-                    }
-                    self.status = match &status {
-                        NativeFollowUpStatus::Retained(reason) => reason.clone(),
-                        NativeFollowUpStatus::Delivered {
-                            dispatch,
-                            draft_cleared,
-                        } => format!(
-                            "{}{}",
-                            dispatch_label(*dispatch),
-                            if delivery.queued {
-                                "; separate draft preserved"
-                            } else if *draft_cleared {
-                                ""
-                            } else {
-                                "; draft cleanup did not complete. Do not submit it again."
-                            }
-                        ),
                         NativeFollowUpStatus::Pending => unreachable!(),
                     };
-                    self.refresh_queue(cx);
+                    if self
+                        .selected
+                        .as_ref()
+                        .is_some_and(|thread| thread["id"] == delivery.thread)
+                    {
+                        self.refresh_queue(cx);
+                    }
                     cx.notify();
                 }
             }
@@ -1115,24 +959,23 @@ fn behavior_help(behavior: Behavior) -> &'static str {
 #[cfg(test)]
 mod send_route_tests {
     use super::{
-        AdmittedPreview, PendingSend, SelectionWait, SendRoute, buffered_text, follow_up_source,
-        preview_handed_off, send_route, separate_buffered_payload,
+        AdmittedPreview, PendingSend, SelectionWait, buffered_text, follow_up_source,
+        preview_handed_off, separate_buffered_payload,
     };
     use serde_json::json;
 
     #[test]
-    fn submitted_bubble_stays_until_queue_or_transcript_is_visible() {
+    fn admitted_preview_stays_until_its_queue_or_accepted_transcript_is_visible() {
         let thread = json!({"id":"t","selection":{"provider":"codex"},
             "items":[{"kind":"user","text":"same"}], "draftContext":[]});
         let preview = AdmittedPreview {
             pending: PendingSend::new(&thread, "same".into(), false),
             queue_id: "queue-1".into(),
-            direct: true,
         };
         let mut snapshot = thread.clone();
         snapshot["rustMessageQueue"] = json!([{"id":"queue-1","state":"dispatching"}]);
         let queue = vec![json!({"id":"queue-1","state":"dispatching"})];
-        assert!(!preview_handed_off(&preview, &snapshot, &queue));
+        assert!(preview_handed_off(&preview, &snapshot, &queue));
         snapshot["rustMessageQueue"][0]["state"] = json!("completed");
         assert!(
             !preview_handed_off(&preview, &snapshot, &[]),
@@ -1141,12 +984,14 @@ mod send_route_tests {
         snapshot["items"]
             .as_array_mut()
             .unwrap()
-            .push(json!({"kind":"user","text":"same"}));
+            .push(json!({"kind":"user","text":"same","rustQueueMessageID":"queue-1","rustAwaitingQueueDelivery":true}));
+        assert!(!preview_handed_off(&preview, &snapshot, &[]));
+        snapshot["items"][1]
+            .as_object_mut()
+            .unwrap()
+            .remove("rustAwaitingQueueDelivery");
         assert!(preview_handed_off(&preview, &snapshot, &[]));
-        let queued = AdmittedPreview {
-            direct: false,
-            ..preview
-        };
+        let queued = AdmittedPreview { ..preview };
         assert!(preview_handed_off(&queued, &thread, &queue));
     }
 
@@ -1163,20 +1008,14 @@ mod send_route_tests {
     }
 
     #[test]
-    fn running_turn_routes_to_follow_up_even_while_selection_is_refreshing() {
-        assert_eq!(send_route(true, false, true), SendRoute::FollowUp);
-        assert_eq!(send_route(true, false, false), SendRoute::FollowUp);
+    fn a_recalled_message_cannot_claim_admission() {
+        let slot = super::CapturedAdmission::default();
+        assert!(slot.claim(2));
+        assert!(!slot.claim(1));
+        let slot = super::CapturedAdmission::default();
+        assert!(slot.claim(1));
+        assert!(!slot.claim(2));
     }
-
-    #[test]
-    fn image_import_finishes_before_either_send_path() {
-        assert_eq!(send_route(true, true, true), SendRoute::WaitForImages);
-        assert_eq!(send_route(false, true, false), SendRoute::WaitForImages);
-        assert_eq!(send_route(false, true, true), SendRoute::WaitForSelection);
-        assert_eq!(send_route(false, false, true), SendRoute::WaitForSelection);
-        assert_eq!(send_route(false, false, false), SendRoute::Send);
-    }
-
     #[test]
     fn waiting_send_uses_the_acknowledged_selection_without_changing_its_payload() {
         for provider in [

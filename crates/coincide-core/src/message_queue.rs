@@ -95,6 +95,16 @@ pub(crate) fn add_payload(
     context: Value,
     images: Vec<crate::attachments::StoredImage>,
 ) -> Result<Message> {
+    add_payload_with_id(thread, Uuid::new_v4(), text, context, images)
+}
+
+pub(crate) fn add_payload_with_id(
+    thread: &mut Value,
+    id: Uuid,
+    text: &str,
+    context: Value,
+    images: Vec<crate::attachments::StoredImage>,
+) -> Result<Message> {
     crate::composer_context::validate(&context)?;
     ensure!(
         text.len() <= 256 * 1024
@@ -112,6 +122,11 @@ pub(crate) fn add_payload(
         "Queued images exceed safe limits"
     );
     let mut messages = read(thread)?;
+    let id = id.to_string();
+    ensure!(
+        messages.iter().all(|message| message.id != id),
+        "This message already has a queue entry"
+    );
     let mut rows = thread["rustMessageQueue"]
         .as_array()
         .cloned()
@@ -134,7 +149,7 @@ pub(crate) fn add_payload(
         "Queued text exceeds 512 KiB"
     );
     let message = Message {
-        id: Uuid::new_v4().to_string(),
+        id,
         text: text.into(),
         selection: thread["selection"].clone(),
         context,
@@ -179,6 +194,20 @@ pub fn finish(thread: &mut Value, id: &str, state: State, error: Option<&str>) -
         row["error"] = Value::String(error.chars().take(1024).collect());
     } else if let Some(row) = row.as_object_mut() {
         row.remove("error");
+    }
+    if state == State::Completed
+        && let Some(item) = thread
+            .get_mut("items")
+            .and_then(Value::as_array_mut)
+            .and_then(|items| {
+                items
+                    .iter_mut()
+                    .rev()
+                    .find(|item| item["rustQueueMessageID"] == id)
+            })
+        && let Some(item) = item.as_object_mut()
+    {
+        item.remove("rustAwaitingQueueDelivery");
     }
     Ok(())
 }
@@ -240,6 +269,41 @@ mod raw_finish_tests {
         finish(&mut thread, &first.id, State::Completed, None).unwrap();
         assert_eq!(thread, expected);
     }
+    #[test]
+    fn only_an_accepted_claim_releases_its_transcript_opener() {
+        let mut thread = json!({"selection":{"provider":"codex"}});
+        let first = add(&mut thread, "first").unwrap();
+        let next = add(&mut thread, "next").unwrap();
+        thread["items"] = json!([
+            {"id":"older","text":"first"},
+            {"id":"one","rustQueueMessageID":first.id,"rustAwaitingQueueDelivery":true},
+            {"id":"two","rustQueueMessageID":next.id,"rustAwaitingQueueDelivery":true}
+        ]);
+        thread["rustMessageQueue"][0]["state"] = json!("dispatching");
+        finish(&mut thread, &first.id, State::Completed, None).unwrap();
+        assert!(
+            thread["items"][1]
+                .get("rustAwaitingQueueDelivery")
+                .is_none()
+        );
+        assert_eq!(thread["items"][2]["rustAwaitingQueueDelivery"], true);
+        thread["rustMessageQueue"][1]["state"] = json!("dispatching");
+        finish(&mut thread, &next.id, State::Interrupted, None).unwrap();
+        assert_eq!(thread["items"][2]["rustAwaitingQueueDelivery"], true);
+        assert_eq!(thread["items"][0], json!({"id":"older","text":"first"}));
+    }
+
+    #[test]
+    fn native_message_keeps_its_identity_and_cannot_be_enqueued_twice() {
+        let id = Uuid::new_v4();
+        let mut thread = json!({"selection":{"provider":"codex"}});
+        let row = add_payload_with_id(&mut thread, id, "hello", Value::Null, vec![]).unwrap();
+        assert_eq!(row.id, id.to_string());
+        let before = thread.clone();
+        assert!(add_payload_with_id(&mut thread, id, "hello", Value::Null, vec![]).is_err());
+        assert_eq!(thread, before);
+    }
+
     #[test]
     fn adding_payload_preserves_neighbor_unknowns_and_rejects_invalid_context_atomically() {
         let mut thread = json!({"selection":{"provider":"codex"}});

@@ -1932,6 +1932,11 @@ impl Engine {
         );
         if restore_paused_goal.is_none() {
             append(&mut v, "user", prompt, None);
+            if let SendOrigin::Queued(claim) = origin {
+                let item = v["items"].as_array_mut().unwrap().last_mut().unwrap();
+                item["rustQueueMessageID"] = json!(claim.id());
+                item["rustAwaitingQueueDelivery"] = json!(true);
+            }
             if crate::composer_context::has_context(&context) {
                 v["items"].as_array_mut().unwrap().last_mut().unwrap()["context"] = context;
             }

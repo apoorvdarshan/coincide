@@ -6,6 +6,14 @@ pub(super) enum PendingQueueAction {
         expected: Value,
         message: Value,
     },
+    Interrupt {
+        expected: Value,
+        message: Value,
+    },
+    StopDelivery {
+        thread: String,
+        message: String,
+    },
     Edit {
         thread: String,
         message: Value,
@@ -20,8 +28,12 @@ pub(super) enum PendingQueueAction {
 impl PendingQueueAction {
     fn thread(&self) -> &str {
         match self {
-            Self::Send { expected, .. } => expected["id"].as_str().unwrap_or(""),
-            Self::Edit { thread, .. } | Self::Change { thread, .. } => thread,
+            Self::Send { expected, .. } | Self::Interrupt { expected, .. } => {
+                expected["id"].as_str().unwrap_or("")
+            }
+            Self::Edit { thread, .. }
+            | Self::Change { thread, .. }
+            | Self::StopDelivery { thread, .. } => thread,
         }
     }
 }
@@ -95,6 +107,24 @@ fn queue_expected_scope(thread: &Value) -> Value {
     Value::Object(scope)
 }
 
+fn hold_queue_completion_for_transcript(messages: &mut [Value], previous: &[Value]) {
+    for row in messages {
+        if row["state"] == "completed"
+            && previous
+                .iter()
+                .any(|item| item["id"] == row["id"] && item["state"] != "completed")
+        {
+            row["state"] = json!("dispatching");
+            row["deliveryCommitted"] = json!(true);
+        }
+    }
+}
+
+fn pending_row(pending: &composer_follow_up_mount::PendingSend, id: &str, state: &str) -> Value {
+    json!({"id":id, "state":state, "text":pending.draft, "error":pending.last_error,
+        "rustImages":pending.captured["rustDraftImages"], "context":pending.captured["draftContext"]})
+}
+
 impl Coincide {
     fn defer_queue_action(&mut self, action: PendingQueueAction) {
         retain_pending_action(&mut self.pending_queue_actions, action);
@@ -118,6 +148,12 @@ impl Coincide {
             PendingQueueAction::Send { expected, message } => {
                 self.send_queued_now(&expected, &message, cx)
             }
+            PendingQueueAction::Interrupt { expected, message } => {
+                self.send_queued(&expected, &message, true, cx)
+            }
+            PendingQueueAction::StopDelivery { thread, message } => {
+                self.stop_queue_delivery(thread, message, cx)
+            }
             PendingQueueAction::Edit { message, .. } => {
                 self.edit_queued_message(&message, window, cx)
             }
@@ -128,6 +164,15 @@ impl Coincide {
     }
 
     fn send_queued_now(&mut self, expected: &Value, message: &Value, cx: &mut Context<Self>) {
+        self.send_queued(expected, message, false, cx);
+    }
+    fn send_queued(
+        &mut self,
+        expected: &Value,
+        message: &Value,
+        interrupt: bool,
+        cx: &mut Context<Self>,
+    ) {
         if self.media.close_requested || self.media.shutdown_requested {
             return;
         }
@@ -140,8 +185,13 @@ impl Coincide {
         {
             return;
         }
-        let result = try_state(&self.engine)
-            .and_then(|mut engine| engine.native_send_queued_now(expected, message));
+        let result = try_state(&self.engine).and_then(|mut engine| {
+            if interrupt {
+                engine.native_interrupt_and_send_queued(expected, message)
+            } else {
+                engine.native_send_queued_now(expected, message)
+            }
+        });
         match result {
             Ok(ticket) => {
                 self.track_queued_delivery(ticket, text(expected, "id"));
@@ -154,14 +204,29 @@ impl Coincide {
                         .to_string()
                         .contains("another native delivery is pending") =>
             {
-                self.defer_queue_action(PendingQueueAction::Send {
-                    expected: expected.clone(),
-                    message: message.clone(),
-                })
+                let expected = expected.clone();
+                let message = message.clone();
+                self.defer_queue_action(if interrupt {
+                    PendingQueueAction::Interrupt { expected, message }
+                } else {
+                    PendingQueueAction::Send { expected, message }
+                });
             }
             Err(error) => {
                 self.queue_error = format!("Could not send queued message: {error}");
             }
+        }
+        cx.notify();
+    }
+    fn stop_queue_delivery(&mut self, thread: String, message: String, cx: &mut Context<Self>) {
+        match try_state(&self.engine)
+            .and_then(|mut engine| engine.native_stop_unaccepted_queued_turn(&thread, &message))
+        {
+            Ok(()) => self.refresh_queue(cx),
+            Err(error) if engine_busy(&error) => {
+                self.defer_queue_action(PendingQueueAction::StopDelivery { thread, message })
+            }
+            Err(error) => self.queue_error = error.to_string(),
         }
         cx.notify();
     }
@@ -324,12 +389,13 @@ impl Coincide {
                 .map_err(|error| error.to_string()),
             Err(_) => return,
         };
-        self.accept_queue_read(&id, result, cx);
+        self.accept_queue_read(&id, result, false, cx);
     }
     pub(super) fn accept_queue_read(
         &mut self,
         id: &str,
         result: Result<Value, String>,
+        transcript_updated: bool,
         cx: &mut Context<Self>,
     ) {
         if self
@@ -341,7 +407,12 @@ impl Coincide {
         }
         match result {
             Ok(value) => {
-                let messages = value["messages"].as_array().cloned().unwrap_or_default();
+                let mut messages = value["messages"].as_array().cloned().unwrap_or_default();
+                // A small queue read can finish before the matching transcript
+                // refresh. Keep the row until both views can advance together.
+                if !transcript_updated {
+                    hold_queue_completion_for_transcript(&mut messages, &self.queued_messages);
+                }
                 let enabled = value["enabled"] == true;
                 let error = value["error"].as_str().unwrap_or_default().to_owned();
                 if self.queued_messages != messages
@@ -365,10 +436,8 @@ impl Coincide {
                 }
             }
             Err(error) => {
-                // Never retain another thread's pending messages after selection.
-                self.selected_generation = self.selected_generation.wrapping_add(1);
-                self.queued_messages.clear();
-                self.queue_enabled = false;
+                // Selection clears another thread's rows. Keep this thread's
+                // last valid queue across snapshot or persistence recovery.
                 self.queue_error = format!("Unable to load queued messages: {error}");
             }
         }
@@ -405,89 +474,303 @@ impl Coincide {
         }
     }
 
-    pub(super) fn queue_pane(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn recall_buffered_queue(
+        &mut self,
+        id: &str,
+        edit: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.chat_visible() || self.media.close_requested || self.media.shutdown_requested {
+            return;
+        }
+        let Some(thread) = self.selected.as_ref().map(|thread| text(thread, "id")) else {
+            return;
+        };
+        let matches = |entry: &composer_follow_up_mount::PendingSend| {
+            entry.thread == thread && entry.buffer_id.as_deref() == Some(id)
+        };
+        if edit && !self.composer.read(cx).value().is_empty() {
+            self.queue_error = "Finish the current draft before editing this message.".into();
+            cx.notify();
+            return;
+        }
+        let pending = if let Some(entry) = self
+            .pending_follow_up
+            .as_ref()
+            .filter(|entry| matches(entry))
+        {
+            if !entry.recall() {
+                return;
+            }
+            self.pending_follow_up.take()
+        } else if let Some(index) = self.pending_follow_up_backlog.iter().position(matches) {
+            if !self.pending_follow_up_backlog[index].recall() {
+                return;
+            }
+            self.pending_follow_up_backlog.remove(index)
+        } else {
+            None
+        };
+        let Some(pending) = pending else { return };
+        self.attachment_imports.release_claims(&pending.import_jobs);
+        self.finish_pending_images(pending.image_send, false);
+        self.queue_error.clear();
+        if edit {
+            self.composer
+                .update(cx, |input, cx| input.set_value(pending.draft, window, cx));
+            self.composer.read(cx).focus_handle(cx).focus(window, cx);
+        }
+        cx.notify();
+    }
+
+    pub(super) fn queue_pane(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         use gpui_kit::assets::IconName;
-        let messages = self
+        let current = self.selected.as_ref()?;
+        let thread = text(current, "id");
+        let source = queue_expected_scope(current);
+        let running = self.running.contains(&thread);
+        let mut messages = self
             .queued_messages
             .iter()
-            .filter(|message| message["state"] != "completed")
-            .filter(|message| {
-                !matches!(message["state"].as_str(), Some("pending" | "dispatching"))
-                    || !self
-                        .admitted_previews
-                        .iter()
-                        .any(|preview| preview.direct && message["id"] == preview.queue_id)
-            })
+            .filter(|row| row["state"] != "completed")
+            .cloned()
+            .map(|row| (row, false, Vec::new()))
             .collect::<Vec<_>>();
+        let stoppable = if messages
+            .iter()
+            .any(|(row, _, _)| row["state"] == "dispatching")
+        {
+            current["items"]
+                .as_array()
+                .and_then(|items| {
+                    items.iter().rev().find_map(|item| {
+                        (item["rustAwaitingQueueDelivery"] == true)
+                            .then(|| item["rustQueueMessageID"].as_str())
+                            .flatten()
+                    })
+                })
+                .map(str::to_owned)
+        } else {
+            None
+        };
+        let show_queue_toggle = !messages.is_empty();
+        for preview in self
+            .admitted_previews
+            .iter()
+            .filter(|preview| preview.pending.thread == thread)
+        {
+            if !messages
+                .iter()
+                .any(|(row, _, _)| row["id"] == preview.queue_id)
+            {
+                messages.push((
+                    pending_row(&preview.pending, &preview.queue_id, "dispatching"),
+                    true,
+                    Vec::new(),
+                ));
+            }
+        }
+        for pending in self
+            .pending_follow_up
+            .iter()
+            .chain(&self.pending_follow_up_backlog)
+        {
+            if let Some(id) = pending.buffer_id.as_deref().filter(|id| {
+                pending.thread == thread && !messages.iter().any(|(row, _, _)| row["id"] == *id)
+            }) {
+                let state = if pending.can_recall() {
+                    "pending"
+                } else {
+                    "dispatching"
+                };
+                messages.push((
+                    pending_row(pending, id, state),
+                    true,
+                    pending.import_jobs.clone(),
+                ));
+            }
+        }
         if messages.is_empty() && self.queue_error.is_empty() {
             return None;
         }
-        let running = self
-            .selected
-            .as_ref()
-            .is_some_and(|thread| self.running.contains(&text(thread, "id")));
-        let source = self.selected.as_ref().map(queue_expected_scope);
         let mut pane = div()
             .id("message-queue")
             .w_full()
+            .max_h(px(190.))
+            .overflow_y_scroll()
             .flex()
             .flex_col()
-            .gap(px(2.))
-            .px_3()
+            .gap_1()
+            .px_2()
             .py_1()
             .rounded_md()
             .bg(self.color(0x181d28));
         if !self.queue_error.is_empty() {
-            pane = pane.child(div().text_xs().child(self.queue_error.clone()));
+            pane = pane.child(
+                div()
+                    .px_2()
+                    .py_1()
+                    .text_xs()
+                    .child(self.queue_error.clone()),
+            );
         }
-        for (index, message) in messages.iter().take(3).enumerate() {
-            let id = text(message, "id");
-            let state = text(message, "state");
-            let body = text(message, "text");
-            let body = coincide_core::async_questions::display_reply(&body).unwrap_or(body);
-            let preview = body.lines().next().unwrap_or("");
-            let images = message["rustImages"].as_array().map_or(0, Vec::len);
-            let context = message["context"].as_array().map_or(0, Vec::len);
-            let preview = if !preview.is_empty() {
-                preview.to_owned()
-            } else if images != 0 {
-                format!("{images} image{}", if images == 1 { "" } else { "s" })
-            } else {
-                format!("{context} reference{}", if context == 1 { "" } else { "s" })
-            };
-            let edit_message = (*message).clone();
-            let send_message = (*message).clone();
-            let expected = source.clone();
+        for (index, (message, local, importing)) in messages.into_iter().enumerate() {
+            let id = text(&message, "id");
+            let state = text(&message, "state");
+            let in_flight = state == "dispatching";
+            let can_stop =
+                !local && message["deliveryCommitted"] != true && stoppable.as_deref() == Some(&id);
             let editable = matches!(state.as_str(), "pending" | "failed" | "interrupted")
                 && message["codexQuestionSession"].is_null();
-            let can_send = state == "pending";
+            let sendable = !local && state == "pending" && running;
+            let body = text(&message, "text");
+            let body = coincide_core::async_questions::display_reply(&body).unwrap_or(body);
+            let images = message["rustImages"]
+                .as_array()
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            let files = message["context"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|row| row["kind"] == "file" || row["kind"] == "folder")
+                .filter_map(|row| row["displayName"].as_str().or_else(|| row["name"].as_str()))
+                .take(3)
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            let count =
+                images.len() + message["context"].as_array().map_or(0, Vec::len) + importing.len();
+            let mut thumbs = images
+                .iter()
+                .take(3)
+                .map(|image| self.image_preview(image, None, 30., 26., window, cx))
+                .collect::<Vec<_>>();
+            for preview in self
+                .attachment_imports
+                .claimed_previews(&importing)
+                .into_iter()
+                .take(3 - thumbs.len())
+            {
+                use composer_attachments::ImportPreview;
+                thumbs.push(match preview {
+                    ImportPreview::Clipboard(image) => img(image)
+                        .w(px(30.))
+                        .h(px(26.))
+                        .rounded_md()
+                        .object_fit(ObjectFit::Cover)
+                        .into_any_element(),
+                    ImportPreview::Path(path) => div()
+                        .id(("queued-import-file", thumbs.len()))
+                        .w(px(30.))
+                        .h(px(26.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(Icon::new(IconName::FileText).small())
+                        .tooltip(move |window, cx| {
+                            gpui_kit::component::tooltip::Tooltip::new(
+                                path.file_name().map_or_else(
+                                    || "Attachment".into(),
+                                    |name| name.to_string_lossy().into_owned(),
+                                ),
+                            )
+                            .build(window, cx)
+                        })
+                        .into_any_element(),
+                });
+            }
+            let row_error = message["error"]
+                .as_str()
+                .filter(|error| !error.is_empty())
+                .map(str::to_owned);
+            let caption = if count == 1 {
+                "1 attachment".into()
+            } else {
+                format!("{count} attachments")
+            };
+            let action_source = source.clone();
+            let steer_message = message.clone();
+            let interrupt_source = source.clone();
+            let interrupt_message = message.clone();
+            let edit_message = message.clone();
+            let edit_id = id.clone();
+            let remove_id = id.clone();
+            let stop_thread = thread.clone();
             pane = pane.child(
                 div()
                     .id(("queued-message", index))
-                    .h(px(26.))
                     .flex()
                     .items_center()
                     .gap_2()
+                    .px_2()
+                    .py_1()
                     .child(
                         Icon::new(IconName::Clock)
-                            .size(px(12.))
+                            .size(px(13.))
                             .text_color(self.color(0x96a0b2)),
                     )
-                    .child(div().flex_1().min_w_0().truncate().text_xs().child(preview))
-                    .when(index == 0, |row| {
+                    .child(
+                        div()
+                            .flex()
+                            .flex_1()
+                            .min_w_0()
+                            .flex_col()
+                            .gap_1()
+                            .when(!body.is_empty(), |label| {
+                                label.child(div().truncate().text_sm().child(body))
+                            })
+                            .when(count > 0, |label| {
+                                label.child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap_1p5()
+                                        .min_w_0()
+                                        .children(thumbs)
+                                        .child(
+                                            div()
+                                                .min_w_0()
+                                                .truncate()
+                                                .text_xs()
+                                                .text_color(self.color(0x98a6ba))
+                                                .child(if files.is_empty() {
+                                                    caption
+                                                } else {
+                                                    format!("{caption} · {}", files.join(", "))
+                                                }),
+                                        ),
+                                )
+                            })
+                            .when_some(row_error, |label, error| {
+                                label.child(
+                                    div()
+                                        .text_xs()
+                                        .truncate()
+                                        .text_color(self.color(0xe4e9f2).opacity(0.7))
+                                        .child(error),
+                                )
+                            }),
+                    )
+                    .when(index == 0 && show_queue_toggle, |row| {
+                        let enabled = self.queue_enabled;
                         row.child(
                             Button::new("queue-toggle-compact")
-                                .icon(if self.queue_enabled {
+                                .icon(if enabled {
                                     IconName::Pause
                                 } else {
                                     IconName::Play
                                 })
-                                .accessibility_label(if self.queue_enabled {
+                                .tooltip(if enabled {
                                     "Pause queue"
                                 } else {
                                     "Resume queue"
                                 })
-                                .tooltip(if self.queue_enabled {
+                                .accessibility_label(if enabled {
                                     "Pause queue"
                                 } else {
                                     "Resume queue"
@@ -504,63 +787,100 @@ impl Coincide {
                                         },
                                         None,
                                         cx,
-                                    )
+                                    );
                                 })),
                         )
                     })
-                    .when(running, |row| {
+                    .when(sendable, |row| {
                         row.child(
                             Button::new(SharedString::from(format!("send-queued-now-{id}")))
                                 .icon(IconName::CornerUpRight)
-                                .accessibility_label("Send queued message now")
                                 .tooltip("Send now")
+                                .accessibility_label("Send queued message now")
                                 .ghost()
                                 .xsmall()
                                 .compact()
-                                .disabled(!can_send)
                                 .on_click(cx.listener(move |this, _, _, cx| {
-                                    if let Some(expected) = &expected {
-                                        this.send_queued_now(expected, &send_message, cx);
-                                    }
+                                    this.send_queued_now(&action_source, &steer_message, cx)
                                 })),
+                        )
+                        .when(
+                            message["codexQuestionSession"].is_null(),
+                            |row| {
+                                row.child(
+                                    Button::new(SharedString::from(format!(
+                                        "interrupt-for-queued-{id}"
+                                    )))
+                                    .icon(IconName::SkipForward)
+                                    .tooltip("Stop current turn and send")
+                                    .accessibility_label("Stop current turn and send this message")
+                                    .ghost()
+                                    .xsmall()
+                                    .compact()
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.send_queued(
+                                            &interrupt_source,
+                                            &interrupt_message,
+                                            true,
+                                            cx,
+                                        )
+                                    })),
+                                )
+                            },
                         )
                     })
                     .child(
                         Button::new(SharedString::from(format!("edit-queued-{id}")))
                             .icon(IconName::Pencil)
-                            .accessibility_label("Edit queued message")
                             .tooltip("Edit queued message")
+                            .accessibility_label("Edit queued message")
                             .ghost()
                             .xsmall()
                             .compact()
                             .disabled(!editable)
                             .on_click(cx.listener(move |this, _, window, cx| {
-                                this.edit_queued_message(&edit_message, window, cx)
+                                if local {
+                                    this.recall_buffered_queue(&edit_id, true, window, cx);
+                                } else {
+                                    this.edit_queued_message(&edit_message, window, cx);
+                                }
                             })),
                     )
                     .child(
                         Button::new(SharedString::from(format!("remove-queued-{id}")))
                             .icon(IconName::Close)
-                            .accessibility_label("Remove queued message")
-                            .tooltip(if state == "dispatching" {
-                                "Dismiss sending message"
+                            .tooltip(if in_flight {
+                                "Stop delivery"
                             } else {
-                                "Remove from queue"
+                                "Cancel queued message"
+                            })
+                            .accessibility_label(if in_flight {
+                                "Stop delivery"
+                            } else {
+                                "Cancel queued message"
                             })
                             .ghost()
                             .xsmall()
                             .compact()
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.queue_action("agent.queue.remove", Some(id.clone()), cx)
+                            .disabled(in_flight && !can_stop)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                if local {
+                                    this.recall_buffered_queue(&remove_id, false, window, cx);
+                                } else if in_flight {
+                                    this.stop_queue_delivery(
+                                        stop_thread.clone(),
+                                        remove_id.clone(),
+                                        cx,
+                                    );
+                                } else {
+                                    this.queue_action(
+                                        "agent.queue.remove",
+                                        Some(remove_id.clone()),
+                                        cx,
+                                    );
+                                }
                             })),
                     ),
-            );
-        }
-        if messages.len() > 3 {
-            pane = pane.child(
-                div()
-                    .text_xs()
-                    .child(format!("{} more queued", messages.len() - 3)),
             );
         }
         Some(pane.into_any_element())
@@ -570,6 +890,19 @@ impl Coincide {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[::core::prelude::v1::test]
+    fn early_queue_completion_keeps_the_visible_row_until_transcript_refresh() {
+        let previous = vec![json!({"id":"send","state":"dispatching"})];
+        let mut incoming = vec![
+            json!({"id":"send","state":"completed"}),
+            json!({"id":"older","state":"completed"}),
+        ];
+        hold_queue_completion_for_transcript(&mut incoming, &previous);
+        assert_eq!(incoming[0]["state"], "dispatching");
+        assert_eq!(incoming[0]["deliveryCommitted"], true);
+        assert_eq!(incoming[1]["state"], "completed");
+    }
 
     #[::core::prelude::v1::test]
     fn option_up_edits_queue_only_in_a_visible_focused_composer() {
