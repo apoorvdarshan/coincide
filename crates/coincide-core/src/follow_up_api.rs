@@ -207,18 +207,18 @@ impl Engine {
                 }));
         let mut target = current.clone();
         target["selection"] = captured["selection"].clone();
-        let queue_id = captured["nativeQueueID"]
-            .as_str()
-            .map(Uuid::parse_str)
-            .transpose()?
-            .unwrap_or_else(Uuid::new_v4);
-        let message = crate::message_queue::add_payload_with_id(
-            &mut target,
-            queue_id,
-            captured["draft"].as_str().unwrap_or(""),
-            context,
-            images,
-        )?;
+        let draft = captured["draft"].as_str().unwrap_or("");
+        let message = if let Some(id) = captured["nativeQueueID"].as_str() {
+            crate::message_queue::add_payload_with_id(
+                &mut target,
+                Uuid::parse_str(id)?,
+                draft,
+                context,
+                images,
+            )?
+        } else {
+            crate::message_queue::add_payload(&mut target, draft, context, images)?
+        };
         target["selection"] = current["selection"].clone();
         if let Some(reason) = failure {
             let row = target["rustMessageQueue"]

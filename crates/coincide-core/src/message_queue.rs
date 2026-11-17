@@ -37,13 +37,19 @@ pub enum State {
     Interrupted,
 }
 
+const QUEUE_BYTES: usize = 2 * 1024 * 1024;
+// Native sends previously supported a 1 MiB prompt. JSON escaping can
+// expand that prompt to 6 MiB before its attachment metadata is included.
+const NATIVE_QUEUE_BYTES: usize = 8 * 1024 * 1024;
+const NATIVE_PROMPT_BYTES: usize = 1024 * 1024;
+
 pub fn read(thread: &Value) -> Result<Vec<Message>> {
     if thread["rustMessageQueue"].is_null() {
         return Ok(Vec::new());
     }
     ensure!(
-        serde_json::to_vec(&thread["rustMessageQueue"])?.len() <= 2 * 1024 * 1024,
-        "Saved message queue exceeds 2 MiB"
+        serde_json::to_vec(&thread["rustMessageQueue"])?.len() <= NATIVE_QUEUE_BYTES,
+        "Saved message queue exceeds 8 MiB"
     );
     let messages: Vec<Message> = serde_json::from_value(thread["rustMessageQueue"].clone())
         .context("Invalid saved message queue")?;
@@ -95,7 +101,7 @@ pub(crate) fn add_payload(
     context: Value,
     images: Vec<crate::attachments::StoredImage>,
 ) -> Result<Message> {
-    add_payload_with_id(thread, Uuid::new_v4(), text, context, images)
+    add_payload_inner(thread, None, text, context, images)
 }
 
 pub(crate) fn add_payload_with_id(
@@ -105,13 +111,30 @@ pub(crate) fn add_payload_with_id(
     context: Value,
     images: Vec<crate::attachments::StoredImage>,
 ) -> Result<Message> {
+    add_payload_inner(thread, Some(id), text, context, images)
+}
+
+fn add_payload_inner(
+    thread: &mut Value,
+    id: Option<Uuid>,
+    text: &str,
+    context: Value,
+    images: Vec<crate::attachments::StoredImage>,
+) -> Result<Message> {
+    let native = id.is_some();
+    let text_limit = if native {
+        NATIVE_PROMPT_BYTES
+    } else {
+        256 * 1024
+    };
     crate::composer_context::validate(&context)?;
     ensure!(
-        text.len() <= 256 * 1024
+        text.len() <= text_limit
             && (!text.trim().is_empty()
                 || crate::composer_context::has_context(&context)
                 || !images.is_empty()),
-        "Queued message must contain text, images or context and fit within 256 KiB"
+        "Queued message must contain text, images or context and fit within {} KiB",
+        text_limit / 1024
     );
     ensure!(
         images.len() <= 20
@@ -122,7 +145,7 @@ pub(crate) fn add_payload_with_id(
         "Queued images exceed safe limits"
     );
     let mut messages = read(thread)?;
-    let id = id.to_string();
+    let id = id.unwrap_or_else(Uuid::new_v4).to_string();
     ensure!(
         messages.iter().all(|message| message.id != id),
         "This message already has a queue entry"
@@ -145,7 +168,7 @@ pub(crate) fn add_payload_with_id(
         rows.remove(removable);
     }
     ensure!(
-        messages.iter().map(|m| m.text.len()).sum::<usize>() + text.len() <= 512 * 1024,
+        native || messages.iter().map(|m| m.text.len()).sum::<usize>() + text.len() <= 512 * 1024,
         "Queued text exceeds 512 KiB"
     );
     let message = Message {
@@ -161,10 +184,20 @@ pub(crate) fn add_payload_with_id(
         codex_question_session: None,
     };
     rows.push(serde_json::to_value(&message)?);
-    ensure!(
-        serde_json::to_vec(&rows)?.len() <= 2 * 1024 * 1024,
-        "Queued payloads exceed 2 MiB"
-    );
+    if native {
+        while serde_json::to_vec(&rows)?.len() > NATIVE_QUEUE_BYTES {
+            let completed = rows
+                .iter()
+                .position(|row| row["state"] == "completed")
+                .context("Queued payloads exceed 8 MiB")?;
+            rows.remove(completed);
+        }
+    } else {
+        ensure!(
+            serde_json::to_vec(&rows)?.len() <= QUEUE_BYTES,
+            "Queued payloads exceed 2 MiB"
+        );
+    }
     thread["rustMessageQueue"] = Value::Array(rows);
     Ok(message)
 }
@@ -291,6 +324,15 @@ mod raw_finish_tests {
         finish(&mut thread, &next.id, State::Interrupted, None).unwrap();
         assert_eq!(thread["items"][2]["rustAwaitingQueueDelivery"], true);
         assert_eq!(thread["items"][0], json!({"id":"older","text":"first"}));
+    }
+
+    #[test]
+    fn native_queue_preserves_the_previous_ordinary_prompt_limit() {
+        let mut thread = json!({"selection":{"provider":"codex"}});
+        let text = "\u{0001}".repeat(NATIVE_PROMPT_BYTES);
+        assert!(add(&mut thread, &text).is_err());
+        add_payload_with_id(&mut thread, Uuid::new_v4(), &text, Value::Null, vec![]).unwrap();
+        assert_eq!(read(&thread).unwrap()[0].text, text);
     }
 
     #[test]
