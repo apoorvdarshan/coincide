@@ -120,9 +120,14 @@ enum RightPanel {
 }
 
 impl Coincide {
-    pub(super) fn conversation_toolbar(&self, title: String, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn conversation_toolbar(&self, cx: &mut Context<Self>) -> AnyElement {
         // A conversation's stored title can carry a multi-line preview; the
         // header shows the first line only, as Swift's cell does.
+        let title = self
+            .selected
+            .as_ref()
+            .map(|thread| text(thread, "title"))
+            .unwrap_or_else(|| "Welcome to Coincide".into());
         let title = title
             .lines()
             .map(str::trim)

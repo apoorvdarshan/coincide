@@ -7938,24 +7938,11 @@ impl Render for Coincide {
             self.sync_keyboard_recording(window, cx);
         }
         let navigation_rail = self.navigation_rail(window, cx);
-        let sidebar_selected = self.thread_navigation.target().unwrap_or(&selected_id);
+        // Keep the sidebar selection tied to the transcript on screen. A
+        // pending target is used for navigation only until its selection commits.
         let sidebar = self
             .thread_list_open
-            .then(|| self.navigation_sidebar(sidebar_selected, window, cx));
-        let title = if let Some(id) = self.thread_navigation.target() {
-            self.sidebar_all_threads
-                .iter()
-                .find(|thread| thread.id == id)
-                .map(|thread| thread.title.clone())
-                .unwrap_or_else(|| "Conversation".into())
-        } else if self.pending_new_thread.is_some() {
-            "New chat".into()
-        } else {
-            self.selected
-                .as_ref()
-                .map(|v| text(v, "title"))
-                .unwrap_or_else(|| "Welcome to Coincide".into())
-        };
+            .then(|| self.navigation_sidebar(&selected_id, window, cx));
         let entity = cx.entity();
         // A long active turn may contain thousands of tool events. Resolve its
         // opener once instead of rescanning the tail for every visible row.
@@ -8105,7 +8092,7 @@ impl Render for Coincide {
                     .min_w_0()
                     .h_full()
                     .when_some(cookie_recovery, |view, recovery| view.child(recovery))
-                    .child(self.conversation_toolbar(title, cx))
+                    .child(self.conversation_toolbar(cx))
                     .when_some(self.thread_management(cx), |view, management| {
                         view.child(management)
                     })
