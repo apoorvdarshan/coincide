@@ -593,9 +593,6 @@ impl State {
 impl super::Coincide {
     pub(super) fn running_opener_for(&self, thread: &Value) -> Option<usize> {
         let id = thread["id"].as_str()?;
-        if !self.running.contains(id) {
-            return None;
-        }
         running_opener(
             thread["items"].as_array()?,
             self.window_chrome.run_opener(id)?,
@@ -605,9 +602,6 @@ impl super::Coincide {
     pub(super) fn selected_running_opener(&self) -> Option<usize> {
         let thread = self.selected.as_ref()?;
         let id = thread["id"].as_str()?;
-        if !self.running.contains(id) {
-            return None;
-        }
         self.chat_turns.running_opener(
             self.selected.transcript_revision(),
             thread["items"].as_array()?,
@@ -653,7 +647,7 @@ impl super::Coincide {
         let opener = self.selected_running_opener();
         let status = live(
             opener.map_or(&[][..], |opener| &items[opener..]),
-            self.running.contains(id),
+            self.running.iter().any(|running| running == id),
             self.chat_turns.starting.contains(id),
             self.settings["showReasoning"].as_bool().unwrap_or(true),
             waiting,
