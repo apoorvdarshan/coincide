@@ -2,16 +2,18 @@
 //! The native caller binds this projection to its owned immutable parse and
 //! rechecks renderer focus/revision/selection immediately before Core admission.
 use anyhow::{Result, ensure};
+use serde_json::{Value, json};
 use std::ops::Range;
-use unicode_segmentation::UnicodeSegmentation;
+use unicode_segmentation::GraphemeCursor;
 use uuid::Uuid;
 pub struct NativeReplySelection {
     pub(crate) item: Uuid,
+    card_id: Uuid,
     pub(crate) source: String,
     pub(crate) source_kind: String,
+    #[cfg(test)]
     source_range: Range<usize>,
-    rendered: String,
-    rendered_range: Range<usize>,
+    quote: String,
 }
 fn range_valid(text: &str, range: &Range<usize>) -> bool {
     range.start < range.end
@@ -19,10 +21,9 @@ fn range_valid(text: &str, range: &Range<usize>) -> bool {
         && text.is_char_boundary(range.start)
         && text.is_char_boundary(range.end)
         && [range.start, range.end].into_iter().all(|boundary| {
-            boundary == text.len()
-                || text
-                    .grapheme_indices(true)
-                    .any(|(index, _)| index == boundary)
+            GraphemeCursor::new(boundary, text.len(), true)
+                .is_boundary(text, 0)
+                .unwrap_or(false)
         })
 }
 impl NativeReplySelection {
@@ -66,35 +67,34 @@ impl NativeReplySelection {
             range_valid(&rendered, &rendered_range),
             "Reply selection is not on complete rendered grapheme boundaries"
         );
-        let value = Self {
-            item: Uuid::parse_str(item)?,
-            source,
-            source_kind: source_kind.into(),
-            source_range,
-            rendered,
-            rendered_range,
-        };
-        value.quote()?;
-        Ok(value)
-    }
-    pub(crate) fn quote(&self) -> Result<&str> {
+        let quote = rendered[rendered_range].trim();
         ensure!(
-            range_valid(&self.source, &self.source_range)
-                && range_valid(&self.rendered, &self.rendered_range),
-            "Reply selection range changed"
-        );
-        let quote = self.rendered[self.rendered_range.clone()].trim();
-        ensure!(
-            !quote.is_empty() && quote.len() <= 16000 && !quote.contains('\0'),
+            !quote.is_empty() && quote.len() <= 16_000 && !quote.contains('\0'),
             "Select nonblank reply text of at most 16000 UTF-8 bytes"
         );
-        Ok(quote)
+        Ok(Self {
+            item: Uuid::parse_str(item)?,
+            card_id: Uuid::new_v4(),
+            source,
+            source_kind: source_kind.into(),
+            #[cfg(test)]
+            source_range,
+            quote: quote.into(),
+        })
+    }
+    /// Display this card while the engine verifies the captured source and saves it.
+    pub fn reference_preview(&self, provider: &Value) -> Result<Value> {
+        crate::composer_context::quote_card(
+            &json!({"id":self.item,"kind":self.source_kind,"text":self.quote,"provider":provider}),
+            self.card_id,
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use unicode_segmentation::UnicodeSegmentation;
     fn selection(
         source: &str,
         source_range: Range<usize>,
@@ -136,7 +136,7 @@ mod tests {
             start..start + 6,
         )
         .unwrap();
-        assert_eq!(selection.quote().unwrap(), "repeat");
+        assert_eq!(selection.quote, "repeat");
         assert_eq!(selection.source_range, source_start..source_start + 6);
     }
     #[test]

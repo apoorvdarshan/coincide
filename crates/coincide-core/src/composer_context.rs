@@ -188,7 +188,9 @@ pub fn remove(raw: &Value, id: &str) -> Result<Value> {
     ))
 }
 pub fn append_quote(raw: &Value, message: &Value) -> Result<Value> {
-    validate(raw)?;
+    append_quote_card(raw, quote_card(message, Uuid::new_v4())?)
+}
+pub(crate) fn quote_card(message: &Value, id: Uuid) -> Result<Value> {
     ensure!(
         message["kind"].as_str().is_some_and(quotable_kind),
         "This message cannot be quoted"
@@ -198,8 +200,7 @@ pub fn append_quote(raw: &Value, message: &Value) -> Result<Value> {
         !message["text"].as_str().unwrap().is_empty(),
         "Message has no text to quote"
     );
-    let mut rows = raw.as_array().cloned().unwrap_or_default();
-    let mut quote = json!({"id":Uuid::new_v4(),"kind":"quote","text":message["text"]});
+    let mut quote = json!({"id":id,"kind":"quote","text":message["text"]});
     quote["sourceKind"] = message["kind"].clone();
     if message["id"]
         .as_str()
@@ -211,6 +212,11 @@ pub fn append_quote(raw: &Value, message: &Value) -> Result<Value> {
         bounded(provider, 128, "provider")?;
         quote["provider"] = provider.clone();
     }
+    Ok(quote)
+}
+pub(crate) fn append_quote_card(raw: &Value, quote: Value) -> Result<Value> {
+    validate(raw)?;
+    let mut rows = raw.as_array().cloned().unwrap_or_default();
     rows.push(quote);
     let result = Value::Array(rows);
     validate(&result)?;

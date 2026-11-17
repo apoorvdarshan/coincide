@@ -78,6 +78,32 @@ fn selected_user_text_in_large_thread_keeps_a_newer_draft_and_tags_source() {
 }
 
 #[test]
+fn reply_previews_keep_their_identity_and_two_quick_quotes_both_save() {
+    let (_directory, mut engine, id, item, thread) = fixture();
+    let expected = ExpectedContext::from_thread(&thread);
+    let first = selection(&item);
+    let second = selection(&item);
+    let first_preview = first.reference_preview(&Value::Null).unwrap();
+    let second_preview = second.reference_preview(&Value::Null).unwrap();
+    assert_eq!(first_preview["text"], "bold");
+    assert_ne!(first_preview["id"], second_preview["id"]);
+    engine
+        .native_attach_reply_selection_preserve_draft(&id, expected.clone(), first)
+        .unwrap();
+    let saved = engine
+        .native_attach_reply_selection_preserve_draft(&id, expected, second)
+        .unwrap();
+    assert_eq!(saved["draftContext"][0]["id"], first_preview["id"]);
+    assert_eq!(saved["draftContext"][1]["id"], second_preview["id"]);
+    assert_eq!(engine.store.thread(&id).unwrap()["draft"], thread["draft"]);
+    engine
+        .remove_draft_context_card(&id, &saved["draftContext"][0])
+        .unwrap();
+    let after = engine.store.thread(&id).unwrap();
+    assert_eq!(after["draftContext"], json!([saved["draftContext"][1]]));
+}
+
+#[test]
 fn selection_remains_valid_if_a_streamed_reply_only_appends_text() {
     let (_directory, mut engine, id, item, mut thread) = fixture();
     let selection = selection(&item);
