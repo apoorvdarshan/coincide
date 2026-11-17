@@ -53,7 +53,7 @@ tempfile.workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus-secret-service-keyring-store = { version = "=1.0.1", default-features = false, features = ["crypto-rust"] }
 # Avahi advertising for Coincide Remote; already in the graph through the secret store.
-zbus = "=6.2.1"
+zbus = "=6.3.0"
 
 [target.'cfg(windows)'.dependencies]
 windows-native-keyring-store = { version = "=1.1.0", default-features = false }
