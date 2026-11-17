@@ -1,5 +1,4 @@
-//! Native profiles, metadata preview and explicit saved bookmark import. No cookies,
-//! passwords, keys, login grants or original Swift website stores are imported.
+//! Native profiles and reviewed browser data import.
 use crate::native_menu::AccessibleMenuExt as _;
 use crate::worker_owner::{ShutdownStatus as WorkerOwnerStatus, WorkerOwner};
 use anyhow::{Result, ensure};
@@ -1718,7 +1717,7 @@ impl BrowserSettings {
                     div().child("Import browser data").child(
                         div()
                             .text_xs()
-                            .child("Review bookmarks, history, cookies, and saved-login imports."),
+                            .child("Import bookmarks, history, and cookies from a file."),
                     ),
                 )
                 .child(
@@ -1928,7 +1927,11 @@ impl Render for BrowserSettings {
                     ),
             );
         }
-        panel.child(self.render_history(cx)).child(self.cookie_import_panel(cx)).child(SharedString::from(self.status.clone())).child("Chromium/Safari cookie migration, password CSV import and the system passkey sheet are unavailable; Bitwarden passkeys sign in where supported (see Passwords). Closed Firefox snapshot import uses a new unselected profile; imported cookies may grant site access. No account, keychain or Swift store is accessed.").into_any_element()
+        panel
+            .child(self.render_history(cx))
+            .child(self.cookie_import_panel(cx))
+            .child(SharedString::from(self.status.clone()))
+            .into_any_element()
     }
 }
 

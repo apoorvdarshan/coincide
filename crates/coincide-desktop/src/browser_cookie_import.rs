@@ -2,7 +2,7 @@
 //! Browser child module: parent supplies its existing shutdown callback registry.
 //! No JSON/native picker/navigation authority and no timeout/cancellation/retry.
 use super::shutdown::{Callbacks, NativeLease};
-use coincide_core::firefox_cookie_import::{Binding, Cookie, SameSite};
+use coincide_core::browser_cookie_import::{Binding, Cookie, SameSite};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},

@@ -20,6 +20,21 @@ The browser uses the native web engine's preferred languages, without a
 Coincide-specific language or region override. Sites can still use a language
 explicitly selected in their own account or settings.
 
+## Import cookies on macOS
+
+Open a conversation, then go to **Settings → Browser → Import… → Choose
+cookie file…**. Coincide accepts a [Cookie-Editor JSON export](https://cookie-editor.com/)
+from Chrome, Safari, Edge, Brave, Arc, Vivaldi, Opera, or Firefox. Export the
+desired site's cookies as JSON and save the clipboard contents as a local plain
+text `.json` file in a private, non-synced folder. Safari's **Export Browsing
+Data** ZIP does not contain cookies. Firefox can also use a standalone
+`cookies.sqlite` snapshot with no WAL, SHM, or journal files alongside it.
+
+Review the sites and choose which to import. Use a new profile name and select
+that profile after import completes. The preview counts skipped expired,
+partitioned, or unsupported cookies. Some sites require signing in again because
+they use other browser storage or validate sessions against the original browser.
+
 Agent `search` requests become HTTP(S) navigation using the selected search
 provider. Agent navigation does not gain local-file access. A local folder grant
 created by the user typing a file path ends when the tab navigates to web content.

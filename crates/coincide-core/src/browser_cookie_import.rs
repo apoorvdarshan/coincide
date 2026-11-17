@@ -1,4 +1,5 @@
-//! Native-selected Firefox cookie snapshots. Secrets never enter JSON or Debug.
+//! Native-selected Firefox snapshots and browser cookie exports.
+//! Cookie values never enter control messages or diagnostics.
 //! No source scanning, decryption, source writes, navigation or native insertion.
 use rusqlite::{Connection, OpenFlags};
 use sha2::{Digest, Sha256};
@@ -9,6 +10,8 @@ use std::{
     path::{Path, PathBuf},
 };
 use uuid::Uuid;
+#[path = "cookie_json_export.rs"]
+mod cookie_json_export;
 const MAX_SOURCE: u64 = 16 * 1024 * 1024;
 const MAX_ROWS: usize = 1000;
 const MAX_VALUES: usize = 1024 * 1024;
@@ -26,11 +29,11 @@ pub enum Failure {
 impl std::fmt::Display for Failure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            Self::SourceUnavailable => "Choose a readable regular Firefox cookie snapshot",
+            Self::SourceUnavailable => "Choose a readable cookie JSON export or Firefox snapshot",
             Self::SourceChanged => "Cookie source changed; choose and review it again",
             Self::LiveSource => "Choose a standalone cookie snapshot without live SQLite sidecars",
-            Self::InvalidSnapshot => "Unsupported Firefox cookie snapshot",
-            Self::LimitExceeded => "Cookie snapshot exceeds import limits",
+            Self::InvalidSnapshot => "Unsupported cookie export or Firefox snapshot",
+            Self::LimitExceeded => "Cookie file exceeds import limits",
             Self::InvalidSelection => "Choose only reviewed cookie hosts",
             Self::StaleContext => "Browser import context changed",
             Self::CleanupPending(_) => "Private cookie snapshot cleanup is pending",
@@ -359,9 +362,66 @@ fn valid_cookie(c: &Cookie) -> bool {
         && (!c.name.starts_with("__Host-")
             || (c.secure && !c.domain.starts_with('.') && c.path == "/"))
 }
+
+#[derive(Default)]
+struct Review {
+    cookies: Vec<Cookie>,
+    keys: BTreeSet<(String, String, String)>,
+    hosts: BTreeMap<String, usize>,
+    expired: usize,
+    unsupported: usize,
+    total_values: usize,
+}
+
+impl Review {
+    fn add(&mut self, cookie: Cookie, supported: bool, now: i64) -> Result<()> {
+        self.total_values = self
+            .total_values
+            .checked_add(cookie.value.len())
+            .filter(|count| *count <= MAX_VALUES)
+            .ok_or(Failure::LimitExceeded)?;
+        if !supported || !valid_cookie(&cookie) {
+            self.unsupported += 1;
+            return Ok(());
+        }
+        if cookie.expires.is_some_and(|expiry| expiry <= now) {
+            self.expired += 1;
+            return Ok(());
+        }
+        if !self.keys.insert((
+            cookie.domain.clone(),
+            cookie.path.clone(),
+            cookie.name.clone(),
+        )) {
+            return Err(Failure::InvalidSnapshot);
+        }
+        *self
+            .hosts
+            .entry(cookie.domain.trim_start_matches('.').to_owned())
+            .or_insert(0) += 1;
+        self.cookies.push(cookie);
+        Ok(())
+    }
+
+    fn finish(self) -> (Vec<Cookie>, Preview) {
+        (
+            self.cookies,
+            Preview {
+                hosts: self
+                    .hosts
+                    .into_iter()
+                    .map(|(host, cookies)| HostCount { host, cookies })
+                    .collect(),
+                expired: self.expired,
+                unsupported: self.unsupported,
+            },
+        )
+    }
+}
+
 impl Plan {
-    /// Off UI only. Closed-file snapshot, not a live-browser consistency claim.
-    /// Source bytes are read with no-follow; SQLite opens ONLY our private copy.
+    /// Off UI only. Source bytes are read with no-follow and rechecked after
+    /// decoding. SQLite opens only our private copy. JSON stays in memory.
     pub fn read(source: NativeSource, now: i64) -> Result<Self> {
         Self::read_with_cleanup(source, now, |path| fs::remove_dir_all(path))
     }
@@ -372,20 +432,7 @@ impl Plan {
     ) -> Result<Self> {
         let (bytes, identity) = source_bytes(&source.path)?;
         let before = Sha256::digest(&bytes).into();
-        let mut copy = PrivateCopy::create(&bytes)?;
-        let result = (|| {
-            let db = Connection::open_with_flags(
-                &copy.database,
-                OpenFlags::SQLITE_OPEN_READ_ONLY
-                    | OpenFlags::SQLITE_OPEN_NO_MUTEX
-                    | OpenFlags::SQLITE_OPEN_NOFOLLOW,
-            )
-            .map_err(|_| Failure::InvalidSnapshot)?;
-            copy.connection = Some(db);
-            let (cookies, preview) = Self::decode_copy(
-                copy.connection.as_ref().ok_or(Failure::InvalidSnapshot)?,
-                now,
-            )?;
+        let finish = |(cookies, preview)| {
             let (after, after_identity) = source_bytes(&source.path)?;
             if bytes != after || identity != after_identity {
                 return Err(Failure::SourceChanged);
@@ -397,6 +444,26 @@ impl Plan {
                 cookies,
                 preview,
             })
+        };
+        if !bytes.starts_with(b"SQLite format 3\0") {
+            let cookies = cookie_json_export::decode(&bytes, now)?;
+            return finish(cookies);
+        }
+        let mut copy = PrivateCopy::create(&bytes)?;
+        let result = (|| {
+            let db = Connection::open_with_flags(
+                &copy.database,
+                OpenFlags::SQLITE_OPEN_READ_ONLY
+                    | OpenFlags::SQLITE_OPEN_NO_MUTEX
+                    | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+            )
+            .map_err(|_| Failure::InvalidSnapshot)?;
+            copy.connection = Some(db);
+            let cookies = Self::decode_copy(
+                copy.connection.as_ref().ok_or(Failure::InvalidSnapshot)?,
+                now,
+            )?;
+            finish(cookies)
         })();
         // Even decode/source-validation failures explicitly close SQLite first.
         // A close or deletion failure returns its exact private cleanup owner.
@@ -480,10 +547,7 @@ impl Plan {
         );
         let mut statement = db.prepare(&query).map_err(|_| Failure::InvalidSnapshot)?;
         let mut rows = statement.query([]).map_err(|_| Failure::InvalidSnapshot)?;
-        let mut cookies = Vec::new();
-        let mut keys = BTreeSet::new();
-        let mut hosts = BTreeMap::new();
-        let (mut expired, mut unsupported, mut total) = (0, 0, 0usize);
+        let mut review = Review::default();
         while let Some(row) = rows.next().map_err(|_| Failure::InvalidSnapshot)? {
             let read = || -> rusqlite::Result<(Cookie, String, i64)> {
                 let same: i64 = row.get(7)?;
@@ -534,49 +598,15 @@ impl Plan {
                 ))
             };
             let (cookie, attributes, expiry) = read().map_err(|_| Failure::InvalidSnapshot)?;
-            total = total
-                .checked_add(cookie.value.len())
-                .ok_or(Failure::LimitExceeded)?;
-            if total > MAX_VALUES {
-                return Err(Failure::LimitExceeded);
-            }
-            if expiry < 0 || !attributes.is_empty() || !valid_cookie(&cookie) {
-                unsupported += 1;
-                continue;
-            }
             // Persisted Firefox cookies have a concrete expiry; never revive
             // a zero or expired value as a session cookie.
-            if expiry <= now {
-                expired += 1;
-                continue;
-            }
-            if !keys.insert((
-                cookie.domain.clone(),
-                cookie.path.clone(),
-                cookie.name.clone(),
-            )) {
-                return Err(Failure::InvalidSnapshot);
-            }
-            *hosts
-                .entry(cookie.domain.trim_start_matches('.').to_owned())
-                .or_insert(0) += 1;
-            cookies.push(cookie);
+            review.add(cookie, expiry >= 0 && attributes.is_empty(), now)?;
         }
         drop(rows);
         drop(statement);
         db.execute_batch("COMMIT")
             .map_err(|_| Failure::InvalidSnapshot)?;
-        Ok((
-            cookies,
-            Preview {
-                hosts: hosts
-                    .into_iter()
-                    .map(|(host, cookies)| HostCount { host, cookies })
-                    .collect(),
-                expired,
-                unsupported,
-            },
-        ))
+        Ok(review.finish())
     }
     pub fn preview(&self) -> &Preview {
         &self.preview
@@ -622,13 +652,75 @@ impl ApprovedPlan {
         Ok(self
             .cookies
             .by_ref()
-            .find(|cookie| cookie.expires.is_some_and(|expiry| expiry > now)))
+            .find(|cookie| cookie.expires.is_none_or(|expiry| expiry > now)))
     }
 }
 
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exported_cookies_keep_host_scope_flags_and_session_lifetime() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("cookies.json");
+        let bytes = br#"[
+            {"domain":"example.com","hostOnly":true,"httpOnly":true,"name":"session",
+             "path":"/","secure":true,"session":true,"sameSite":null,"storeId":null,"value":"fixture"},
+            {"domain":".example.com","hostOnly":false,"httpOnly":false,"name":"preference",
+             "path":"/settings","secure":true,"session":false,"sameSite":"lax","expirationDate":200.9,"value":"fixture"},
+            {"domain":"another.test","hostOnly":true,"httpOnly":false,"name":"other",
+             "path":"/","secure":true,"session":true,"sameSite":"strict","value":"fixture"}
+        ]"#;
+        fs::write(&path, bytes).unwrap();
+        let plan = Plan::read(NativeSource::from_native_choice(path.clone()), 100).unwrap();
+        assert_eq!(plan.preview().hosts.len(), 2);
+        assert_eq!(plan.preview().hosts[1].cookies, 2);
+        let scope = binding();
+        let mut approved = plan
+            .approve(&["example.com".into()], scope.clone())
+            .unwrap();
+        let session = approved.next(&scope, 101).unwrap().unwrap();
+        assert_eq!(session.domain(), "example.com");
+        assert_eq!(session.expires(), None);
+        assert!(session.secure() && session.http_only());
+        assert!(session.same_site() == SameSite::Unspecified);
+        let persistent = approved.next(&scope, 101).unwrap().unwrap();
+        assert_eq!(persistent.domain(), ".example.com");
+        assert_eq!(persistent.path(), "/settings");
+        assert_eq!(persistent.expires(), Some(200));
+        assert!(persistent.same_site() == SameSite::Lax);
+        assert!(approved.next(&scope, 101).unwrap().is_none());
+        assert_eq!(fs::read(path).unwrap(), bytes);
+    }
+
+    #[test]
+    fn json_review_rejects_scope_changes_and_changed_files() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("cookies.json");
+        let rows = serde_json::json!([
+            {"domain":"example.com","hostOnly":true,"httpOnly":false,"name":"expired",
+             "path":"/","secure":true,"session":false,"expirationDate":0,"value":"fixture"},
+            {"domain":"example.com","hostOnly":true,"httpOnly":false,"name":"partitioned",
+             "path":"/","secure":true,"session":true,"partitionKey":{"topLevelSite":"https://other.test"},"value":"fixture"},
+            {"domain":".co.uk","hostOnly":false,"httpOnly":false,"name":"suffix",
+             "path":"/","secure":true,"session":true,"value":"fixture"},
+            {"domain":".example.com","hostOnly":true,"httpOnly":false,"name":"wrong-scope",
+             "path":"/","secure":true,"session":true,"value":"fixture"},
+            {"domain":"example.com","hostOnly":true,"httpOnly":false,"name":"ok",
+             "path":"/","secure":true,"session":true,"sameSite":"no_restriction","value":"fixture"}
+        ]);
+        fs::write(&path, serde_json::to_vec(&rows).unwrap()).unwrap();
+        let plan = Plan::read(NativeSource::from_native_choice(path.clone()), 100).unwrap();
+        assert_eq!(plan.preview().expired, 1);
+        assert_eq!(plan.preview().unsupported, 3);
+        assert_eq!(plan.preview().hosts[0].cookies, 1);
+        fs::write(&path, b"[]").unwrap();
+        assert!(matches!(
+            plan.approve(&["example.com".into()], binding()),
+            Err(Failure::SourceChanged)
+        ));
+    }
     fn fixture() -> (tempfile::TempDir, PathBuf) {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("cookies.sqlite");
@@ -935,7 +1027,7 @@ mod tests {
     #[test]
     fn decode_failure_retains_original_error_and_exact_cleanup_owner() {
         let (_root, path) = fixture();
-        fs::write(&path, b"synthetic private invalid SQLite").unwrap();
+        fs::write(&path, b"SQLite format 3\0synthetic invalid database").unwrap();
         let error =
             Plan::read_with_cleanup(NativeSource::from_native_choice(path), 100, |_| Ok(()))
                 .err()

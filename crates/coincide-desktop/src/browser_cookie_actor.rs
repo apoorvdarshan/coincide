@@ -5,7 +5,7 @@ use crate::browser_settings::cookie_flow::{
     ImportRevision, ImportStatus, PreparedImport, Reservation, ReserveRequest,
 };
 #[cfg(target_os = "macos")]
-use cookie_import::{PreparedCookie, ReadbackReceipt, Receipt, Status, Target};
+use cookie_import::{Failure, PreparedCookie, ReadbackReceipt, Receipt, Status, Target};
 #[cfg(any(target_os = "macos", test))]
 #[derive(Clone)]
 struct ProfileFence {
@@ -45,7 +45,10 @@ fn finish_readback(
         status.message="Readback arrived after import revocation. Counts are retained; the unselected profile stays incomplete/uncertain.".into();
         ReadbackDisposition::DrainedIncomplete
     } else if counts.exact() {
-        status.message="Exact cookie readback matched. The new profile remains unselected; disk persistence has not been proven.".into();
+        status.message = format!(
+            "Verified {} imported cookies. Select the new profile to use them.",
+            counts.matched
+        );
         ReadbackDisposition::Promote
     } else {
         status.message="Cookie readback did not exactly match. The profile remains incomplete/uncertain and unselected.".into();
@@ -55,7 +58,7 @@ fn finish_readback(
 #[cfg(target_os = "macos")]
 pub(super) struct Actor {
     context: crate::browser_settings::cookie_flow::ImportContext,
-    binding: coincide_core::firefox_cookie_import::Binding,
+    binding: coincide_core::browser_cookie_import::Binding,
     fence: ProfileFence,
     target: Option<Target>,
     waiting: Option<Receipt>,
@@ -269,6 +272,7 @@ impl BrowserController {
             // Prevalidate every native representation before creating a profile
             // or data store. This Foundation-only step does not dispatch work.
             let mut expired = 0;
+            let mut refused = 0;
             let mut remaining = VecDeque::new();
             while prepared.cookies.remaining() != 0 {
                 let before = prepared.cookies.remaining();
@@ -280,11 +284,14 @@ impl BrowserController {
                 let Some(cookie) = cookie else { break };
                 match PreparedCookie::prepare(cookie) {
                     Ok(cookie) => remaining.push_back(cookie),
-                    Err(_)=>return Err("Native cookie representation is unsupported (including SameSite=None). No profile was created and no cookie was dispatched.".into()),
+                    Err(Failure::InvalidCookie | Failure::UnsupportedSameSiteNone) => refused += 1,
+                    Err(_) => return Err("The browser cookie store is unavailable.".into()),
                 }
             }
             if remaining.is_empty() {
-                return Err("All reviewed cookies expired; no profile was created.".into());
+                return Err(format!(
+                    "No cookies could be imported. {expired} expired and {refused} could not be stored by WebKit."
+                ));
             }
             if self.shutdown.callbacks.closed() || !prepared.reservation.context.valid() {
                 return Err("Cookie context closed before destination creation.".into());
@@ -300,6 +307,7 @@ impl BrowserController {
                 thread: current_thread.into(),
                 generation: prepared.reservation.context.generation,
                 expired,
+                refused,
                 undispatched: remaining.len(),
                 ..Default::default()
             };

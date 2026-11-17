@@ -1,7 +1,7 @@
 //! Persistent native-only cookie workflow. Typed source/cleanup ownership never
 //! travels through control JSON or the generic string-error bookmark transport.
 use super::*;
-use coincide_core::firefox_cookie_import::{
+use coincide_core::browser_cookie_import::{
     self as core_cookie, ApprovedPlan, Binding, CleanupCustody, NativeSource, Plan,
 };
 use std::{collections::BTreeSet, sync::Mutex};
@@ -203,7 +203,16 @@ impl Flow {
                         self.plan = Some(plan);
                         self.selected.clear();
                         self.page = 0;
-                        self.status.message="Review exact hosts and counts, then explicitly import into a new unselected profile.".into();
+                        self.status.message = if self
+                            .plan
+                            .as_ref()
+                            .is_some_and(|plan| plan.preview().hosts.is_empty())
+                        {
+                            "This file has no supported, unexpired cookies."
+                        } else {
+                            "Select the sites you want to import."
+                        }
+                        .into();
                     }
                     Ok(_) => {}
                     Err(error) => self.status.message = error,
@@ -504,7 +513,7 @@ impl BrowserSettings {
             files: true,
             directories: false,
             multiple: false,
-            prompt: Some("Choose closed Firefox cookie snapshot".into()),
+            prompt: Some("Choose a cookie JSON export or Firefox snapshot".into()),
         });
         cx.spawn(async move |this, cx| {
             let result: Result<_> = async { picker.await? }.await;
@@ -539,11 +548,21 @@ impl BrowserSettings {
             || flow.busy
             || flow.status.pending
             || flow.cleanup_count() != 0;
-        let mut view=div().flex().flex_col().gap_2().child("Firefox cookies — closed snapshot only")
-            .child("Choose a standalone cookies.sqlite with no WAL/SHM/journal. Only reviewed ordinary cookies are supported; other browser storage and partitioned sessions are not imported.")
-            .child(Button::new("cookie-choose").label("Choose cookie snapshot").disabled(disabled||flow.context.is_none()).on_click(cx.listener(|this,_,_,cx|this.choose_cookie_source(cx))));
+        let mut view = div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child("Import cookies")
+            .child("Choose a Cookie-Editor JSON export from Chrome, Safari, Edge, Brave, Arc, Vivaldi, Opera, or Firefox. Firefox also supports a standalone cookies.sqlite snapshot.")
+            .child("Export as JSON for the site you want to move. Keep the file private because it can contain sign-ins.")
+            .child(
+                Button::new("cookie-choose")
+                    .label("Choose cookie file…")
+                    .disabled(disabled || flow.context.is_none())
+                    .on_click(cx.listener(|this, _, _, cx| this.choose_cookie_source(cx))),
+            );
         if !supported {
-            view=view.child("Cookie import requires macOS14 or later with the named website-store backend and a selected conversation.");
+            view = view.child("Cookie import requires macOS 14 or later and an open conversation.");
         }
         if let Some(plan) = &flow.plan {
             let preview = plan.preview();
