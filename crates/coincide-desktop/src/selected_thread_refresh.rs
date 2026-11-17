@@ -13,12 +13,18 @@ struct Scope {
     draft: Option<Value>,
 }
 
+// A queue revision is installed with the selected thread and advances its
+// generation. Avoid duplicating the entire queue to validate local metadata.
+fn locally_editable_metadata(key: &str) -> bool {
+    !matches!(key, "items" | "draft" | "rustMessageQueue")
+}
+
 fn metadata(thread: &Value) -> Option<Map<String, Value>> {
     let object = thread.as_object()?;
     Some(
         object
             .iter()
-            .filter(|(key, _)| *key != "items" && *key != "draft")
+            .filter(|(key, _)| locally_editable_metadata(key))
             .map(|(key, value)| (key.clone(), value.clone()))
             .collect(),
     )
@@ -40,7 +46,7 @@ impl Scope {
             && thread["id"].as_str() == Some(&self.id)
             && object
                 .iter()
-                .filter(|(key, _)| *key != "items" && *key != "draft")
+                .filter(|(key, _)| locally_editable_metadata(key))
                 .count()
                 == self.metadata.len()
             && self
@@ -234,6 +240,50 @@ mod tests {
         let mut changed = original.clone();
         changed["selection"]["provider"] = json!("claude");
         assert!(complete().apply_if_current(&changed, 4).is_none());
+    }
+
+    #[test]
+    fn busy_store_does_not_hold_the_queue_refresh_caller() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = coincide_core::store::Store::open(&dir.path().join("refresh.sqlite")).unwrap();
+        let engine = Arc::new(Mutex::new(coincide_core::api::Engine::new(store)));
+        let mut locked = engine.lock().unwrap();
+        let thread =
+            locked.dispatch(json!({"method":"threads.create","params":{}}))["result"].clone();
+        let id = thread["id"].as_str().unwrap();
+        let mut reader = Reader::default();
+        assert!(reader.start(&engine, &thread, 1));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(result) = reader.poll() {
+                assert!(result.is_err());
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "busy queue refresh stalled underneath the UI"
+            );
+            std::thread::yield_now();
+        }
+        drop(locked);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !reader.start(&engine, &thread, 1) {
+            assert!(
+                Instant::now() < deadline,
+                "busy refresh worker did not return"
+            );
+            std::thread::yield_now();
+        }
+        let completed = loop {
+            if let Some(result) = reader.poll() {
+                break result.unwrap();
+            }
+            assert!(Instant::now() < deadline, "queue refresh did not recover");
+            std::thread::yield_now();
+        };
+        let (_, refreshed, queue, _) = completed.apply_if_current(&thread, 1).unwrap();
+        assert_eq!(refreshed["id"], id);
+        assert!(queue.is_ok());
     }
 
     #[test]

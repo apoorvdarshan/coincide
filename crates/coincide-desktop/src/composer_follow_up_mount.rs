@@ -46,7 +46,11 @@ pub(super) struct AdmittedPreview {
     pub pending: PendingSend,
     pub queue_id: String,
 }
-fn preview_handed_off(preview: &AdmittedPreview, thread: &Value, visible_queue: &[Value]) -> bool {
+fn preview_handed_off(
+    preview: &AdmittedPreview,
+    thread: &Value,
+    visible_queue: &[Arc<Value>],
+) -> bool {
     if text(thread, "id") != preview.pending.thread {
         return false;
     }
@@ -287,14 +291,17 @@ pub(super) fn buffered_text(first: &PendingSend, thread: &str, current: &str) ->
 
 /// Earlier submissions own their images and references; do not attach them a
 /// second time merely because their previews are still awaiting admission.
-pub(super) fn separate_buffered_payload(next: &mut PendingSend, earlier: &[PendingSend]) {
+pub(super) fn separate_buffered_payload<'a>(
+    next: &mut PendingSend,
+    earlier: impl IntoIterator<Item = &'a PendingSend>,
+) {
     let images = next.captured["rustDraftImages"]
         .as_array()
         .cloned()
         .unwrap_or_default();
     let contexts = next.captured["draftContext"].as_array().cloned();
     let prior = earlier
-        .iter()
+        .into_iter()
         .filter(|entry| entry.thread == next.thread)
         .collect::<Vec<_>>();
     let images: Vec<Value> = images
@@ -513,13 +520,12 @@ impl Coincide {
             next.selection_wait = SelectionWait::Waiting;
         }
         self.exclude_submitted_images(&mut next);
-        let earlier = self
-            .pending_follow_up
-            .iter()
-            .chain(self.pending_follow_up_backlog.iter())
-            .cloned()
-            .collect::<Vec<_>>();
-        separate_buffered_payload(&mut next, &earlier);
+        separate_buffered_payload(
+            &mut next,
+            self.pending_follow_up
+                .iter()
+                .chain(&self.pending_follow_up_backlog),
+        );
         if let Err(error) =
             coincide_core::composer_context::validate(&next.captured["draftContext"])
         {
@@ -574,8 +580,7 @@ impl Coincide {
         );
         self.composer
             .update(cx, |input, cx| input.set_value("", window, cx));
-        self.reconcile_buffered_sends();
-        self.status = "Preparing your message.".into();
+        self.outgoing_queue_scroll.scroll_to_bottom();
         cx.notify();
     }
 
@@ -974,7 +979,9 @@ mod send_route_tests {
         };
         let mut snapshot = thread.clone();
         snapshot["rustMessageQueue"] = json!([{"id":"queue-1","state":"dispatching"}]);
-        let queue = vec![json!({"id":"queue-1","state":"dispatching"})];
+        let queue = vec![std::sync::Arc::new(
+            json!({"id":"queue-1","state":"dispatching"}),
+        )];
         assert!(preview_handed_off(&preview, &snapshot, &queue));
         snapshot["rustMessageQueue"][0]["state"] = json!("completed");
         assert!(

@@ -86,11 +86,10 @@ fn edit_last_queued_key_routes(
 
 /// The native queue operation verifies only these fields. Capturing the full
 /// transcript in every queue-row callback made long chats expensive to render.
-fn queue_expected_scope(thread: &Value) -> Value {
+fn queue_execution_scope(thread: &Value) -> Value {
     let mut scope = serde_json::Map::new();
     for key in [
         "id",
-        "rustMessageQueue",
         "selection",
         "projectID",
         "projectPath",
@@ -107,21 +106,45 @@ fn queue_expected_scope(thread: &Value) -> Value {
     Value::Object(scope)
 }
 
-fn hold_queue_completion_for_transcript(messages: &mut [Value], previous: &[Value]) {
-    for row in messages {
-        if row["state"] == "completed"
-            && previous
-                .iter()
-                .any(|item| item["id"] == row["id"] && item["state"] != "completed")
-        {
-            row["state"] = json!("dispatching");
-            row["deliveryCommitted"] = json!(true);
-        }
+fn queue_expected_scope(thread: &Value) -> Value {
+    let mut scope = queue_execution_scope(thread);
+    if let Some(queue) = thread.get("rustMessageQueue") {
+        scope["rustMessageQueue"] = queue.clone();
     }
+    scope
+}
+
+fn queue_preview_text(text: &str) -> String {
+    let display = coincide_core::async_questions::display_reply(text);
+    let line = display
+        .as_deref()
+        .unwrap_or(text)
+        .lines()
+        .next()
+        .unwrap_or("");
+    let mut chars = line.chars();
+    let mut preview: String = chars.by_ref().take(240).collect();
+    if chars.next().is_some() {
+        preview.push('…');
+    }
+    preview
+}
+
+fn retain_queue_rows(previous: &[Arc<Value>], incoming: Vec<Value>) -> Vec<Arc<Value>> {
+    incoming
+        .into_iter()
+        .map(|row| {
+            previous
+                .iter()
+                .find(|old| old["id"] == row["id"] && old.as_ref() == &row)
+                .cloned()
+                .unwrap_or_else(|| Arc::new(row))
+        })
+        .collect()
 }
 
 fn pending_row(pending: &composer_follow_up_mount::PendingSend, id: &str, state: &str) -> Value {
-    json!({"id":id, "state":state, "text":pending.draft, "error":pending.last_error,
+    json!({"id":id, "state":state, "text":queue_preview_text(&pending.draft), "error":pending.last_error,
         "rustImages":pending.captured["rustDraftImages"], "context":pending.captured["draftContext"]})
 }
 
@@ -378,24 +401,23 @@ impl Coincide {
         true
     }
     pub(super) fn refresh_queue(&mut self, cx: &mut Context<Self>) {
-        let Some(id) = self.selected.as_ref().map(|v| text(v, "id")) else {
+        let Some(thread) = self.selected.as_ref() else {
             self.queued_messages.clear();
             self.queue_error.clear();
             return;
         };
-        let result = match try_state(&self.engine) {
-            Ok(engine) => engine
-                .native_queue_read(&id)
-                .map_err(|error| error.to_string()),
-            Err(_) => return,
-        };
-        self.accept_queue_read(&id, result, false, cx);
+        // Use the same background read for the queue and transcript so an
+        // acknowledgement cannot remove a row before its message is visible.
+        self.opening_thread_details = thread["id"].as_str().map(str::to_owned);
+        self.selected_thread_reader
+            .start(&self.engine, thread, self.selected_generation);
+        cx.notify();
     }
+
     pub(super) fn accept_queue_read(
         &mut self,
         id: &str,
         result: Result<Value, String>,
-        transcript_updated: bool,
         cx: &mut Context<Self>,
     ) {
         if self
@@ -406,13 +428,13 @@ impl Coincide {
             return;
         }
         match result {
-            Ok(value) => {
-                let mut messages = value["messages"].as_array().cloned().unwrap_or_default();
-                // A small queue read can finish before the matching transcript
-                // refresh. Keep the row until both views can advance together.
-                if !transcript_updated {
-                    hold_queue_completion_for_transcript(&mut messages, &self.queued_messages);
-                }
+            Ok(mut value) => {
+                let incoming = value["messages"].take();
+                let incoming = match incoming {
+                    Value::Array(rows) => rows,
+                    _ => Vec::new(),
+                };
+                let messages = retain_queue_rows(&self.queued_messages, incoming);
                 let enabled = value["enabled"] == true;
                 let error = value["error"].as_str().unwrap_or_default().to_owned();
                 if self.queued_messages != messages
@@ -424,16 +446,6 @@ impl Coincide {
                 self.queued_messages = messages;
                 self.queue_enabled = enabled;
                 self.queue_error = error;
-                // Keep the raw queue source (including future row metadata) for
-                // exact native Send now admission; list returns typed previews.
-                if let Some(raw_queue) = value.get("rawQueue")
-                    && self.selected.as_ref().is_some_and(|selected| {
-                        selected["id"] == id && selected.get("rustMessageQueue") != Some(raw_queue)
-                    })
-                    && let Some(selected) = self.selected.as_mut()
-                {
-                    selected["rustMessageQueue"] = raw_queue.clone();
-                }
             }
             Err(error) => {
                 // Selection clears another thread's rows. Keep this thread's
@@ -524,6 +536,26 @@ impl Coincide {
         cx.notify();
     }
 
+    fn send_visible_queue_row(
+        &mut self,
+        expected: &Value,
+        row: &Arc<Value>,
+        interrupt: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(thread) = self.selected.as_ref().filter(|thread| {
+            queue_execution_scope(thread) == *expected
+                && self
+                    .queued_messages
+                    .iter()
+                    .any(|current| Arc::ptr_eq(current, row))
+        }) else {
+            return;
+        };
+        let source = queue_expected_scope(thread);
+        self.send_queued(&source, row, interrupt, cx);
+    }
+
     pub(super) fn queue_pane(
         &mut self,
         window: &mut Window,
@@ -532,7 +564,7 @@ impl Coincide {
         use gpui_kit::assets::IconName;
         let current = self.selected.as_ref()?;
         let thread = text(current, "id");
-        let source = queue_expected_scope(current);
+        let source = Arc::new(queue_execution_scope(current));
         let running = self.running.contains(&thread);
         let mut messages = self
             .queued_messages
@@ -569,7 +601,11 @@ impl Coincide {
                 .any(|(row, _, _)| row["id"] == preview.queue_id)
             {
                 messages.push((
-                    pending_row(&preview.pending, &preview.queue_id, "dispatching"),
+                    Arc::new(pending_row(
+                        &preview.pending,
+                        &preview.queue_id,
+                        "dispatching",
+                    )),
                     true,
                     Vec::new(),
                 ));
@@ -589,7 +625,7 @@ impl Coincide {
                     "dispatching"
                 };
                 messages.push((
-                    pending_row(pending, id, state),
+                    Arc::new(pending_row(pending, id, state)),
                     true,
                     pending.import_jobs.clone(),
                 ));
@@ -603,6 +639,7 @@ impl Coincide {
             .w_full()
             .max_h(px(190.))
             .overflow_y_scroll()
+            .track_scroll(&self.outgoing_queue_scroll)
             .flex()
             .flex_col()
             .gap_1()
@@ -628,8 +665,7 @@ impl Coincide {
             let editable = matches!(state.as_str(), "pending" | "failed" | "interrupted")
                 && message["codexQuestionSession"].is_null();
             let sendable = !local && state == "pending" && running;
-            let body = text(&message, "text");
-            let body = coincide_core::async_questions::display_reply(&body).unwrap_or(body);
+            let body = queue_preview_text(message["text"].as_str().unwrap_or(""));
             let images = message["rustImages"]
                 .as_array()
                 .map(Vec::as_slice)
@@ -703,7 +739,7 @@ impl Coincide {
             let stop_thread = thread.clone();
             pane = pane.child(
                 div()
-                    .id(("queued-message", index))
+                    .id(SharedString::from(format!("queued-message-{id}")))
                     .flex()
                     .items_center()
                     .gap_2()
@@ -801,7 +837,12 @@ impl Coincide {
                                 .xsmall()
                                 .compact()
                                 .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.send_queued_now(&action_source, &steer_message, cx)
+                                    this.send_visible_queue_row(
+                                        &action_source,
+                                        &steer_message,
+                                        false,
+                                        cx,
+                                    )
                                 })),
                         )
                         .when(
@@ -818,7 +859,7 @@ impl Coincide {
                                     .xsmall()
                                     .compact()
                                     .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.send_queued(
+                                        this.send_visible_queue_row(
                                             &interrupt_source,
                                             &interrupt_message,
                                             true,
@@ -892,16 +933,26 @@ mod tests {
     use super::*;
 
     #[::core::prelude::v1::test]
-    fn early_queue_completion_keeps_the_visible_row_until_transcript_refresh() {
-        let previous = vec![json!({"id":"send","state":"dispatching"})];
-        let mut incoming = vec![
-            json!({"id":"send","state":"completed"}),
-            json!({"id":"older","state":"completed"}),
-        ];
-        hold_queue_completion_for_transcript(&mut incoming, &previous);
-        assert_eq!(incoming[0]["state"], "dispatching");
-        assert_eq!(incoming[0]["deliveryCommitted"], true);
-        assert_eq!(incoming[1]["state"], "completed");
+    fn long_message_draws_a_short_preview_and_retains_the_original_payload() {
+        let text = "é".repeat(400_000);
+        let original = Arc::new(json!({"id":"send","text":text,"state":"pending"}));
+        let next = retain_queue_rows(
+            std::slice::from_ref(&original),
+            vec![original.as_ref().clone()],
+        );
+        assert!(Arc::ptr_eq(&original, &next[0]));
+        assert_eq!(
+            queue_preview_text(next[0]["text"].as_str().unwrap())
+                .chars()
+                .count(),
+            241
+        );
+        assert_eq!(next[0]["text"].as_str().unwrap(), text);
+        assert_eq!(queue_preview_text("first line\nsecond line"), "first line");
+        let mut changed = original.as_ref().clone();
+        changed["state"] = json!("completed");
+        let refreshed = retain_queue_rows(&next, vec![changed]);
+        assert!(!Arc::ptr_eq(&original, &refreshed[0]));
     }
 
     #[::core::prelude::v1::test]
@@ -971,6 +1022,9 @@ mod tests {
         let thread = json!({"id":"thread", "selection":{"provider":"codex"},
             "rustMessageQueue":[{"id":"message","future":true}],
             "accessMode":null, "projectPath":"/project", "items":[{"text":"x".repeat(9_000_000)}]});
+        let paint_scope = queue_execution_scope(&thread);
+        assert!(paint_scope.get("rustMessageQueue").is_none());
+        assert!(paint_scope.get("items").is_none());
         let scope = queue_expected_scope(&thread);
         assert_eq!(scope["rustMessageQueue"], thread["rustMessageQueue"]);
         assert_eq!(scope["selection"], thread["selection"]);

@@ -500,7 +500,8 @@ struct Coincide {
     pending_inputs: std::collections::HashMap<(String, String, String), Entity<InputState>>,
     pending_choices: std::collections::HashMap<(String, String, String), Vec<String>>,
     pending_question_step: std::collections::HashMap<String, usize>,
-    queued_messages: Vec<Value>,
+    queued_messages: Vec<Arc<Value>>,
+    outgoing_queue_scroll: ScrollHandle,
     queue_enabled: bool,
     queue_error: String,
     thread_list_open: bool,
@@ -1820,6 +1821,7 @@ impl Coincide {
             pending_choices: Default::default(),
             pending_question_step: Default::default(),
             queued_messages: Vec::new(),
+            outgoing_queue_scroll: ScrollHandle::default(),
             queue_enabled: false,
             queue_error: String::new(),
             thread_list_open,
@@ -3189,6 +3191,9 @@ impl Coincide {
                 self.pending_requests.clear();
                 self.schedules.clear();
                 self.queued_messages.clear();
+                if changing_thread {
+                    self.outgoing_queue_scroll.set_offset(point(px(0.), px(0.)));
+                }
                 self.admitted_previews
                     .retain(|preview| preview.pending.thread == id);
                 self.queue_enabled = false;
@@ -5444,21 +5449,10 @@ impl Coincide {
         self.splice_transcript(start..self.transcript_count, count - start);
         self.transcript_count = count;
         self.replace_selected_thread(Some(thread));
-        self.reconcile_buffered_sends();
-        let count = self
-            .selected
-            .as_ref()
-            .and_then(|thread| thread["items"].as_array().map(Vec::len))
-            .unwrap_or(self.transcript_count);
-        if count != self.transcript_count {
-            let start = self.transcript_count.min(count);
-            self.splice_transcript(start..self.transcript_count, count - start);
-            self.transcript_count = count;
-        }
         if let Some((reply, imported)) = turn_changes {
             self.accept_turn_changes(&id, reply, imported);
         }
-        self.accept_queue_read(&id, queue, true, cx);
+        self.accept_queue_read(&id, queue, cx);
         if self.refresh_inner(cx, false) {
             self.revision = revision;
         }
@@ -7376,16 +7370,13 @@ impl Render for Coincide {
                             }
                             self.finish_pending_images(pending.image_send, true);
                             let delivering = ticket.is_some();
-                            if pending.buffer_id.is_some() {
-                                self.admitted_previews.push(
-                                    composer_follow_up_mount::AdmittedPreview {
-                                        pending: pending.clone(),
-                                        queue_id,
-                                    },
-                                );
-                            }
                             if let Some(ticket) = ticket {
                                 self.track_queued_delivery(ticket, pending.thread.clone());
+                            }
+                            if pending.buffer_id.is_some() {
+                                self.admitted_previews.push(
+                                    composer_follow_up_mount::AdmittedPreview { pending, queue_id },
+                                );
                             }
                             self.status = if delivering {
                                 "Delivering your message."
@@ -7460,16 +7451,13 @@ impl Render for Coincide {
                             self.pending_drafts.remove(&pending.thread);
                         }
                         self.finish_pending_images(pending.image_send, true);
-                        if pending.buffer_id.is_some() {
-                            self.admitted_previews.push(
-                                composer_follow_up_mount::AdmittedPreview {
-                                    pending: pending.clone(),
-                                    queue_id,
-                                },
-                            );
-                        }
                         if let Some(ticket) = ticket {
                             self.track_queued_delivery(ticket, pending.thread.clone());
+                        }
+                        if pending.buffer_id.is_some() {
+                            self.admitted_previews.push(
+                                composer_follow_up_mount::AdmittedPreview { pending, queue_id },
+                            );
                         }
                         if let Some(error) = error {
                             self.show_local_error(&format!(
