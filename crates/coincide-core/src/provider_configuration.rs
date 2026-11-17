@@ -1361,7 +1361,8 @@ pub use accounts::{
 #[path = "provider_setup.rs"]
 mod setup;
 pub use setup::{
-    SetupAction, SetupCommand, SetupHandoff, run_native_provider_setup, setup_commands,
+    SetupAction, SetupCommand, SetupHandoff, native_sign_in_supported, run_native_provider_setup,
+    setup_commands,
 };
 
 #[cfg(test)]

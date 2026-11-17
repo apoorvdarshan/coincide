@@ -73,11 +73,15 @@ fn brew() -> Option<PathBuf> {
 }
 fn login(provider: &str) -> Result<&'static [&'static str]> {
     match provider {
-        "claude" => Ok(&["auth", "login"]),
+        "claude" | "acp-devin" => Ok(&["auth", "login"]),
         "codex" | "cursor" | "grok" => Ok(&["login"]),
         "opencode" => Ok(&["auth", "login"]),
         _ => anyhow::bail!("Use this provider's managed account setup"),
     }
+}
+/// Only built-in, verified login commands can start a setup handoff.
+pub fn native_sign_in_supported(provider: &str) -> bool {
+    login(provider).is_ok()
 }
 fn brew_arguments(provider: &str) -> Result<&'static [&'static str]> {
     match provider {
@@ -127,12 +131,10 @@ pub fn setup_commands(provider: &str, executable: Option<&Path>) -> Vec<SetupCom
         });
     }
     if let Ok(arguments) = login(provider) {
-        let executable = executable.map(quote).unwrap_or_else(|| {
-            if provider == "cursor" {
-                "cursor-agent".into()
-            } else {
-                provider.into()
-            }
+        let executable = executable.map(quote).unwrap_or_else(|| match provider {
+            "cursor" => "cursor-agent".into(),
+            "acp-devin" => "devin".into(),
+            _ => provider.into(),
         });
         commands.push(SetupCommand {
             action: SetupAction::SignIn,
@@ -289,6 +291,14 @@ impl Engine {
         let (launch, use_brew) = match action {
             SetupAction::SignIn => {
                 login(provider)?;
+                if crate::acp_registry::registry_id(provider).is_some() {
+                    ensure!(
+                        record.as_ref().is_some_and(
+                            |record| record.acp.is_some() && record.executable.is_some()
+                        ),
+                        "Add this agent before signing in"
+                    );
+                }
                 let path = record
                     .as_ref()
                     .and_then(|record| {
@@ -591,6 +601,36 @@ mod tests {
         assert_eq!(result, 0);
         handoff.wait_for_transfer(&|| true).unwrap();
         assert!(consume_with(handoff.path(), &binary, |_| panic!("replay launched")).is_err());
+    }
+    #[test]
+    fn devin_login_uses_the_approved_binary_and_fixed_args() {
+        let (_root, mut engine, binary) = super::super::tests::fixture();
+        assert!(
+            engine
+                .prepare_native_provider_setup("acp-devin", SetupAction::SignIn, &binary)
+                .is_err()
+        );
+        engine
+            .register_native_acp_agent(&crate::acp_registry::Agent {
+                id: "devin".into(),
+                name: "Devin".into(),
+                website: None,
+                icon: None,
+                executable: Some(binary.clone()),
+                arguments: vec!["acp".into()],
+                environment: Default::default(),
+            })
+            .unwrap();
+        let handoff = engine
+            .prepare_native_provider_setup("acp-devin", SetupAction::SignIn, &binary)
+            .unwrap();
+        consume_with(handoff.path(), &binary, |command| {
+            assert_eq!(command.get_program(), binary.as_os_str());
+            assert_eq!(command.get_args().collect::<Vec<_>>(), ["auth", "login"]);
+            Ok(0)
+        })
+        .unwrap();
+        assert!(setup_commands("acp-custom-example", Some(&binary)).is_empty());
     }
     #[test]
     fn configuration_change_or_forged_handoff_never_invokes_setup_child() {

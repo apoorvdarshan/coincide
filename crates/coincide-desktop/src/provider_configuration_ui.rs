@@ -107,6 +107,7 @@ pub(super) struct Panel {
     pending: Option<String>,
     active: String,
     check_queue: std::collections::VecDeque<String>,
+    queued_acp_sign_in: Option<String>,
     last_clock_refresh: Instant,
     enabled: bool,
     pickers: Vec<Task<()>>,
@@ -155,6 +156,7 @@ impl Panel {
             pending: None,
             active: String::new(),
             check_queue: Default::default(),
+            queued_acp_sign_in: None,
             last_clock_refresh: Instant::now(),
             enabled: true,
             pickers: Vec::new(),
@@ -206,6 +208,34 @@ impl Panel {
             self.start(provider, Request::Load, cx);
         }
     }
+    pub fn queue_acp_sign_in(
+        &mut self,
+        provider: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.pending.is_some() || self.queued_acp_sign_in.is_some() || !self.workers.can_start()
+        {
+            return;
+        }
+        self.queued_acp_sign_in = Some(provider.to_owned());
+        self.select(provider, true, window, cx);
+        cx.notify();
+    }
+
+    pub fn acp_setup_pending(&self) -> bool {
+        self.pending.is_some() || self.queued_acp_sign_in.is_some()
+    }
+
+    pub fn acp_setup_notice(&self, provider: &str) -> Option<&str> {
+        let editor = self.editors.get(provider)?;
+        if editor.failed || editor.notice.starts_with("Handed off") {
+            Some(&editor.notice)
+        } else {
+            None
+        }
+    }
+
     pub fn check_all(&mut self, providers: &[String], window: &mut Window, cx: &mut Context<Self>) {
         if self.has_pending_write() || !self.check_queue.is_empty() {
             return;
@@ -546,6 +576,27 @@ impl Panel {
             self.start(&provider, Request::Load, cx);
         }
         if self.pending.is_none()
+            && let Some(provider) = self.queued_acp_sign_in.clone()
+            && let Some(editor) = self.editors.get(&provider)
+        {
+            if editor.loaded || !editor.load_requested {
+                self.queued_acp_sign_in = None;
+                if editor.loaded {
+                    let baseline = editor.baseline.clone();
+                    self.start(
+                        &provider,
+                        Request::Setup {
+                            action: SetupAction::SignIn,
+                            baseline,
+                        },
+                        cx,
+                    );
+                }
+            } else {
+                self.start(&provider, Request::Load, cx);
+            }
+        }
+        if self.pending.is_none()
             && let Some(provider) = self
                 .editors
                 .iter()
@@ -593,7 +644,13 @@ impl Panel {
                 }
                 Ok(Outcome::SetupHandedOff) => {
                     if let Some(editor) = self.editors.get_mut(&reply.provider) {
-                        editor.notice = "Handed off to a separate terminal. Installation and sign-in are not verified; choose Check Again after finishing there.".into();
+                        editor.notice = if coincide_core::acp_registry::registry_id(&reply.provider)
+                            .is_some()
+                        {
+                            "Handed off to the setup terminal. Finish signing in, then choose Check sign-in.".into()
+                        } else {
+                            "Handed off to a separate terminal. Installation and sign-in are not verified; choose Check Again after finishing there.".into()
+                        };
                         editor.report = None;
                         editor.catalog = None;
                         editor.checked = None;
@@ -750,6 +807,7 @@ impl Panel {
             || self.accounts.has_queued_action()
             || self.accounts.has_pending_names()
             || !self.check_queue.is_empty()
+            || self.queued_acp_sign_in.is_some()
             || self.pending.is_some()
             || self.pickers.iter().any(|task| !task.is_ready())
     }
@@ -1146,6 +1204,7 @@ impl Panel {
     }
     pub fn request_shutdown(&mut self) {
         self.check_queue.clear();
+        self.queued_acp_sign_in = None;
         self.accounts.cancel_review();
         self.workers.close();
     }

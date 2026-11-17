@@ -7,6 +7,19 @@ fn rpc(id: u64, method: &str, params: Value) -> Value {
     json!({"jsonrpc":"2.0","id":id,"method":method,"params":params})
 }
 
+fn requires_sign_in(frame: &Value) -> bool {
+    let error = &frame["error"];
+    // Some agents also use -32000 for generic failures, including failed
+    // session restores. The code alone does not establish a sign-in problem.
+    error["code"].as_i64() == Some(-32000)
+        && error["message"].as_str().is_some_and(|message| {
+            message
+                .trim()
+                .trim_end_matches('.')
+                .eq_ignore_ascii_case("authentication required")
+        })
+}
+
 fn selected_option<'a>(options: &'a [Value], kind: &str) -> Option<&'a Value> {
     options
         .iter()
@@ -130,9 +143,12 @@ pub(super) fn model_catalog(
         if frame["id"].as_u64() != Some(stage) {
             continue;
         }
+        if requires_sign_in(&frame) {
+            bail!("{}", crate::acp_registry::SIGN_IN_REQUIRED);
+        }
         ensure!(
             frame.get("error").is_none(),
-            "ACP model discovery was rejected; check the agent sign-in"
+            "The agent could not provide its models"
         );
         let result = frame
             .get("result")
@@ -444,8 +460,16 @@ fn run_flavored(
             Err(error) => return Err(error),
         };
         // Authentication responses can contain credential material; never persist them.
-        if !is_grok || (stage != 5 && frame["error"]["code"] != -32000) {
-            raw(events, if is_grok { "grok" } else { "acp" }, &frame)?;
+        if !(frame["error"]["code"] == -32000 || is_grok && stage == 5) {
+            if stage == 1 && frame["id"] == 1 && frame["result"].get("authMethods").is_some() {
+                let mut diagnostic = frame.clone();
+                if let Some(result) = diagnostic["result"].as_object_mut() {
+                    result.remove("authMethods");
+                }
+                raw(events, if is_grok { "grok" } else { "acp" }, &diagnostic)?;
+            } else {
+                raw(events, if is_grok { "grok" } else { "acp" }, &frame)?;
+            }
         }
         if is_grok
             && stage == 4
@@ -570,6 +594,18 @@ fn run_flavored(
             if is_grok && (stage == 5 || frame["error"]["code"] == -32000) {
                 bail!(
                     "Grok authentication failed; sign in with the configured Grok CLI account first"
+                );
+            }
+            if requires_sign_in(&frame) {
+                bail!("{}", crate::acp_registry::SIGN_IN_REQUIRED);
+            }
+            if frame["error"]["code"] == -32000 {
+                let message = frame["error"]["message"]
+                    .as_str()
+                    .unwrap_or("The agent rejected the request");
+                bail!(
+                    "ACP rejected request: {}",
+                    json!({"code":-32000,"message":message})
                 );
             }
             bail!("ACP rejected request: {}", frame["error"]);

@@ -326,7 +326,7 @@ impl Coincide {
             let _ = cx
                 .background_executor()
                 .spawn(async move {
-                    if let Ok(mut engine) = try_state(&engine) {
+                    if let Ok(mut engine) = engine.lock() {
                         let _ = engine.refresh_native_provider_discovery();
                         let _ = engine.refresh_native_acp_registry();
                     }
@@ -338,6 +338,115 @@ impl Coincide {
             });
         })
         .detach();
+    }
+
+    pub(super) fn acp_setup_controls(&self, provider: &str, cx: &mut Context<Self>) -> AnyElement {
+        let Some(id) = coincide_core::acp_registry::registry_id(provider) else {
+            return div().into_any_element();
+        };
+        let website = self.settings_navigation.agent_view["agents"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|agent| agent["id"] == id)
+            .and_then(|agent| agent["website"].as_str())
+            .and_then(|url| url::Url::parse(url).ok())
+            .filter(|url| {
+                url.scheme() == "https"
+                    && url.host_str().is_some()
+                    && url.username().is_empty()
+                    && url.password().is_none()
+            })
+            .map(|url| url.to_string());
+        let can_sign_in = coincide_core::provider_configuration::native_sign_in_supported(provider);
+        let mut actions = div().flex().items_center().flex_wrap().gap_1();
+        if can_sign_in {
+            let busy = self
+                .provider_configuration_panel
+                .read(cx)
+                .acp_setup_pending();
+            let target = provider.to_owned();
+            actions = actions.child(
+                Button::new(SharedString::from(format!("sign-in-{id}")))
+                    .label("Sign in")
+                    .compact()
+                    .disabled(busy)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.provider_configuration_panel
+                            .update(cx, |panel, cx| panel.queue_acp_sign_in(&target, window, cx));
+                    })),
+            );
+            let target = provider.to_owned();
+            actions = actions.child(
+                Button::new(SharedString::from(format!("check-sign-in-{id}")))
+                    .label("Check sign-in")
+                    .compact()
+                    .ghost()
+                    .disabled(busy)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.provider_configuration_panel.update(cx, |panel, cx| {
+                            panel.check_all(std::slice::from_ref(&target), window, cx);
+                        });
+                    })),
+            );
+        }
+        if let Some(website) = website {
+            actions = actions.child(
+                Button::new(SharedString::from(format!("setup-guide-{id}")))
+                    .label("Setup guide")
+                    .compact()
+                    .ghost()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.selection_ui.expanded = false;
+                        this.open_web_link(
+                            website.clone(),
+                            transcript_links::Destination::BrowserNewTab,
+                            cx,
+                        );
+                    })),
+            );
+        }
+        if self.selected.is_some() {
+            actions = actions.child(
+                Button::new(SharedString::from(format!("setup-terminal-{id}")))
+                    .label("Open terminal")
+                    .compact()
+                    .ghost()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.selection_ui.expanded = false;
+                        let main = this.main_window;
+                        cx.spawn(async move |owner, cx| {
+                            let _ =
+                                main_window_poll::update(main, &owner, cx, |this, window, cx| {
+                                    window.activate_window();
+                                    this.hide_inline_settings();
+                                    if !this.terminal_open {
+                                        this.terminal(window, cx);
+                                    } else {
+                                        this.terminal_activate_on_show = true;
+                                        this.sync_terminal_workspace(window, cx);
+                                    }
+                                    cx.notify();
+                                });
+                        })
+                        .detach();
+                    })),
+            );
+        }
+        let notice = self
+            .provider_configuration_panel
+            .read(cx)
+            .acp_setup_notice(provider)
+            .map(str::to_owned);
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(actions)
+            .when_some(notice, |pane, notice| {
+                pane.child(div().text_xs().child(notice))
+            })
+            .into_any_element()
     }
 
     fn add_registry_agent_in_settings(&mut self, id: String, cx: &mut Context<Self>) {
@@ -359,7 +468,7 @@ impl Coincide {
             let _ = this.update(cx, |this, cx| {
                 this.settings_navigation.agent_add_pending = false;
                 this.settings_status = match result {
-                    Ok(_) => "Agent added. You can select it in a conversation.".into(),
+                    Ok(_) => "Agent is available in the model picker.".into(),
                     Err(error) => format!("Agent could not be added: {error}"),
                 };
                 this.settings_navigation.last_agent_read = None;
@@ -942,21 +1051,25 @@ impl Coincide {
             let id = text(&agent, "id");
             let name = text(&agent, "name");
             let registered = agent["registered"] == true;
-            let action_label = if registered {
-                format!("{name} added")
+            let provider = format!("acp-{id}");
+            let action_label = format!("Add {name}");
+            let detail = if registered
+                && coincide_core::provider_configuration::native_sign_in_supported(&provider)
+            {
+                self.provider_configuration_panel
+                    .read(cx)
+                    .summary(&provider)
+            } else if registered {
+                "CLI configured".into()
             } else {
-                format!("Add {name}")
-            };
-            let detail = if registered {
-                "Added"
-            } else {
-                "Installed · add to use"
+                "Installed · add to use".into()
             };
             pane = pane.child(
                 self.settings_card(
                     div()
                         .flex()
                         .items_center()
+                        .flex_wrap()
                         .gap_3()
                         .p_4()
                         .child(
@@ -969,22 +1082,46 @@ impl Coincide {
                                 }),
                         )
                         .child(
-                            div().flex_1().child(name).child(
+                            div().flex_1().child(name.clone()).child(
                                 div()
                                     .text_xs()
                                     .text_color(self.color(0xe4e9f2).opacity(0.65))
                                     .child(detail),
                             ),
                         )
-                        .child(
+                        .child(if registered {
+                            let repair_id = id.clone();
+                            div()
+                                .flex()
+                                .items_center()
+                                .flex_wrap()
+                                .gap_1()
+                                .child(self.acp_setup_controls(&provider, cx))
+                                .child(
+                                    Button::new(SharedString::from(format!(
+                                        "provider-reapprove-{id}"
+                                    )))
+                                    .icon(gpui_kit::assets::IconName::RotateCw)
+                                    .accessibility_label(format!("Reapprove {name} executable"))
+                                    .tooltip("Reapprove after updating the CLI")
+                                    .compact()
+                                    .ghost()
+                                    .disabled(self.settings_navigation.agent_add_pending)
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.add_registry_agent_in_settings(repair_id.clone(), cx)
+                                    })),
+                                )
+                                .into_any_element()
+                        } else {
                             Button::new(SharedString::from(format!("provider-add-{id}")))
-                                .label(if registered { "Added" } else { "Add" })
+                                .label("Add")
                                 .accessibility_label(action_label)
-                                .disabled(registered || self.settings_navigation.agent_add_pending)
+                                .disabled(self.settings_navigation.agent_add_pending)
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.add_registry_agent_in_settings(id.clone(), cx)
-                                })),
-                        ),
+                                }))
+                                .into_any_element()
+                        }),
                 )
                 .flex_shrink_0(),
             );
@@ -1133,6 +1270,7 @@ impl Coincide {
                         div()
                             .flex()
                             .items_center()
+                            .flex_wrap()
                             .gap_3()
                             .p_4()
                             .child(
@@ -1181,6 +1319,8 @@ impl Coincide {
                 );
             }
         }
+        let last_checked = self.provider_configuration_panel.read(cx).last_checked();
+        let checking_all = self.provider_configuration_panel.read(cx).checking_all();
         let content = pane
             .child(
                 div()
@@ -1188,18 +1328,25 @@ impl Coincide {
                     .flex_shrink_0()
                     .items_center()
                     .justify_between()
-                    .child(panel.last_checked())
+                    .child(last_checked)
                     .child(
                         Button::new("providers-check-all")
                             .label("Check All Again")
-                            .disabled(panel.checking_all())
+                            .disabled(checking_all)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 let providers = coincide_core::provider_catalog::PROVIDERS
                                     .iter()
                                     .filter(|descriptor| {
                                         provider_enabled(&this.settings, descriptor.id)
                                     })
-                                    .map(|descriptor| provider_key(descriptor.id).to_owned())
+                                    .map(|descriptor| provider_key(descriptor.id))
+                                    .chain(
+                                        this.settings_navigation.agent_view["registered"].as_array()
+                                            .into_iter().flatten()
+                                            .filter_map(|agent| agent["provider"].as_str())
+                                            .filter(|provider| coincide_core::provider_configuration::native_sign_in_supported(provider)),
+                                    )
+                                    .map(str::to_owned)
                                     .collect::<Vec<_>>();
                                 this.provider_configuration_panel.update(cx, |panel, cx| {
                                     panel.check_all(&providers, window, cx)

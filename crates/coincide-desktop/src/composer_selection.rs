@@ -4335,7 +4335,14 @@ impl Coincide {
             .tab_provider
             .clone()
             .unwrap_or_else(|| saved_provider.clone());
-        let mut tabs = div().flex().items_center().gap_1().flex_wrap();
+        let mut tabs = div()
+            .id("selection-provider-tabs")
+            .flex()
+            .items_center()
+            .gap_1()
+            .flex_wrap()
+            .max_h(px(100.))
+            .overflow_y_scroll();
         let favorites = self.selection_ui.favorites_only;
         tabs = tabs.child(
             Button::new("picker-tab-favorites")
@@ -4363,11 +4370,6 @@ impl Coincide {
             .flatten()
             .filter(|provider| provider["enabled"] != false)
             .filter(|provider| {
-                provider["provider"]
-                    .as_str()
-                    .is_none_or(|id| coincide_core::acp_registry::registry_id(id).is_none())
-            })
-            .filter(|provider| {
                 let id = text(provider, "provider");
                 coincide_core::provider_catalog::PROVIDERS
                     .iter()
@@ -4386,6 +4388,8 @@ impl Coincide {
             let label = text(provider, "displayName");
             let source = source.clone();
             let selected = shown == id && !favorites;
+            let is_acp = coincide_core::acp_registry::registry_id(&id).is_some();
+            let label_text = label.clone();
             tabs = tabs.child(
                 Button::new(SharedString::from(format!("selection-provider-{id}")))
                     .accessibility_label(label.clone())
@@ -4393,7 +4397,8 @@ impl Coincide {
                     .compact()
                     .ghost()
                     .h(px(30.))
-                    .w(px(38.))
+                    .when(!is_acp, |button| button.w(px(38.)))
+                    .when(is_acp, |button| button.max_w(px(146.)))
                     .rounded(px(7.))
                     .when(selected, |button| button.bg(self.picker_selection_bg()))
                     .when_some(chat_layout::provider_mark(&id, 18.), |button, image| {
@@ -4401,6 +4406,9 @@ impl Coincide {
                     })
                     .when(!chat_layout::provider_known(&id), |button| {
                         button.icon(gpui_kit::assets::IconName::Cpu)
+                    })
+                    .when(is_acp, |button| {
+                        button.child(div().min_w_0().truncate().text_sm().child(label_text))
                     })
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if !this
@@ -4421,11 +4429,12 @@ impl Coincide {
                     })),
             );
         }
-        let active_registry =
-            shown == ACP_REGISTRY_TAB || coincide_core::acp_registry::registry_id(&shown).is_some();
+        let active_registry = shown == ACP_REGISTRY_TAB;
         tabs = tabs.child(
             Button::new("picker-tab-more-agents")
-                .label("Agents")
+                .icon(gpui_kit::assets::IconName::Plus)
+                .accessibility_label("Add agents")
+                .tooltip("Add agents")
                 .compact()
                 .ghost()
                 .h(px(30.))
@@ -4575,7 +4584,11 @@ impl Coincide {
             .flex()
             .flex_col();
         let mut count = 0usize;
-        for agent in rows.into_iter().take(200) {
+        for agent in rows
+            .into_iter()
+            .filter(|agent| agent["registered"] != true)
+            .take(200)
+        {
             let id = text(&agent, "id");
             let name = text(&agent, "name");
             let installed = agent["executable"].as_str().is_some() || agent["registered"] == true;
@@ -5334,6 +5347,38 @@ impl Coincide {
                 ));
             }
         }
+        let acp_tab = coincide_core::acp_registry::registry_id(&tab_provider).is_some();
+        let auth_required = acp_tab
+            && same_scope
+            && state == "failed"
+            && catalog["error"] == coincide_core::acp_registry::SIGN_IN_REQUIRED;
+        if acp_tab
+            && !self.selection_ui.favorites_only
+            && state != "ready"
+            && draft.provider != tab_provider
+            && query.trim().is_empty()
+        {
+            let provider = tab_provider.clone();
+            let source = (thread_id.clone(), thread["selection"].clone());
+            let name = self.selection_ui.capabilities["providers"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|row| row["provider"] == tab_provider)
+                .and_then(|row| row["displayName"].as_str())
+                .unwrap_or("agent");
+            list = list.child(self.picker_menu_row(
+                "picker-use-acp-default".into(),
+                format!("Use {name}"),
+                Some("Provider default model".into()),
+                None,
+                false,
+                model_disabled,
+                move |this, _, cx| this.finish_acp_choice(source.clone(), Ok(provider.clone()), cx),
+                cx,
+            ));
+            shown += 1;
+        }
         let discovery_reason = self.selection_ui.capabilities["providers"]
             .as_array()
             .into_iter()
@@ -5354,7 +5399,7 @@ impl Coincide {
             "ready" => "No models yet.".to_owned(),
             _ => discovery_reason.to_owned(),
         };
-        if shown == 0 {
+        if shown == 0 && !auth_required {
             list = list.child(
                 div()
                     .px_2()
@@ -5461,11 +5506,15 @@ impl Coincide {
                     .icon(gpui_kit::assets::IconName::Settings)
                     .compact()
                     .ghost()
-                    .on_click(cx.listener(|this, _, window, cx| {
+                    .on_click(cx.listener(move |this, _, window, cx| {
                         this.selection_ui.expanded = false;
                         this.open_settings_panel(window, cx);
                         this.navigate_settings_section(
-                            settings::SettingsSection::Models,
+                            if acp_tab {
+                                settings::SettingsSection::Accounts
+                            } else {
+                                settings::SettingsSection::Models
+                            },
                             window,
                             cx,
                         );
@@ -5480,7 +5529,34 @@ impl Coincide {
             .child(providers)
             .when(draft.provider == "antigravity", |pane| pane.child(accounts))
             .child(self.model_picker_filter_bar(cx))
+            .when(auth_required, |pane| {
+                pane.child(
+                    div()
+                        .px_2()
+                        .text_sm()
+                        .child("Sign in, then refresh to load models."),
+                )
+            })
             .child(list)
+            .when(acp_tab && !self.selection_ui.favorites_only, |pane| {
+                let status =
+                    coincide_core::provider_configuration::native_sign_in_supported(&tab_provider)
+                        .then(|| {
+                            self.provider_configuration_panel
+                                .read(cx)
+                                .summary(&tab_provider)
+                        });
+                pane.when_some(status, |pane, status| {
+                    pane.child(
+                        div()
+                            .px_2()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(status),
+                    )
+                })
+                .child(self.acp_setup_controls(&tab_provider, cx))
+            })
             .when(shows_reasoning, |pane| {
                 pane.child(div().h(px(1.)).w_full().bg(self.color(0x29303d)))
                     .child(reasoning)

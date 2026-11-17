@@ -34,6 +34,10 @@ pub struct Agent {
 pub fn provider_id(id: &str) -> Option<String> {
     valid_id(id).then(|| format!("acp-{id}"))
 }
+/// A protocol-defined auth failure is safe to expose without provider data.
+pub const SIGN_IN_REQUIRED: &str =
+    "Sign in to this agent from Settings → Providers, then refresh its models.";
+
 pub fn registry_id(provider: &str) -> Option<&str> {
     let id = provider.strip_prefix("acp-")?;
     valid_id(id).then_some(id)
