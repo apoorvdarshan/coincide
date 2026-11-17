@@ -2,6 +2,7 @@
 pub mod store;
 
 pub mod acp_registry;
+pub mod active_work;
 pub mod agent;
 pub mod api;
 pub mod async_questions;

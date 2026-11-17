@@ -393,7 +393,7 @@ fn steer_parts<'a>(body: &[usize], kind: impl Fn(usize) -> &'a str) -> Vec<(usiz
 pub(super) enum Live {
     /// The provider has not answered yet: "Starting Claude…".
     Starting,
-    Thinking,
+    Working,
 }
 
 /// Swift's needsLiveRow: the live line says the agent is busy when nothing
@@ -412,7 +412,7 @@ pub(super) fn live(
     let status = if starting {
         Live::Starting
     } else {
-        Live::Thinking
+        Live::Working
     };
     let Some(last) = items.iter().rposition(|item| visible(item, show_reasoning)) else {
         return Some(status);
@@ -833,7 +833,7 @@ impl super::Coincide {
                 Live::Starting => {
                     format!("Starting {}…", presentation::provider_name(&provider))
                 }
-                Live::Thinking => "Thinking…".into(),
+                Live::Working => "Working…".into(),
             };
             line(div().pl_1().child(label).into_any_element(), 36.)
         });
@@ -1411,7 +1411,7 @@ mod tests {
         );
         assert_eq!(
             live(&[user.clone()], true, false, true, |_| false),
-            Some(Live::Thinking)
+            Some(Live::Working)
         );
         let mut running = item("t", "tool", 1.);
         running["status"] = json!("running");
@@ -1425,7 +1425,7 @@ mod tests {
         done["status"] = json!("completed");
         assert_eq!(
             live(&[user.clone(), done], true, false, true, |_| false),
-            Some(Live::Thinking)
+            Some(Live::Working)
         );
         let streaming = item("a", "assistant", 1.);
         assert_eq!(
@@ -1444,7 +1444,7 @@ mod tests {
             live(&[user.clone(), streaming, blank], true, false, true, |_| {
                 false
             }),
-            Some(Live::Thinking),
+            Some(Live::Working),
             "a reply followed by a newer item is no longer the activity"
         );
         let approval = item("p", "approval", 1.);
@@ -1456,7 +1456,7 @@ mod tests {
         );
         assert_eq!(
             live(&[user, approval], true, false, true, |_| false),
-            Some(Live::Thinking)
+            Some(Live::Working)
         );
     }
 

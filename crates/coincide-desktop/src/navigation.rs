@@ -642,6 +642,11 @@ impl Coincide {
         if let Some(label) = self.sidebar_thread_status(thread).label() {
             lines.push(label.into());
         }
+        if let Some((_, detail)) =
+            sidebar_thread_status::work_labels(self.thread_activity.work(&thread.id))
+        {
+            lines.push(detail);
+        }
         if thread.snoozed_until.is_some_and(|until| until > now) {
             lines.push("Snoozed".into());
         }
