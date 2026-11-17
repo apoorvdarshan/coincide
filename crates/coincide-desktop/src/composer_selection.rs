@@ -557,11 +557,15 @@ fn apply_selection_in_engine(
     if let Some(reason) = mode_problem(draft, provider) {
         anyhow::bail!(reason);
     }
-    if let Some(reason) = effort_problem(draft, &current, provider) {
-        anyhow::bail!(reason);
-    }
-    if let Some(reason) = speed_problem(draft, &current, provider) {
-        anyhow::bail!(reason);
+    // The controls validate edits to the current model. For a different
+    // model, Core checks the selected options against the target catalog.
+    if saved_effort_scope(draft, &current) {
+        if let Some(reason) = effort_problem(draft, &current, provider) {
+            anyhow::bail!(reason);
+        }
+        if let Some(reason) = speed_problem(draft, &current, provider) {
+            anyhow::bail!(reason);
+        }
     }
     let saved = selection_response(engine, "agent.select", params)?;
     let mut projection = serde_json::Map::new();
@@ -571,6 +575,8 @@ fn apply_selection_in_engine(
         "accessMode",
         "interactionMode",
         "modelPreferences",
+        "rustProviderSelections",
+        "rustAccountSelections",
     ] {
         if let Some(value) = saved.get(key) {
             projection.insert(key.into(), value.clone());
@@ -1206,6 +1212,30 @@ fn picker_account(draft: &SelectionDraft, provider: &str) -> Value {
     } else {
         Value::Null
     }
+}
+fn picker_saved_options(
+    thread: &Value,
+    provider: &str,
+    account: &Value,
+    row: &Value,
+) -> (Value, Value) {
+    let Some(saved) =
+        coincide_core::composer_selection::remembered_selection(thread, provider, account)
+            .filter(|selection| selection["modelID"] == row["id"])
+    else {
+        return (Value::Null, Value::Null);
+    };
+    let effort = row["reportedEfforts"]
+        .as_array()
+        .filter(|options| options.contains(&saved["effort"]))
+        .map(|_| saved["effort"].clone())
+        .unwrap_or_default();
+    let speed = row["reportedSpeeds"]
+        .as_array()
+        .filter(|options| options.iter().any(|option| option["id"] == saved["speed"]))
+        .map(|_| saved["speed"].clone())
+        .unwrap_or_default();
+    (effort, speed)
 }
 fn catalog_response_matches(value: &Value, request: &CatalogRequest) -> bool {
     value["requestId"].as_str() == Some(request.request_id.as_str())
@@ -2802,6 +2832,8 @@ impl Coincide {
                                     "accessMode",
                                     "interactionMode",
                                     "modelPreferences",
+                                    "rustProviderSelections",
+                                    "rustAccountSelections",
                                 ] {
                                     match saved.get(key) {
                                         Some(value) => {
@@ -3532,9 +3564,7 @@ impl Coincide {
         }
     }
 
-    /// Chooses a discovered model the way Swift's picker does: one click saves
-    /// the provider and model, closes the popover, and leaves effort at the
-    /// provider's default until the reasoning chips choose one.
+    /// One click saves the provider and model with any supported saved options.
     fn choose_picker_model(
         &mut self,
         thread_id: &str,
@@ -3599,12 +3629,16 @@ impl Coincide {
             || catalog["provider"].as_str() != Some(provider)
             || catalog["accountID"].as_str() != default_account_id(&target_account)
             || (workspace_catalog(provider) && catalog["threadId"].as_str() != Some(thread_id))
-            || !catalog["models"]
-                .as_array()
-                .is_some_and(|rows| rows.iter().any(|row| row["id"] == model))
         {
             return;
         }
+        let Some(row) = catalog["models"]
+            .as_array()
+            .and_then(|rows| rows.iter().find(|row| row["id"] == model))
+        else {
+            return;
+        };
+        let (effort, speed) = picker_saved_options(thread, provider, &target_account, row);
         let chosen_provider = provider.to_owned();
         let chosen_model = model.to_owned();
         let Some(draft) = self.selection_ui.drafts.get_mut(thread_id) else {
@@ -3614,8 +3648,8 @@ impl Coincide {
         draft.account = target_account;
         draft.custom = chosen_model.clone();
         draft.use_custom = true;
-        draft.proposed_effort = Value::Null;
-        draft.proposed_speed = Value::Null;
+        draft.proposed_effort = effort;
+        draft.proposed_speed = speed;
         self.model_input.update(cx, |input, cx| {
             input.set_value(chosen_model.clone(), window, cx)
         });
@@ -5216,14 +5250,25 @@ impl Coincide {
             shown += 1;
         }
         if state == "ready" {
-            for row in filtered_picker_models(
+            let mut rows = filtered_picker_models(
                 &self.settings,
                 catalog,
                 &tab_provider,
                 &current_model,
                 &query,
                 self.selection_ui.favorites_only,
-            ) {
+            );
+            if draft.provider != tab_provider
+                && let Some(saved) = coincide_core::composer_selection::remembered_selection(
+                    thread,
+                    &tab_provider,
+                    &target_account,
+                )
+                && let Some(index) = rows.iter().position(|row| row["id"] == saved["modelID"])
+            {
+                rows[..=index].rotate_right(1);
+            }
+            for row in rows {
                 if text(row, "id").is_empty() {
                     continue;
                 }
@@ -6009,6 +6054,39 @@ mod tests {
         );
         assert!(state.catalog.is_null() && state.catalog_request.is_none());
     }
+    #[::core::prelude::v1::test]
+    fn picker_restores_only_the_matching_providers_supported_model_options() {
+        let thread = json!({
+            "selection":{"provider":"claude","modelID":"other"},
+            "rustAccountSelections":{"codex/default":{"provider":"codex","modelID":"saved","effort":"high","speed":"ultrafast"}},
+            "rustProviderSelections":{"codex":{"provider":"codex","accountID":"another","modelID":"saved","effort":"low"}}
+        });
+        let row =
+            json!({"id":"saved","reportedEfforts":["high"],"reportedSpeeds":[{"id":"ultrafast"}]});
+        let automatic = (Value::Null, Value::Null);
+        assert_eq!(
+            picker_saved_options(&thread, "codex", &Value::Null, &row),
+            (json!("high"), json!("ultrafast"))
+        );
+        assert_eq!(
+            picker_saved_options(&thread, "claude", &Value::Null, &row),
+            automatic
+        );
+        assert_eq!(
+            picker_saved_options(&thread, "codex", &json!("another"), &row),
+            automatic
+        );
+        assert_eq!(
+            picker_saved_options(
+                &thread,
+                "codex",
+                &Value::Null,
+                &json!({"id":"different","reportedEfforts":["high"]})
+            ),
+            automatic
+        );
+    }
+
     #[::core::prelude::v1::test]
     fn picker_catalog_accounts_follow_the_target_provider() {
         let thread = json!({"id":"A","selection":{"provider":"codex","accountID":"private-account","modelID":"model"},"accessMode":"approval","interactionMode":"build"});

@@ -47,6 +47,9 @@ impl Engine {
             self.park_named_departure_by_id(id)?;
         }
         if self.active_thread != selected {
+            if self.new_composer != selected {
+                self.new_composer = None;
+            }
             self.cancel_provider_restore();
             self.composer_file_owner = Uuid::new_v4();
             self.active_thread = selected;

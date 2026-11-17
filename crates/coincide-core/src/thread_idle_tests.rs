@@ -16,6 +16,64 @@ fn new(engine: &mut Engine, params: &Value) -> Value {
     engine.apply_native_new_thread(prepared).unwrap()
 }
 #[test]
+fn new_composer_defaults_follow_the_latest_choice_across_projects() {
+    let (_directory, mut engine, project) = fixture();
+    let first = new(&mut engine, &project);
+    let first_id = text(&first, "id");
+    engine.set_active_thread(Some(first_id.clone())).unwrap();
+    let choose =
+        |engine: &mut Engine, id: &str, provider, model| {
+            engine.execute("agent.select", &json!({
+            "threadId":id,"provider":provider,"model":model,"rememberComposerChoice":true
+        })).unwrap()
+        };
+    choose(&mut engine, &first_id, "codex", "project-model");
+    let claude = choose(&mut engine, &first_id, "claude", "new-default");
+    assert_eq!(
+        claude["rustProviderSelections"]["codex"]["modelID"],
+        "project-model"
+    );
+    let projectless = new(&mut engine, &json!({}));
+    assert_eq!(projectless["selection"], claude["selection"]);
+    assert_eq!(
+        projectless["rustProviderSelections"]["codex"]["modelID"],
+        "project-model"
+    );
+
+    let projectless_id = text(&projectless, "id");
+    engine
+        .set_active_thread(Some(projectless_id.clone()))
+        .unwrap();
+    engine.set_active_thread(Some(first_id.clone())).unwrap();
+    let old = choose(&mut engine, &first_id, "claude", "existing-thread-only");
+    assert_eq!(old["selection"]["modelID"], "existing-thread-only");
+    assert_eq!(
+        engine.store.thread(&projectless_id).unwrap()["selection"],
+        claude["selection"]
+    );
+    let defaults = engine.store.document("settings.json").unwrap().unwrap();
+    assert_eq!(defaults["defaultSelection"], claude["selection"]);
+    assert_eq!(
+        defaults["rustDefaultProviderSelections"]["claude"],
+        claude["selection"]
+    );
+}
+
+#[test]
+fn a_sent_conversation_does_not_update_the_new_composer_default() {
+    let (_directory, mut engine, params) = fixture();
+    let mut thread = new(&mut engine, &params);
+    let id = text(&thread, "id");
+    engine.set_active_thread(Some(id.clone())).unwrap();
+    thread["items"] = json!([{"kind":"user","text":"Already sent"}]);
+    engine.store.save(&thread).unwrap();
+    engine.execute("agent.select", &json!({
+        "threadId":id,"provider":"claude","model":"existing-thread-only","rememberComposerChoice":true
+    })).unwrap();
+    assert!(engine.store.document("settings.json").unwrap().is_none());
+}
+
+#[test]
 fn untouched_same_folder_and_defaults_reuses_exact_document_without_any_write() {
     let (_directory, mut engine, params) = fixture();
     let first = new(&mut engine, &params);

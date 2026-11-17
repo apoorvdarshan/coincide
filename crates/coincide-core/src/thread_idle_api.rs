@@ -41,6 +41,14 @@ fn untouched(
         && ["selection", "accessMode", "interactionMode"]
             .iter()
             .all(|key| thread[*key] == fresh[*key])
+        && fresh["rustProviderSelections"]
+            .as_object()
+            .is_none_or(|choices| {
+                choices.iter().all(|(provider, selection)| {
+                    thread["selection"] == *selection
+                        || thread["rustProviderSelections"][provider] == *selection
+                })
+            })
 }
 fn same_uuid(left: &str, right: &str) -> bool {
     match (Uuid::parse_str(left), Uuid::parse_str(right)) {
@@ -179,6 +187,7 @@ impl Engine {
             "New Thread candidate became busy; retry"
         );
         let (thread, created) = self.store.apply_native_new_row(intent.row)?;
+        self.new_composer = thread["id"].as_str().map(str::to_owned);
         if created {
             self.revision += 1;
         }

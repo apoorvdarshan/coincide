@@ -137,19 +137,45 @@ impl Engine {
         // configured; Store::new_thread retains its separate existing contract.
         thread["selection"] = json!({"provider":"codex","modelID":"default"});
         let projects = self.store.projects()?;
-        let defaults = if let Some(defaults) = project_defaults(&projects, project)? {
+        let project_override = project_defaults(&projects, project)?;
+        // With explicit project defaults, only the optional provider history
+        // can be read from general settings. A bad record cannot block creation.
+        let settings = if project_override.is_some() {
+            self.store.document("settings.json").ok().flatten()
+        } else {
+            self.store.document("settings.json")?
+        };
+        let defaults = if let Some(defaults) = project_override {
             Some(
                 self.validate_composer_defaults(defaults)
                     .context("Project composer defaults are unsupported")?,
             )
         } else {
-            // Deliberately lazy: a valid project override must not read/validate
-            // unrelated global defaults, including a bad captured settings file.
-            let settings = self.store.document("settings.json")?;
             global_defaults(settings.as_ref(), &thread)?
                 .map(|defaults| {
-                    self.validate_composer_defaults(&defaults)
-                        .context("Global composer defaults are unsupported")
+                    let selection = &defaults["selection"];
+                    let remembered = selection["provider"].as_str().is_some_and(|provider| {
+                        settings.as_ref().is_some_and(|settings| {
+                            settings["rustDefaultProviderSelections"][provider] == *selection
+                        })
+                    });
+                    if remembered
+                        && selection["provider"] == "codex"
+                        && crate::composer_selection::default_account(&selection["accountID"])
+                        && selection["modelID"] != "default"
+                    {
+                        // Opening a composer is safe before the catalog is warm.
+                        // Selection edits and sends still need fresh model proof.
+                        crate::composer_selection::validate_selection(selection)?;
+                        let mut base = defaults.clone();
+                        base["selection"]["effort"] = Value::Null;
+                        base["selection"]["speed"] = Value::Null;
+                        crate::composer_selection::validate_thread_base(&base)?;
+                        Ok(defaults)
+                    } else {
+                        self.validate_composer_defaults(&defaults)
+                    }
+                    .context("Global composer defaults are unsupported")
                 })
                 .transpose()?
         };
@@ -157,10 +183,6 @@ impl Engine {
             && !fields.contains_key("selection")
             && self.provider_discovery.is_some()
         {
-            let settings = self
-                .store
-                .document("settings.json")?
-                .unwrap_or_else(|| json!({}));
             let installed = self
                 .provider_discovery
                 .as_ref()
@@ -173,11 +195,20 @@ impl Engine {
                     installed.is_some_and(|rows| {
                         rows.iter()
                             .any(|row| row["provider"] == *id && row["state"] == "found")
-                    }) && crate::provider_preferences::enabled(&settings, id).unwrap_or(false)
+                    }) && crate::provider_preferences::enabled(
+                        settings.as_ref().unwrap_or(&Value::Null),
+                        id,
+                    )
+                    .unwrap_or(false)
                 })
             {
                 thread["selection"] = json!({"provider":provider,"modelID":"default"});
             }
+        }
+        if let Some(settings) = settings
+            && settings["rustDefaultProviderSelections"].is_object()
+        {
+            thread["rustProviderSelections"] = settings["rustDefaultProviderSelections"].clone();
         }
         if let Some(defaults) = defaults {
             for key in ["selection", "accessMode", "interactionMode"] {
