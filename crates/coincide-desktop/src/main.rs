@@ -8026,21 +8026,7 @@ impl Render for Coincide {
         let changing_conversation = route.navigating && !route.settings;
         let conversation_content = if route.settings {
             self.settings_surface(cx)
-        } else if changing_conversation && !route.selected {
-            div()
-                .flex_1()
-                .min_h_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_color(self.color(0xe4e9f2).opacity(0.55))
-                .child(if self.pending_new_thread.is_some() {
-                    "Creating chat…"
-                } else {
-                    "Opening conversation…"
-                })
-                .into_any_element()
-        } else if self.selected.is_none() && !self.schedules_open {
+        } else if !route.selected {
             self.empty_workspace_welcome(cx)
         } else {
             transcript.into_any_element()
@@ -8349,7 +8335,7 @@ impl Render for Coincide {
                     .when_some(terminal_bottom, |view, pane| view.child(pane))
                     // Keep the old column intact until the new draft and
                     // transcript are ready. The sidebar can still change the destination.
-                    .when(changing_conversation && route.selected, |view| {
+                    .when(changing_conversation, |view| {
                         view.capture_key_down(|_, _, cx| cx.stop_propagation())
                             .child(chat_layout::modal_backdrop())
                     })
