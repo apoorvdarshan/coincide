@@ -39,8 +39,10 @@ use gpui_kit::{
 };
 use serde_json::{Value, json};
 use std::{
+    cell::Cell,
     collections::{HashMap, HashSet},
     ops::Range,
+    rc::Rc,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -962,6 +964,7 @@ pub struct TerminalWorkspace {
     thread: String,
     tabs: Vec<Tab>,
     tab_scroll: ScrollHandle,
+    tab_reveal: Rc<Cell<Option<(PaneId, Pixels)>>>,
     active: Option<PaneId>,
     panes: HashMap<PaneId, Pane>,
     next: PaneId,
@@ -1029,6 +1032,7 @@ impl TerminalWorkspace {
             thread: thread_id,
             tabs: vec![],
             tab_scroll: ScrollHandle::new(),
+            tab_reveal: Rc::default(),
             active: None,
             panes: HashMap::new(),
             next: 1,
@@ -1255,7 +1259,7 @@ impl TerminalWorkspace {
             }
             return false;
         }
-        if pane.closing || pane.terminal.is_none() {
+        if pane.closing || (pane.terminal.is_none() && !matches!(action, Action::Close)) {
             pane.notice = WAIT_FOR_TERMINAL_CREATION.into();
             cx.notify();
             return false;
@@ -1417,6 +1421,9 @@ impl TerminalWorkspace {
             .collect();
         if !self.tabs.iter().any(|t| Some(t.key) == self.active) {
             self.active = self.tabs.first().map(|t| t.key);
+            if self.active.is_some() {
+                self.tab_scroll.scroll_to_item(0);
+            }
         }
         self.watch();
     }
@@ -1491,6 +1498,9 @@ impl TerminalWorkspace {
                             p.terminal = Some(id);
                             clear_creation_notice(&mut p.notice, p.closing);
                             pending = std::mem::take(&mut p.pending);
+                            if p.closing {
+                                pending.clear();
+                            }
                         }
                         for input in pending {
                             self.act(key, Action::Input(input), cx);
@@ -2587,12 +2597,42 @@ impl TerminalWorkspace {
     /// Swift TerminalHeaderView: the tabs and New Terminal on the left; the
     /// working directory, the splits and Hide on the right.
     fn header(&self, cx: &mut Context<Self>) -> AnyElement {
+        let active_index = self
+            .tabs
+            .iter()
+            .position(|tab| Some(tab.key) == self.active);
+        let active = active_index.map(|index| &self.tabs[index]);
+        let scroll = self.tab_scroll.clone();
+        let reveal = self.tab_reveal.clone();
+        let reveal_target = active_index.zip(self.active);
         let mut strip = div()
+            .on_children_prepainted(move |_, window, _| {
+                let bounds = scroll.bounds();
+                let target = reveal_target.map(|(_, key)| (key, bounds.size.width));
+                // Recheck against the measured viewport on the first frame
+                // and resize. Ordinary wheel scrolling keeps its position.
+                if reveal.replace(target) == target {
+                    return;
+                }
+                let Some(tab) = reveal_target.and_then(|(index, _)| scroll.bounds_for_item(index))
+                else {
+                    return;
+                };
+                let mut offset = scroll.offset();
+                let desired = offset.x.clamp(
+                    (bounds.right() - tab.right()).min(bounds.left() - tab.left()),
+                    bounds.left() - tab.left(),
+                );
+                if desired != offset.x {
+                    offset.x = desired;
+                    scroll.set_offset(offset);
+                    window.request_animation_frame();
+                }
+            })
             .id("terminal-tabs")
             .role(Role::TabList)
             .aria_label("Terminal tabs")
             .track_scroll(&self.tab_scroll)
-            .flex_1()
             .flex()
             .items_center()
             .gap(px(2.))
@@ -2601,7 +2641,6 @@ impl TerminalWorkspace {
         for tab in &self.tabs {
             strip = strip.child(self.tab_item(tab, cx));
         }
-        let active = self.tabs.iter().find(|t| Some(t.key) == self.active);
         let directory = active
             .and_then(|tab| self.panes.get(&tab.focus))
             .and_then(|pane| pane.status.as_ref())
@@ -2617,17 +2656,34 @@ impl TerminalWorkspace {
             .bg(cx.theme().foreground.opacity(0.05))
             .border_b_1()
             .border_color(cx.theme().border)
-            .child(strip)
             .child(
-                Button::new("terminal-workspace-new")
-                    .icon(IconName::Plus)
-                    .ghost()
-                    .compact()
-                    .accessibility_label("New Terminal")
-                    .tooltip(format!("New Terminal ({})", tabs::new_terminal_shortcut()))
-                    .on_click(cx.listener(|this, _, window, cx| this.create(None, window, cx))),
-            )
-            .child(div().flex_1().min_w_0());
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_w_0()
+                    .items_center()
+                    .gap_1()
+                    .child(strip)
+                    .child(
+                        div()
+                            .debug_selector(|| "terminal-new-tab-button".into())
+                            .flex_shrink_0()
+                            .child(
+                                Button::new("terminal-workspace-new")
+                                    .icon(IconName::Plus)
+                                    .ghost()
+                                    .compact()
+                                    .accessibility_label("New Terminal")
+                                    .tooltip(format!(
+                                        "New Terminal ({})",
+                                        tabs::new_terminal_shortcut()
+                                    ))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.create(None, window, cx)
+                                    })),
+                            ),
+                    ),
+            );
         if let Some(directory) = directory {
             row = row.child(self.directory_label(directory, cx));
         }
@@ -2741,8 +2797,6 @@ impl TerminalWorkspace {
         )
         .into_any_element()
     }
-    /// One tab: an icon (or its progress), the title and a close button that
-    /// shows on hover. The title dims once the shell exits.
     /// The pane's find strip: the query field, the position of the current
     /// match, previous/next, and Close. Escape closes it and returns focus.
     fn find_bar(&self, key: PaneId, bar: &FindBar, cx: &mut Context<Self>) -> AnyElement {
@@ -2816,6 +2870,7 @@ impl TerminalWorkspace {
             )
             .into_any_element()
     }
+    /// One tab with an activity icon, title, and close control.
     fn tab_item(&self, tab: &Tab, cx: &mut Context<Self>) -> AnyElement {
         let key = tab.key;
         let selected = Some(key) == self.active;
@@ -2920,10 +2975,11 @@ impl TerminalWorkspace {
                     .ghost()
                     .xsmall()
                     .accessibility_label(format!("Close {title}"))
+                    .flex_shrink_0()
                     .tooltip(format!("Close {title}"))
                     .when(!selected, |button| {
                         button
-                            .opacity(0.)
+                            .opacity(0.55)
                             .group_hover(group, |button| button.opacity(1.))
                     })
                     .on_click(cx.listener(move |this, _, window, cx| {
@@ -2948,6 +3004,7 @@ impl TerminalWorkspace {
             .items_center()
             .gap_1()
             .min_w_0()
+            .max_w(relative(0.24))
             .mr(px(6.))
             .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
             .child(
@@ -3151,8 +3208,82 @@ fn selection_bounds(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ::core::prelude::v1::test;
     use coincide_core::terminal::selected_text;
     use std::sync::{Arc, Mutex};
+
+    #[gpui_kit::test]
+    fn terminal_tabs_use_the_header_and_add_and_close_while_starting(cx: &mut TestAppContext) {
+        struct Header(Entity<TerminalWorkspace>);
+        impl Render for Header {
+            fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+                self.0.update(cx, |workspace, cx| workspace.header(cx))
+            }
+        }
+        cx.update(gpui_kit::init);
+        let root = tempfile::tempdir().unwrap();
+        let engine = Arc::new(Mutex::new(coincide_core::api::Engine::new(
+            coincide_core::store::Store::open(&root.path().join("state.sqlite")).unwrap(),
+        )));
+        let (commands, queued) = mpsc::sync_channel(64);
+        let (_updates, replies) = mpsc::sync_channel(32);
+        let (header, cx): (Entity<Header>, &mut VisualTestContext) =
+            cx.add_window_view(|window, cx| {
+                Header(cx.new(|cx| {
+                    let mut workspace =
+                        TerminalWorkspace::new(engine, "synthetic".into(), window, cx);
+                    workspace._poll = Task::ready(());
+                    workspace.tx = commands;
+                    workspace.rx = replies;
+                    for _ in 0..12 {
+                        let key = workspace.allocate(cx);
+                        workspace.tab_for(key);
+                    }
+                    workspace
+                }))
+            });
+        let workspace = header.read_with(cx, |header, _| header.0.clone());
+        cx.simulate_resize(size(px(800.), px(350.)));
+        let draw = |cx: &mut VisualTestContext| {
+            cx.update(|window, cx| {
+                window.activate_window();
+                for _ in 0..2 {
+                    window.simulate_next_frame(cx);
+                    window.refresh();
+                    window.draw(cx).clear(cx);
+                }
+            });
+        };
+        draw(cx);
+        let (strip, tab, offset) = workspace.read_with(cx, |workspace, _| {
+            let scroll = &workspace.tab_scroll;
+            (
+                scroll.bounds(),
+                scroll.bounds_for_item(11).unwrap(),
+                scroll.offset(),
+            )
+        });
+        assert!(strip.size.width > px(600.), "{strip:?}");
+        assert!(tab.left() + offset.x >= strip.left());
+        assert!(tab.right() + offset.x <= strip.right() + px(1.));
+        let add = cx.debug_bounds("terminal-new-tab-button").unwrap();
+        assert!(add.left() >= strip.right() && add.right() < px(800.));
+        cx.simulate_click(add.center(), Modifiers::default());
+        assert!(matches!(queued.try_recv(), Ok(Command::Create(13, None))));
+        draw(cx);
+        let close = workspace.read_with(cx, |workspace, _| {
+            let scroll = &workspace.tab_scroll;
+            let tab = scroll.bounds_for_item(12).unwrap();
+            point(tab.right() + scroll.offset().x - px(12.), tab.center().y)
+        });
+        cx.simulate_click(close, Modifiers::default());
+        assert!(
+            queued
+                .try_iter()
+                .any(|command| matches!(command, Command::Act(13, _, Action::Close)))
+        );
+        assert!(workspace.read_with(cx, |workspace, _| workspace.panes[&13].closing));
+    }
 
     #[::core::prelude::v1::test]
     fn explicit_open_waits_for_listing_and_never_duplicates_adopted_or_failed_shells() {

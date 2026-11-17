@@ -1171,7 +1171,10 @@ impl Coincide {
                 .then(|| (id.clone(), draft.text.clone()))
         });
         if let Some((id, text)) = next {
-            if self.pending_new_thread.is_some() || self.thread_navigation.target().is_some() {
+            if self.pending_new_thread.is_some()
+                || self.thread_navigation.target().is_some()
+                || self.awaiting_file_mention_draft(&id)
+            {
                 self.draft_saver.record_now(&id, &text);
             } else {
                 self.draft_saver.record(&id, &text);

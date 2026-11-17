@@ -570,6 +570,7 @@ impl Engine {
                 | "bots.list"
                 | "threads.list"
                 | "threads.read"
+                | "composer.commands"
                 | "schedules.list"
                 | "browser.request"
                 | "browser.result"
@@ -2972,10 +2973,7 @@ impl Engine {
                             } else {
                                 Value::Null
                             };
-                            let folder = self
-                                .working_directory(&v)
-                                .ok()
-                                .and_then(|path| path.canonicalize().ok());
+                            let folder = self.composer_command_directory(&v).ok();
                             self.composer_commands.record(
                                 &id,
                                 &provider,
@@ -3264,10 +3262,7 @@ impl Engine {
                                     } else {
                                         Value::Null
                                     };
-                                    let folder = self
-                                        .working_directory(&v)
-                                        .ok()
-                                        .and_then(|path| path.canonicalize().ok());
+                                    let folder = self.composer_command_directory(&v).ok();
                                     self.composer_commands.record(
                                         &id,
                                         &provider,

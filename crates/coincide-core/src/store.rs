@@ -700,6 +700,20 @@ impl Store {
         Ok(serde_json::from_str(&document)?)
     }
 
+    pub(crate) fn thread_terminal_context(&self, id: &str) -> Result<Value> {
+        let document: String = self.connection()?.query_row(
+            "SELECT json_object(
+                'projectID', document -> '$.projectID',
+                'worktreePath', document -> '$.worktreePath',
+                'botID', document -> '$.botID',
+                'rustBotContext', json_object('cwd', document -> '$.rustBotContext.cwd')
+            ) FROM threads WHERE id=?1",
+            [id],
+            |row| row.get(0),
+        )?;
+        Ok(serde_json::from_str(&document)?)
+    }
+
     pub(crate) fn thread_selection_envelope(&self, id: &str) -> Result<Value> {
         let document: String = self.connection()?.query_row(
             "SELECT json_object('selection', document -> '$.selection', 'accessMode', document -> '$.accessMode', 'interactionMode', document -> '$.interactionMode') FROM threads WHERE id=?1",
