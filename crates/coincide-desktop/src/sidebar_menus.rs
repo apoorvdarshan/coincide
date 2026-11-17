@@ -68,9 +68,15 @@ pub(super) enum BulkAction {
 fn handler(context: &MenuContext, id: &str, action: ThreadAction) -> Handler {
     let parent = context.parent.clone();
     let id = id.to_owned();
-    Rc::new(move |_, window, cx| {
+    Rc::new(move |event, window, cx| {
         let _ = parent.update(cx, |this, cx| {
-            this.sidebar_thread_action(&id, action.clone(), window, cx)
+            this.sidebar_thread_action(&id, action.clone(), window, cx);
+            if matches!(
+                action,
+                ThreadAction::Move(_) | ThreadAction::Archive(true) | ThreadAction::Delete
+            ) {
+                this.anchor_sidebar_review_to_click(event, cx);
+            }
         });
     })
 }
@@ -389,9 +395,12 @@ pub(super) fn bulk_menu(
     let item = |title: &'static str, action: BulkAction| {
         let parent = parent.clone();
         let ids = ids.to_vec();
-        PopupMenuItem::new(title).on_click(move |_, window, cx| {
+        PopupMenuItem::new(title).on_click(move |event, window, cx| {
             let _ = parent.update(cx, |this, cx| {
-                this.sidebar_bulk_action(&ids, action, window, cx)
+                this.sidebar_bulk_action(&ids, action, window, cx);
+                if matches!(action, BulkAction::Delete) {
+                    this.anchor_sidebar_review_to_click(event, cx);
+                }
             });
         })
     };
