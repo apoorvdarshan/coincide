@@ -1727,11 +1727,11 @@ fn send_catalog_action(
     {
         return SendCatalogAction::Proceed;
     }
-    if pending {
-        return SendCatalogAction::Wait;
-    }
     if proven {
         return SendCatalogAction::Proceed;
+    }
+    if pending {
+        return SendCatalogAction::Wait;
     }
     if failed && !retry_due {
         return SendCatalogAction::Wait;
@@ -1796,10 +1796,10 @@ impl Coincide {
         if self.running.contains(&id) || selection["provider"] != "codex" {
             return false;
         }
-        if self.selection_ui.capability_pending {
-            return true;
-        }
         if named_models::named_thread(thread) {
+            if self.selection_ui.capability_pending {
+                return true;
+            }
             let named = &self.selection_ui.capabilities["namedModels"];
             if named.is_null() {
                 // Wait only while capabilities have not arrived. A completed
@@ -4361,9 +4361,16 @@ impl Coincide {
             .as_array()
             .into_iter()
             .flatten()
-            .filter(|provider| provider["enabled"] != false)
             .filter(|provider| {
                 let id = text(provider, "provider");
+                if !coincide_core::provider_preferences::enabled(&self.settings, &id)
+                    .unwrap_or(false)
+                {
+                    return false;
+                }
+                if provider["enabled"] == false {
+                    return false;
+                }
                 coincide_core::provider_catalog::PROVIDERS
                     .iter()
                     .find(|entry| settings_navigation::provider_key(entry.id) == id)
@@ -4381,8 +4388,6 @@ impl Coincide {
             let label = text(provider, "displayName");
             let source = source.clone();
             let selected = shown == id && !favorites;
-            let is_acp = coincide_core::acp_registry::registry_id(&id).is_some();
-            let label_text = label.clone();
             tabs = tabs.child(
                 Button::new(SharedString::from(format!("selection-provider-{id}")))
                     .accessibility_label(label.clone())
@@ -4390,8 +4395,7 @@ impl Coincide {
                     .compact()
                     .ghost()
                     .h(px(30.))
-                    .when(!is_acp, |button| button.w(px(38.)))
-                    .when(is_acp, |button| button.max_w(px(146.)))
+                    .w(px(38.))
                     .rounded(px(7.))
                     .when(selected, |button| button.bg(self.picker_selection_bg()))
                     .when_some(chat_layout::provider_mark(&id, 18.), |button, image| {
@@ -4399,9 +4403,6 @@ impl Coincide {
                     })
                     .when(!chat_layout::provider_known(&id), |button| {
                         button.icon(gpui_kit::assets::IconName::Cpu)
-                    })
-                    .when(is_acp, |button| {
-                        button.child(div().min_w_0().truncate().text_sm().child(label_text))
                     })
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if !this
@@ -4579,7 +4580,16 @@ impl Coincide {
         let mut count = 0usize;
         for agent in rows
             .into_iter()
-            .filter(|agent| agent["registered"] != true)
+            .filter(|agent| {
+                agent["registered"] != true
+                    && agent["id"]
+                        .as_str()
+                        .and_then(coincide_core::acp_registry::provider_id)
+                        .is_some_and(|provider| {
+                            coincide_core::provider_preferences::enabled(&self.settings, &provider)
+                                .unwrap_or(false)
+                        })
+            })
             .take(200)
         {
             let id = text(&agent, "id");
@@ -5265,6 +5275,25 @@ impl Coincide {
             .tab_provider
             .clone()
             .unwrap_or_else(|| draft.provider.clone());
+        if coincide_core::acp_registry::registry_id(&tab_provider).is_some()
+            && !coincide_core::provider_preferences::enabled(&self.settings, &tab_provider)
+                .unwrap_or(false)
+        {
+            return div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(providers)
+                .child(self.model_picker_filter_bar(cx))
+                .child(
+                    div()
+                        .px_2()
+                        .py_3()
+                        .text_sm()
+                        .child("This agent is off in Settings."),
+                )
+                .into_any_element();
+        }
         let query = self.model_picker_search.read(cx).value();
         let current_model = if draft.provider == tab_provider {
             draft.custom.clone()

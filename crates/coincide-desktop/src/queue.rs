@@ -26,6 +26,22 @@ pub(super) enum PendingQueueAction {
 }
 
 impl PendingQueueAction {
+    fn status_for(&self, id: &str) -> Option<&'static str> {
+        match self {
+            Self::Send { message, .. } | Self::Interrupt { message, .. } if message["id"] == id => {
+                Some("Send now requested")
+            }
+            Self::Edit { message, .. } if message["id"] == id => Some("Opening draft…"),
+            Self::StopDelivery { message, .. } if message == id => Some("Stopping delivery…"),
+            Self::Change {
+                method: "agent.queue.remove",
+                message: Some(message),
+                ..
+            } if message == id => Some("Canceling…"),
+            _ => None,
+        }
+    }
+
     fn thread(&self) -> &str {
         match self {
             Self::Send { expected, .. } | Self::Interrupt { expected, .. } => {
@@ -143,9 +159,17 @@ fn retain_queue_rows(previous: &[Arc<Value>], incoming: Vec<Value>) -> Vec<Arc<V
         .collect()
 }
 
+pub(super) fn queue_receipt_finished(thread: &Value, id: &str) -> bool {
+    thread["rustMessageQueue"].as_array().is_some_and(|rows| {
+        rows.iter()
+            .any(|row| row["id"] == id && (row["state"] == "completed" || row["dismissed"] == true))
+    })
+}
+
 fn pending_row(pending: &composer_follow_up_mount::PendingSend, id: &str, state: &str) -> Value {
     json!({"id":id, "state":state, "text":queue_preview_text(&pending.draft), "error":pending.last_error,
-        "rustImages":pending.captured["rustDraftImages"], "context":pending.captured["draftContext"]})
+        "rustImages":pending.captured["rustDraftImages"], "context":pending.captured["draftContext"],
+        "sendNow":pending.send_now})
 }
 
 impl Coincide {
@@ -254,22 +278,68 @@ impl Coincide {
         cx.notify();
     }
     pub(super) fn send_next_queued_now(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(thread) = self.selected.as_ref().map(queue_expected_scope) else {
+        let Some(thread) = self.selected.as_ref() else {
             return false;
         };
-        if !self.running.contains(&text(&thread, "id")) {
-            return false;
-        }
-        let Some(message) = self
+        let id = text(thread, "id");
+        if let Some(message) = self
             .queued_messages
             .iter()
-            .find(|message| message["state"] == "pending")
+            .find(|message| {
+                message["state"] == "pending"
+                    && message["id"]
+                        .as_str()
+                        .is_some_and(|id| !queue_receipt_finished(thread, id))
+            })
             .cloned()
-        else {
+        {
+            let source = queue_expected_scope(thread);
+            let interrupt = message["codexQuestionSession"].is_null();
+            self.send_queued(&source, &message, interrupt, cx);
+            return true;
+        }
+        let buffered = self
+            .pending_follow_up
+            .iter()
+            .chain(&self.pending_follow_up_backlog)
+            .find(|pending| pending.thread == id && pending.can_recall())
+            .and_then(|pending| pending.buffer_id.clone());
+        buffered.is_some_and(|message| self.send_buffered_now(&id, &message, cx))
+    }
+
+    fn send_buffered_now(&mut self, thread: &str, id: &str, cx: &mut Context<Self>) -> bool {
+        if self.media.close_requested
+            || self.media.shutdown_requested
+            || !self
+                .selected
+                .as_ref()
+                .is_some_and(|selected| selected["id"] == thread)
+        {
             return false;
+        }
+        let matches = |pending: &composer_follow_up_mount::PendingSend| {
+            pending.thread == thread && pending.buffer_id.as_deref() == Some(id)
         };
-        self.send_queued_now(&thread, &message, cx);
-        true
+        let prioritized = if let Some(pending) = self
+            .pending_follow_up
+            .as_mut()
+            .filter(|pending| matches(pending))
+        {
+            pending.prioritize()
+        } else if let Some(index) = self.pending_follow_up_backlog.iter().position(matches) {
+            let pending = &mut self.pending_follow_up_backlog[index];
+            let prioritized = pending.prioritize();
+            if prioritized && let Some(pending) = self.pending_follow_up_backlog.remove(index) {
+                self.pending_follow_up_backlog.push_front(pending);
+            }
+            prioritized
+        } else {
+            false
+        };
+        if prioritized {
+            cx.notify();
+        }
+        prioritized
     }
 
     fn edit_queued_message(
@@ -291,6 +361,7 @@ impl Coincide {
                     thread,
                     message: message.clone(),
                 });
+                cx.notify();
             }
             return;
         }
@@ -337,6 +408,8 @@ impl Coincide {
         })();
         match result {
             Ok(thread) => {
+                self.queued_messages
+                    .retain(|row| row["id"] != message["id"]);
                 let draft = text(&thread, "draft");
                 self.replace_selected_thread(Some(thread));
                 self.composer_files.invalidate();
@@ -471,7 +544,14 @@ impl Coincide {
             method,
             json!({"threadId":id,"messageId":message}),
         ) {
-            Ok(_) => self.refresh_queue(cx),
+            Ok(_) => {
+                if method == "agent.queue.remove"
+                    && let Some(message) = message.as_deref()
+                {
+                    self.queued_messages.retain(|row| row["id"] != message);
+                }
+                self.refresh_queue(cx);
+            }
             Err(error) if engine_busy(&error) => {
                 self.defer_queue_action(PendingQueueAction::Change {
                     thread: id,
@@ -562,14 +642,21 @@ impl Coincide {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         use gpui_kit::assets::IconName;
+        // Other actions can install a fresh transcript before the queue reader
+        // completes. Apply its completed receipts before drawing cached rows.
+        self.reconcile_buffered_sends();
         let current = self.selected.as_ref()?;
         let thread = text(current, "id");
         let source = Arc::new(queue_execution_scope(current));
-        let running = self.running.contains(&thread);
         let mut messages = self
             .queued_messages
             .iter()
-            .filter(|row| row["state"] != "completed")
+            .filter(|row| {
+                row["state"] != "completed"
+                    && row["id"]
+                        .as_str()
+                        .is_none_or(|id| !queue_receipt_finished(current, id))
+            })
             .cloned()
             .map(|row| (row, false, Vec::new()))
             .collect::<Vec<_>>();
@@ -617,7 +704,9 @@ impl Coincide {
             .chain(&self.pending_follow_up_backlog)
         {
             if let Some(id) = pending.buffer_id.as_deref().filter(|id| {
-                pending.thread == thread && !messages.iter().any(|(row, _, _)| row["id"] == *id)
+                pending.thread == thread
+                    && !queue_receipt_finished(current, id)
+                    && !messages.iter().any(|(row, _, _)| row["id"] == *id)
             }) {
                 let state = if pending.can_recall() {
                     "pending"
@@ -665,7 +754,22 @@ impl Coincide {
                 !local && message["deliveryCommitted"] != true && stoppable.as_deref() == Some(&id);
             let editable = matches!(state.as_str(), "pending" | "failed" | "interrupted")
                 && message["codexQuestionSession"].is_null();
-            let sendable = !local && state == "pending" && running;
+            let sendable = state == "pending";
+            let question = message["codexQuestionSession"].is_string();
+            let action_status = self
+                .pending_queue_actions
+                .iter()
+                .filter(|action| action.thread() == thread)
+                .find_map(|action| action.status_for(&id))
+                .or_else(|| {
+                    if message["sendNow"] == true {
+                        Some("Send now requested")
+                    } else if in_flight {
+                        Some("Waiting for delivery confirmation…")
+                    } else {
+                        None
+                    }
+                });
             let body = queue_preview_text(message["text"].as_str().unwrap_or(""));
             let images = message["rustImages"]
                 .as_array()
@@ -731,9 +835,9 @@ impl Coincide {
                 format!("{count} attachments")
             };
             let action_source = source.clone();
-            let steer_message = message.clone();
-            let interrupt_source = source.clone();
-            let interrupt_message = message.clone();
+            let send_message = message.clone();
+            let send_id = id.clone();
+            let send_thread = thread.clone();
             let edit_message = message.clone();
             let edit_id = id.clone();
             let remove_id = id.clone();
@@ -751,9 +855,13 @@ impl Coincide {
                         row.border_t_1().border_color(cx.theme().border)
                     })
                     .child(
-                        Icon::new(IconName::Clock)
-                            .size(px(13.))
-                            .text_color(cx.theme().muted_foreground),
+                        Icon::new(if in_flight {
+                            IconName::CornerUpRight
+                        } else {
+                            IconName::Clock
+                        })
+                        .size(px(13.))
+                        .text_color(cx.theme().muted_foreground),
                     )
                     .child(
                         div()
@@ -785,6 +893,14 @@ impl Coincide {
                                                     format!("{caption} · {}", files.join(", "))
                                                 }),
                                         ),
+                                )
+                            })
+                            .when_some(action_status, |label, status| {
+                                label.child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(status),
                                 )
                             })
                             .when_some(row_error, |label, error| {
@@ -832,53 +948,48 @@ impl Coincide {
                                 })),
                         )
                     })
-                    .when(sendable, |row| {
-                        row.child(
-                            Button::new(SharedString::from(format!("send-queued-now-{id}")))
-                                .icon(IconName::CornerUpRight)
-                                .tooltip("Send now")
-                                .accessibility_label("Send queued message now")
-                                .ghost()
-                                .xsmall()
-                                .compact()
-                                .on_click(cx.listener(move |this, _, _, cx| {
+                    .child(
+                        Button::new(SharedString::from(format!("send-queued-now-{id}")))
+                            .label("Send now")
+                            .icon(IconName::CornerUpRight)
+                            .tooltip(if in_flight {
+                                "Delivery is already in progress".into()
+                            } else if !sendable {
+                                "Edit this message before sending again".into()
+                            } else if question {
+                                "Send the answer in its current turn".into()
+                            } else {
+                                format!(
+                                    "Interrupt and send · First waiting message: {}",
+                                    crate::composer_follow_up_mount::SEND_NOW_SHORTCUT_LABEL
+                                )
+                            })
+                            .accessibility_label("Send queued message now")
+                            .ghost()
+                            .xsmall()
+                            .compact()
+                            .disabled(!sendable)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if local {
+                                    this.send_buffered_now(&send_thread, &send_id, cx);
+                                } else {
                                     this.send_visible_queue_row(
                                         &action_source,
-                                        &steer_message,
-                                        false,
+                                        &send_message,
+                                        !question,
                                         cx,
-                                    )
-                                })),
-                        )
-                        .when(
-                            message["codexQuestionSession"].is_null(),
-                            |row| {
-                                row.child(
-                                    Button::new(SharedString::from(format!(
-                                        "interrupt-for-queued-{id}"
-                                    )))
-                                    .icon(IconName::SkipForward)
-                                    .tooltip("Stop current turn and send")
-                                    .accessibility_label("Stop current turn and send this message")
-                                    .ghost()
-                                    .xsmall()
-                                    .compact()
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.send_visible_queue_row(
-                                            &interrupt_source,
-                                            &interrupt_message,
-                                            true,
-                                            cx,
-                                        )
-                                    })),
-                                )
-                            },
-                        )
-                    })
+                                    );
+                                }
+                            })),
+                    )
                     .child(
                         Button::new(SharedString::from(format!("edit-queued-{id}")))
                             .icon(IconName::Pencil)
-                            .tooltip("Edit queued message")
+                            .tooltip(if in_flight {
+                                "Editing is unavailable during delivery"
+                            } else {
+                                "Edit queued message"
+                            })
                             .accessibility_label("Edit queued message")
                             .ghost()
                             .xsmall()
@@ -895,8 +1006,10 @@ impl Coincide {
                     .child(
                         Button::new(SharedString::from(format!("remove-queued-{id}")))
                             .icon(IconName::Close)
-                            .tooltip(if in_flight {
+                            .tooltip(if can_stop {
                                 "Stop delivery"
+                            } else if in_flight {
+                                "Delivery confirmation is pending"
                             } else {
                                 "Cancel queued message"
                             })

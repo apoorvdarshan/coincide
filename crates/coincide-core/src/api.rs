@@ -343,6 +343,10 @@ impl ThreadReadSnapshot {
 const SAVED_MODEL_CATALOG: &str = "model-catalog.json";
 
 impl Engine {
+    pub fn unsaved_thread_for_navigation(&self, id: &str) -> Option<Value> {
+        self.unsaved_threads.get(id).cloned()
+    }
+
     pub fn capture_thread_read(&self, id: &str) -> Result<(u64, ThreadReadSnapshot, Option<bool>)> {
         let thread = match self.unsaved_threads.get(id) {
             Some(thread) => ThreadReadSnapshot::Unsaved(thread.clone()),
@@ -2453,6 +2457,28 @@ impl Engine {
         }
         Ok(())
     }
+    fn launch_next_queue_turn(&mut self, id: &str) -> Result<bool> {
+        let Some(claim) = self.claim_next_queue_turn(id)? else {
+            return Ok(false);
+        };
+        let prompt = claim.text().to_owned();
+        let origin = SendOrigin::Queued(Box::new(claim));
+        match self.send_turn_if_unchanged(
+            &json!({"threadId":id,"text":prompt}),
+            &origin,
+            None,
+            false,
+        ) {
+            Ok(_) => Ok(true),
+            Err(error) => {
+                if let SendOrigin::Queued(claim) = &origin {
+                    self.fail_queue_claim(claim, &error.to_string())?;
+                }
+                Err(error)
+            }
+        }
+    }
+
     fn poll_message_queues(&mut self) {
         if self.admissions_frozen() {
             return;
@@ -2488,27 +2514,7 @@ impl Engine {
                 }
             }
             self.queue_catalog_poll_after.remove(&id);
-            let launched = (|| -> Result<bool> {
-                let Some(claim) = self.claim_next_queue_turn(&id)? else {
-                    return Ok(false);
-                };
-                let prompt = claim.text().to_owned();
-                let origin = SendOrigin::Queued(Box::new(claim));
-                match self.send_turn_if_unchanged(
-                    &json!({"threadId":id,"text":prompt}),
-                    &origin,
-                    None,
-                    false,
-                ) {
-                    Ok(_) => Ok(true),
-                    Err(error) => {
-                        if let SendOrigin::Queued(claim) = &origin {
-                            self.fail_queue_claim(claim, &error.to_string())?;
-                        }
-                        Err(error)
-                    }
-                }
-            })();
+            let launched = self.launch_next_queue_turn(&id);
             if !matches!(launched, Ok(true)) {
                 self.enabled_queues.remove(&id);
                 self.revision += 1;

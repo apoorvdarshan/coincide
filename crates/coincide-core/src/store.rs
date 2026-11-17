@@ -74,6 +74,23 @@ pub struct Store {
     deferred_search_active: std::collections::HashSet<String>,
 }
 
+/// Read a durable conversation from SQLite's WAL without waiting for the
+/// process-wide engine mutex. The main engine remains the only writer.
+#[derive(Clone)]
+pub struct ThreadNavigationReader(std::path::PathBuf);
+
+impl ThreadNavigationReader {
+    pub fn read(&self, id: &str) -> Result<Value> {
+        let db = Connection::open_with_flags(&self.0, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        db.busy_timeout(std::time::Duration::from_millis(250))?;
+        let document: String =
+            db.query_row("SELECT document FROM threads WHERE id=?1", [id], |row| {
+                row.get(0)
+            })?;
+        Ok(serde_json::from_str(&document)?)
+    }
+}
+
 fn mark_draft_write(tx: &rusqlite::Transaction<'_>, id: &str) -> Result<()> {
     tx.execute(
         "INSERT INTO native_draft_revisions(id,revision) VALUES (?1,randomblob(16)) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision",
@@ -657,6 +674,11 @@ impl Store {
             }
         }
         Ok(verified)
+    }
+
+    pub fn thread_navigation_reader(&self) -> Option<ThreadNavigationReader> {
+        let path = self.connection().ok()?.path()?;
+        (!path.is_empty()).then(|| ThreadNavigationReader(path.into()))
     }
 
     /// Capture the saved bytes under the store lock so callers can decode a

@@ -31,6 +31,7 @@ pub enum CapturedNativeSend {
     Saved {
         enabled: bool,
         cleared: bool,
+        started: bool,
         queue_id: String,
         ticket: Option<NativeFollowUpTicket>,
         error: Option<String>,
@@ -261,6 +262,24 @@ impl Engine {
         behavior: Behavior,
         alternate: bool,
     ) -> Result<CapturedNativeSend> {
+        self.admit_captured_send(captured, clear_original, behavior, alternate, false)
+    }
+
+    pub fn admit_captured_native_send_now(
+        &mut self,
+        captured: &Value,
+    ) -> Result<CapturedNativeSend> {
+        self.admit_captured_send(captured, false, Behavior::Interrupt, false, true)
+    }
+
+    fn admit_captured_send(
+        &mut self,
+        captured: &Value,
+        clear_original: bool,
+        behavior: Behavior,
+        alternate: bool,
+        send_now: bool,
+    ) -> Result<CapturedNativeSend> {
         let id = required(captured, "id")?;
         // A stop already owns this turn. Admit the captured message after its
         // completion rather than sending a second stop or a stale steer.
@@ -294,43 +313,81 @@ impl Engine {
             && !has_images
             && !has_context
             && agent::codex_compact_command(command);
-        let can_steer = self.runs.get(id).is_some_and(|run| {
-            matches!(
-                provider.as_str(),
-                "codex" | "claude" | "opencode" | "lithos"
-            ) && current["interactionMode"]
-                .as_str()
-                .is_none_or(|mode| mode == "build")
+        let run = self.runs.get(id);
+        let can_steer = run.is_some_and(|run| {
+            run.provider == provider
+                && run.persistence_error.is_none()
+                && matches!(
+                    provider.as_str(),
+                    "codex" | "claude" | "opencode" | "lithos"
+                )
+                && current["interactionMode"]
+                    .as_str()
+                    .is_none_or(|mode| mode == "build")
                 && (provider != "codex" || run.session.can_steer())
                 && !(has_images && matches!(provider.as_str(), "claude" | "opencode" | "lithos"))
         });
         let prior = crate::message_queue::read(&current)?;
         let eligible = chosen != Behavior::Queue
-            && !compact_control
+            && (!compact_control || send_now)
             && (chosen != Behavior::Steer || can_steer || goal_control)
             && self.active_thread.as_deref() == Some(id)
-            && self.runs.contains_key(id)
+            && run.is_some()
             && captured["selection"] == current["selection"];
         if eligible && self.native_follow_up.pending_thread(id) {
             return Ok(CapturedNativeSend::Waiting);
         }
-        let auto = eligible
-            && !prior.iter().any(|message| {
-                matches!(
-                    message.state,
-                    crate::message_queue::State::Pending | crate::message_queue::State::Dispatching
-                )
-            });
+        let next_in_line = !prior.iter().any(|message| {
+            matches!(
+                message.state,
+                crate::message_queue::State::Pending | crate::message_queue::State::Dispatching
+            )
+        });
+        let idle = run.is_none()
+            && captured["selection"] == current["selection"]
+            && !self.goal_selection_waiting.contains(id)
+            && !self.native_follow_up.pending_thread(id)
+            && !self.named_resume.waiting_for_join(&current);
+        let idle_ready = idle && !self.native_send_waits_for_codex_catalog(&current);
+        // An explicit action may skip older waiting rows, but never take over
+        // a delivery with an unknown outcome or bypass a prerequisite.
+        if send_now
+            && (prior
+                .iter()
+                .any(|message| message.state == crate::message_queue::State::Dispatching)
+                || (idle && !idle_ready))
+        {
+            return Ok(CapturedNativeSend::Waiting);
+        }
+        let auto = (eligible && (next_in_line || send_now))
+            || (send_now && idle_ready && self.active_thread.as_deref() == Some(id));
+        let ready_for_turn = idle_ready && next_in_line;
         let (enabled, cleared, message) =
             self.queue_captured_native_send_inner(captured, clear_original, !auto, None)?;
         let queue_id = message.id.clone();
         if !auto {
+            // Admit the head immediately when possible. The durable receipt
+            // still owns delivery and protects the payload until the provider
+            // acknowledges it. Older and blocked messages use the queue poll.
+            let started = if enabled && ready_for_turn {
+                self.launch_next_queue_turn(id)
+            } else {
+                Ok(false)
+            };
+            if started.is_err() {
+                self.enabled_queues.remove(id);
+            }
+            let (started, error) = match started {
+                Ok(started) => (started, None),
+                Err(error) => (false, Some(error.to_string())),
+            };
             return Ok(CapturedNativeSend::Saved {
-                enabled,
+                enabled: self.enabled_queues.contains(id),
                 cleared,
+                started,
                 queue_id,
                 ticket: None,
-                error: None,
+                error,
             });
         }
         // From here the snapshot is already durable. Never return Err to a
@@ -351,6 +408,7 @@ impl Engine {
         Ok(CapturedNativeSend::Saved {
             enabled,
             cleared,
+            started: false,
             queue_id,
             ticket,
             error,
@@ -689,7 +747,8 @@ impl Engine {
             // neither steal queued messages nor answer unrelated approvals.
             dispatch = Dispatch::Steer;
         }
-        if matches!(run.provider.as_str(), "codex" | "opencode" | "lithos")
+        if queued_behavior != Some(Behavior::Interrupt)
+            && matches!(run.provider.as_str(), "codex" | "opencode" | "lithos")
             && agent::codex_compact_command(&text)
             && images.is_empty()
             && !crate::composer_context::has_context(&context)
@@ -918,8 +977,7 @@ impl Engine {
                         match result["status"].as_str() {
                             Some("pending" | "accepted_pending_persistence") => Ok(None),
                             Some("accepted") => {
-                                if let Some(claim) = &op.queue {
-                                    self.complete_native_queue_steer(claim)?;
+                                if op.queue.is_some() {
                                     Ok(Some(false))
                                 } else {
                                     Ok(Some(self.store.clear_native_follow_up_draft(
@@ -973,16 +1031,16 @@ impl Engine {
                                 ),
                             }
                         }
-                        if let Err(error) = self
-                            .persist_text_steer(&op.thread, item_id, &op.text, context, provider)
-                        {
+                        let queue_id = op.queue.as_ref().map(|claim| claim.id());
+                        if let Err(error) = self.persist_text_steer(
+                            &op.thread, item_id, &op.text, context, provider, queue_id,
+                        ) {
                             self.schedule_error = Some(format!(
                                 "Accepted provider message could not be saved yet: {error}"
                             ));
                             return Ok(None);
                         }
-                        if let Some(claim) = &op.queue {
-                            self.complete_native_queue_steer(claim)?;
+                        if op.queue.is_some() {
                             Ok(Some(false))
                         } else {
                             Ok(Some(self.store.clear_native_follow_up_draft(

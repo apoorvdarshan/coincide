@@ -1226,7 +1226,8 @@ impl Coincide {
             .as_ref()
             .and_then(|value| value["id"].as_str());
         let new_id = thread.as_ref().and_then(|value| value["id"].as_str());
-        if old_id != new_id {
+        let switched = old_id != new_id;
+        if switched {
             self.prepare_inspector_thread_change();
         }
         if let (Some(current), Some(next)) = (self.selected.as_ref(), &mut thread) {
@@ -1237,7 +1238,10 @@ impl Coincide {
             );
         }
         self.selected_generation = self.selected_generation.wrapping_add(1);
-        self.selected.replace(thread);
+        let previous = self.selected.replace(thread);
+        if switched && let Some(previous) = previous {
+            self.thread_navigation.remember(previous);
+        }
     }
     fn new(
         engine: SharedEngine,
@@ -1746,6 +1750,8 @@ impl Coincide {
             .try_lock()
             .ok()
             .and_then(|engine| engine.store.data_directory().ok());
+        let mut thread_navigation = thread_navigation::State::default();
+        thread_navigation.reader(&engine);
         let poll_window = window.window_handle();
         let poll = cx.spawn_in(window, async move |this, cx| {
             loop {
@@ -2021,7 +2027,7 @@ impl Coincide {
             reply_media_cache: Default::default(),
             search,
             pending_select: None,
-            thread_navigation: Default::default(),
+            thread_navigation,
             opening_thread_details: None,
             pending_new_thread: None,
             new_thread_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
@@ -2962,12 +2968,27 @@ impl Coincide {
         {
             self.draft_saver.record_now(&previous, &draft.text);
         }
+        if let Some(thread) = self
+            .thread_navigation
+            .take_recent(id, &self.sidebar_all_threads)
+            && self.thread_navigation.finish(generation, id, thread)
+        {
+            self.select(id, window, cx);
+            return;
+        }
+        let reader = self.thread_navigation.reader(&self.engine);
         let engine = self.engine.clone();
         let requested = id.to_owned();
         let worker_id = requested.clone();
         let cancellation = self.thread_navigation.cancellation();
         let work = cx.background_executor().spawn(async move {
-            thread_navigation::read(&engine, &worker_id, &cancellation, generation)
+            thread_navigation::read(
+                &engine,
+                reader.as_ref(),
+                &worker_id,
+                &cancellation,
+                generation,
+            )
         });
         let owner = self.main_window;
         let task = cx.spawn_in(window, async move |this, cx| {
@@ -3086,21 +3107,6 @@ impl Coincide {
                     .selected
                     .as_ref()
                     .is_none_or(|thread| thread["id"] != id);
-                if changing_thread {
-                    match self.inspector_follow.prepare_destination(&self.engine, id) {
-                        Ok(true) => {}
-                        Ok(false) => {
-                            self.thread_navigation.put_back(id, v);
-                            self.pending_select = Some(id.to_owned());
-                            cx.notify();
-                            return;
-                        }
-                        Err(error) => {
-                            eprintln!("Unable to restore the conversation panel: {error}");
-                            self.inspector_follow.fallback_destination(id);
-                        }
-                    }
-                }
                 self.session_import_open = false;
                 if self
                     .selected
@@ -3218,13 +3224,6 @@ impl Coincide {
                         let _ = engine.set_active_thread(None);
                         self.status =
                             format!("Selected conversation authority unavailable: {error}");
-                    }
-                    match engine.store.remember_native_selected_thread(Some(id)) {
-                        Ok(_) => self.pending_native_selection = None,
-                        Err(error) => {
-                            self.status =
-                                format!("Unable to remember conversation selection: {error}")
-                        }
                     }
                     consume_open_activation(&mut engine.requested_open, id)
                 } else {
@@ -7332,6 +7331,7 @@ impl Render for Coincide {
                         Some(Ok(coincide_core::api::CapturedNativeSend::Saved {
                             enabled,
                             cleared,
+                            started,
                             queue_id,
                             ticket,
                             error,
@@ -7369,7 +7369,7 @@ impl Render for Coincide {
                                     .update(cx, |input, cx| input.set_value("", window, cx));
                             }
                             self.finish_pending_images(pending.image_send, true);
-                            let delivering = ticket.is_some();
+                            let delivering = started || ticket.is_some();
                             if let Some(ticket) = ticket {
                                 self.track_queued_delivery(ticket, pending.thread.clone());
                             }
@@ -7377,6 +7377,7 @@ impl Render for Coincide {
                                 self.admitted_previews.push(
                                     composer_follow_up_mount::AdmittedPreview { pending, queue_id },
                                 );
+                                self.reconcile_buffered_sends();
                             }
                             self.status = if delivering {
                                 "Delivering your message."
@@ -7438,6 +7439,7 @@ impl Render for Coincide {
                     Some(Ok(coincide_core::api::CapturedNativeSend::Saved {
                         enabled,
                         cleared,
+                        started,
                         queue_id,
                         ticket,
                         error,
@@ -7458,13 +7460,16 @@ impl Render for Coincide {
                             self.admitted_previews.push(
                                 composer_follow_up_mount::AdmittedPreview { pending, queue_id },
                             );
+                            self.reconcile_buffered_sends();
                         }
                         if let Some(error) = error {
                             self.show_local_error(&format!(
                                 "Message saved, but delivery could not start: {error}"
                             ));
                         }
-                        self.status = if enabled {
+                        self.status = if started {
+                            "Delivering the earlier conversation's message."
+                        } else if enabled {
                             "The earlier conversation's message is queued."
                         } else {
                             "The earlier conversation's message is saved in its paused queue."
