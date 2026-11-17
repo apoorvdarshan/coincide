@@ -9,10 +9,11 @@ mod setup;
 #[path = "instructions_sync.rs"]
 mod sync;
 use file::EditorFile;
+use gpui_kit::assets::IconName;
 use gpui_kit::{
     base::Disableable,
     component::{
-        ActiveTheme, Selectable, StyledExt,
+        ActiveTheme, Icon, Selectable, StyledExt,
         button::*,
         input::{InputEvent, Textarea, TextareaState},
     },
@@ -93,7 +94,21 @@ impl InstructionsPanel {
                 .source
                 .as_ref()
                 .and_then(EditorFile::baseline)
-                .is_some_and(|baseline| baseline != self.editor.read(cx).value().as_ref())
+                .is_some_and(|baseline| {
+                    let draft = self.editor.read(cx).text();
+                    if draft.len() != baseline.len() {
+                        return true;
+                    }
+                    let mut remaining = baseline;
+                    !draft.chunks().all(|chunk| {
+                        if let Some(rest) = remaining.strip_prefix(chunk) {
+                            remaining = rest;
+                            true
+                        } else {
+                            false
+                        }
+                    })
+                })
     }
     pub(super) fn has_unsaved_edits(&self, cx: &App) -> bool {
         self.dirty(cx)
@@ -126,7 +141,7 @@ impl InstructionsPanel {
                 Ok(text) => {
                     self.editor
                         .update(cx, |editor, cx| editor.set_value(text, window, cx));
-                    self.status = "Matches the saved instruction file".into();
+                    self.status.clear();
                     self.blocked = false;
                     self.native_edited = false;
                     self.edit_lease.set_dirty(false);
@@ -146,12 +161,12 @@ impl InstructionsPanel {
         if self.blocked {
             return false;
         }
-        let text = self.editor.read(cx).value().to_string();
+        let text = self.editor.read(cx).text().to_string();
         let mut saved = false;
         if let Some(source) = &mut self.source {
             match source.save(&text) {
                 Ok(()) => {
-                    self.status = "Saved instruction file".into();
+                    self.status.clear();
                     self.native_edited = false;
                     self.edit_lease.set_dirty(false);
                     saved = true;
@@ -180,6 +195,10 @@ impl Render for InstructionsPanel {
             .source
             .as_ref()
             .is_some_and(|source| source.baseline().is_some());
+        let reviewing =
+            self.setup.review.is_some() || self.setup.has_copy_review() || self.setup.git_busy();
+        let path = self.native_target_label();
+        let display_path = crate::navigation::home_display_path(&path);
         div()
             .id("global-instructions-editor")
             .flex()
@@ -216,19 +235,18 @@ impl Render for InstructionsPanel {
                     .flex_col()
                     .child(
                         div()
+                            .flex_none()
                             .flex()
                             .items_center()
                             .gap_2()
-                            .p_3()
+                            .px_4()
+                            .py_2()
                             .border_b_1()
                             .border_color(cx.theme().border)
                             .child(
                                 div()
                                     .flex_1()
                                     .min_w_0()
-                                    .flex()
-                                    .flex_col()
-                                    .gap_1()
                                     .child(
                                         div().truncate().font_semibold().child(
                                             self.source
@@ -238,17 +256,24 @@ impl Render for InstructionsPanel {
                                                 .unwrap_or_else(|| "Instructions".into()),
                                         ),
                                     )
-                                    .child(
-                                        div()
-                                            .truncate()
-                                            .text_xs()
-                                            .text_color(cx.theme().muted_foreground)
-                                            .child(self.native_target_label()),
-                                    ),
+                                    .when(self.source.is_some(), |heading| {
+                                        heading.child(
+                                            div()
+                                                .id("instructions-source-path")
+                                                .truncate()
+                                                .text_xs()
+                                                .text_color(cx.theme().muted_foreground)
+                                                .child(display_path)
+                                                .tooltip(move |window, cx| {
+                                                    gpui_kit::component::tooltip::Tooltip::new(path.clone())
+                                                        .build(window, cx)
+                                                }),
+                                        )
+                                    }),
                             )
                             .child(
                                 Button::new("global-instructions-reload")
-                                    .icon(gpui_kit::assets::IconName::RefreshCw)
+                                    .icon(IconName::RefreshCw)
                                     .ghost()
                                     .compact()
                                     .accessibility_label(if dirty {
@@ -274,9 +299,7 @@ impl Render for InstructionsPanel {
                                         !readable
                                             || !dirty
                                             || self.blocked
-                                            || self.setup.review.is_some()
-                                            || self.setup.has_copy_review()
-                                            || self.setup.git_busy()
+                                            || reviewing
                                             || self.setup.picker_pending,
                                     )
                                     .on_click(cx.listener(|this, _, _, cx| {
@@ -284,54 +307,73 @@ impl Render for InstructionsPanel {
                                     })),
                             ),
                     )
-                    .when(!readable, |view| {
-                        view.child(div().p_3().text_sm().child(
-                            "Choose or create an instruction file in the sidebar to start editing.",
-                        ))
+                    .when(self.setup_open || reviewing, |view| {
+                        view.child(
+                            div()
+                                .id("instructions-setup-scroll")
+                                .debug_selector(|| "instructions-setup-scroll".into())
+                                .max_h(relative(0.56))
+                                .min_h_0()
+                                .overflow_y_scroll()
+                                .border_b_1()
+                                .border_color(cx.theme().border)
+                                .px_4()
+                                .py_3()
+                                .when(reviewing, |pane| pane.child(self.setup_review(cx)))
+                                .when(!reviewing, |pane| pane.child(self.setup_controls(cx))),
+                        )
                     })
                     .child(
                         div()
+                            .id("instructions-document")
+                            .debug_selector(|| "instructions-document".into())
                             .flex_1()
                             .min_h_0()
                             .overflow_hidden()
-                            .font_family("monospace")
-                            .child(Textarea::new(&self.editor).h_full().disabled(
-                                !readable
-                                    || self.setup.review.is_some()
-                                    || self.setup.has_copy_review()
-                                    || self.setup.git_busy()
-                                    || self.setup.picker_pending,
-                            )),
+                            .p_4()
+                            .when(readable, |body| {
+                                body.child(
+                                    Textarea::new(&self.editor)
+                                        .accessibility_id("instructions-text")
+                                        .aria_label("Instruction file contents")
+                                        .appearance(false)
+                                        .bordered(false)
+                                        .h_full()
+                                        .font_family(cx.theme().mono_font_family.clone())
+                                        .disabled(reviewing || self.setup.picker_pending),
+                                )
+                            })
+                            .when(!readable, |body| {
+                                body.child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child("Select an instruction file or open Setup and sync to create one."),
+                                )
+                            }),
                     )
                     .child(
                         div()
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .gap_2()
                             .border_t_1()
                             .border_color(cx.theme().border)
-                            .px_3()
+                            .px_4()
                             .py_2()
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
-                            .child(if dirty {
-                                "Unsaved changes — Save to update the file".into()
-                            } else if self.status.is_empty() {
-                                "Saved".into()
-                            } else {
-                                self.status.clone()
+                            .when(readable && (!self.blocked || dirty), |bar| {
+                                bar.child(
+                                    Icon::new(if dirty { IconName::Pencil } else { IconName::Check })
+                                        .size(px(12.)),
+                                )
+                                .child(if dirty { "Unsaved changes" } else { "Saved" })
+                            })
+                            .when(!self.status.is_empty(), |bar| {
+                                bar.child(div().min_w_0().child(self.status.clone()))
                             }),
-                    )
-                    .when(
-                        self.setup.review.is_some()
-                            || self.setup.has_copy_review()
-                            || self.setup.git_busy(),
-                        |view| {
-                            view.child(
-                                div()
-                                    .id("instructions-review-scroll")
-                                    .max_h(px(300.))
-                                    .overflow_y_scroll()
-                                    .child(self.setup_review(cx)),
-                            )
-                        },
                     ),
             )
     }

@@ -208,6 +208,10 @@ fn home_folder() -> Option<String> {
     std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).ok()
 }
 
+pub(super) fn home_display_path(path: &str) -> String {
+    abbreviated_path(path, home_folder().as_deref())
+}
+
 /// The project a new thread starts in, as Swift's `currentProjectID`: the
 /// sidebar's project filter (a Rust-only view), else the open thread's project
 /// but never Bots, else the first project. Projectless chats stand in for
@@ -970,6 +974,8 @@ impl Coincide {
                     .into_any_element()
             });
         }
+        // Project drop handlers share their render-time comparison snapshot.
+        let project_order_snapshot = std::cell::OnceCell::new();
         let section_order = if no_projects {
             Vec::new()
         } else {
@@ -1048,7 +1054,9 @@ impl Coincide {
                     let new_project_id = group_id.clone();
                     let drag_project = group_id.clone();
                     let drop_project = group_id.clone();
-                    let expected_projects = json!(self.projects);
+                    let expected_projects = Arc::clone(
+                        project_order_snapshot.get_or_init(|| Arc::new(json!(self.projects))),
+                    );
                     let menu_path = self
                         .projects
                         .iter()
@@ -1060,8 +1068,7 @@ impl Coincide {
                     // found" once the folder is gone, else its path.
                     let missing = folder && self.missing_project_folders.contains(&group_id);
                     let folder_tooltip = menu_path.as_ref().map(|path| {
-                        let path =
-                            abbreviated_path(&path.to_string_lossy(), home_folder().as_deref());
+                        let path = home_display_path(&path.to_string_lossy());
                         if missing {
                             format!("Folder not found: {path}")
                         } else {

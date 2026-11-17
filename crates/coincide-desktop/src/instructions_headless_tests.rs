@@ -2,7 +2,7 @@
 //! local Git processes. This does not exercise a physical OS dialog or CUA.
 use crate::instructions::InstructionsPanel;
 use coincide_core::{api::Engine, native_file, store::Store};
-use gpui_kit::{Entity, TestAppContext, VisualTestContext};
+use gpui_kit::{Entity, Modifiers, TestAppContext, VisualTestContext, px, size};
 use serde_json::json;
 use std::{
     fs,
@@ -75,6 +75,43 @@ fn settle(
         std::thread::sleep(Duration::from_millis(5));
     }
 }
+fn draw_instructions(cx: &mut VisualTestContext) {
+    cx.update(|window, cx| {
+        window.refresh();
+        window.draw(cx).clear(cx);
+    });
+}
+
+fn check_setup_layout(cx: &mut VisualTestContext) {
+    for (width, height) in [(564., 454.), (900., 680.)] {
+        cx.simulate_resize(size(px(width), px(height)));
+        cx.update(|window, _| window.activate_window());
+        draw_instructions(cx);
+        assert!(cx.debug_bounds("instructions-setup-scroll").is_none());
+        let closed = cx.debug_bounds("instructions-document").unwrap();
+        let toggle = cx
+            .debug_bounds("instructions-setup-toggle")
+            .unwrap()
+            .center();
+        cx.simulate_mouse_move(toggle, None, Modifiers::default());
+        cx.simulate_click(toggle, Modifiers::default());
+        draw_instructions(cx);
+        let setup = cx.debug_bounds("instructions-setup-scroll").unwrap();
+        let editor = cx.debug_bounds("instructions-document").unwrap();
+        assert!(
+            setup.size.height <= px(height * 0.56 + 1.)
+                && setup.bottom() <= editor.top()
+                && editor.size.height >= px(100.)
+                && editor.size.width == closed.size.width,
+            "setup {setup:?} obscures the editor {editor:?} in a {width}x{height} pane",
+        );
+        cx.simulate_click(toggle, Modifiers::default());
+        draw_instructions(cx);
+        assert!(cx.debug_bounds("instructions-setup-scroll").is_none());
+        assert_eq!(cx.debug_bounds("instructions-document"), Some(closed));
+    }
+}
+
 #[gpui_kit::test]
 #[ignore = "only private_instructions_ui_child runs this with a fresh synthetic HOME"]
 fn headless_native_handlers_busy_initialization_picker_cas_git_and_owned_quit(
@@ -273,6 +310,7 @@ fn headless_native_handlers_busy_initialization_picker_cas_git_and_owned_quit(
         cx.read(|app| panel.read(app).editor.read(app).value().to_string()),
         "Synthetic approved master version two\n"
     );
+    check_setup_layout(cx);
     cx.update(|window, cx| {
         panel.update(cx, |panel, cx| {
             panel.choose_instruction_copy(false, window, cx)
@@ -307,6 +345,8 @@ fn headless_native_handlers_busy_initialization_picker_cas_git_and_owned_quit(
         Some(vec![repo.clone()])
     });
     settle(cx, &panel, |panel| panel.setup.git.reviewing());
+    draw_instructions(cx);
+    assert!(cx.debug_bounds("instructions-git-review-actions").is_some());
     assert_eq!(git(&bare, &["rev-parse", "main"]), remote_before);
     panel.update(cx, |panel, cx| panel.apply_git_copy(true, cx));
     settle(cx, &panel, |panel| {

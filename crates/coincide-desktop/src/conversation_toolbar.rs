@@ -126,8 +126,9 @@ impl Coincide {
         let title = self
             .selected
             .as_ref()
-            .map(|thread| text(thread, "title"))
-            .unwrap_or_else(|| "Welcome to Coincide".into());
+            .map_or("Welcome to Coincide", |thread| {
+                thread["title"].as_str().unwrap_or_default()
+            });
         let title = title
             .lines()
             .map(str::trim)
@@ -135,12 +136,21 @@ impl Coincide {
             .unwrap_or("Conversation")
             .to_owned();
         let bot = bot_heading(self.selected.as_ref(), &self.sidebar_bots);
-        let provider_mark = self
-            .selected
-            .as_ref()
-            .and_then(|thread| thread["selection"]["provider"].as_str())
-            .and_then(|provider| chat_layout::provider_mark(provider, 16.));
-        let (title, subtitle) = match bot.clone() {
+        let mark = if bot.is_some() {
+            Some(
+                Icon::new(IconName::Bot)
+                    .size(px(16.))
+                    .text_color(cx.theme().muted_foreground)
+                    .into_any_element(),
+            )
+        } else {
+            self.selected
+                .as_ref()
+                .and_then(|thread| thread["selection"]["provider"].as_str())
+                .and_then(|provider| chat_layout::provider_mark(provider, 16.))
+                .map(IntoElement::into_any_element)
+        };
+        let (title, subtitle) = match bot {
             Some((name, conversation)) => (name, Some(conversation).filter(|c| !c.is_empty())),
             None => (
                 title,
@@ -155,29 +165,6 @@ impl Coincide {
             .as_ref()
             .map(|subtitle| format!("{title}\n{subtitle}"))
             .unwrap_or_else(|| title.clone());
-        let mark = if bot.is_some() {
-            Some(
-                div()
-                    .size(px(18.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(IconName::Bot)
-                    .into_any_element(),
-            )
-        } else {
-            provider_mark.map(|mark| {
-                div()
-                    .size(px(28.))
-                    .rounded(px(9.))
-                    .bg(self.color(0x202a3b))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(mark)
-                    .into_any_element()
-            })
-        };
         let heading = div()
             .id("conversation-header-context")
             .role(Role::Label)
@@ -218,8 +205,8 @@ impl Coincide {
                     .id("conversation-toolbar-primary")
                     .flex()
                     .items_center()
-                    .min_h(px(50.))
-                    .px_3()
+                    .min_h(px(46.))
+                    .px_4()
                     .gap_1()
                     .child(heading)
                     .when_some(self.project_scripts_control(cx), |toolbar, scripts| {

@@ -368,7 +368,7 @@ impl Coincide {
     ) {
         match call(&self.engine, "settings.patch", json!({ "patch": patch })) {
             Ok(settings) => {
-                self.settings_status = "Saved".into();
+                self.settings_status.clear();
                 self.accept_settings(settings, window, cx);
             }
             Err(error) => {

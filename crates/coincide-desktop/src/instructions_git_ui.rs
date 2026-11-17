@@ -398,6 +398,7 @@ impl InstructionsPanel {
             }
             pane = pane.child(remotes).child(
                 div()
+                    .debug_selector(|| "instructions-git-review-actions".into())
                     .flex()
                     .flex_wrap()
                     .gap_2()

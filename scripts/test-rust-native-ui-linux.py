@@ -121,7 +121,8 @@ def main():
                 # navigation label must not make a stale page look ready.
                 crop = image.crop((220, 0, image.width, image.height))
                 ocr_path = observed.with_name(observed.stem + "-ocr-region.png")
-                crop.save(ocr_path)
+                # Give OCR enough pixels for compact headers beside an icon.
+                crop.resize((crop.width * 2, crop.height * 2), Image.Resampling.LANCZOS).save(ocr_path)
             text = command("tesseract", str(ocr_path), "stdout", "--psm", segmentation, env=env)
             observed.with_suffix(".txt").write_text(text)
             if settings_title:
