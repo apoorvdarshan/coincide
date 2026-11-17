@@ -17,6 +17,8 @@ pub(super) struct State {
     agent_add_pending: bool,
     logo_requests: std::collections::HashMap<String, Instant>,
     logo_pending: bool,
+    providers_expanded: bool,
+    pub(super) registry_agent: Option<(String, String)>,
     show_more_agents: bool,
     show_custom_agent: bool,
 }
@@ -77,7 +79,7 @@ fn section_icon(section: Section) -> gpui_kit::assets::IconName {
         Section::Appshots => I::Camera,
         Section::Media => I::GalleryVerticalEnd,
         Section::Accounts => I::LayoutDashboard,
-        Section::Provider(_) => I::Cpu,
+        Section::Provider(_) | Section::RegistryAgent => I::Cpu,
         Section::About => I::Info,
         _ => I::Settings2,
     }
@@ -162,6 +164,16 @@ pub(super) fn registry_agent_rows(view: &Value, include_extra: bool, query: &str
         )
     });
     rows
+}
+
+fn registry_logo(id: &str, size: f32) -> AnyElement {
+    chat_layout::provider_mark(&format!("acp-{id}"), size)
+        .map(|mark| mark.into_any_element())
+        .unwrap_or_else(|| {
+            Icon::new(gpui_kit::assets::IconName::Cpu)
+                .size(px(size))
+                .into_any_element()
+        })
 }
 
 fn enabled_patch(
@@ -562,6 +574,12 @@ impl Coincide {
         self.session_import_open = false;
         self.provider_settings.open = false;
         self.settings_section = section;
+        if section != Section::RegistryAgent {
+            self.settings_navigation.registry_agent = None;
+        }
+        if matches!(section, Section::Provider(_) | Section::RegistryAgent) {
+            self.settings_navigation.providers_expanded = true;
+        }
         if let Section::Provider(provider) = section {
             let enabled = provider_enabled(&self.settings, provider);
             self.provider_configuration_panel.update(cx, |panel, cx| {
@@ -595,7 +613,13 @@ impl Coincide {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let selected = self.settings_section == section
-            || (self.settings_section == Section::Media && section == Section::Appshots);
+            || (self.settings_section == Section::Media && section == Section::Appshots)
+            || (section == Section::Accounts
+                && !self.settings_navigation.providers_expanded
+                && matches!(
+                    self.settings_section,
+                    Section::Provider(_) | Section::RegistryAgent
+                ));
         let enabled = match section {
             Section::Provider(provider) => provider_enabled(&self.settings, provider),
             _ => true,
@@ -696,27 +720,65 @@ impl Coincide {
             navigation =
                 navigation.child(self.settings_navigation_row(section, section.label(), cx));
         }
-        navigation =
-            navigation.child(self.settings_navigation_row(Section::Accounts, "Providers", cx));
-        for provider in coincide_core::provider_catalog::provider_catalog() {
+        let expanded = self.settings_navigation.providers_expanded;
+        let disclosure = if expanded {
+            "Collapse providers"
+        } else {
+            "Expand providers"
+        };
+        navigation = navigation.child(
+            div()
+                .flex()
+                .items_center()
+                .gap_1()
+                .child(div().flex_1().min_w_0().child(self.settings_navigation_row(
+                    Section::Accounts,
+                    "Providers",
+                    cx,
+                )))
+                .child(
+                    Button::new("settings-providers-disclosure")
+                        .icon(if expanded {
+                            gpui_kit::assets::IconName::ChevronDown
+                        } else {
+                            gpui_kit::assets::IconName::ChevronRight
+                        })
+                        .ghost()
+                        .small()
+                        .accessibility_label(disclosure)
+                        .tooltip(disclosure)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.settings_navigation.providers_expanded =
+                                !this.settings_navigation.providers_expanded;
+                            cx.notify();
+                        })),
+                ),
+        );
+        if expanded {
             let selected = self
                 .selected
                 .as_ref()
                 .and_then(|thread| thread["selection"]["provider"].as_str());
-            if !provider_is_shown(
-                &self.settings,
-                &self.settings_navigation.agent_view,
-                provider.id,
-                selected,
-            ) && self.settings_section != Section::Provider(provider.id)
-            {
-                continue;
+            let mut providers = div().pl_2().flex().flex_col().gap_0p5();
+            for provider in coincide_core::provider_catalog::provider_catalog() {
+                if provider_is_shown(
+                    &self.settings,
+                    &self.settings_navigation.agent_view,
+                    provider.id,
+                    selected,
+                ) || self.settings_section == Section::Provider(provider.id)
+                {
+                    providers = providers.child(self.settings_navigation_row(
+                        Section::Provider(provider.id),
+                        provider.display_name,
+                        cx,
+                    ));
+                }
             }
-            navigation = navigation.child(self.settings_navigation_row(
-                Section::Provider(provider.id),
-                provider.display_name,
-                cx,
-            ));
+            for agent in registry_agent_rows(&self.settings_navigation.agent_view, false, "") {
+                providers = providers.child(self.registry_agent_link(&agent, false, cx));
+            }
+            navigation = navigation.child(providers);
         }
         navigation = navigation.child(div().child(self.settings_navigation_row(
             Section::About,
@@ -748,6 +810,7 @@ impl Coincide {
         });
         div()
             .id("settings-pane")
+            .relative()
             .text_size(px(13.))
             .flex_1()
             .min_w_0()
@@ -810,6 +873,16 @@ impl Coincide {
                     .flex()
                     .flex_col()
                     .child(self.settings_detail_surface(cx)),
+            )
+            .when(
+                self.browser_settings_visible()
+                    && self.browser_settings_panel.read(cx).import_dialog_open(),
+                |surface| {
+                    surface.child(
+                        self.browser_settings_panel
+                            .update(cx, |panel, cx| panel.render_import_dialog(cx)),
+                    )
+                },
             )
             .into_any_element()
     }
@@ -947,6 +1020,189 @@ impl Coincide {
         true
     }
 
+    pub(super) fn open_registry_agent(
+        &mut self,
+        id: String,
+        name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.settings_navigation.registry_agent = Some((id, name));
+        self.navigate_settings_section(Section::RegistryAgent, window, cx);
+    }
+
+    fn registry_agent_summary(&self, id: &str, registered: bool, cx: &App) -> String {
+        let provider = format!("acp-{id}");
+        if !registered {
+            "Detected · add to use".into()
+        } else if coincide_core::provider_configuration::native_sign_in_supported(&provider) {
+            self.provider_configuration_panel
+                .read(cx)
+                .summary(&provider)
+        } else {
+            "CLI configured".into()
+        }
+    }
+
+    pub(super) fn registry_agent_link(
+        &self,
+        agent: &Value,
+        overview: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let id = text(agent, "id");
+        let name = text(agent, "name");
+        let registered = agent["registered"] == true;
+        let summary = self.registry_agent_summary(&id, registered, cx);
+        let status = self
+            .provider_configuration_panel
+            .read(cx)
+            .status_dot(&format!("acp-{id}"), registered);
+        let selected = self.settings_section == Section::RegistryAgent
+            && self
+                .settings_navigation
+                .registry_agent
+                .as_ref()
+                .is_some_and(|(selected, _)| selected == &id);
+        Button::new(SharedString::from(format!(
+            "settings-{}-acp-{id}",
+            if overview { "overview" } else { "sidebar" }
+        )))
+        .accessibility_label(format!("{name}, {summary}"))
+        .ghost()
+        .w_full()
+        .h_auto()
+        .when(selected && !overview, |button| {
+            button.bg(self.color(0x202a3b))
+        })
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .w_full()
+                .gap_2()
+                .py(if overview { px(8.) } else { px(5.) })
+                .child(registry_logo(&id, if overview { 28. } else { 22. }))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .child(
+                            div()
+                                .truncate()
+                                .when(selected, |label| label.font_weight(FontWeight::SEMIBOLD))
+                                .child(name.clone()),
+                        )
+                        .when(overview, |label| {
+                            label.child(
+                                div()
+                                    .text_xs()
+                                    .truncate()
+                                    .text_color(self.color(0xe4e9f2).opacity(0.65))
+                                    .child(summary),
+                            )
+                        }),
+                )
+                .when(overview, |row| {
+                    row.child(Icon::new(gpui_kit::assets::IconName::ChevronRight).small())
+                })
+                .when(!overview, |row| {
+                    row.child(div().size(px(7.)).rounded_full().bg(rgb(status.1)))
+                }),
+        )
+        .on_click(cx.listener(move |this, _, window, cx| {
+            this.open_registry_agent(id.clone(), name.clone(), window, cx);
+        }))
+        .into_any_element()
+    }
+
+    pub(super) fn registry_agent_pane(&self, cx: &mut Context<Self>) -> AnyElement {
+        let Some((id, name)) = &self.settings_navigation.registry_agent else {
+            return self.providers_overview_pane(cx);
+        };
+        let agent = registry_agent_rows(&self.settings_navigation.agent_view, false, "")
+            .into_iter()
+            .find(|agent| agent["id"] == *id);
+        let registered = agent
+            .as_ref()
+            .is_some_and(|agent| agent["registered"] == true);
+        let provider = format!("acp-{id}");
+        let summary = if agent.is_some() {
+            self.registry_agent_summary(id, registered, cx)
+        } else {
+            "Agent is no longer detected".into()
+        };
+        let action_id = id.clone();
+        let actions = div().flex().flex_wrap().items_center().gap_2();
+        let actions = if registered {
+            actions.child(self.acp_setup_controls(&provider, cx)).child(
+                Button::new("registry-agent-reapprove")
+                    .label("Reapprove executable…")
+                    .compact()
+                    .ghost()
+                    .disabled(self.settings_navigation.agent_add_pending)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.add_registry_agent_in_settings(action_id.clone(), cx);
+                    })),
+            )
+        } else if agent.is_some() {
+            actions.child(
+                Button::new("registry-agent-add")
+                    .label("Add to Coincide")
+                    .primary()
+                    .disabled(self.settings_navigation.agent_add_pending)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.add_registry_agent_in_settings(action_id.clone(), cx);
+                    })),
+            )
+        } else {
+            actions.child(
+                Button::new("registry-agent-detect")
+                    .label("Detect again")
+                    .on_click(cx.listener(|this, _, _, cx| this.refresh_agent_discovery(cx))),
+            )
+        };
+        div()
+            .flex_1()
+            .min_h_0()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .child(self.settings_subpage_header(name.clone(), "registry-agent-done", cx))
+            .child(
+                div()
+                    .id("registry-agent-detail")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .p_5()
+                    .child(
+                        self.settings_card(
+                            div()
+                                .p_4()
+                                .flex()
+                                .flex_col()
+                                .gap_3()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .child(registry_logo(id, 32.))
+                                        .child(summary),
+                                )
+                                .child(actions)
+                                .when(!self.settings_status.is_empty(), |card| {
+                                    card.child(div().text_sm().child(self.settings_status.clone()))
+                                }),
+                        ),
+                    ),
+            )
+            .into_any_element()
+    }
+
     pub(super) fn providers_overview_pane(&self, cx: &mut Context<Self>) -> AnyElement {
         let panel = self.provider_configuration_panel.read(cx);
         let mut pane = div()
@@ -1047,84 +1303,13 @@ impl Coincide {
             );
         }
         let registry = &self.settings_navigation.agent_view;
-        for agent in registry_agent_rows(registry, false, "") {
-            let id = text(&agent, "id");
-            let name = text(&agent, "name");
-            let registered = agent["registered"] == true;
-            let provider = format!("acp-{id}");
-            let action_label = format!("Add {name}");
-            let detail = if registered
-                && coincide_core::provider_configuration::native_sign_in_supported(&provider)
-            {
-                self.provider_configuration_panel
-                    .read(cx)
-                    .summary(&provider)
-            } else if registered {
-                "CLI configured".into()
-            } else {
-                "Installed · add to use".into()
-            };
-            pane = pane.child(
-                self.settings_card(
-                    div()
-                        .flex()
-                        .items_center()
-                        .flex_wrap()
-                        .gap_3()
-                        .p_4()
-                        .child(
-                            chat_layout::provider_mark(&format!("acp-{id}"), 24.)
-                                .map(|mark| mark.into_any_element())
-                                .unwrap_or_else(|| {
-                                    Icon::new(gpui_kit::assets::IconName::Cpu)
-                                        .small()
-                                        .into_any_element()
-                                }),
-                        )
-                        .child(
-                            div().flex_1().child(name.clone()).child(
-                                div()
-                                    .text_xs()
-                                    .text_color(self.color(0xe4e9f2).opacity(0.65))
-                                    .child(detail),
-                            ),
-                        )
-                        .child(if registered {
-                            let repair_id = id.clone();
-                            div()
-                                .flex()
-                                .items_center()
-                                .flex_wrap()
-                                .gap_1()
-                                .child(self.acp_setup_controls(&provider, cx))
-                                .child(
-                                    Button::new(SharedString::from(format!(
-                                        "provider-reapprove-{id}"
-                                    )))
-                                    .icon(gpui_kit::assets::IconName::RotateCw)
-                                    .accessibility_label(format!("Reapprove {name} executable"))
-                                    .tooltip("Reapprove after updating the CLI")
-                                    .compact()
-                                    .ghost()
-                                    .disabled(self.settings_navigation.agent_add_pending)
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.add_registry_agent_in_settings(repair_id.clone(), cx)
-                                    })),
-                                )
-                                .into_any_element()
-                        } else {
-                            Button::new(SharedString::from(format!("provider-add-{id}")))
-                                .label("Add")
-                                .accessibility_label(action_label)
-                                .disabled(self.settings_navigation.agent_add_pending)
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.add_registry_agent_in_settings(id.clone(), cx)
-                                }))
-                                .into_any_element()
-                        }),
-                )
-                .flex_shrink_0(),
-            );
+        let installed = registry_agent_rows(registry, false, "");
+        if !installed.is_empty() {
+            let mut agents = div().flex().flex_col();
+            for agent in installed {
+                agents = agents.child(self.registry_agent_link(&agent, true, cx));
+            }
+            pane = pane.child(self.settings_card(agents).flex_shrink_0());
         }
         if registry.is_null() || (registry["loading"] == true && registry["agents"].is_null()) {
             pane = pane.child(
@@ -1662,6 +1847,29 @@ mod tests {
             P::Claude,
             None
         ));
+    }
+
+    #[::core::prelude::v1::test]
+    fn devin_stays_discoverable_after_registration_and_a_partial_refresh() {
+        let view = json!({
+            "agents": [
+                {"id":"devin","name":"Devin","executable":"/fixture/devin"},
+                {"id":"uninstalled","name":"Uninstalled","executable":null}
+            ]
+        });
+        let detected = registry_agent_rows(&view, false, "DeV");
+        assert_eq!(detected.len(), 1);
+        assert_eq!(detected[0]["id"], "devin");
+        assert_ne!(detected[0]["registered"], true);
+
+        let view = json!({
+            "agents": [{"id":"uninstalled","name":"Uninstalled","executable":null}],
+            "registered": [{"provider":"acp-devin","displayName":"Devin"}]
+        });
+        let registered = registry_agent_rows(&view, false, "Devin");
+        assert_eq!(registered.len(), 1);
+        assert_eq!(registered[0]["id"], "devin");
+        assert_eq!(registered[0]["registered"], true);
     }
 
     #[::core::prelude::v1::test]

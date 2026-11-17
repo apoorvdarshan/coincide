@@ -495,7 +495,12 @@ impl Coincide {
             .filter(|entry| entry.matches(query))
             .collect::<Vec<_>>();
         let mut list = div().flex().flex_col().gap_1();
-        if results.is_empty() {
+        let agents = settings_navigation::registry_agent_rows(
+            &self.settings_navigation.agent_view,
+            false,
+            query.trim(),
+        );
+        if results.is_empty() && agents.is_empty() {
             return list
                 .child(
                     div()
@@ -533,6 +538,9 @@ impl Coincide {
                         this.open_settings_destination(destination, window, cx)
                     })),
             );
+        }
+        for agent in agents {
+            list = list.child(self.registry_agent_link(&agent, false, cx));
         }
         list.into_any_element()
     }

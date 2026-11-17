@@ -23,6 +23,7 @@ pub(super) enum SettingsSection {
     ComputerUse,
     Usage,
     Provider(coincide_core::provider_catalog::ProviderId),
+    RegistryAgent,
 }
 impl SettingsSection {
     pub(super) fn id(self) -> &'static str {
@@ -45,6 +46,7 @@ impl SettingsSection {
             Self::ComputerUse => "computer-use",
             Self::Usage => "usage",
             Self::Provider(provider) => super::settings_navigation::provider_key(provider),
+            Self::RegistryAgent => "registry-agent",
         }
     }
     pub(super) fn label(self) -> &'static str {
@@ -66,6 +68,7 @@ impl SettingsSection {
             Self::Media => "Historical images",
             Self::ComputerUse => "Computer Use",
             Self::Usage => "Usage",
+            Self::RegistryAgent => "Agent",
             Self::Provider(provider) => {
                 coincide_core::provider_catalog::provider(provider).display_name
             }
@@ -1147,11 +1150,12 @@ impl Coincide {
     /// Keep the page title and close action outside every detail scroller.
     pub(super) fn settings_subpage_header(
         &self,
-        title: &'static str,
+        title: impl Into<SharedString>,
         done_id: &'static str,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let icon = match title {
+        let title = title.into();
+        let icon = match title.as_ref() {
             "General" => Some(SettingsSection::General),
             "Models" => Some(SettingsSection::Models),
             "Usage" => Some(SettingsSection::Usage),
@@ -1166,7 +1170,7 @@ impl Coincide {
             "About" => Some(SettingsSection::About),
             _ => None,
         };
-        let subtitle = match title {
+        let subtitle = match title.as_ref() {
             "General" => Some("Appearance, workspace, and everyday preferences"),
             "Models" => Some("Choose defaults and organize your models"),
             "Usage" => Some("Activity and limits across your agents"),
@@ -1393,6 +1397,8 @@ impl Coincide {
             self.antigravity_settings(cx)
         } else if self.settings_section == SettingsSection::Accounts {
             self.providers_overview_pane(cx)
+        } else if self.settings_section == SettingsSection::RegistryAgent {
+            self.registry_agent_pane(cx)
         } else if let SettingsSection::Provider(provider) = self.settings_section {
             self.provider_preferences_pane(provider, cx)
         } else {

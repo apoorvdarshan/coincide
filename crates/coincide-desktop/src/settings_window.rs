@@ -176,7 +176,16 @@ impl Render for SettingsWindow {
                     window.remove_window();
                     return div().into_any_element();
                 }
-                window.set_window_title(owner.settings_section.label());
+                let title = if owner.settings_section == settings::SettingsSection::RegistryAgent {
+                    owner
+                        .settings_navigation
+                        .registry_agent
+                        .as_ref()
+                        .map_or("Agent", |(_, name)| name.as_str())
+                } else {
+                    owner.settings_section.label()
+                };
+                window.set_window_title(title);
                 owner.microphone_settings_active =
                     window.is_window_active() && window.visibility().is_visible();
                 owner.sync_transcription_binding(cx);
@@ -227,6 +236,16 @@ impl Coincide {
             return;
         }
         let key = &event.keystroke;
+        if self.browser_settings_visible()
+            && self.browser_settings_panel.read(cx).import_dialog_open()
+        {
+            if key.key == "escape" {
+                self.browser_settings_panel
+                    .update(cx, |panel, cx| panel.close_import_dialog(window, cx));
+                cx.stop_propagation();
+            }
+            return;
+        }
         let command = if cfg!(target_os = "macos") {
             key.modifiers.platform
         } else {

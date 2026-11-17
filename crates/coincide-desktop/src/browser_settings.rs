@@ -100,6 +100,8 @@ const MAX_DOCUMENT: u64 = 1_048_576;
 pub(crate) mod cookie_flow;
 #[path = "browser_history_flow.rs"]
 pub(crate) mod history_flow;
+#[path = "browser_import_view.rs"]
+mod import_view;
 #[path = "browser_search_settings.rs"]
 mod search_settings;
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -803,7 +805,7 @@ pub struct BrowserSettings {
     chosen: Option<ChosenBookmarks>,
     library: Option<Library>,
     pub(super) pane_mode: bool,
-    advanced_open: bool,
+    import_dialog: import_view::ImportDialog,
     new_profile_open: bool,
     pane_library_attempt: Option<u64>,
     library_page: usize,
@@ -811,6 +813,7 @@ pub struct BrowserSettings {
     bookmark_open: Option<BookmarkOpen>,
     snapshot: Option<ProfileSnapshot>,
     name: Entity<InputState>,
+    cookie_profile_name: Entity<InputState>,
     sender: SyncSender<ProfileRequest>,
     preview: Option<ImportPreview>,
     import_busy: bool,
@@ -873,6 +876,15 @@ impl BrowserSettings {
     }
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> (Self, Receiver<ProfileRequest>) {
         let name = cx.new(|cx| InputState::new(window, cx).placeholder("Profile name"));
+        let cookie_profile_name =
+            cx.new(|cx| InputState::new(window, cx).placeholder("New profile name"));
+        cx.subscribe(&cookie_profile_name, |_, _, event, cx| {
+            if matches!(event, gpui_kit::component::input::InputEvent::Change) {
+                cx.notify();
+            }
+        })
+        .detach();
+        let import_dialog = import_view::ImportDialog::new(cx);
         let (sender, requests) = mpsc::sync_channel(8);
         let (import_sender, imports) = mpsc::sync_channel(1);
         (
@@ -887,7 +899,7 @@ impl BrowserSettings {
                 chosen: None,
                 library: None,
                 pane_mode: false,
-                advanced_open: false,
+                import_dialog,
                 new_profile_open: false,
                 pane_library_attempt: None,
                 library_page: 0,
@@ -895,6 +907,7 @@ impl BrowserSettings {
                 bookmark_open: None,
                 snapshot: None,
                 name,
+                cookie_profile_name,
                 sender,
                 preview: None,
                 import_busy: false,
@@ -1086,7 +1099,20 @@ impl BrowserSettings {
             if library.bookmarks.is_empty() {
                 panel = panel.child("No saved bookmarks.");
             }
-            for bookmark in library.bookmarks.iter().rev().take(30) {
+            let page_size = if self.pane_mode { 30 } else { 10 };
+            let pages = library.bookmarks.len().div_ceil(page_size).max(1);
+            let page = if self.pane_mode {
+                0
+            } else {
+                self.library_page.min(pages - 1)
+            };
+            for bookmark in library
+                .bookmarks
+                .iter()
+                .rev()
+                .skip(page * page_size)
+                .take(page_size)
+            {
                 let id = bookmark.id;
                 let revision = library.revision;
                 panel = panel.child(
@@ -1127,6 +1153,22 @@ impl BrowserSettings {
                             )
                         }),
                 );
+            }
+            if pages > 1 && !self.pane_mode {
+                panel = panel.child(import_view::page_controls(
+                    "saved-bookmark-pages",
+                    page,
+                    pages,
+                    busy,
+                    cx.listener(|this, _, _, cx| {
+                        this.library_page = this.library_page.saturating_sub(1);
+                        cx.notify();
+                    }),
+                    cx.listener(|this, _, _, cx| {
+                        this.library_page += 1;
+                        cx.notify();
+                    }),
+                ));
             }
         }
         panel = panel.child(self.pane_history(cx));
@@ -1222,6 +1264,7 @@ impl BrowserSettings {
     }
     pub fn sync_route_context(&mut self, thread: Option<&str>, cx: &mut Context<Self>) {
         if update_route_epoch(&mut self.route, thread, &mut self.generation, &self.epoch) {
+            self.import_dialog.deactivate();
             self.history.set_binding(None);
             self.cookie_flow.route_changed();
             self.snapshot = None;
@@ -1717,7 +1760,7 @@ impl BrowserSettings {
                     div().child("Import browser data").child(
                         div()
                             .text_xs()
-                            .child("Import bookmarks, history, and cookies from a file."),
+                            .child("Bring in bookmarks, history, or cookies from an export."),
                     ),
                 )
                 .child(
@@ -1725,9 +1768,8 @@ impl BrowserSettings {
                         .label("Import…")
                         .small()
                         .disabled(busy)
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.advanced_open = true;
-                            cx.notify();
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.open_import_dialog(window, cx);
                         })),
                 ),
         );
@@ -1743,195 +1785,10 @@ impl Drop for BrowserSettings {
 impl Render for BrowserSettings {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.pane_mode {
-            return self.pane_library(cx).into_any_element();
+            self.pane_library(cx)
+        } else {
+            self.overview_page(cx)
         }
-        if !self.advanced_open {
-            return self.overview_page(cx);
-        }
-        let busy = self.import_busy
-            || self.profile_pending
-            || self.history.busy()
-            || self.workers.closed();
-        let search_engine = self.search_engine_row(cx);
-        let mut panel = div()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .p_4()
-            .child(
-                Button::new("browser-import-tools-back")
-                    .label("Back to Browser Settings")
-                    .small()
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.advanced_open = false;
-                        cx.notify();
-                    })),
-            )
-            .child(search_engine)
-            .child("Browser profiles");
-        if let Some(snapshot) = &self.snapshot {
-            panel=panel.child(SharedString::from(format!("{} tab(s) in selected thread. Profile switching requires closing only this thread's tabs.",snapshot.open_tabs)));
-            for profile in &snapshot.profiles {
-                let id = profile.id;
-                panel = panel.child(
-                    Button::new(SharedString::from(format!("browser-profile-{id}")))
-                        .label(format!(
-                            "{}{}",
-                            profile.name,
-                            if snapshot.selected == ProfileChoice::Persistent(id) {
-                                " · selected"
-                            } else {
-                                ""
-                            }
-                        ))
-                        .disabled(
-                            busy || snapshot.open_tabs > 0
-                                || (!profile.is_default && !snapshot.persistent_profiles_available),
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.request(
-                                ProfileOperation::Select(ProfileChoice::Persistent(id)),
-                                cx,
-                            )
-                        })),
-                );
-            }
-            panel = panel.child(
-                Button::new("browser-profile-private")
-                    .label(if snapshot.selected == ProfileChoice::Private {
-                        "Temporary profile · selected"
-                    } else {
-                        "Use temporary profile for this thread"
-                    })
-                    .disabled(busy || snapshot.open_tabs > 0)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.request(ProfileOperation::Select(ProfileChoice::Private), cx)
-                    })),
-            );
-        }
-        panel = panel
-            .child(Input::new(&self.name))
-            .child(
-                Button::new("browser-profile-create")
-                    .label("Create profile")
-                    .disabled(
-                        busy || self
-                            .snapshot
-                            .as_ref()
-                            .is_none_or(|snapshot| !snapshot.persistent_profiles_available),
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        let name = this.name.read(cx).value().to_string();
-                        this.request(ProfileOperation::CreateFresh(name), cx)
-                    })),
-            )
-            .child(
-                Button::new("browser-import-preview")
-                    .label("Choose metadata export to preview")
-                    .disabled(busy || self.snapshot.is_none())
-                    .on_click(cx.listener(|this, _, _, cx| this.choose_import(cx))),
-            );
-        panel = panel.child(Button::new("browser-import-discard").label("Discard import preview").disabled(!self.import_busy && self.preview.is_none()).on_click(cx.listener(|this,_,_,cx| {this.generation=this.generation.wrapping_add(1);this.epoch.store(this.generation,Ordering::Release);this.preview=None;this.chosen=None;this.status="Preview discarded. An existing file dialog may still need to be cancelled.".into();cx.notify();})));
-        if let Some(preview) = &self.preview {
-            panel=panel.child(SharedString::from(format!("Preview: {} profile reference(s), {} bookmarks, {} history entries; {} cookies will not be imported. {}",preview.profiles,preview.bookmarks,preview.history,preview.cookies_not_imported,if preview.legacy_profile{"Legacy Swift store remains untouched. Create a fresh Rust profile above to start separately."}else{"Source IDs are never reused for a new profile."})));
-        }
-
-        if let Some(preview) = &self.preview {
-            if let Some(problem) = &preview.bookmark_problem {
-                panel = panel.child(SharedString::from(format!(
-                    "Bookmarks cannot be saved: {problem}"
-                )));
-            }
-        }
-        if let Some(chosen) = &self.chosen {
-            let count = chosen.plan.bookmarks.len();
-            let page = self.preview_page;
-            let pages = count.div_ceil(10);
-            let mut review = div()
-                .id("browser-bookmark-review")
-                .flex()
-                .flex_col()
-                .gap_1();
-            for bookmark in chosen.plan.bookmarks.iter().skip(page * 10).take(10) {
-                review = review.child(SharedString::from(format!(
-                    "{} · {}",
-                    bookmark.title, bookmark.url
-                )));
-            }
-            panel=panel.child(SharedString::from(format!("Review all {count} bookmarks — page {} of {pages}. Save imports every reviewed export row; duplicate URLs keep the saved bookmark.",page+1))).child(review)
-                .child(div().flex().gap_2()
-                    .child(Button::new("bookmark-preview-prev").label("Previous preview page").disabled(busy||page==0).on_click(cx.listener(|this,_,_,cx|{this.preview_page=this.preview_page.saturating_sub(1);cx.notify();})))
-                    .child(Button::new("bookmark-preview-next").label("Next preview page").disabled(busy||page+1>=pages).on_click(cx.listener(|this,_,_,cx|{this.preview_page+=1;cx.notify();}))))
-                .child(Button::new("bookmark-import-save").label(format!("Save {count} bookmarks to Rust library")).disabled(busy||self.engine.is_none()||chosen.expected_revision.is_none()).on_click(cx.listener(|this,_,_,cx|this.save_bookmarks(cx))));
-        }
-        panel = panel.child(
-            Button::new("bookmark-library-reload")
-                .label("Reload bookmarks")
-                .disabled(busy || self.engine.is_none() || self.snapshot.is_none())
-                .on_click(cx.listener(|this, _, _, cx| this.reload_bookmarks(cx))),
-        );
-        if let Some(library) = &self.library {
-            let count = library.bookmarks.len();
-            let page = self.library_page;
-            let pages = count.div_ceil(10).max(1);
-            panel = panel.child(SharedString::from(format!(
-                "Saved Rust bookmarks: {count} · page {} of {pages}",
-                page + 1
-            )));
-            let mut rows = div()
-                .id("browser-bookmark-library")
-                .flex()
-                .flex_col()
-                .gap_2();
-            for bookmark in library.bookmarks.iter().skip(page * 10).take(10) {
-                let id = bookmark.id;
-                let revision = library.revision;
-                rows = rows.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .child(SharedString::from(bookmark.title.clone()))
-                        .child(SharedString::from(bookmark.url.clone()))
-                        .child(
-                            Button::new(SharedString::from(format!("bookmark-open-{id}")))
-                                .label("Open in this thread's browser")
-                                .disabled(busy || self.snapshot.is_none())
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.open_bookmark(id, revision, cx)
-                                })),
-                        ),
-                );
-            }
-            panel = panel.child(rows).child(
-                div()
-                    .flex()
-                    .gap_2()
-                    .child(
-                        Button::new("bookmark-library-prev")
-                            .label("Previous saved page")
-                            .disabled(busy || page == 0)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.library_page = this.library_page.saturating_sub(1);
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Button::new("bookmark-library-next")
-                            .label("Next saved page")
-                            .disabled(busy || page + 1 >= pages)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.library_page += 1;
-                                cx.notify();
-                            })),
-                    ),
-            );
-        }
-        panel
-            .child(self.render_history(cx))
-            .child(self.cookie_import_panel(cx))
-            .child(SharedString::from(self.status.clone()))
-            .into_any_element()
     }
 }
 

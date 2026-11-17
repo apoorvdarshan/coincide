@@ -24,6 +24,10 @@ impl ChatRoute {
     pub fn visible(self) -> bool {
         self.selected && self.available() && !self.navigating
     }
+
+    pub fn shows_composer(self) -> bool {
+        self.selected && !self.settings
+    }
 }
 
 /// The composer can submit while Settings is open in its own window. The
@@ -124,7 +128,8 @@ impl Coincide {
             global_schedules: self.global_schedules_route(),
             importing: self.session_import_open,
             navigating: self.thread_navigation.target().is_some()
-                || self.pending_new_thread.is_some(),
+                || self.pending_new_thread.is_some()
+                || self.archive_deleting_selected_thread(),
         }
     }
     pub(super) fn chat_route_available(&self) -> bool {
@@ -249,6 +254,10 @@ mod tests {
             secondary: false,
             shift: false,
         };
+        assert!(
+            loading.shows_composer(),
+            "keep the old draft visible during navigation"
+        );
         assert!(!composer_enter_sends(&enter, true, loading));
         assert!(composer_enter_sends(&enter, true, route));
         assert_eq!(
@@ -269,6 +278,21 @@ mod tests {
             assert!(!unavailable.visible());
             assert_eq!(panel(unavailable, true, true, true, true), None);
         }
+        assert!(
+            !ChatRoute {
+                settings: true,
+                ..route
+            }
+            .shows_composer()
+        );
+        assert!(
+            ChatRoute {
+                importing: true,
+                ..route
+            }
+            .shows_composer()
+        );
+        assert!(!ChatRoute::default().shows_composer());
         let schedules = ChatRoute {
             global_schedules: true,
             ..route

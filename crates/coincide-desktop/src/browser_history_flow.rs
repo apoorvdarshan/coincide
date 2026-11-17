@@ -644,7 +644,14 @@ impl BrowserSettings {
             if library.rows.is_empty() {
                 view = view.child(div().text_xs().child("No browsing history yet."));
             }
-            for entry in library.rows.iter().take(30) {
+            let page_size = if self.pane_mode { 30 } else { 10 };
+            let pages = library.rows.len().div_ceil(page_size).max(1);
+            let page = if self.pane_mode {
+                0
+            } else {
+                self.history.library_page.min(pages - 1)
+            };
+            for entry in library.rows.iter().skip(page * page_size).take(page_size) {
                 let id = entry.id;
                 let revision = library.revision;
                 let title = if entry.view.title.is_empty() {
@@ -664,6 +671,22 @@ impl BrowserSettings {
                             cx.listener(move |this, _, _, cx| this.history_open(id, revision, cx)),
                         ),
                 );
+            }
+            if pages > 1 && !self.pane_mode {
+                view = view.child(import_view::page_controls(
+                    "saved-history-pages",
+                    page,
+                    pages,
+                    busy,
+                    cx.listener(|this, _, _, cx| {
+                        this.history.library_page = this.history.library_page.saturating_sub(1);
+                        cx.notify();
+                    }),
+                    cx.listener(|this, _, _, cx| {
+                        this.history.library_page += 1;
+                        cx.notify();
+                    }),
+                ));
             }
         } else {
             view = view.child(div().text_xs().child(self.history.status.clone()));
@@ -696,128 +719,72 @@ impl BrowserSettings {
                 })
             })
             .unwrap_or_else(|| "No persistent profile".into());
-        let mut panel=div().flex().flex_col().gap_2().child("Browser history").child(format!("Destination: {destination}")).child("Import history from a browser metadata JSON export. Existing history is kept; cookies, passwords and browser databases are not imported.")
-            .child(Button::new("history-import-choose").label("Choose history metadata export").disabled(busy||!enabled).on_click(cx.listener(|this,_,_,cx|this.history_choose(cx))))
-            .child(Button::new("history-library-reload").label("Reload saved history").disabled(busy||!enabled).on_click(cx.listener(|this,_,_,cx|this.history_reload(cx))))
-            .child(SharedString::from(self.history.status.clone()));
+        let mut panel = div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(if enabled {
+                format!("Choose a browser metadata JSON export to add history to {destination}.")
+            } else {
+                "Choose a persistent browser profile in Settings to import history.".to_owned()
+            })
+            .child(
+                div().flex().items_center().flex_wrap().gap_2().child(
+                    Button::new("history-import-choose")
+                        .label(if self.history.chosen.is_some() {
+                            "Choose another file…"
+                        } else {
+                            "Choose file…"
+                        })
+                        .small()
+                        .disabled(busy || !enabled)
+                        .on_click(cx.listener(|this, _, _, cx| this.history_choose(cx))),
+                ),
+            );
         if let Some(chosen) = &self.history.chosen {
             let count = chosen.rows.len();
             let pages = count.div_ceil(10).max(1);
             let page = self.history.preview_page.min(pages - 1);
             panel = panel.child(format!(
-                "Review {count} history entries for {destination} — page {} of {pages}",
-                page + 1
+                "{count} entries to import into {destination}. Existing history is kept."
             ));
-            for view in chosen.rows.iter().skip(page * 10).take(10) {
+            for entry in chosen.rows.iter().skip(page * 10).take(10) {
                 panel = panel.child(
                     div()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .child(view.title.clone())
-                        .child(view.url.clone())
-                        .child(format!("{} visits · {}", view.visit_count, view.last_visit)),
+                        .min_w_0()
+                        .child(div().truncate().child(entry.title.clone()))
+                        .child(div().text_xs().truncate().child(entry.url.clone())),
                 );
             }
-            panel = panel
-                .child(
-                    div()
-                        .flex()
-                        .gap_2()
-                        .child(
-                            Button::new("history-preview-prev")
-                                .label("Previous review page")
-                                .disabled(busy || page == 0)
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.history.preview_page =
-                                        this.history.preview_page.saturating_sub(1);
-                                    cx.notify();
-                                })),
-                        )
-                        .child(
-                            Button::new("history-preview-next")
-                                .label("Next review page")
-                                .disabled(busy || page + 1 >= pages)
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.history.preview_page += 1;
-                                    cx.notify();
-                                })),
-                        ),
-                )
-                .child(
-                    Button::new("history-import-save")
-                        .label(format!(
-                            "Import all {count} reviewed history entries into {destination}"
-                        ))
-                        .disabled(busy || !enabled)
-                        .on_click(cx.listener(|this, _, _, cx| this.history_save(cx))),
-                )
-                .child(
-                    Button::new("history-import-discard")
-                        .label("Discard history review")
-                        .disabled(busy)
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.history.chosen = None;
-                            this.history.status =
-                                "History review discarded. Nothing imported.".into();
-                            cx.notify();
-                        })),
-                );
-        }
-        if let Some(library) = &self.history.library {
-            let count = library.rows.len();
-            let pages = count.div_ceil(10).max(1);
-            let page = self.history.library_page.min(pages - 1);
-            panel = panel.child(format!(
-                "Saved history in {destination}: {count} · page {} of {pages}",
-                page + 1
-            ));
-            for entry in library.rows.iter().skip(page * 10).take(10) {
-                let view = &entry.view;
-                let id = entry.id;
-                let revision = library.revision;
-                panel = panel.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .child(view.title.clone())
-                        .child(view.url.clone())
-                        .child(format!("{} visits · {}", view.visit_count, view.last_visit))
-                        .child(
-                            Button::new(SharedString::from(format!("history-open-{id}")))
-                                .label("Open this saved URL in a new tab")
-                                .disabled(busy || !enabled)
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.history_open(id, revision, cx)
-                                })),
-                        ),
-                );
+            if pages > 1 {
+                panel = panel.child(import_view::page_controls(
+                    "history-review-pages",
+                    page,
+                    pages,
+                    busy,
+                    cx.listener(|this, _, _, cx| {
+                        this.history.preview_page = this.history.preview_page.saturating_sub(1);
+                        cx.notify();
+                    }),
+                    cx.listener(|this, _, _, cx| {
+                        this.history.preview_page += 1;
+                        cx.notify();
+                    }),
+                ));
             }
             panel = panel.child(
-                div()
-                    .flex()
-                    .gap_2()
-                    .child(
-                        Button::new("history-library-prev")
-                            .label("Previous saved history page")
-                            .disabled(busy || page == 0)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.history.library_page =
-                                    this.history.library_page.saturating_sub(1);
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Button::new("history-library-next")
-                            .label("Next saved history page")
-                            .disabled(busy || page + 1 >= pages)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.history.library_page += 1;
-                                cx.notify();
-                            })),
-                    ),
+                div().flex().justify_end().child(
+                    Button::new("history-import-save")
+                        .label(format!("Import {count} entries"))
+                        .small()
+                        .primary()
+                        .disabled(busy || !enabled || count == 0)
+                        .on_click(cx.listener(|this, _, _, cx| this.history_save(cx))),
+                ),
             );
+        }
+        if !self.history.status.is_empty() && enabled {
+            panel = panel.child(div().text_xs().child(self.history.status.clone()));
         }
         panel.into_any_element()
     }
