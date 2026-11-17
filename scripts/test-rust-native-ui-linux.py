@@ -419,7 +419,7 @@ def main():
             ("Usage", "Usage", "Usage"),
             ("Instructions", "Instructions", "Global"),
             ("Archive", "Archive", "archived"),
-            ("Keyboard", "Keyboard", "shortcuts"),
+            ("Keyboard", "Keyboard shortcuts", "shortcuts"),
             ("Voice", "Voice", "Engine"),
             ("Browser", "Browser", "Browser profile"),
             ("Computer Use", "Computer Use", "Computer Use"),
