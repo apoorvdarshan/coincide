@@ -58,6 +58,7 @@ mod sidebar_lifecycle;
 pub(crate) use sidebar_lifecycle::SidebarRow;
 #[path = "store_message_search.rs"]
 mod store_message_search;
+pub use store_message_search::MessageSearchSource;
 #[path = "store_thread_delete.rs"]
 mod store_thread_delete;
 pub(crate) use store_thread_delete::bot_lifecycle::{BotLifecycle, BotLifecycleUndo};
@@ -701,6 +702,18 @@ impl Store {
     pub(crate) fn thread_selection_envelope(&self, id: &str) -> Result<Value> {
         let document: String = self.connection()?.query_row(
             "SELECT json_object('selection', document -> '$.selection', 'accessMode', document -> '$.accessMode', 'interactionMode', document -> '$.interactionMode') FROM threads WHERE id=?1",
+            [id],
+            |row| row.get(0),
+        )?;
+        Ok(serde_json::from_str(&document)?)
+    }
+
+    /// Named-account departure only needs identity and selection to decide
+    /// whether a retained receipt exists. Avoid decoding the transcript until
+    /// that exact receipt actually needs its full context checked.
+    pub(crate) fn thread_departure_selection(&self, id: &str) -> Result<Value> {
+        let document: String = self.connection()?.query_row(
+            "SELECT json_object('id', document -> '$.id', 'selection', document -> '$.selection') FROM threads WHERE id=?1",
             [id],
             |row| row.get(0),
         )?;

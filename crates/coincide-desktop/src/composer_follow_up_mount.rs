@@ -575,7 +575,6 @@ impl Coincide {
             let start = self.transcript_count.min(count);
             self.splice_transcript(start..self.transcript_count, count - start);
             self.transcript_count = count;
-            self.transcript_list.scroll_to_end();
         }
         self.status = "Preparing your message.".into();
         cx.notify();

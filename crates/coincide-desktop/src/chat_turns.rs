@@ -667,8 +667,7 @@ impl super::Coincide {
         self.chat_turns.toggle(thread, anchor);
         let end = range.end.min(self.transcript_count);
         if range.start < end {
-            self.transcript_list
-                .splice(range.start..end, end - range.start);
+            self.transcript_list.remeasure_items(range.start..end);
         }
         cx.notify();
     }
@@ -693,7 +692,7 @@ impl super::Coincide {
         let key = Some((thread, label));
         if self.chat_turns.tick != key && opener < self.transcript_count {
             self.chat_turns.tick = key;
-            self.transcript_list.splice(opener..opener + 1, 1);
+            self.transcript_list.remeasure_items(opener..opener + 1);
             cx.notify();
         }
     }
@@ -709,7 +708,7 @@ impl super::Coincide {
 
     pub(super) fn redraw_live_row(&mut self, cx: &mut Context<Self>) {
         if let Some(last) = self.transcript_count.checked_sub(1) {
-            self.transcript_list.splice(last..last + 1, 1);
+            self.transcript_list.remeasure_items(last..last + 1);
             cx.notify();
         }
     }

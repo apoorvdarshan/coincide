@@ -175,6 +175,9 @@ mod transcript_find;
 mod transcript_find_large;
 mod transcript_links;
 mod transcript_media;
+#[cfg(test)]
+#[path = "transcript_scroll_ui_tests.rs"]
+mod transcript_scroll_ui_tests;
 mod transcription_composer;
 mod transcription_settings;
 mod turn_changes;
@@ -222,6 +225,39 @@ impl std::error::Error for EngineBusy {}
 /// newest reply, as every chat does.
 fn transcript_scrolled_away(top: gpui_kit::ListOffset, count: usize) -> bool {
     top.item_ix < count || top.offset_in_item > px(1.)
+}
+
+/// Keep the user's item and offset while rows are remeasured or inserted.
+/// Only an already-at-bottom view follows the new tail.
+fn update_transcript_rows(
+    list: &ListState,
+    old_count: usize,
+    range: std::ops::Range<usize>,
+    count: usize,
+) {
+    let top = list.logical_scroll_top();
+    let following =
+        !transcript_scrolled_away(top, old_count) || list.is_scrolled_to_end() == Some(true);
+    if range.len() == count {
+        list.remeasure_items(range);
+    } else {
+        let within = range.contains(&top.item_ix);
+        let start = range.start;
+        list.splice(range, count);
+        if !following && within {
+            list.scroll_to(ListOffset {
+                item_ix: start + (top.item_ix - start).min(count.saturating_sub(1)),
+                offset_in_item: if count == 0 {
+                    px(0.)
+                } else {
+                    top.offset_in_item
+                },
+            });
+        }
+    }
+    if following {
+        list.scroll_to_end();
+    }
 }
 
 fn engine_busy(error: &anyhow::Error) -> bool {
@@ -707,6 +743,7 @@ struct Coincide {
     terminal_visible_thread: Option<String>,
     transcript_list: ListState,
     transcript_count: usize,
+    local_error_notice: Option<String>,
     expanded: std::collections::HashSet<usize>,
     chat_turns: chat_turns::State,
     approval_replies: approval_banner::Replies,
@@ -1372,6 +1409,7 @@ impl Coincide {
                 }
                 let drafts_saved = this.flush_pending_drafts();
                 let cookies_ready = this.poll_cookie_close(cx);
+                let search_ready = this.sidebar_message_search.prepare_window_close();
                 this.appshots.close();
                 this.shutdown_computer_use(cx);
                 let media_ready = this.request_media_close(window, cx);
@@ -1379,9 +1417,15 @@ impl Coincide {
                 let ready = drafts_saved
                     && media_ready
                     && cookies_ready
+                    && search_ready
                     && this.computer_use_shutdown_ready()
                     && this.appshots.drained();
-                ready && this.prepare_background_window_close(cx)
+                if ready && this.prepare_background_window_close(cx) {
+                    this.sidebar_message_search.shutdown();
+                    true
+                } else {
+                    false
+                }
             })
             .unwrap_or(false)
         });
@@ -1769,7 +1813,7 @@ impl Coincide {
                     this.thread_bulk.invalidate();
                     let query = search.read(cx).value().to_string();
                     this.sidebar_message_search.changed(&query, Instant::now());
-                    this.refresh(cx);
+                    this.refresh_cached_sidebar_search(cx);
                 }
             }),
             cx.subscribe(&composer, |this, _, event, cx| {
@@ -2015,6 +2059,7 @@ impl Coincide {
             terminal_visible_thread: None,
             transcript_list: ListState::new(0, ListAlignment::Bottom, px(500.)),
             transcript_count: 0,
+            local_error_notice: None,
             expanded: Default::default(),
             chat_turns: Default::default(),
             approval_replies: Default::default(),
@@ -3198,6 +3243,7 @@ impl Coincide {
                     .as_ref()
                     .is_none_or(|thread| thread["id"] != id)
                 {
+                    self.local_error_notice = None;
                     self.context_details.invalidate();
                     self.invalidate_native_conversation_view();
                     self.composer_accessory_scroll
@@ -4507,6 +4553,7 @@ impl Coincide {
             self.thread_navigation.cancel();
             self.pending_select = None;
             self.selected_thread_reader.close();
+            self.sidebar_message_search.shutdown();
             self.appshots.close();
             self.shutdown_computer_use(cx);
             self.sync_media_context(cx);
@@ -4520,6 +4567,7 @@ impl Coincide {
                 && self.computer_use_shutdown_ready()
                 && self.thread_bulk.closed_and_drained()
                 && self.selected_thread_reader.closed_and_drained()
+                && self.sidebar_message_search.closed_and_drained()
                 && self.navigation_tasks.is_empty()
                 && self.composer_files.closed_and_drained()
                 && self.composer_suggestions.closed_and_drained()
@@ -4552,6 +4600,9 @@ impl Coincide {
                 cx.notify();
             } else if !self.selected_thread_reader.closed_and_drained() {
                 self.status = "Closing waits for the conversation read to finish.".into();
+                cx.notify();
+            } else if !self.sidebar_message_search.closed_and_drained() {
+                self.status = "Closing waits for the message search to finish.".into();
                 cx.notify();
             } else if !self.navigation_tasks.is_empty() {
                 self.status = "Closing waits for conversation navigation to finish.".into();
@@ -5451,12 +5502,7 @@ impl Coincide {
     /// back down. Someone still at the bottom keeps following the tail.
     pub(crate) fn splice_transcript(&mut self, range: std::ops::Range<usize>, count: usize) {
         self.selected_generation = self.selected_generation.wrapping_add(1);
-        let top = self.transcript_list.logical_scroll_top();
-        let away = transcript_scrolled_away(top, self.transcript_count);
-        self.transcript_list.splice(range, count);
-        if away {
-            self.transcript_list.scroll_to(top);
-        }
+        update_transcript_rows(&self.transcript_list, self.transcript_count, range, count);
     }
 
     /// Apply a background read only if the same local view is still current.
@@ -6169,7 +6215,6 @@ impl Coincide {
         let start = self.transcript_count.min(count);
         self.splice_transcript(start..self.transcript_count, count - start);
         self.transcript_count = count;
-        self.transcript_list.scroll_to_end();
         Some(seq)
     }
     fn finish_pending_images(&mut self, sequence: Option<u64>, delivered: bool) {
@@ -6216,6 +6261,15 @@ impl Coincide {
             use std::io::Write as _;
             let _ = writeln!(log, "{:?} {message}", std::time::SystemTime::now());
         }
+        if transcript_scrolled_away(
+            self.transcript_list.logical_scroll_top(),
+            self.transcript_count,
+        ) && self.transcript_list.is_scrolled_to_end() != Some(true)
+        {
+            // Keep a send or attachment failure visible without moving the
+            // conversation away from what the user is reading.
+            self.local_error_notice = Some(message.to_owned());
+        }
         let Some(thread) = self.selected.as_mut() else {
             return;
         };
@@ -6234,7 +6288,6 @@ impl Coincide {
         let start = self.transcript_count.min(count);
         self.splice_transcript(start..self.transcript_count, count - start);
         self.transcript_count = count;
-        self.transcript_list.scroll_to_end();
     }
     /// Take the optimistic row away again when the engine refuses the send.
     pub(crate) fn drop_pending_send(&mut self, id: &str) {
@@ -6470,8 +6523,6 @@ impl Coincide {
                                     this.transcript_count,
                                 );
                             }
-                            // The new message is the newest row: follow it.
-                            this.transcript_list.scroll_to_end();
                         }
                         Err(error) => {
                             this.finish_pending_images(image_send, false);
@@ -7916,7 +7967,7 @@ impl Render for Coincide {
         let scrolled_away = transcript_scrolled_away(
             self.transcript_list.logical_scroll_top(),
             self.transcript_count,
-        );
+        ) && self.transcript_list.is_scrolled_to_end() != Some(true);
         let jump_to_latest = scrolled_away
             && self.selected.as_ref().is_some_and(|thread| {
                 thread["items"]
@@ -7975,6 +8026,7 @@ impl Render for Coincide {
                                 .border_color(self.color(0x29303d))
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.transcript_list.scroll_to_end();
+                                    this.local_error_notice = None;
                                     cx.notify();
                                 })),
                         ),
@@ -8034,6 +8086,7 @@ impl Render for Coincide {
         let show_composer = self.chat_visible();
         let importing_images = self.attachment_imports.contains(&selected_id);
         let queue_pane = self.queue_pane(cx);
+        let local_error_notice = self.local_error_notice.clone();
         let plan_card = if self.chat_visible() {
             self.plan_card(window, cx)
         } else {
@@ -8096,6 +8149,36 @@ impl Render for Coincide {
                                 .overflow_hidden()
                                 .px(px(presentation::CONTENT_GUTTER))
                                 .py_3()
+                                .when_some(local_error_notice, |view, message| {
+                                    view.child(
+                                        div()
+                                            .w_full()
+                                            .max_w(px(presentation::CONTENT_WIDTH))
+                                            .mb_2()
+                                            .px_3()
+                                            .py_2()
+                                            .rounded(px(10.))
+                                            .bg(self.color(0x181d28))
+                                            .border_1()
+                                            .border_color(self.color(0x29303d))
+                                            .flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .child(div().flex_1().min_w_0().text_sm().child(message))
+                                            .child(
+                                                Button::new("dismiss-local-error-notice")
+                                                    .icon(gpui_kit::assets::IconName::Close)
+                                                    .ghost()
+                                                    .xsmall()
+                                                    .accessibility_label("Dismiss error")
+                                                    .tooltip("Dismiss error")
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.local_error_notice = None;
+                                                        cx.notify();
+                                                    })),
+                                            ),
+                                    )
+                                })
                                 .when_some(pending_pane, |view, pane| {
                                     view.child(
                                         div()
@@ -9010,5 +9093,28 @@ mod transcript_scroll_tests {
             },
             12
         ));
+    }
+
+    #[::core::prelude::v1::test]
+    fn transcript_updates_keep_the_reader_anchored_and_follow_only_from_the_end() {
+        let list =
+            ListState::new(10, ListAlignment::Bottom, px(0.)).with_uniform_item_height(px(100.));
+        let top = ListOffset {
+            item_ix: 4,
+            offset_in_item: px(37.),
+        };
+        list.scroll_to(top);
+        // Redrawing a growing row must not reset an offset inside that row.
+        update_transcript_rows(&list, 10, 4..5, 1);
+        assert_eq!(list.logical_scroll_top(), top);
+        // New rows before the viewport shift the item index, not the content.
+        update_transcript_rows(&list, 10, 1..1, 2);
+        assert_eq!(list.logical_scroll_top(), ListOffset { item_ix: 6, ..top });
+        // Streaming/new messages at the end leave the reader where they are.
+        update_transcript_rows(&list, 12, 12..12, 1);
+        assert_eq!(list.logical_scroll_top(), ListOffset { item_ix: 6, ..top });
+        list.scroll_to_end();
+        update_transcript_rows(&list, 13, 13..13, 1);
+        assert_eq!(list.logical_scroll_top().item_ix, 14);
     }
 }
