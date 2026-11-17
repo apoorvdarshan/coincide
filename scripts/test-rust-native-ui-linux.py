@@ -425,7 +425,7 @@ def main():
             ("Computer Use", "Computer Use", "Computer Use"),
             ("Appshots", "Appshots", "Permissions"),
             ("Historical images", "Historical images", "Historical images"),
-            ("About", "About", "Help"),
+            ("About", "About Coincide", "Help"),
             ("Claude Code", "Claude Code", "Executable"),
             ("Cursor", "Cursor", "Executable"),
             ("Grok Build", "Grok Build", "Executable"),
