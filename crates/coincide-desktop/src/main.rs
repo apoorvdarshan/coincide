@@ -295,48 +295,6 @@ fn call(engine: &SharedEngine, method: &str, params: Value) -> Result<Value> {
         .map(Value::take)
         .unwrap_or(Value::Null))
 }
-/// The worker waits for the engine before dispatching exactly once. An engine
-/// lock conflict is therefore not reported as a failed send.
-fn send_captured_waiting(engine: &SharedEngine, captured: &Value, prompt: &str) -> Result<Value> {
-    let id = text(captured, "id");
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        let mut owner = engine
-            .lock()
-            .map_err(|_| anyhow::anyhow!("App engine is unavailable"))?;
-        if owner.admissions_frozen() {
-            anyhow::bail!("App is closing; message retained");
-        }
-        if !owner.is_thread_stopping(&id) {
-            if !owner.native_send_waits_for_codex_catalog(captured) {
-                return owner.send_captured_native_turn(captured, prompt);
-            }
-            drop(owner);
-            if Instant::now() >= deadline {
-                anyhow::bail!("Codex is unavailable. Your message is still in the composer.");
-            }
-            std::thread::sleep(Duration::from_millis(250));
-            continue;
-        }
-        drop(owner);
-        if Instant::now() >= deadline {
-            anyhow::bail!("The previous turn is still stopping; message retained");
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-}
-fn send_error_message(reason: &str) -> String {
-    let lower = reason.to_ascii_lowercase();
-    if lower.contains("catalog")
-        || lower.contains("model proof")
-        || lower.contains("model options are temporarily unavailable")
-    {
-        "The selected model or its options are unavailable. Choose a model and try again.".into()
-    } else {
-        format!("Message not sent: {reason}")
-    }
-}
-
 /// Trusted draft persistence only; decide and write under the same try-lock.
 fn persist_pending_draft(engine: &SharedEngine, id: &str, text: &str) -> Result<()> {
     persist_pending_draft_guarded(engine, id, text, || true)
@@ -374,88 +332,6 @@ enum PreviewState {
 struct ImagePreview {
     state: PreviewState,
     rows: Vec<(String, usize)>,
-}
-
-#[derive(Clone)]
-struct PendingSent {
-    thread: String,
-    draft: String,
-    baseline_user_messages: usize,
-    row: Value,
-}
-impl PendingSent {
-    /// Keep the complete optimistic row until the corresponding saved message
-    /// appears, even when the user visits another conversation in between.
-    fn reconcile(&self, thread: &mut Value) -> bool {
-        if text(thread, "id") != self.thread {
-            return false;
-        }
-        let Some(items) = thread["items"].as_array_mut() else {
-            return false;
-        };
-        let stored = items
-            .iter()
-            .filter(|item| {
-                item["kind"] == "user"
-                    && item["pendingSend"] != true
-                    && item["bufferedSend"] != true
-            })
-            .skip(self.baseline_user_messages)
-            .any(|item| {
-                let same_context = item["context"] == self.row["context"]
-                    || (!coincide_core::composer_context::has_context(&item["context"])
-                        && !coincide_core::composer_context::has_context(&self.row["context"]));
-                let images = item["rustImages"]
-                    .as_array()
-                    .map(Vec::as_slice)
-                    .unwrap_or(&[]);
-                let submitted = self.row["rustImages"]
-                    .as_array()
-                    .map(Vec::as_slice)
-                    .unwrap_or(&[]);
-                item["text"].as_str() == Some(self.draft.as_str())
-                    && same_context
-                    && images == submitted
-            });
-        if stored {
-            items.retain(|item| item["id"] != self.row["id"]);
-        } else if !items.iter().any(|item| item["id"] == self.row["id"]) {
-            items.push(self.row.clone());
-        }
-        stored
-    }
-}
-
-#[cfg(test)]
-mod pending_sent_tests {
-    use super::*;
-
-    #[::core::prelude::v1::test]
-    fn preview_survives_refresh_and_thread_switch_until_its_full_message_is_saved() {
-        let pending = PendingSent {
-            thread: "one".into(),
-            draft: "repeat".into(),
-            baseline_user_messages: 1,
-            row: json!({"id":"pending", "kind":"user", "text":"repeat", "pendingSend":true,
-                "context":[{"id":"quote"}], "rustImages":[{"id":"image"}]}),
-        };
-        let mut other = json!({"id":"two", "items":[]});
-        assert!(!pending.reconcile(&mut other));
-        assert_eq!(other["items"], json!([]));
-        let mut stale = json!({"id":"one", "items":[{"kind":"user", "text":"repeat"}]});
-        assert!(!pending.reconcile(&mut stale));
-        assert_eq!(stale["items"][1], pending.row);
-        assert!(!pending.reconcile(&mut stale));
-        assert_eq!(stale["items"].as_array().unwrap().len(), 2);
-        stale["items"]
-            .as_array_mut()
-            .unwrap()
-            .push(json!({"id":"saved", "kind":"user", "text":"repeat",
-            "context":[{"id":"quote"}], "rustImages":[{"id":"image"}]}));
-        assert!(pending.reconcile(&mut stale));
-        assert_eq!(stale["items"].as_array().unwrap().len(), 2);
-        assert_eq!(stale["items"][1]["id"], "saved");
-    }
 }
 
 fn terminal_rgb(value: &Value, fallback: u32) -> Rgba {
@@ -502,6 +378,13 @@ struct FindReveal {
     generation: u64,
     serial: u64,
 }
+fn transcript_search_text(item: &Value) -> &str {
+    if item["rustAwaitingQueueDelivery"] == true {
+        ""
+    } else {
+        item["text"].as_str().unwrap_or("")
+    }
+}
 fn find_sources(thread: &Value) -> Result<Vec<transcript_find::FindItem>> {
     find_sources_reusing(thread, &[])
 }
@@ -520,7 +403,7 @@ fn find_sources_reusing(
             .filter(|id| !id.is_empty() && id.len() <= 512 && !id.contains('\0'))
             .ok_or_else(|| anyhow::anyhow!("Find requires stable message IDs"))?;
         anyhow::ensure!(ids.insert(id), "Find requires unique message IDs");
-        let source = item["text"].as_str().unwrap_or("");
+        let source = transcript_search_text(item);
         let source = previous
             .get(index)
             .filter(|old| old.item_id == id && old.source.as_ref() == source)
@@ -538,7 +421,7 @@ fn find_source_matches(thread: &Value, sources: &[transcript_find::FindItem]) ->
         items.len() == sources.len()
             && items.iter().zip(sources).all(|(item, source)| {
                 item["id"].as_str() == Some(source.item_id.as_str())
-                    && item["text"].as_str().unwrap_or("") == source.source.as_ref()
+                    && transcript_search_text(item) == source.source.as_ref()
             })
     })
 }
@@ -617,7 +500,8 @@ struct Coincide {
     pending_inputs: std::collections::HashMap<(String, String, String), Entity<InputState>>,
     pending_choices: std::collections::HashMap<(String, String, String), Vec<String>>,
     pending_question_step: std::collections::HashMap<String, usize>,
-    queued_messages: Vec<Value>,
+    queued_messages: Vec<Arc<Value>>,
+    outgoing_queue_scroll: ScrollHandle,
     queue_enabled: bool,
     queue_error: String,
     thread_list_open: bool,
@@ -783,7 +667,6 @@ struct Coincide {
     pending_native_selection: Option<Option<String>>,
     startup_selection_pending: bool,
     pending_drafts: std::collections::HashMap<String, PendingDraft>,
-    submitted_drafts: draft_close::SubmittedDrafts,
     draft_saver: draft_saver::Saver,
     composer: Entity<TextareaState>,
     model_input: Entity<InputState>,
@@ -826,7 +709,6 @@ struct Coincide {
     new_thread_inflight: Option<u64>,
     /// Text a refused send puts back in the composer on the next frame, where
     /// a window is available to edit the field.
-    restore_composer: Option<(String, String)>,
     /// A follow-up whose engine call found the lock busy, retried each tick.
     pending_follow_up: Option<composer_follow_up_mount::PendingSend>,
     pending_follow_up_backlog: std::collections::VecDeque<composer_follow_up_mount::PendingSend>,
@@ -837,7 +719,6 @@ struct Coincide {
     pending_follow_up_choice: Option<(String, coincide_core::composer_follow_up::Behavior)>,
     follow_up_choice_inflight: bool,
     /// Just-sent messages remain visible until each conversation has its saved row.
-    pending_sent: std::collections::HashMap<String, PendingSent>,
     ordinary_sends_inflight: usize,
     pending_images: composer_pending_images::PendingImages,
     /// Identity for the optimistic row, so a refresh keeps the same element.
@@ -1337,8 +1218,6 @@ impl Coincide {
     fn preserve_pending_draft(&self, thread: &mut Value) {
         if let Some(draft) = self.pending_drafts.get(&text(thread, "id")) {
             thread["draft"] = json!(draft.text);
-        } else {
-            self.submitted_drafts.project(thread);
         }
     }
     pub(crate) fn replace_selected_thread(&mut self, mut thread: Option<Value>) {
@@ -1392,7 +1271,6 @@ impl Coincide {
                     return false;
                 }
                 if this.ordinary_sends_inflight > 0
-                    || this.restore_composer.is_some()
                     || this.selection_ui.apply_inflight()
                     || this.follow_up_choice_inflight
                 {
@@ -1943,6 +1821,7 @@ impl Coincide {
             pending_choices: Default::default(),
             pending_question_step: Default::default(),
             queued_messages: Vec::new(),
+            outgoing_queue_scroll: ScrollHandle::default(),
             queue_enabled: false,
             queue_error: String::new(),
             thread_list_open,
@@ -2104,7 +1983,6 @@ impl Coincide {
             pending_native_selection: None,
             startup_selection_pending: true,
             pending_drafts: Default::default(),
-            submitted_drafts: Default::default(),
             draft_saver,
             composer,
             model_input,
@@ -2148,7 +2026,6 @@ impl Coincide {
             pending_new_thread: None,
             new_thread_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             new_thread_inflight: None,
-            restore_composer: None,
             pending_follow_up: None,
             pending_follow_up_backlog: Default::default(),
             pending_queue_actions: Default::default(),
@@ -2156,7 +2033,6 @@ impl Coincide {
             quit_after_pending_sends: false,
             pending_follow_up_choice: None,
             follow_up_choice_inflight: false,
-            pending_sent: Default::default(),
             ordinary_sends_inflight: 0,
             pending_images: Default::default(),
             pending_seq: 0,
@@ -3315,6 +3191,11 @@ impl Coincide {
                 self.pending_requests.clear();
                 self.schedules.clear();
                 self.queued_messages.clear();
+                if changing_thread {
+                    self.outgoing_queue_scroll.set_offset(point(px(0.), px(0.)));
+                }
+                self.admitted_previews
+                    .retain(|preview| preview.pending.thread == id);
                 self.queue_enabled = false;
                 self.queue_error.clear();
                 let visible = self.browser_panels.contains(id).then_some(id);
@@ -4774,7 +4655,7 @@ impl Coincide {
                     .update(cx, |panel, _| panel.set_usage(usage));
             }
         }
-        self.poll_composer_follow_ups(window, cx);
+        self.poll_composer_follow_ups(cx);
         self.poll_pending_browser_control(cx);
         self.poll_browser(window, cx);
         self.sync_browser_settings(window, cx);
@@ -5427,9 +5308,6 @@ impl Coincide {
         let Some(thread) = self.selected.composer_metadata_mut() else {
             return;
         };
-        if !self.pending_drafts.contains_key(&text(thread, "id")) {
-            self.submitted_drafts.project(thread);
-        }
         if thread["draft"].as_str() == Some(draft.as_str()) {
             return;
         }
@@ -5440,7 +5318,6 @@ impl Coincide {
         {
             pending.edited = true;
         }
-        self.submitted_drafts.changed(&id, &draft);
         if self.pending_successor_waiting(&id) {
             self.draft_saver.invalidate();
         } else {
@@ -5538,22 +5415,40 @@ impl Coincide {
         self.preserve_pending_draft(&mut thread);
         let id = text(&thread, "id");
         let count = thread["items"].as_array().map_or(0, Vec::len);
-        let start = self.transcript_count.saturating_sub(1).min(count);
+        let mut start = self.transcript_count.saturating_sub(1).min(count);
+        // A provider ACK can release a previously hidden opener above the
+        // most recent streaming row. Invalidate its measured height too.
+        if let Ok(queue) = &queue {
+            let released = self
+                .queued_messages
+                .iter()
+                .filter(|previous| previous["state"] != "completed")
+                .filter_map(|previous| {
+                    queue["messages"]
+                        .as_array()?
+                        .iter()
+                        .any(|current| {
+                            current["id"] == previous["id"] && current["state"] == "completed"
+                        })
+                        .then(|| previous["id"].as_str())
+                        .flatten()
+                })
+                .collect::<Vec<_>>();
+            if !released.is_empty()
+                && let Some(index) = thread["items"].as_array().and_then(|items| {
+                    items.iter().position(|item| {
+                        item["rustQueueMessageID"]
+                            .as_str()
+                            .is_some_and(|id| released.contains(&id))
+                    })
+                })
+            {
+                start = start.min(index);
+            }
+        }
         self.splice_transcript(start..self.transcript_count, count - start);
         self.transcript_count = count;
         self.replace_selected_thread(Some(thread));
-        self.reconcile_pending_send();
-        self.reconcile_buffered_sends();
-        let count = self
-            .selected
-            .as_ref()
-            .and_then(|thread| thread["items"].as_array().map(Vec::len))
-            .unwrap_or(self.transcript_count);
-        if count != self.transcript_count {
-            let start = self.transcript_count.min(count);
-            self.splice_transcript(start..self.transcript_count, count - start);
-            self.transcript_count = count;
-        }
         if let Some((reply, imported)) = turn_changes {
             self.accept_turn_changes(&id, reply, imported);
         }
@@ -6165,74 +6060,6 @@ impl Coincide {
                 .into_any_element(),
         )
     }
-    /// Draw the message the user just sent before the stored thread has it, so
-    /// a send appears in the conversation at once instead of a second later.
-    pub(crate) fn show_pending_send(
-        &mut self,
-        id: &str,
-        message: &str,
-        context: &Value,
-    ) -> Option<u64> {
-        let images = self
-            .selected
-            .as_ref()
-            .and_then(|thread| {
-                thread["rustDraftImages"]
-                    .as_array()
-                    .map(|images| self.pending_images.visible(id, images))
-            })
-            .unwrap_or_default();
-        let Some(thread) = self
-            .selected
-            .as_mut()
-            .filter(|thread| text(thread, "id") == id)
-        else {
-            return None;
-        };
-        let Some(items) = thread["items"].as_array_mut() else {
-            return None;
-        };
-        let baseline_user_messages = items
-            .iter()
-            .filter(|item| {
-                item["kind"] == "user"
-                    && item["pendingSend"] != true
-                    && item["bufferedSend"] != true
-            })
-            .count();
-        let seq = self.pending_seq.wrapping_add(1);
-        self.pending_seq = seq;
-        let mut pending = json!({
-            "id": format!("pending-send-{seq}"),
-            "kind": "user",
-            "text": message,
-            "createdAt": coincide_core::store::swift_timestamp(),
-            "pendingSend": true
-        });
-        if !images.is_empty() {
-            pending["rustImages"] = json!(images);
-        }
-        if coincide_core::composer_context::has_context(context) {
-            pending["context"] = context.clone();
-        }
-        self.pending_images.begin(seq, id, images);
-        self.submitted_drafts.begin(seq, id, message);
-        items.push(pending.clone());
-        self.pending_sent.insert(
-            id.to_owned(),
-            PendingSent {
-                thread: id.to_owned(),
-                draft: message.to_owned(),
-                baseline_user_messages,
-                row: pending,
-            },
-        );
-        let count = items.len();
-        let start = self.transcript_count.min(count);
-        self.splice_transcript(start..self.transcript_count, count - start);
-        self.transcript_count = count;
-        Some(seq)
-    }
     fn finish_pending_images(&mut self, sequence: Option<u64>, delivered: bool) {
         let Some((id, submitted)) = sequence.and_then(|seq| self.pending_images.finish(seq)) else {
             return;
@@ -6245,25 +6072,6 @@ impl Coincide {
             && let Some(images) = thread["rustDraftImages"].as_array_mut()
         {
             images.retain(|image| !submitted.contains(image));
-        }
-    }
-    fn finish_submitted_draft(&mut self, sequence: Option<u64>, delivered_and_cleared: bool) {
-        let Some(submitted) = sequence.and_then(|seq| self.submitted_drafts.finish(seq)) else {
-            return;
-        };
-        if delivered_and_cleared
-            && let Some((thread, text)) = submitted.successor_to_save()
-            && !self.pending_drafts.contains_key(thread)
-        {
-            self.pending_drafts.insert(
-                thread.into(),
-                PendingDraft {
-                    text: text.into(),
-                    retry: true,
-                    failed: false,
-                },
-            );
-            self.draft_saver.record(thread, text);
         }
     }
     /// Show a failure in the conversation itself: the composer's status row is
@@ -6304,46 +6112,6 @@ impl Coincide {
         let start = self.transcript_count.min(count);
         self.splice_transcript(start..self.transcript_count, count - start);
         self.transcript_count = count;
-    }
-    /// Take the optimistic row away again when the engine refuses the send.
-    pub(crate) fn drop_pending_send(&mut self, id: &str) {
-        if self.pending_sent.remove(id).is_none() {
-            return;
-        }
-        let Some(thread) = self
-            .selected
-            .as_mut()
-            .filter(|thread| text(thread, "id") == id)
-        else {
-            return;
-        };
-        let Some(items) = thread["items"].as_array_mut() else {
-            return;
-        };
-        items.retain(|item| item["pendingSend"] != true);
-        let count = items.len();
-        let start = self.transcript_count.min(count);
-        self.splice_transcript(start..self.transcript_count, count - start);
-        self.transcript_count = count;
-    }
-    /// Keep the optimistic row until the stored thread contains that message.
-    fn reconcile_pending_send(&mut self) {
-        let Some(id) = self.selected.as_ref().map(|thread| text(thread, "id")) else {
-            return;
-        };
-        let Some(pending) = self.pending_sent.get(&id).cloned() else {
-            return;
-        };
-        let Some(thread) = self
-            .selected
-            .as_mut()
-            .filter(|thread| text(thread, "id") == pending.thread)
-        else {
-            return;
-        };
-        if pending.reconcile(thread) {
-            self.pending_sent.remove(&id);
-        }
     }
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.send_selected(false, window, cx);
@@ -6388,38 +6156,10 @@ impl Coincide {
         .detach();
     }
     fn send_selected(&mut self, alternate: bool, window: &mut Window, cx: &mut Context<Self>) {
-        self.send_selected_inner(alternate, window, cx, false);
-    }
-    fn send_selected_inner(
-        &mut self,
-        alternate: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-        from_pending: bool,
-    ) {
         if self.voice.preview.is_some() {
             self.cancel_composer_dictation(cx);
         }
-        // A hidden composer may retain focus after opening the Git pane.
         if !self.chat_visible() {
-            return;
-        }
-        if !from_pending
-            && (self.pending_follow_up.is_some()
-                || !self.pending_follow_up_backlog.is_empty()
-                || self.ordinary_sends_inflight > 0)
-        {
-            if let Some(thread) = self.selected.as_ref() {
-                let draft = self.composer.read(cx).value().to_string();
-                if let Some(command) =
-                    composer_commands::intercept(thread, &draft, |command| command)
-                {
-                    let submission = composer_commands::Submission::new(thread, &draft);
-                    self.perform_composer_command(command, submission, window, cx);
-                    return;
-                }
-            }
-            self.buffer_composer_send(alternate, window, cx);
             return;
         }
         // Sending nothing while a plan is offered implements it, as in Swift.
@@ -6433,6 +6173,9 @@ impl Coincide {
         if self.composer.read(cx).value().trim().is_empty()
             && !has_attached_payload
             && self.proposed_plan().is_some()
+            && self.pending_follow_up.is_none()
+            && self.pending_follow_up_backlog.is_empty()
+            && self.ordinary_sends_inflight == 0
         {
             self.implement_plan(window, cx);
             return;
@@ -6452,110 +6195,7 @@ impl Coincide {
                 return;
             }
         }
-        if let Some(v) = self.selected.as_ref() {
-            let id = text(v, "id");
-            match composer_follow_up_mount::send_route(
-                self.running.contains(&id),
-                self.attachment_imports.contains(&id),
-                self.selection_change_pending(),
-            ) {
-                composer_follow_up_mount::SendRoute::WaitForImages => {
-                    // Claim the import jobs and move the submission out of
-                    // the editor now. Its own snapshot waits for those jobs.
-                    self.buffer_composer_send(alternate, window, cx);
-                    return;
-                }
-                composer_follow_up_mount::SendRoute::FollowUp => {
-                    self.send_follow_up(alternate, window, cx);
-                    return;
-                }
-                composer_follow_up_mount::SendRoute::WaitForSelection => {
-                    // Preserve the submitted snapshot while the selection
-                    // resolves, so the editor is ready for the next draft.
-                    self.buffer_composer_send(alternate, window, cx);
-                    return;
-                }
-                composer_follow_up_mount::SendRoute::Send => {}
-            }
-            let mut pending = composer_follow_up_mount::PendingSend::new(
-                v,
-                self.composer.read(cx).value().to_string(),
-                alternate,
-            )
-            .with_behavior(self.captured_follow_up_behavior(v));
-            self.exclude_submitted_images(&mut pending);
-            if self.wait_for_send_catalog(cx) {
-                // Capture the message immediately even while discovery is
-                // refreshing. The existing buffer owns it until admission.
-                self.buffer_composer_send(alternate, window, cx);
-                return;
-            }
-            // Send reads as instant: the draft leaves the composer now, and a
-            // refused send puts it back. Waiting for the engine made a plain
-            // sentence sit in the field for a second.
-            let sent = self.composer.read(cx).value().to_string();
-            self.draft_saver.invalidate();
-            if self
-                .pending_drafts
-                .get(&id)
-                .is_some_and(|draft| draft.text == sent)
-            {
-                self.pending_drafts.remove(&id);
-            }
-            if let Some(thread) = self.selected.as_mut() {
-                thread["draft"] = json!("");
-                thread.as_object_mut().unwrap().remove("draftContext");
-            }
-            self.composer
-                .update(cx, |input, cx| input.set_value("", window, cx));
-            // The engine call runs off the UI thread: the window never freezes
-            // behind a send, and a refused send still restores the text.
-            let image_send = self.show_pending_send(&id, &sent, &pending.captured["draftContext"]);
-            let engine = self.engine.clone();
-            let sent_for_call = sent.clone();
-            let captured_for_call = pending.captured;
-            // API Quit must not close the app while this submitted text is
-            // still owned by a worker or waiting to be restored on failure.
-            self.buffered_send_lease.set_dirty(true);
-            self.ordinary_sends_inflight += 1;
-            cx.spawn(async move |this, cx| {
-                let result = cx
-                    .background_executor()
-                    .spawn(async move {
-                        send_captured_waiting(&engine, &captured_for_call, &sent_for_call)
-                    })
-                    .await;
-                let _ = this.update(cx, |this, cx| {
-                    this.ordinary_sends_inflight = this.ordinary_sends_inflight.saturating_sub(1);
-                    this.record_composer_draft(cx);
-                    match result {
-                        Ok(_) => {
-                            this.finish_pending_images(image_send, true);
-                            this.finish_submitted_draft(image_send, true);
-                            if !this.running.contains(&id) {
-                                this.running.push(id.clone());
-                                this.splice_transcript(
-                                    0..this.transcript_count,
-                                    this.transcript_count,
-                                );
-                            }
-                        }
-                        Err(error) => {
-                            this.finish_pending_images(image_send, false);
-                            this.finish_submitted_draft(image_send, false);
-                            this.retry_selected_account_readiness();
-                            this.drop_pending_send(&id);
-                            this.restore_composer = Some((id.clone(), sent.clone()));
-                            this.show_local_error(&send_error_message(&error.to_string()));
-                            this.status = error.to_string();
-                        }
-                    }
-                    cx.notify();
-                });
-            })
-            .detach();
-        }
-        cx.notify();
+        self.buffer_composer_send(alternate, window, cx);
     }
     /// One tool/reasoning row after Swift-style normalization. None means the
     /// provider emitted a duplicate row that Swift never draws.
@@ -6642,6 +6282,9 @@ impl Coincide {
         else {
             return div().into_any_element();
         };
+        if item["rustAwaitingQueueDelivery"] == true {
+            return div().into_any_element();
+        }
         let kind = text(item, "kind");
         let item_id = text(item, "id");
         let source_id = self
@@ -6835,16 +6478,6 @@ impl Coincide {
         // and image links, plus generated files listed in `attachments`.
         let media = self.reply_media(item);
         let media_cards = self.media_cards(&media, &source_id, &item_id, cx);
-        let pending_send = item["pendingSend"] == true || item["bufferedSend"] == true;
-        let delivering_buffer = item["bufferedSend"] == true
-            && self.admitted_previews.iter().any(|preview| {
-                preview.direct && preview.pending.buffer_id.as_deref() == item["id"].as_str()
-            });
-        let pending_label = if item["bufferedSend"] == true && !delivering_buffer {
-            "Preparing…"
-        } else {
-            "Sending…"
-        };
         let context_item =
             coincide_core::composer_context::has_context(&item["context"]).then(|| item.clone());
         let context_pane = context_item.as_ref().and_then(|snapshot| {
@@ -6885,7 +6518,6 @@ impl Coincide {
                 }
             })
             .collect::<Vec<_>>();
-        let pending_color = self.color(0x98a6ba).opacity(0.7);
         let native_body = self.find_body(
             &source_id,
             &item_id,
@@ -7135,17 +6767,8 @@ impl Coincide {
                 )
             })
             .children(self.historical_images(&item_id, cx))
-            .when(pending_send, |view| {
-                view.child(
-                    div()
-                        .mt_1()
-                        .text_xs()
-                        .text_color(pending_color)
-                        .child(pending_label),
-                )
-            })
             .when_some(footer, |view, footer| view.child(footer));
-        let card = if coincide_core::composer_context::quotable_kind(&kind) && !pending_send {
+        let card = if coincide_core::composer_context::quotable_kind(&kind) {
             self.message_reply_context_menu(card, &source_id, &item_id, cx)
         } else {
             card.into_any_element()
@@ -7559,8 +7182,7 @@ impl Render for Coincide {
             let draft = self
                 .pending_drafts
                 .get(&text(thread, "id"))
-                .map(|draft| draft.text.as_str())
-                .or_else(|| self.submitted_drafts.projection(thread))?;
+                .map(|draft| draft.text.as_str())?;
             (thread["draft"].as_str() != Some(draft)).then(|| draft.to_owned())
         });
         if let Some(draft) = projected_draft
@@ -7609,7 +7231,6 @@ impl Render for Coincide {
                     match result {
                         Ok(()) => {
                             self.finish_pending_images(pending.image_send, true);
-                            self.remove_buffered_send(&pending);
                             self.status = "Message saved for editing after the account or provider change failed.".into();
                             self.refresh_queue(cx);
                             cx.notify();
@@ -7637,7 +7258,6 @@ impl Render for Coincide {
                         .is_some_and(|images| !images.is_empty());
                 if !has_payload {
                     self.finish_pending_images(pending.image_send, false);
-                    self.remove_buffered_send(&pending);
                     self.status =
                         "The attachment or reference could not be added; try again.".into();
                     cx.notify();
@@ -7659,7 +7279,6 @@ impl Render for Coincide {
                                 images.retain(|image| !submitted.contains(image));
                             }
                             self.finish_pending_images(pending.image_send, true);
-                            self.remove_buffered_send(&pending);
                             self.status =
                                 "Message saved for editing after an attachment or reference failed.".into();
                             self.refresh_queue(cx);
@@ -7682,31 +7301,15 @@ impl Render for Coincide {
                 .as_ref()
                 .filter(|thread| text(thread, "id") == pending.thread)
             {
-                if pending.waiting_for_import || pending.import_failed {
-                    self.pending_follow_up = Some(pending);
-                } else if pending.buffer_id.is_none()
-                    && !self.attachment_imports.contains(&pending.thread)
-                    && pending.matches(thread, self.composer.read(cx).value().as_ref())
+                let same_selection = pending.captured["selection"] == thread["selection"];
+                if pending.waiting_for_import
+                    || pending.import_failed
+                    || (same_selection && self.wait_for_send_catalog(cx))
                 {
-                    if self
-                        .pending_drafts
-                        .get(&pending.thread)
-                        .is_some_and(|draft| draft.failed)
-                    {
-                        self.show_local_error("The draft could not be saved. It remains in the composer; retry saving before sending.");
-                        cx.notify();
-                    } else if self.pending_drafts.contains_key(&pending.thread) {
-                        self.pending_follow_up = Some(pending);
-                    } else {
-                        if let Some(sequence) = pending.image_send {
-                            self.pending_images.finish(sequence);
-                        }
-                        self.send_selected_inner(pending.alternate, window, cx, true);
-                    }
+                    self.pending_follow_up = Some(pending);
                 } else {
                     let clear_original =
                         !pending.edited && self.composer.read(cx).value().as_ref() == pending.draft;
-                    let same_selection = pending.captured["selection"] == thread["selection"];
                     if clear_original {
                         self.draft_saver.invalidate();
                     }
@@ -7767,17 +7370,13 @@ impl Render for Coincide {
                             }
                             self.finish_pending_images(pending.image_send, true);
                             let delivering = ticket.is_some();
-                            if pending.buffer_id.is_some() {
-                                self.admitted_previews.push(
-                                    composer_follow_up_mount::AdmittedPreview {
-                                        pending: pending.clone(),
-                                        queue_id,
-                                        direct: delivering,
-                                    },
-                                );
-                            }
                             if let Some(ticket) = ticket {
                                 self.track_queued_delivery(ticket, pending.thread.clone());
+                            }
+                            if pending.buffer_id.is_some() {
+                                self.admitted_previews.push(
+                                    composer_follow_up_mount::AdmittedPreview { pending, queue_id },
+                                );
                             }
                             self.status = if delivering {
                                 "Delivering your message."
@@ -7810,7 +7409,7 @@ impl Render for Coincide {
                                 let message = format!(
                                     "Previous message is waiting and has not been sent: {reason}"
                                 );
-                                self.show_local_error(&message);
+                                self.queue_error = message;
                                 pending.last_error = Some(reason);
                             }
                             self.pending_follow_up = Some(pending);
@@ -7852,17 +7451,13 @@ impl Render for Coincide {
                             self.pending_drafts.remove(&pending.thread);
                         }
                         self.finish_pending_images(pending.image_send, true);
-                        if pending.buffer_id.is_some() {
-                            self.admitted_previews.push(
-                                composer_follow_up_mount::AdmittedPreview {
-                                    pending: pending.clone(),
-                                    queue_id,
-                                    direct: ticket.is_some(),
-                                },
-                            );
-                        }
                         if let Some(ticket) = ticket {
                             self.track_queued_delivery(ticket, pending.thread.clone());
+                        }
+                        if pending.buffer_id.is_some() {
+                            self.admitted_previews.push(
+                                composer_follow_up_mount::AdmittedPreview { pending, queue_id },
+                            );
                         }
                         if let Some(error) = error {
                             self.show_local_error(&format!(
@@ -7888,7 +7483,6 @@ impl Render for Coincide {
         if self.pending_follow_up.is_none()
             && self.pending_follow_up_backlog.is_empty()
             && self.ordinary_sends_inflight == 0
-            && self.restore_composer.is_none()
             && !self.selection_ui.apply_inflight()
             && !self.follow_up_choice_inflight
         {
@@ -7899,30 +7493,6 @@ impl Render for Coincide {
             }
         }
         self.poll_queue_action(window, cx);
-        if let Some((id, text)) = self.restore_composer.clone()
-            && self
-                .selected
-                .as_ref()
-                .is_some_and(|thread| thread["id"] == id)
-        {
-            if self.composer.read(cx).value().is_empty() {
-                self.restore_composer = None;
-                self.composer
-                    .update(cx, |input, cx| input.set_value(text.clone(), window, cx));
-                if let Some(thread) = self.selected.composer_metadata_mut() {
-                    thread["draft"] = json!(text);
-                }
-                self.draft_saver.record(&id, &text);
-                self.pending_drafts.insert(
-                    id.clone(),
-                    PendingDraft {
-                        text,
-                        retry: true,
-                        failed: false,
-                    },
-                );
-            }
-        }
         let selected_id = self
             .selected
             .as_ref()
@@ -8053,7 +7623,7 @@ impl Render for Coincide {
         };
         let attachment_count = self.draft_attachment_count();
         let importing_images = self.attachment_imports.contains(&selected_id);
-        let queue_pane = self.queue_pane(cx);
+        let queue_pane = self.queue_pane(window, cx);
         let local_error_notice = self.local_error_notice.clone();
         let plan_card = if show_composer {
             self.plan_card(window, cx)
@@ -8821,44 +8391,6 @@ fn reopen_main_window(cx: &mut App) {
 #[cfg(test)]
 mod liveness_tests {
     use super::*;
-
-    #[::core::prelude::v1::test]
-    fn captured_send_waits_for_a_busy_engine_and_revalidates_before_dispatch() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut store = Store::open(&dir.path().join("data.sqlite")).unwrap();
-        let project = store.create_project(dir.path(), Some("fixture")).unwrap();
-        let current = store.new_thread(project["id"].as_str().unwrap()).unwrap();
-        let mut captured = current.clone();
-        captured["selection"]["modelID"] = json!("stale-model");
-        let engine = Arc::new(Mutex::new(Engine::new(store)));
-        let held = engine.lock().unwrap();
-        let worker = engine.clone();
-        let (tx, rx) = std::sync::mpsc::channel();
-        let task = std::thread::spawn(move || {
-            tx.send(send_captured_waiting(&worker, &captured, "hello"))
-                .unwrap();
-        });
-        assert!(matches!(
-            rx.recv_timeout(Duration::from_millis(50)),
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
-        ));
-        drop(held);
-        let error = rx
-            .recv_timeout(Duration::from_secs(5))
-            .unwrap()
-            .unwrap_err();
-        assert!(error.to_string().contains("context changed"));
-        task.join().unwrap();
-        assert_eq!(
-            engine
-                .lock()
-                .unwrap()
-                .store
-                .thread(&text(&current, "id"))
-                .unwrap(),
-            current
-        );
-    }
 
     #[::core::prelude::v1::test]
     fn native_call_reports_busy_without_dispatching_or_poisoning_engine() {

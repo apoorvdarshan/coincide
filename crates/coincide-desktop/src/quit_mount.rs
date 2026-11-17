@@ -122,7 +122,6 @@ impl Coincide {
         if self.selection_ui.apply_inflight()
             || self.follow_up_choice_inflight
             || self.ordinary_sends_inflight > 0
-            || self.restore_composer.is_some()
         {
             self.status = "Finishing your composer choice before quitting…".into();
             return false;

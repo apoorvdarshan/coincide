@@ -334,6 +334,21 @@ impl ImageImports {
             })
             .collect()
     }
+    pub(super) fn claimed_previews(&self, jobs: &[u64]) -> Vec<ImportPreview> {
+        self.jobs
+            .iter()
+            .filter(|job| jobs.contains(&job.id) && !job.cancelled)
+            .filter_map(|job| job.preview.clone())
+            .take(3)
+            .collect()
+    }
+    pub(super) fn release_claims(&mut self, jobs: &[u64]) {
+        for job in &mut self.jobs {
+            if jobs.contains(&job.id) {
+                job.claimed = false;
+            }
+        }
+    }
     fn claim_one(&mut self, id: u64) {
         if let Some(job) = self.jobs.iter_mut().find(|job| job.id == id) {
             job.claimed = true;
