@@ -656,8 +656,8 @@ impl Coincide {
     ) -> Option<mentions::Ticket> {
         let binding = self.file_reference_binding(cx)?;
         // A native WebKit responder is not represented by GPUI focus handles.
-        // Explicit @ Files remains available; automatic caret ownership waits.
-        if self.browser_panels.contains(&binding.thread) {
+        // Only its actual focus revokes the composer's caret ownership.
+        if self.browser_owns_reply_focus(window, cx) {
             return None;
         }
         if require_focus && !self.composer.read(cx).focus_handle(cx).is_focused(window) {

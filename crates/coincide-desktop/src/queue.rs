@@ -52,6 +52,26 @@ fn take_ready_action(
     Some(action)
 }
 
+fn edit_last_queued_key_routes(
+    event: &KeyDownEvent,
+    window_active: bool,
+    route: chat_inspector::ChatRoute,
+    picker_open: bool,
+    composer_focused: bool,
+) -> bool {
+    let key = &event.keystroke;
+    !event.is_held
+        && window_active
+        && matches!(key.key.as_str(), "up" | "arrowup")
+        && key.modifiers.alt
+        && !key.modifiers.platform
+        && !key.modifiers.control
+        && !key.modifiers.shift
+        && route.visible()
+        && !picker_open
+        && composer_focused
+}
+
 /// The native queue operation verifies only these fields. Capturing the full
 /// transcript in every queue-row callback made long chats expensive to render.
 fn queue_expected_scope(thread: &Value) -> Value {
@@ -259,19 +279,13 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        let key = &event.keystroke;
-        if event.is_held
-            || !window.is_window_active()
-            || key.key != "up" && key.key != "arrowup"
-            || !key.modifiers.alt
-            || key.modifiers.platform
-            || key.modifiers.control
-            || key.modifiers.shift
-            || self.settings_open
-            || !self.chat_visible()
-            || self.composer_files.opened
-            || !self.composer.read(cx).focus_handle(cx).is_focused(window)
-        {
+        if !edit_last_queued_key_routes(
+            event,
+            window.is_window_active(),
+            self.chat_route(),
+            self.composer_files.opened,
+            self.composer.read(cx).focus_handle(cx).is_focused(window),
+        ) {
             return false;
         }
         if self.composer.update(cx, |input, cx| {
@@ -556,6 +570,68 @@ impl Coincide {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[::core::prelude::v1::test]
+    fn option_up_edits_queue_only_in_a_visible_focused_composer() {
+        let mut event = KeyDownEvent {
+            keystroke: gpui_kit::Keystroke {
+                key: "up".into(),
+                modifiers: gpui_kit::Modifiers {
+                    alt: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            is_held: false,
+            prefer_character_input: false,
+        };
+        let route = chat_inspector::ChatRoute {
+            selected: true,
+            settings: settings_window::settings_rendered_inline(true, true, false),
+            ..Default::default()
+        };
+        assert!(edit_last_queued_key_routes(
+            &event, true, route, false, true
+        ));
+        assert!(!edit_last_queued_key_routes(
+            &event, false, route, false, true
+        ));
+        assert!(!edit_last_queued_key_routes(
+            &event, true, route, true, true
+        ));
+        assert!(!edit_last_queued_key_routes(
+            &event, true, route, false, false
+        ));
+        assert!(!edit_last_queued_key_routes(
+            &event,
+            true,
+            chat_inspector::ChatRoute {
+                settings: true,
+                ..route
+            },
+            false,
+            true,
+        ));
+        assert!(!edit_last_queued_key_routes(
+            &event,
+            true,
+            chat_inspector::ChatRoute {
+                navigating: true,
+                ..route
+            },
+            false,
+            true,
+        ));
+        event.keystroke.modifiers.shift = true;
+        assert!(!edit_last_queued_key_routes(
+            &event, true, route, false, true
+        ));
+        event.keystroke.modifiers.shift = false;
+        event.is_held = true;
+        assert!(!edit_last_queued_key_routes(
+            &event, true, route, false, true
+        ));
+    }
 
     #[::core::prelude::v1::test]
     fn queued_action_captures_exact_execution_fields_without_the_transcript() {
