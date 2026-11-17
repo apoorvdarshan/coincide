@@ -1341,7 +1341,7 @@ impl Coincide {
         match action {
             RowAction::Open => {
                 if let Some(thread) = self.schedule_open_target(&task) {
-                    self.select(&thread, window, cx);
+                    self.navigate_to_thread(&thread, window, cx);
                 } else if !self.schedule_editor.open
                     && self.schedule_editor.scope_epoch == scope_epoch
                 {
@@ -1501,9 +1501,9 @@ impl Coincide {
                 header
                     .cursor_pointer()
                     .hover(move |style| style.bg(hover))
-                    .on_click(
-                        cx.listener(move |this, _, window, cx| this.select(&thread, window, cx)),
-                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.navigate_to_thread(&thread, window, cx)
+                    }))
             })
             .into_any_element()
     }

@@ -20,14 +20,14 @@ impl Coincide {
         self.refresh_settings(window, cx);
     }
 
-    /// What the menu bar shows now. Key equivalents follow the same routing as
-    /// keys: while a browser panel is visible only its two commands keep theirs,
-    /// so native page keys never reach a menu item instead.
+    /// What the menu bar shows now. A focused native page retains its keys;
+    /// merely showing a browser beside the composer must not disable shortcuts.
     fn menu_snapshot(
         &self,
         context: app_menu::EditContext,
         selection_available: bool,
         main_active: bool,
+        browser_focused: bool,
     ) -> app_menu::MenuSnapshot {
         use keyboard_settings::Command as K;
         let browser = self.browser_panel_open();
@@ -36,7 +36,7 @@ impl Coincide {
             .filter(|command| {
                 command.jump_index().is_none()
                     && *command != K::AddToComposer
-                    && (!browser || keyboard_settings::browser_command(*command))
+                    && (!browser_focused || keyboard_settings::browser_command(*command))
             })
             .filter_map(|command| {
                 keyboard_settings::menu_keystroke(&self.settings, command)
@@ -54,7 +54,7 @@ impl Coincide {
             selection_available,
             keys,
             add_selection_key: keyboard_settings::menu_keystroke(&self.settings, K::AddToComposer),
-            fixed_keys: !browser,
+            fixed_keys: !browser_focused,
             enabled: K::ALL
                 .into_iter()
                 .filter(|command| self.keyboard_command_available(*command))
@@ -115,7 +115,13 @@ impl Coincide {
             app_menu::EditContext::Unverified
         };
         let selection_available = self.selection_to_composer_available(window, cx);
-        let snapshot = self.menu_snapshot(context, selection_available, window.is_window_active());
+        let browser_focused = self.browser_owns_reply_focus(window, cx);
+        let snapshot = self.menu_snapshot(
+            context,
+            selection_available,
+            window.is_window_active(),
+            browser_focused,
+        );
         app_menu::update(cx, snapshot);
         for request in app_menu::take_requests(cx) {
             match request {

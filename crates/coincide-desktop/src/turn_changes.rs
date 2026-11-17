@@ -77,26 +77,6 @@ pub(super) fn anchor(items: &[Value], index: usize) -> Option<(usize, String)> {
 }
 
 impl Coincide {
-    /// Load turn changes when opening a thread; revision updates use the
-    /// background conversation reader.
-    pub(super) fn refresh_turn_changes(&mut self) {
-        let Some(id) = self.selected.as_ref().map(|thread| text(thread, "id")) else {
-            self.turn_changes = TurnChanges::default();
-            return;
-        };
-        let Ok(reply) = call(&self.engine, "checkpoints.list", json!({"threadId":id})) else {
-            // Busy or unavailable: keep what is shown until the next revision.
-            if self.turn_changes.thread.as_deref() != Some(id.as_str()) {
-                self.turn_changes = TurnChanges::default();
-            }
-            return;
-        };
-        let imported = try_state(&self.engine)
-            .ok()
-            .and_then(|engine| engine.store.is_imported(&id).ok());
-        self.accept_turn_changes(&id, reply, imported);
-    }
-
     pub(super) fn accept_turn_changes(&mut self, id: &str, reply: Value, imported: Option<bool>) {
         if self
             .selected

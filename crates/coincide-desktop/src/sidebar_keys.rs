@@ -92,7 +92,7 @@ impl Coincide {
             cx.propagate();
             return;
         };
-        self.select(&first, window, cx);
+        self.navigate_to_thread(&first, window, cx);
         self.thread_list_focus.focus(window, cx);
     }
     /// Delete and type-select in the conversation list. True when the key was
@@ -156,12 +156,13 @@ impl Coincide {
                 (row.0.as_str(), title)
             })
             .collect::<Vec<_>>();
-        let selected = self
-            .selected
-            .as_ref()
-            .and_then(|thread| thread["id"].as_str());
+        let selected = self.thread_navigation.target().or_else(|| {
+            self.selected
+                .as_ref()
+                .and_then(|thread| thread["id"].as_str())
+        });
         if let Some(id) = type_select_match(&titles, selected, &prefix).map(str::to_owned) {
-            self.select(&id, window, cx);
+            self.navigate_to_thread(&id, window, cx);
             self.thread_list_focus.focus(window, cx);
         }
         true

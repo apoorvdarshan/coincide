@@ -324,7 +324,7 @@ impl Coincide {
                         }));
             if reusable {
                 self.created_bot_thread_to_focus = Some(target.clone());
-                self.select(&target, window, cx);
+                self.navigate_to_thread(&target, window, cx);
                 return;
             }
         }
@@ -717,7 +717,7 @@ impl Coincide {
                                                 PopupMenuItem::new(title.clone()).on_click(
                                                     move |_, window, cx| {
                                                         let _ = parent.update(cx, |this, cx| {
-                                                            this.select(&thread, window, cx)
+                                                            this.navigate_to_thread(&thread, window, cx)
                                                         });
                                                     },
                                                 ),

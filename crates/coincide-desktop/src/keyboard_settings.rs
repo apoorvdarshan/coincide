@@ -707,7 +707,10 @@ pub(super) fn terminal_key(event: &Keystroke) -> Option<&'static str> {
 /// WebKit responder is not represented by a GPUI focus handle, so every other
 /// key stays with the page.
 pub(super) fn browser_command(command: Command) -> bool {
-    matches!(command, Command::NewThread | Command::Palette)
+    matches!(
+        command,
+        Command::NewThread | Command::NewChat | Command::Palette
+    )
 }
 fn route(
     command: Option<Command>,
@@ -1023,7 +1026,7 @@ impl Coincide {
         &self,
         key: &Keystroke,
         terminal_owns: bool,
-        browser_visible: bool,
+        browser_focused: bool,
         palette_open: bool,
     ) -> Option<Command> {
         let key = Shortcut::event(key)?;
@@ -1031,7 +1034,7 @@ impl Coincide {
             resolve(&self.settings, &key),
             &key,
             terminal_owns,
-            browser_visible,
+            browser_focused,
             palette_open,
         )
     }
@@ -1283,6 +1286,63 @@ mod tests {
         Shortcut::parse(text).unwrap()
     }
     #[::core::prelude::v1::test]
+    fn every_default_routes_from_a_native_key_event_in_its_owning_context() {
+        let settings = json!({});
+        for command in Command::ALL {
+            let Some(binding) = command.default_shortcut() else {
+                continue;
+            };
+            let modifiers = gpui_kit::Modifiers {
+                platform: cfg!(target_os = "macos") && binding.modifiers & MOD != 0,
+                control: if cfg!(target_os = "macos") {
+                    binding.modifiers & CTRL != 0
+                } else {
+                    binding.modifiers & (MOD | CTRL) != 0
+                },
+                alt: binding.modifiers & ALT != 0,
+                shift: binding.modifiers & SHIFT != 0,
+                ..Default::default()
+            };
+            let event = Keystroke {
+                key: binding.key.clone(),
+                modifiers,
+                ..Default::default()
+            };
+            let event = Shortcut::event(&event).expect("default must be a native shortcut");
+            let resolved = resolve(&settings, &event);
+            assert_eq!(resolved, Some(command), "{}", command.id());
+            assert_eq!(
+                route(resolved, &event, false, false, false),
+                Some(command),
+                "{}",
+                command.id()
+            );
+            assert_eq!(
+                route(resolved, &event, false, true, false),
+                browser_command(command).then_some(command),
+                "{} with browser focus",
+                command.id()
+            );
+            assert_eq!(
+                route(resolved, &event, false, false, true),
+                (command == Command::Palette).then_some(command),
+                "{} with palette focus",
+                command.id()
+            );
+            let terminal_allowed = if cfg!(target_os = "macos") {
+                terminal_key_title(&event).is_none()
+            } else {
+                command == Command::Palette && event.physical() == key("mod+k").physical()
+            };
+            assert_eq!(
+                route(resolved, &event, true, false, false),
+                terminal_allowed.then_some(command),
+                "{} with terminal focus",
+                command.id()
+            );
+        }
+    }
+    #[::core::prelude::v1::test]
     fn swift_syntax_round_trips_aliases_plus_unicode_and_exact_modifier_keys() {
         for (source, expected) in [
             ("Command+Option+Shift+L", "mod+alt+shift+l"),
@@ -1424,6 +1484,16 @@ mod tests {
         assert_eq!(
             route(Some(Command::NewThread), &key("mod+n"), false, true, false),
             Some(Command::NewThread)
+        );
+        assert_eq!(
+            route(
+                Some(Command::NewChat),
+                &key("mod+shift+n"),
+                false,
+                true,
+                false
+            ),
+            Some(Command::NewChat)
         );
         assert_eq!(
             route(

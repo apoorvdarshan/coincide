@@ -1506,6 +1506,10 @@ impl Coincide {
                                                 return;
                                             }
                                             this.bulk_row_click(&id, selecting, window, cx);
+                                            if !selecting {
+                                                this.thread_navigation
+                                                    .focus_composer_when_ready(&id);
+                                            }
                                             if !selecting
                                                 && this
                                                     .selected
@@ -1673,12 +1677,13 @@ impl Coincide {
                 };
                 let rows = this.bulk_sidebar_binding(cx).rows;
                 let ids = rows.iter().map(|row| row.0.as_str()).collect::<Vec<_>>();
-                let selected = this
-                    .selected
-                    .as_ref()
-                    .and_then(|thread| thread["id"].as_str());
+                let selected = this.thread_navigation.target().or_else(|| {
+                    this.selected
+                        .as_ref()
+                        .and_then(|thread| thread["id"].as_str())
+                });
                 if let Some(id) = adjacent_sidebar_row(&ids, selected, step).map(str::to_owned) {
-                    this.select(&id, window, cx);
+                    this.navigate_to_thread(&id, window, cx);
                     this.thread_list_focus.focus(window, cx);
                     cx.stop_propagation();
                 }

@@ -37,18 +37,21 @@ impl Coincide {
     }
     /// Whether a command can run now; its menu item and palette row follow it.
     pub(super) fn keyboard_command_available(&self, command: K) -> bool {
-        let thread = self.selected.is_some();
+        let thread = self.selected.is_some()
+            && self.thread_navigation.target().is_none()
+            && self.pending_new_thread.is_none();
         match command {
             K::OpenInEditor => {
-                self.open_folder().is_some()
+                thread
+                    && self.open_folder().is_some()
                     && open_targets::preferred(&self.open_targets, &self.settings).is_some()
             }
             K::RevealInFinder => {
-                self.open_folder().is_some() && self.file_manager_target().is_some()
+                thread && self.open_folder().is_some() && self.file_manager_target().is_some()
             }
-            K::CopyPath => self.open_folder().is_some(),
+            K::CopyPath => thread && self.open_folder().is_some(),
             K::Terminal => thread && self.chat_visible(),
-            K::Stop => self.selected_running(),
+            K::Stop => thread && self.selected_running(),
             K::PreviousThread | K::NextThread | K::Jump(_) => !self.threads.is_empty(),
             K::Diff
             | K::ChooseModel
@@ -111,13 +114,14 @@ impl Coincide {
     fn step_thread(&mut self, step: i32, window: &mut Window, cx: &mut Context<Self>) {
         let rows = self.bulk_sidebar_binding(cx).rows;
         let ids = rows.iter().map(|row| row.0.as_str()).collect::<Vec<_>>();
-        let selected = self
-            .selected
-            .as_ref()
-            .and_then(|thread| thread["id"].as_str());
+        let selected = self.thread_navigation.target().or_else(|| {
+            self.selected
+                .as_ref()
+                .and_then(|thread| thread["id"].as_str())
+        });
         if let Some(id) = navigation::adjacent_sidebar_row(&ids, selected, step).map(str::to_owned)
         {
-            self.select(&id, window, cx);
+            self.navigate_to_thread(&id, window, cx);
         }
     }
     fn open_settings_section(
@@ -196,7 +200,7 @@ impl Coincide {
             K::Jump(_) => {
                 let index = command.jump_index().unwrap_or(1) - 1;
                 if let Some((id, _, _)) = self.bulk_sidebar_binding(cx).rows.get(index).cloned() {
-                    self.select(&id, window, cx);
+                    self.navigate_to_thread(&id, window, cx);
                 }
             }
             K::ChooseModel => self.open_composer_picker(composer_selection::PickerFacet::Model, cx),
@@ -244,6 +248,21 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if (self.thread_navigation.target().is_some() || self.pending_new_thread.is_some())
+            && matches!(
+                &action,
+                AppAction::RevealImportedSource
+                    | AppAction::OpenIn(_)
+                    | AppAction::Find
+                    | AppAction::FindNext
+                    | AppAction::FindPrevious
+                    | AppAction::BrowserPreview
+                    | AppAction::PullRequests
+                    | AppAction::Schedule
+            )
+        {
+            return;
+        }
         match action {
             AppAction::About => {
                 self.open_settings_section(settings::SettingsSection::About, window, cx)
@@ -307,7 +326,12 @@ impl Coincide {
                 }
             }
             AppAction::Find => {
-                if transcript_find_shortcut_routes(self.selected.as_ref(), &self.browser_panels) {
+                if self.find_context_available()
+                    && transcript_find_shortcut_routes(
+                        self.selected.as_ref(),
+                        self.browser_owns_reply_focus(window, cx),
+                    )
+                {
                     self.open_find(window, cx);
                 }
             }
@@ -316,10 +340,12 @@ impl Coincide {
                     let next = action == AppAction::FindNext;
                     self.transcript_find
                         .update(cx, |find, cx| find.step_match(next, cx));
-                } else if transcript_find_shortcut_routes(
-                    self.selected.as_ref(),
-                    &self.browser_panels,
-                ) {
+                } else if self.find_context_available()
+                    && transcript_find_shortcut_routes(
+                        self.selected.as_ref(),
+                        self.browser_owns_reply_focus(window, cx),
+                    )
+                {
                     self.open_find(window, cx);
                 }
             }

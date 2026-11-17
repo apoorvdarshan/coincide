@@ -15,13 +15,14 @@ pub(super) struct ChatRoute {
     pub settings: bool,
     pub global_schedules: bool,
     pub importing: bool,
+    pub navigating: bool,
 }
 impl ChatRoute {
     pub fn available(self) -> bool {
         !self.settings && !self.importing
     }
     pub fn visible(self) -> bool {
-        self.selected && self.available()
+        self.selected && self.available() && !self.navigating
     }
 }
 
@@ -122,6 +123,8 @@ impl Coincide {
             settings: self.settings_in_main_window(),
             global_schedules: self.global_schedules_route(),
             importing: self.session_import_open,
+            navigating: self.thread_navigation.target().is_some()
+                || self.pending_new_thread.is_some(),
         }
     }
     pub(super) fn chat_route_available(&self) -> bool {
@@ -211,7 +214,7 @@ impl Coincide {
 
 #[cfg(test)]
 mod tests {
-    use super::{ChatRoute, Panel, panel};
+    use super::{ChatRoute, InputEvent, Panel, composer_enter_sends, panel};
     #[::core::prelude::v1::test]
     fn only_full_routes_hide_chat_and_inspectors_never_do() {
         let route = ChatRoute {
@@ -234,6 +237,24 @@ mod tests {
             assert_eq!(chosen, Some(expected));
             assert!(route.visible());
         }
+        let loading = ChatRoute {
+            navigating: true,
+            ..route
+        };
+        assert!(
+            !loading.visible(),
+            "a pending navigation must not submit to the old thread"
+        );
+        let enter = InputEvent::PressEnter {
+            secondary: false,
+            shift: false,
+        };
+        assert!(!composer_enter_sends(&enter, true, loading));
+        assert!(composer_enter_sends(&enter, true, route));
+        assert_eq!(
+            panel(loading, false, false, false, true),
+            Some(Panel::Browser)
+        );
         for unavailable in [
             ChatRoute::default(),
             ChatRoute {

@@ -23,6 +23,7 @@ struct ComposerProbe {
     separate_settings: bool,
     pending_settings: bool,
     selected: bool,
+    navigating: bool,
     send_on_return: bool,
     sends: Vec<String>,
     _subscription: Subscription,
@@ -33,6 +34,7 @@ impl ComposerProbe {
         let subscription = cx.subscribe(&input, |this: &mut Self, input, event, cx| {
             let route = chat_inspector::ChatRoute {
                 selected: this.selected,
+                navigating: this.navigating,
                 settings: settings_window::settings_rendered_inline(
                     this.settings_open,
                     this.separate_settings,
@@ -50,6 +52,7 @@ impl ComposerProbe {
             separate_settings: true,
             pending_settings: false,
             selected: true,
+            navigating: false,
             send_on_return: true,
             sends: Vec::new(),
             _subscription: subscription,
@@ -109,6 +112,13 @@ fn headless_return_with_settings_window(cx: &mut TestAppContext) {
 
     press(vcx, "enter");
     view.read_with(vcx, |this, _| assert_eq!(this.sends, ["synthetic draft"]));
+
+    // A click on another conversation must not send from the old composer
+    // while its replacement is loading in the background.
+    view.update(vcx, |this, _| this.navigating = true);
+    press(vcx, "enter");
+    view.read_with(vcx, |this, _| assert_eq!(this.sends.len(), 1));
+    view.update(vcx, |this, _| this.navigating = false);
 
     // A retained composer must not submit while inline Settings hides it.
     view.update(vcx, |this, _| this.separate_settings = false);

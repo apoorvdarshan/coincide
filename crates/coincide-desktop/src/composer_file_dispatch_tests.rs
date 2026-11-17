@@ -143,8 +143,15 @@ impl Harness {
     fn bound(&mut self, key: keys::Key, window: &mut Window, cx: &mut Context<Self>) {
         self.key("bound", key, false, window, cx);
     }
-    fn raw(&mut self, key: keys::Key, modified: bool, window: &mut Window, cx: &mut Context<Self>) {
-        self.key("raw", key, modified, window, cx);
+    fn raw(
+        &mut self,
+        key: keys::Key,
+        modifiers: Modifiers,
+        _held: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.key("raw", key, modifiers.modified(), window, cx);
     }
     fn release(&mut self, key: keys::Key, _: &mut Context<Self>) {
         self.keys.release(key);

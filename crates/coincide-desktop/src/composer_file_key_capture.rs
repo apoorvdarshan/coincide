@@ -2,7 +2,7 @@
 //! around a real Textarea; ownership and completion stay in the caller.
 use super::keys::Key;
 use gpui_kit::{
-    App, Context, Div, InteractiveElement, KeyBinding, KeyDownEvent, KeyUpEvent, Window,
+    App, Context, Div, InteractiveElement, KeyBinding, KeyDownEvent, KeyUpEvent, Modifiers, Window,
 };
 
 #[derive(Clone, Default, PartialEq, gpui_kit::Action)]
@@ -39,7 +39,7 @@ pub(super) fn attach<T: 'static>(
     scope: Div,
     cx: &mut Context<T>,
     bound: fn(&mut T, Key, &mut Window, &mut Context<T>),
-    raw: fn(&mut T, Key, bool, &mut Window, &mut Context<T>),
+    raw: fn(&mut T, Key, Modifiers, bool, &mut Window, &mut Context<T>),
     release: fn(&mut T, Key, &mut Context<T>),
 ) -> Div {
     // Keep the context mounted when the pane closes: a held activation key
@@ -72,7 +72,14 @@ pub(super) fn attach<T: 'static>(
             if !event.prefer_character_input
                 && let Some(key) = Key::named(&event.keystroke.key)
             {
-                raw(this, key, event.keystroke.modifiers.modified(), window, cx);
+                raw(
+                    this,
+                    key,
+                    event.keystroke.modifiers,
+                    event.is_held,
+                    window,
+                    cx,
+                );
             }
         }))
         .capture_key_up(cx.listener(move |this, event: &KeyUpEvent, _, cx| {
@@ -80,4 +87,50 @@ pub(super) fn attach<T: 'static>(
                 release(this, key, cx);
             }
         }))
+}
+
+pub(super) fn is_shift_tab(key: Key, modifiers: Modifiers) -> bool {
+    key == Key::Tab
+        && modifiers.shift
+        && !modifiers.control
+        && !modifiers.alt
+        && !modifiers.platform
+        && !modifiers.function
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn only_shift_tab_toggles_plan() {
+        let shift = Modifiers {
+            shift: true,
+            ..Default::default()
+        };
+        assert!(is_shift_tab(Key::Tab, shift));
+        assert!(!is_shift_tab(Key::Up, shift));
+        assert!(!is_shift_tab(Key::Tab, Modifiers::default()));
+        assert!(!is_shift_tab(
+            Key::Tab,
+            Modifiers {
+                control: true,
+                ..shift
+            }
+        ));
+        assert!(!is_shift_tab(Key::Tab, Modifiers { alt: true, ..shift }));
+        assert!(!is_shift_tab(
+            Key::Tab,
+            Modifiers {
+                platform: true,
+                ..shift
+            }
+        ));
+        assert!(!is_shift_tab(
+            Key::Tab,
+            Modifiers {
+                function: true,
+                ..shift
+            }
+        ));
+    }
 }

@@ -103,9 +103,9 @@ fn find_escape_routes(
     plain: bool,
     find_open: bool,
     terminal_owns: bool,
-    browser_visible: bool,
+    browser_focused: bool,
 ) -> bool {
-    key == "escape" && plain && find_open && !terminal_owns && !browser_visible
+    key == "escape" && plain && find_open && !terminal_owns && !browser_focused
 }
 
 // IDs and surface colors match the original macOS AppTheme catalog. Unknown
@@ -2146,10 +2146,7 @@ impl Coincide {
         if !terminal_owns && self.browser_tab_key(event, window, cx) {
             return;
         }
-        let browser_visible = self
-            .selected
-            .as_ref()
-            .is_some_and(|thread| self.browser_panels.contains(&text(thread, "id")));
+        let browser_focused = self.browser_owns_reply_focus(window, cx);
         let plain = !key.modifiers.platform
             && !key.modifiers.control
             && !key.modifiers.alt
@@ -2161,7 +2158,7 @@ impl Coincide {
             plain,
             self.transcript_find.read(cx).is_open(),
             terminal_owns,
-            browser_visible,
+            browser_focused,
         ) {
             self.dismiss_find(window, cx);
             cx.stop_propagation();
@@ -2175,7 +2172,7 @@ impl Coincide {
         #[cfg(not(target_os = "macos"))]
         let command = key.modifiers.control;
         let palette_open = self.command_palette.read(cx).is_open();
-        let custom = self.keyboard_command(key, terminal_owns, browser_visible, palette_open);
+        let custom = self.keyboard_command(key, terminal_owns, browser_focused, palette_open);
         // Commands stay closed while the palette is open. Their native menu
         // items share these keys, so consume them rather than let AppKit run one.
         let palette_consumes = palette_open
@@ -2222,7 +2219,9 @@ impl Coincide {
                 cx.notify();
             }
             "f" => {
-                if !transcript_find_shortcut_routes(self.selected.as_ref(), &self.browser_panels) {
+                if !self.find_context_available()
+                    || !transcript_find_shortcut_routes(self.selected.as_ref(), browser_focused)
+                {
                     return;
                 }
                 self.open_find(window, cx);

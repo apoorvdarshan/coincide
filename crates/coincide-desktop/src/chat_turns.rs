@@ -923,7 +923,7 @@ impl super::Coincide {
                                 .xsmall()
                                 .text_color(self.color(0xe4e9f2).opacity(0.6))
                                 .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.select(&parent, window, cx);
+                                    this.navigate_to_thread(&parent, window, cx);
                                 })),
                         ),
                 )
