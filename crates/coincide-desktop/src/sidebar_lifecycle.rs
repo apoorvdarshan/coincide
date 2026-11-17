@@ -2,8 +2,9 @@
 //! requests are observed through actual provider joins before a new review.
 use super::*;
 use coincide_core::api::{
-    BotConversationDisposition as Disposition, BotDeletionUndo, PreparedBotDeletion,
-    PreparedThreadDeletion, PreparedThreadMove, ThreadDeletionUndo, ThreadMoveUndo,
+    BotConversationDisposition as Disposition, BotDeletionUndo, ConversationCleanup,
+    PreparedBotDeletion, PreparedThreadDeletion, PreparedThreadMove, ThreadDeletionUndo,
+    ThreadMoveUndo,
 };
 #[cfg(test)]
 #[path = "sidebar_lifecycle_ui_tests.rs"]
@@ -14,6 +15,33 @@ enum Intent {
     Move(String, String),
     Delete(Vec<String>),
     Bot(String, Disposition),
+}
+impl Intent {
+    fn thread_ids(&self, engine: &Engine) -> Result<Vec<String>> {
+        match self {
+            Self::Move(id, _) => Ok(vec![id.clone()]),
+            Self::Delete(ids) => Ok(ids.clone()),
+            Self::Bot(id, _) => engine.native_bot_thread_ids(id),
+        }
+    }
+}
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+enum ReviewWait {
+    #[default]
+    Blocked,
+    Retry,
+    Running,
+}
+
+fn wait_mode(error: &anyhow::Error, stopped: bool) -> ReviewWait {
+    if engine_busy(error) {
+        return ReviewWait::Retry;
+    }
+    match error.downcast_ref::<ConversationCleanup>() {
+        Some(ConversationCleanup::Running) if !stopped => ReviewWait::Running,
+        Some(ConversationCleanup::Running | ConversationCleanup::Waiting) => ReviewWait::Retry,
+        _ => ReviewWait::Blocked,
+    }
 }
 enum Review {
     Move(PreparedThreadMove),
@@ -28,6 +56,15 @@ enum Undo {
     Delete(ThreadDeletionUndo),
     Bot(BotDeletionUndo),
 }
+impl Undo {
+    fn thread_ids(&self) -> Vec<String> {
+        match self {
+            Self::Move(undo) => vec![undo.thread_id().to_owned()],
+            Self::Delete(undo) => undo.thread_ids(),
+            Self::Bot(undo) => undo.thread_ids(),
+        }
+    }
+}
 #[derive(Default)]
 pub(super) struct State {
     review: Option<Review>,
@@ -35,6 +72,9 @@ pub(super) struct State {
     /// When `undo` was made, among the inbox's Undo receipts (`inbox_undo`).
     undo_stamp: u64,
     stopping: bool,
+    wait: ReviewWait,
+    retry_at: Option<Instant>,
+    confirm_retry: bool,
     auto_apply: bool,
     notice_visible: bool,
     notice_undo: bool,
@@ -56,6 +96,9 @@ impl State {
     fn cancel_review(&mut self) {
         self.review = None;
         self.stopping = false;
+        self.wait = ReviewWait::Blocked;
+        self.retry_at = None;
+        self.confirm_retry = false;
         self.auto_apply = false;
         self.notice_visible = false;
         self.notice_undo = false;
@@ -208,14 +251,18 @@ impl Coincide {
         self.sidebar_lifecycle.auto_apply = false;
         self.sidebar_lifecycle.notice_visible = false;
         self.sidebar_lifecycle.archive_notice_undo = None;
-        if !self.flush_pending_drafts() {
-            self.sidebar_lifecycle.review = Some(Review::Waiting(intent));
-            self.sidebar_lifecycle.status =
-                "Pending drafts must save before preparing a lifecycle review.".into();
-            cx.notify();
-            return;
-        }
+        self.sidebar_lifecycle.confirm_retry = false;
         let result = (|| -> Result<Review> {
+            let ids = {
+                let owner = try_state(&self.engine)?;
+                intent.thread_ids(&owner)?
+            };
+            self.collect_draft_results();
+            if ids.iter().any(|id| self.pending_drafts.contains_key(id)) {
+                anyhow::bail!(
+                    "Save the selected conversation's draft before reviewing this action."
+                );
+            }
             let mut engine = try_state(&self.engine)?;
             match &intent {
                 Intent::Move(id, target) => {
@@ -231,9 +278,11 @@ impl Coincide {
                 }
             }
         })();
-        self.sidebar_lifecycle.stopping = false;
         match result {
             Ok(review) => {
+                self.sidebar_lifecycle.stopping = false;
+                self.sidebar_lifecycle.wait = ReviewWait::Blocked;
+                self.sidebar_lifecycle.retry_at = None;
                 self.sidebar_lifecycle.auto_apply =
                     matches!(&review, Review::Delete(plan) if !plan.requires_confirmation());
                 self.sidebar_lifecycle.review = Some(review);
@@ -244,8 +293,17 @@ impl Coincide {
                 };
             }
             Err(error) => {
+                let wait = wait_mode(&error, self.sidebar_lifecycle.stopping);
+                let status = if engine_busy(&error) {
+                    "Preparing review…".into()
+                } else {
+                    error.to_string()
+                };
                 self.sidebar_lifecycle.review = Some(Review::Waiting(intent));
-                self.sidebar_lifecycle.status = error.to_string();
+                self.sidebar_lifecycle.wait = wait;
+                self.sidebar_lifecycle.retry_at = (wait == ReviewWait::Retry)
+                    .then(|| Instant::now() + Duration::from_millis(180));
+                self.sidebar_lifecycle.status = status;
             }
         }
         cx.notify();
@@ -254,6 +312,9 @@ impl Coincide {
         let Some(Review::Waiting(intent)) = &self.sidebar_lifecycle.review else {
             return;
         };
+        if self.sidebar_lifecycle.wait != ReviewWait::Running {
+            return;
+        }
         let intent = intent.clone();
         let result = (|| -> Result<()> {
             let mut engine = try_state(&self.engine)?;
@@ -273,7 +334,10 @@ impl Coincide {
         match result {
             Ok(()) => {
                 self.sidebar_lifecycle.stopping = true;
-                self.sidebar_lifecycle.status="Stop requested. Waiting for actual provider cleanup before preparing a fresh confirmation.".into();
+                self.sidebar_lifecycle.wait = ReviewWait::Retry;
+                self.sidebar_lifecycle.retry_at = Some(Instant::now());
+                self.sidebar_lifecycle.status =
+                    "Waiting for the selected conversations to stop…".into();
             }
             Err(error) => self.sidebar_lifecycle.status = error.to_string(),
         };
@@ -287,20 +351,21 @@ impl Coincide {
                 self.apply_sidebar_lifecycle(window, cx);
             }
         }
-        if !self.sidebar_lifecycle.stopping {
-            return;
-        }
         if self.media.shutdown_requested || self.media.close_requested {
-            self.sidebar_lifecycle.stopping = false;
-            self.sidebar_lifecycle.review = None;
+            self.sidebar_lifecycle.cancel_review();
             return;
         }
-        let ready = try_state(&self.engine).is_ok_and(|mut engine| {
-            let status = engine.provider_workers_status();
-            status.running == 0 && status.panicked == 0 && status.unclassified == 0
-        });
-        if ready && let Some(Review::Waiting(intent)) = &self.sidebar_lifecycle.review {
-            self.prepare_sidebar_lifecycle(intent.clone(), cx);
+        if self
+            .sidebar_lifecycle
+            .retry_at
+            .is_some_and(|at| Instant::now() >= at)
+        {
+            self.sidebar_lifecycle.retry_at = None;
+            if self.sidebar_lifecycle.confirm_retry {
+                self.apply_sidebar_lifecycle(window, cx);
+            } else if let Some(Review::Waiting(intent)) = &self.sidebar_lifecycle.review {
+                self.prepare_sidebar_lifecycle(intent.clone(), cx);
+            }
         }
     }
     fn apply_sidebar_lifecycle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -308,16 +373,29 @@ impl Coincide {
         if self.media.shutdown_requested || self.media.close_requested {
             return;
         }
-        if !self.flush_pending_drafts() {
-            self.sidebar_lifecycle.status =
-                "Save pending drafts before confirming this operation.".into();
-            cx.notify();
-            return;
-        }
+        let engine = self.engine.clone();
+        let mut owner = match try_state(&engine) {
+            Ok(owner) => owner,
+            Err(error) if engine_busy(&error) => {
+                self.sidebar_lifecycle.confirm_retry = true;
+                self.sidebar_lifecycle.retry_at = Some(Instant::now() + Duration::from_millis(180));
+                self.sidebar_lifecycle.status = "Applying your confirmation…".into();
+                cx.notify();
+                return;
+            }
+            Err(error) => {
+                self.sidebar_lifecycle.status = error.to_string();
+                cx.notify();
+                return;
+            }
+        };
+        self.sidebar_lifecycle.confirm_retry = false;
+        self.sidebar_lifecycle.retry_at = None;
         let Some(review) = self.sidebar_lifecycle.review.take() else {
             return;
         };
         if let Review::Archive(id, _) = &review {
+            drop(owner);
             let archived = if self
                 .selected
                 .as_ref()
@@ -340,23 +418,20 @@ impl Coincide {
             cx.notify();
             return;
         }
-        let result = (|| -> Result<Undo> {
-            let mut engine = try_state(&self.engine)?;
-            match review {
-                Review::Move(plan) => Ok(Undo::Move(engine.apply_native_thread_move(plan)?)),
-                Review::Delete(plan) => {
-                    Ok(Undo::Delete(engine.apply_native_thread_deletion(plan)?))
-                }
-                Review::Bot(plan) => Ok(Undo::Bot(engine.apply_native_bot_deletion(plan)?)),
-                other => {
-                    self.sidebar_lifecycle.review = Some(other);
-                    anyhow::bail!("Prepare a fresh confirmation first")
-                }
+        let result = match review {
+            Review::Move(plan) => owner.apply_native_thread_move(plan).map(Undo::Move),
+            Review::Delete(plan) => owner.apply_native_thread_deletion(plan).map(Undo::Delete),
+            Review::Bot(plan) => owner.apply_native_bot_deletion(plan).map(Undo::Bot),
+            other => {
+                self.sidebar_lifecycle.review = Some(other);
+                Err(anyhow::anyhow!("Prepare a fresh confirmation first"))
             }
-        })();
+        };
+        drop(owner);
         self.sidebar_lifecycle.archive_notice_undo = None;
         match result {
             Ok(undo) => {
+                let affected = undo.thread_ids();
                 self.sidebar_lifecycle.undo = Some(undo);
                 self.sidebar_lifecycle.undo_stamp = inbox_undo::stamp();
                 self.sidebar_lifecycle.notice_visible = true;
@@ -365,7 +440,9 @@ impl Coincide {
                     "Completed. Undo is available while the reviewed content remains unchanged."
                         .into();
                 self.refresh(cx);
-                if let Some(id) = self.selected.as_ref().map(|thread| text(thread, "id")) {
+                if let Some(id) = self.selected.as_ref().map(|thread| text(thread, "id"))
+                    && affected.iter().any(|other| other.eq_ignore_ascii_case(&id))
+                {
                     if self.threads.iter().any(|thread| thread.id == id) {
                         self.select(&id, window, cx);
                     } else {
@@ -400,8 +477,19 @@ impl Coincide {
         if self.media.shutdown_requested || self.media.close_requested {
             return;
         }
-        if !self.flush_pending_drafts() {
-            self.sidebar_lifecycle.status = "Save pending drafts before Undo.".into();
+        self.collect_draft_results();
+        let affected = self
+            .sidebar_lifecycle
+            .undo
+            .as_ref()
+            .map(Undo::thread_ids)
+            .unwrap_or_default();
+        if affected
+            .iter()
+            .any(|id| self.pending_drafts.contains_key(id))
+        {
+            self.sidebar_lifecycle.status =
+                "Save the affected draft before undoing this change.".into();
             self.sidebar_lifecycle.notice_visible = true;
             self.sidebar_lifecycle.notice_undo = self.sidebar_lifecycle.undo.is_some();
             cx.notify();
@@ -425,7 +513,9 @@ impl Coincide {
                 self.sidebar_lifecycle.undo = None;
                 self.sidebar_lifecycle.status = "Restored.".into();
                 self.refresh(cx);
-                if let Some(id) = self.selected.as_ref().map(|thread| text(thread, "id")) {
+                if let Some(id) = self.selected.as_ref().map(|thread| text(thread, "id"))
+                    && affected.iter().any(|other| other.eq_ignore_ascii_case(&id))
+                {
                     self.select(&id, window, cx);
                 }
             }
@@ -463,7 +553,12 @@ impl Coincide {
                  "Choose what happens to its conversations. Linked scheduled tasks will be removed.".to_owned())
             }
             Review::Waiting(_) => (
-                "Review unavailable".into(),
+                match self.sidebar_lifecycle.wait {
+                    ReviewWait::Retry => "Preparing review",
+                    ReviewWait::Running => "Conversation still running",
+                    ReviewWait::Blocked => "Review unavailable",
+                }
+                .into(),
                 self.sidebar_lifecycle.status.clone(),
             ),
             Review::Archive(_, title) => (
@@ -523,23 +618,27 @@ impl Coincide {
             }
             Review::Waiting(intent) => {
                 let intent = intent.clone();
-                actions = actions
-                    .child(
-                        Button::new("sidebar-lifecycle-retry")
-                            .label("Retry review")
-                            .disabled(self.sidebar_lifecycle.stopping)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.prepare_sidebar_lifecycle(intent.clone(), cx)
-                            })),
-                    )
-                    .child(
-                        Button::new("sidebar-lifecycle-stop")
-                            .label("Stop and wait for cleanup")
-                            .disabled(self.sidebar_lifecycle.stopping)
-                            .on_click(
-                                cx.listener(|this, _, _, cx| this.stop_sidebar_lifecycle(cx)),
-                            ),
-                    );
+                match self.sidebar_lifecycle.wait {
+                    ReviewWait::Blocked => {
+                        actions = actions.child(
+                            Button::new("sidebar-lifecycle-retry")
+                                .label("Retry review")
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.prepare_sidebar_lifecycle(intent.clone(), cx)
+                                })),
+                        );
+                    }
+                    ReviewWait::Running => {
+                        actions = actions.child(
+                            Button::new("sidebar-lifecycle-stop")
+                                .label("Stop selected conversations")
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.stop_sidebar_lifecycle(cx)),
+                                ),
+                        );
+                    }
+                    ReviewWait::Retry => {}
+                }
             }
             _ => {
                 let is_delete = matches!(review, Review::Delete(_) | Review::Bot(_));
@@ -555,6 +654,8 @@ impl Coincide {
                 actions = actions.child(
                     Button::new("sidebar-lifecycle-confirm")
                         .label(label)
+                        .loading(self.sidebar_lifecycle.confirm_retry)
+                        .disabled(self.sidebar_lifecycle.confirm_retry)
                         .when(is_delete, |button| button.danger())
                         .when(!is_delete, |button| button.primary())
                         .on_click(cx.listener(|this, _, window, cx| {
@@ -779,4 +880,14 @@ mod confirmation_policy_tests {
         assert!(!state.review_visible());
         assert!(!state.archive_for_other("thread-b"));
     }
+}
+
+#[cfg(test)]
+#[::core::prelude::v1::test]
+fn lifecycle_wait_offers_stop_only_for_a_running_target() {
+    assert!(wait_mode(&EngineBusy.into(), false) == ReviewWait::Retry);
+    assert!(wait_mode(&ConversationCleanup::Running.into(), false) == ReviewWait::Running);
+    assert!(wait_mode(&ConversationCleanup::Running.into(), true) == ReviewWait::Retry);
+    assert!(wait_mode(&ConversationCleanup::Waiting.into(), false) == ReviewWait::Retry);
+    assert!(wait_mode(&ConversationCleanup::Failed.into(), false) == ReviewWait::Blocked);
 }

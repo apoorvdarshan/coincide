@@ -342,7 +342,9 @@ fn archive_opt_out_cannot_bypass_owned_provider_cleanup_after_semantic_finished(
         Event::Finished
     ));
     let worker = session.worker_completion();
-    engine.provider_workers.push(worker.clone());
+    engine
+        .provider_workers
+        .push((Some(ids[0].clone()), worker.clone()));
     assert!(engine.apply_thread_flags(&plan).is_err());
     assert!(
         engine

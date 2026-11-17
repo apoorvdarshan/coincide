@@ -175,7 +175,7 @@ mod sidebar_lifecycle_api;
 mod thread_delete_api;
 pub use sidebar_lifecycle_api::{PreparedThreadMove, ThreadMoveUndo};
 
-pub use thread_delete_api::{PreparedThreadDeletion, ThreadDeletionUndo};
+pub use thread_delete_api::{ConversationCleanup, PreparedThreadDeletion, ThreadDeletionUndo};
 #[path = "thread_idle_api.rs"]
 mod thread_idle_api;
 pub use thread_idle_api::NativeNewThread;
@@ -270,7 +270,8 @@ pub struct Engine {
     /// Runs whose provider has reported anything yet. The others are still
     /// starting, which the transcript's live line says ("Starting Claude…").
     answered_runs: HashSet<String>,
-    provider_workers: Vec<agent::WorkerCompletion>,
+    provider_workers: Vec<(Option<String>, agent::WorkerCompletion)>,
+    failed_thread_workers: HashSet<String>,
     background_workers: background_workers::State,
     provider_worker_outcomes: ProviderWorkersStatus,
     pub revision: u64,
@@ -490,6 +491,7 @@ impl Engine {
             run_clocks: HashMap::new(),
             answered_runs: HashSet::new(),
             provider_workers: Vec::new(),
+            failed_thread_workers: HashSet::new(),
             background_workers,
             provider_worker_outcomes: ProviderWorkersStatus::default(),
             revision: 0,
@@ -2028,7 +2030,8 @@ impl Engine {
     fn insert_running_for_turn(&mut self, id: String, run: Running, opener: Option<String>) {
         self.answered_runs.remove(&id);
         self.composer_commands.begin_run(&id);
-        self.provider_workers.push(run.session.worker_completion());
+        self.provider_workers
+            .push((Some(id.clone()), run.session.worker_completion()));
         self.run_clocks.insert(
             id.clone(),
             RunClock {
@@ -2116,11 +2119,17 @@ impl Engine {
     /// provider threads; completed observations fold into sticky counters here.
     pub fn provider_workers_status(&mut self) -> ProviderWorkersStatus {
         let totals = &mut self.provider_worker_outcomes;
-        self.provider_workers.retain(|worker| {
+        let failed = &mut self.failed_thread_workers;
+        self.provider_workers.retain(|(thread, worker)| {
             let counter = match worker.status() {
                 agent::WorkerThreadStatus::Running => return true,
                 agent::WorkerThreadStatus::Returned => &mut totals.returned,
-                agent::WorkerThreadStatus::Panicked => &mut totals.panicked,
+                agent::WorkerThreadStatus::Panicked => {
+                    if let Some(thread) = thread {
+                        failed.insert(thread.clone());
+                    }
+                    &mut totals.panicked
+                }
                 agent::WorkerThreadStatus::Unclassified => return true,
             };
             *counter = counter.saturating_add(1);
@@ -2132,10 +2141,34 @@ impl Engine {
                 + self
                     .provider_workers
                     .iter()
-                    .filter(|w| w.status() == agent::WorkerThreadStatus::Unclassified)
+                    .filter(|(_, worker)| {
+                        worker.status() == agent::WorkerThreadStatus::Unclassified
+                    })
                     .count() as u64,
             ..*totals
         }
+    }
+    pub(super) fn require_conversation_workers_idle(&mut self, ids: &[String]) -> Result<()> {
+        self.provider_workers_status();
+        let affected = |owner: &str| ids.iter().any(|id| id.eq_ignore_ascii_case(owner));
+        if self
+            .failed_thread_workers
+            .iter()
+            .any(|owner| affected(owner))
+        {
+            return Err(ConversationCleanup::Failed.into());
+        }
+        if self.runs.keys().any(|owner| affected(owner)) {
+            return Err(ConversationCleanup::Running.into());
+        }
+        if self
+            .provider_workers
+            .iter()
+            .any(|(owner, _)| owner.as_ref().is_some_and(|owner| affected(owner)))
+        {
+            return Err(ConversationCleanup::Waiting.into());
+        }
+        Ok(())
     }
     /// Request idle-host release and off-thread join after admission freeze.
     pub fn request_idle_host_shutdown(&mut self) -> Result<()> {
@@ -4148,7 +4181,7 @@ mod catalog_shutdown_adapter_tests {
             Event::Finished
         ));
         let worker = session.worker_completion();
-        engine.provider_workers.push(worker.clone());
+        engine.provider_workers.push((None, worker.clone()));
         engine.freeze_admissions();
         engine.request_model_catalog_shutdown().unwrap();
         assert!(

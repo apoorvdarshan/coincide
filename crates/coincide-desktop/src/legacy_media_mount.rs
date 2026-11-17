@@ -1137,6 +1137,15 @@ impl Coincide {
             .any(|(id, _)| self.media.owner.durable_ownership(*id).is_some());
         div().id("historical-media-surface").flex_1().min_h_0().min_w_0().flex().flex_col()
             .child(self.settings_subpage_header("Historical images", "historical-media-done", cx))
+            .when(!self.media.close_requested && !self.media.shutdown_requested, |view| {
+                view.child(div().px_4().pt_3().child(
+                    Button::new("historical-media-back")
+                        .ghost().compact().label("Back to Appshots")
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.navigate_settings_section(settings::SettingsSection::Appshots, window, cx)
+                        })),
+                ))
+            })
             .when(retained > 0 || !pending.is_empty(), |view| view.child(div().p_2().text_sm().child("Keep this app open until image recovery finishes.")))
             .when(self.media.close_requested||self.media.shutdown_requested,|view|view.child(div().p_2().child("Closing is paused until image work finishes and every receipt is saved and acknowledged.")))
             .when(!self.media.status.is_empty(), |view| view.child(div().px_4().pt_3().text_sm().child(self.media.status.clone())))

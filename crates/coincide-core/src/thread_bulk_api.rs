@@ -101,6 +101,18 @@ fn require_idle<'a>(
     Ok(())
 }
 impl Engine {
+    pub fn restore_native_archived_conversation(&mut self, id: &str) -> Result<()> {
+        self.require_admissions()?;
+        require_idle(
+            std::iter::once(id),
+            self.runs.keys().map(String::as_str),
+            self.unsaved_threads.keys().map(String::as_str),
+        )?;
+        self.store.restore_archived_conversation(id)?;
+        self.revision += 1;
+        Ok(())
+    }
+
     pub fn prepare_thread_flags(
         &mut self,
         ids: &[String],
@@ -130,9 +142,7 @@ impl Engine {
             .store
             .document("settings.json")?
             .is_some_and(|settings| settings["confirmBeforeArchivingThreads"] == false);
-        let workers = self.provider_workers_status();
-        plan.unconfirmed_archive &=
-            workers.running == 0 && workers.panicked == 0 && workers.unclassified == 0;
+        plan.unconfirmed_archive &= self.require_conversation_workers_idle(ids).is_ok();
         Ok(plan)
     }
     pub fn apply_thread_flags(&mut self, prepared: &PreparedThreadFlags) -> Result<ThreadFlagUndo> {
@@ -147,11 +157,12 @@ impl Engine {
             self.unsaved_threads.keys().map(String::as_str),
         )?;
         if prepared.unconfirmed_archive {
-            let workers = self.provider_workers_status();
-            ensure!(
-                workers.running == 0 && workers.panicked == 0 && workers.unclassified == 0,
-                "Wait for actual provider cleanup before archiving without confirmation"
-            );
+            let ids = prepared
+                .rows
+                .iter()
+                .map(|row| row.id.clone())
+                .collect::<Vec<_>>();
+            self.require_conversation_workers_idle(&ids)?;
         }
         self.store.apply_flag_rows_with_archive_preference(
             &prepared.rows,

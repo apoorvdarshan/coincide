@@ -9,6 +9,7 @@ pub(crate) struct BotLifecycle {
     before: BTreeMap<String, Option<Value>>,
     after: BTreeMap<String, Option<Value>>,
     version: DeleteVersion,
+    schedules_before: Option<Value>,
     pub chats_folder: Option<std::path::PathBuf>,
     pub task_count: usize,
 }
@@ -49,6 +50,56 @@ fn write_documents(db: &Connection, values: &BTreeMap<String, Option<Value>>) ->
     }
     Ok(())
 }
+fn bot_thread_ids(db: &Connection, bot: &str) -> Result<Vec<String>> {
+    let mut statement = db.prepare(
+        "SELECT id FROM threads WHERE lower(json_extract(document,'$.botID'))=lower(?1)
+            OR lower(json_extract(document,'$.rustBotContext.botId'))=lower(?1)
+         ORDER BY id LIMIT 129",
+    )?;
+    let ids = statement
+        .query_map([bot], |row| row.get(0))?
+        .collect::<rusqlite::Result<Vec<String>>>()?;
+    ensure!(
+        ids.len() <= 128,
+        "Review at most 128 bot conversations at a time"
+    );
+    Ok(ids)
+}
+fn validate_review(db: &Connection, plan: &BotLifecycle) -> Result<()> {
+    ensure!(
+        version(db)?.external == plan.version.external,
+        "Store changed after bot review"
+    );
+    let id = text(&plan.bot, "id");
+    ensure!(
+        bot_thread_ids(db, &id)?
+            .iter()
+            .map(String::as_str)
+            .eq(plan.rows.iter().map(|row| row.id.as_str())),
+        "The bot's conversations changed after review"
+    );
+    let mut statement = db.prepare(
+        "SELECT name FROM documents WHERE name GLOB 'rust-bot-context-*.json'
+            AND lower(json_extract(document,'$.botId'))=lower(?1) ORDER BY name",
+    )?;
+    let contexts = statement
+        .query_map([id], |row| row.get(0))?
+        .collect::<rusqlite::Result<Vec<String>>>()?;
+    ensure!(
+        contexts.iter().map(String::as_str).eq(plan
+            .before
+            .keys()
+            .filter(|name| name.starts_with("rust-bot-context-"))
+            .map(String::as_str)),
+        "The bot's conversation authorizations changed after review"
+    );
+    let mut expected = plan.before.clone();
+    expected
+        .entry("scheduled-tasks.json".into())
+        .or_insert_with(|| plan.schedules_before.clone());
+    document_cas(db, &expected)?;
+    rows_match(db, &plan.rows)
+}
 impl Store {
     /// A bot's own folder, Swift's `Bot.workingDirectory`: the folder the user
     /// chose for it, or home when none is set. A conversation of a bot that no
@@ -64,6 +115,9 @@ impl Store {
             .map(std::path::PathBuf::from)
             .filter(|folder| folder.is_absolute());
         Ok(Some(folder.unwrap_or_else(crate::terminal::launch::home)))
+    }
+    pub(crate) fn native_bot_thread_ids(&self, bot: &str) -> Result<Vec<String>> {
+        bot_thread_ids(self.connection()?, &Uuid::parse_str(bot)?.to_string())
     }
     pub(crate) fn prepare_bot_lifecycle(&self, id: &str, deleting: bool) -> Result<BotLifecycle> {
         let id = Uuid::parse_str(id)?;
@@ -91,14 +145,7 @@ impl Store {
             .position(|bot| Uuid::parse_str(&text(bot, "id")).ok() == Some(id))
             .context("Bot is no longer available")?;
         let bot = entries.remove(position);
-        let mut statement = self.connection()?.prepare("SELECT id FROM threads WHERE lower(json_extract(document,'$.botID'))=lower(?1) OR lower(json_extract(document,'$.rustBotContext.botId'))=lower(?1) ORDER BY id LIMIT 129")?;
-        let ids = statement
-            .query_map([id.to_string()], |row| row.get::<_, String>(0))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        ensure!(
-            ids.len() <= 128,
-            "Review at most 128 bot conversations at a time"
-        );
+        let ids = self.native_bot_thread_ids(&id.to_string())?;
         let rows = if ids.is_empty() {
             Vec::new()
         } else {
@@ -125,7 +172,7 @@ impl Store {
         });
         let task_count = previous - entries.len();
         if task_count > 0 {
-            before.insert("scheduled-tasks.json".into(), tasks_source);
+            before.insert("scheduled-tasks.json".into(), tasks_source.clone());
             after.insert("scheduled-tasks.json".into(), Some(tasks));
         }
         let mut chats_folder = None;
@@ -222,17 +269,13 @@ impl Store {
             before,
             after,
             version: start,
+            schedules_before: tasks_source,
             chats_folder,
             task_count,
         })
     }
     pub(crate) fn validate_bot_lifecycle(&self, plan: &BotLifecycle) -> Result<()> {
-        ensure!(
-            version(self.connection()?)? == plan.version,
-            "Store changed after bot review"
-        );
-        document_cas(self.connection()?, &plan.before)?;
-        rows_match(self.connection()?, &plan.rows)
+        validate_review(self.connection()?, plan)
     }
     pub(crate) fn apply_bot_lifecycle(&mut self, plan: BotLifecycle) -> Result<BotLifecycleUndo> {
         self.validate_bot_lifecycle(&plan)?;
@@ -240,12 +283,7 @@ impl Store {
         let tx = self
             .connection_mut()?
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        ensure!(
-            version(&tx)? == plan.version,
-            "Store changed after bot review"
-        );
-        document_cas(&tx, &plan.before)?;
-        rows_match(&tx, &plan.rows)?;
+        validate_review(&tx, &plan)?;
         if plan.deleting {
             delete_rows_in_transaction(&tx, &plan.rows, &token)?;
         } else {

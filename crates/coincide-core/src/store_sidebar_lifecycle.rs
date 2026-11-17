@@ -6,7 +6,7 @@ pub(crate) struct SidebarRow {
     pub source: String,
     pub target: String,
     projects: Value,
-    changes: u64,
+    revision: Option<Vec<u8>>,
     external: i64,
 }
 impl Store {
@@ -22,7 +22,7 @@ impl Store {
             "Conversation identity changed"
         );
         let db = self.connection()?;
-        let changes = db.total_changes();
+        let revision = super::store_thread_delete::thread_review_revision(db, &id)?;
         let external = db.query_row("PRAGMA data_version", [], |row| row.get(0))?;
         let raw: String =
             db.query_row("SELECT document FROM threads WHERE id=?1", [&id], |row| {
@@ -38,8 +38,7 @@ impl Store {
         );
         let projects = self.projects()?;
         ensure!(
-            db.total_changes() == changes
-                && db.query_row("PRAGMA data_version", [], |row| row.get::<_, i64>(0))? == external,
+            db.query_row("PRAGMA data_version", [], |row| row.get::<_, i64>(0))? == external,
             "Store changed while preparing review"
         );
         Ok(SidebarRow {
@@ -47,14 +46,14 @@ impl Store {
             source: raw,
             target: target.to_string(),
             projects,
-            changes,
+            revision,
             external,
         })
     }
     pub(crate) fn validate_sidebar_row(&self, row: &SidebarRow) -> Result<()> {
         let db = self.connection()?;
         ensure!(
-            db.total_changes() == row.changes
+            super::store_thread_delete::thread_review_revision(db, &row.id)? == row.revision
                 && db.query_row("PRAGMA data_version", [], |r| r.get::<_, i64>(0))? == row.external,
             "Store changed after native review"
         );
@@ -79,7 +78,7 @@ impl Store {
             .connection_mut()?
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         ensure!(
-            tx.total_changes() == row.changes
+            super::store_thread_delete::thread_review_revision(&tx, &row.id)? == row.revision
                 && tx.query_row("PRAGMA data_version", [], |r| r.get::<_, i64>(0))? == row.external,
             "Store changed while applying native review"
         );

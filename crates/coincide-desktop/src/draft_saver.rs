@@ -77,8 +77,8 @@ impl Saver {
         self.record_inner(thread, text, false);
     }
 
-    /// A navigation boundary waits for this save, without doing disk I/O on
-    /// the UI thread or waiting for the ordinary typing debounce.
+    /// Expediting a draft skips the normal typing debounce and keeps disk I/O
+    /// off the UI thread.
     pub(super) fn record_now(&mut self, thread: &str, text: &str) {
         self.record_inner(thread, text, true);
     }

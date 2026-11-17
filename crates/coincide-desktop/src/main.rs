@@ -2228,6 +2228,12 @@ impl Coincide {
         }
     }
     fn poll_computer_use(&mut self, cx: &mut Context<Self>) {
+        let visible = self.computer_use_settings_visible();
+        if let Some(mount) = &self.computer_use_mount {
+            mount
+                .panel()
+                .update(cx, |panel, _| panel.set_visible(visible));
+        }
         let selected = self.selected.as_ref().map(|thread| text(thread, "id"));
         let ready = if let Ok(mut engine) = self.engine.try_lock() {
             // An explicit pending open is processed by the native view before
@@ -3143,20 +3149,14 @@ impl Coincide {
             // Selecting the current thread cancels a queued navigation.
             self.pending_select = None;
         }
-        if let Some(previous) = previous.filter(|previous| previous != id)
-            && let Some(draft) = self.pending_drafts.get(&previous)
+        // The background saver owns old drafts by conversation ID. Keep its
+        // synchronous recovery fence only if the worker is unavailable.
+        if !self.draft_saver.available()
+            && let Some(previous) = previous.filter(|previous| previous != id)
+            && self.pending_drafts.contains_key(&previous)
         {
-            let expedite = self.pending_select.as_deref() != Some(id)
-                && draft.retry
-                && !self.pending_successor_waiting(&previous);
-            let value = draft.text.clone();
             self.pending_select = Some(id.to_owned());
-            if expedite && self.draft_saver.available() {
-                self.draft_saver.record_now(&previous, &value);
-            }
-            if !self.draft_saver.available() {
-                self.flush_pending_drafts();
-            }
+            self.save_pending_draft(&previous);
             if self
                 .pending_drafts
                 .get(&previous)
@@ -4474,6 +4474,15 @@ impl Coincide {
         // Normal typing and navigation never write a long transcript on the
         // main thread. Close and quit retain their explicit persistence fence.
         self.poll_draft_saves(cx);
+        if let Some(id) = self.pending_select.clone()
+            && self
+                .selected
+                .as_ref()
+                .is_none_or(|thread| text(thread, "id") != id)
+            && !self.thread_navigation.waiting(&id)
+        {
+            self.select(&id, window, cx);
+        }
         let drafts_saved = if self.media.close_requested
             || self.media.shutdown_requested
             || !self.draft_saver.available()
@@ -4708,6 +4717,7 @@ impl Coincide {
         }
         self.poll_window_chrome(window, cx);
         self.poll_sidebar_message_search(cx);
+        self.poll_archive_settings(cx);
         if self.settings_refresh_pending {
             self.refresh_settings(window, cx);
         }
@@ -7907,15 +7917,6 @@ impl Render for Coincide {
                 );
             }
         }
-        if let Some(id) = self.pending_select.clone()
-            && self
-                .selected
-                .as_ref()
-                .is_none_or(|thread| text(thread, "id") != id)
-            && !self.thread_navigation.waiting(&id)
-        {
-            self.select(&id, window, cx);
-        }
         let selected_id = self
             .selected
             .as_ref()
@@ -7993,10 +7994,6 @@ impl Render for Coincide {
             .relative()
             .flex_1()
             .min_h(px(120.))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _, _| this.record_appshot_interaction()),
-            )
             .child(
                 list(self.transcript_list.clone(), move |index, window, cx| {
                     entity.update(cx, |this, cx| {
@@ -8044,6 +8041,20 @@ impl Render for Coincide {
                 .into_any_element()
         } else if self.settings_in_main_window() {
             self.settings_surface(cx)
+        } else if (self.thread_navigation.target().is_some() || self.pending_new_thread.is_some())
+            && self.selected.is_some()
+        {
+            // Keep the existing transcript in place while loading the target.
+            // A separate interaction guard prevents actions against the old chat.
+            div()
+                .relative()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_h_0()
+                .child(transcript)
+                .child(chat_layout::modal_backdrop())
+                .into_any_element()
         } else if self.thread_navigation.target().is_some() || self.pending_new_thread.is_some() {
             div()
                 .flex_1()

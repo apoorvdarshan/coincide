@@ -49,6 +49,9 @@ impl BotDeletionUndo {
     pub fn conversation_count(&self) -> usize {
         self.receipt.thread_ids().len()
     }
+    pub fn thread_ids(&self) -> Vec<String> {
+        self.receipt.thread_ids()
+    }
 }
 fn folder_identity(path: &std::path::Path) -> Result<(PathBuf, crate::private_fs::Identity)> {
     ensure!(
@@ -66,14 +69,17 @@ fn validate_folder(folder: &(PathBuf, crate::private_fs::Identity)) -> Result<()
     Ok(())
 }
 impl Engine {
+    pub fn native_bot_thread_ids(&self, bot: &str) -> Result<Vec<String>> {
+        self.store.native_bot_thread_ids(bot)
+    }
     /// Native Stop-and-review only: requests cancellation of this selected
     /// bot's actual running conversations; the caller must still wait for joins.
     pub fn request_native_bot_stop(&mut self, bot: &str) -> Result<usize> {
-        let plan = self.store.prepare_bot_lifecycle(bot, true)?;
+        let ids = self.native_bot_thread_ids(bot)?;
         let mut stopped = 0;
-        for row in &plan.rows {
-            if self.runs.contains_key(&row.id) {
-                self.request_provider_stop(&row.id)?;
+        for id in ids {
+            if self.runs.contains_key(&id) {
+                self.request_provider_stop(&id)?;
                 stopped += 1;
             }
         }
@@ -85,6 +91,7 @@ impl Engine {
         disposition: BotConversationDisposition,
     ) -> Result<PreparedBotDeletion> {
         self.require_admissions()?;
+        self.require_conversation_workers_idle(&self.native_bot_thread_ids(bot)?)?;
         let plan = self
             .store
             .prepare_bot_lifecycle(bot, disposition == BotConversationDisposition::Delete)?;

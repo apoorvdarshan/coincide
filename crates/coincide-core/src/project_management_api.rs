@@ -15,16 +15,28 @@ pub(super) struct State {
     current: Option<(String, Instant, PreparedProject)>,
 }
 impl Engine {
-    fn project_change_admitted(&self, p: &PreparedProject) -> Result<()> {
+    fn project_change_admitted(&mut self, p: &PreparedProject) -> Result<()> {
         ensure!(!self.shutdown, "Application is closing");
         if p.action == ProjectAction::Rename {
             return Ok(());
         }
+        let ids = p
+            .threads
+            .iter()
+            .map(|(id, _)| id.clone())
+            .collect::<Vec<_>>();
+        self.require_conversation_workers_idle(&ids)?;
+        let affected = |id: &str| ids.iter().any(|owner| owner.eq_ignore_ascii_case(id));
         ensure!(
-            self.workspace_pending.is_empty()
-                && self.workspace_mutations.is_empty()
-                && self.steering_operations.is_empty(),
-            "Wait for pending workspace and provider changes before managing this project"
+            !self
+                .workspace_pending
+                .values()
+                .any(|(thread, _)| affected(thread))
+                && !self
+                    .steering_operations
+                    .values()
+                    .any(|operation| affected(&operation.thread)),
+            "Wait for this project's workspace and provider changes"
         );
         for (id, raw) in &p.threads {
             ensure!(

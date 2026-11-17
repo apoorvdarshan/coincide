@@ -33,7 +33,7 @@ impl Engine {
                 &self.composer_codex_executable()?,
             )?;
             let operation = agent::codex_profile_login::Operation::start(profile);
-            self.provider_workers.push(operation.completion());
+            self.provider_workers.push((None, operation.completion()));
             let status = operation.status();
             self.codex_profile_login = Some(operation);
             self.revision += 1;

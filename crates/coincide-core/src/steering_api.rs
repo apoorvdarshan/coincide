@@ -4,7 +4,7 @@ use super::*;
 use agent::codex_steering::{Outcome, Ticket};
 use std::sync::mpsc::TryRecvError;
 pub(super) struct Operation {
-    thread: String,
+    pub(super) thread: String,
     text: String,
     context: Value,
     images: Vec<crate::attachments::StoredImage>,
