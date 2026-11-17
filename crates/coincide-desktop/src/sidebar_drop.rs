@@ -29,6 +29,7 @@ impl Coincide {
         &mut self,
         drag: &ThreadDrag,
         project: &str,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if self.thread_bulk.mode
@@ -38,7 +39,7 @@ impl Coincide {
         {
             return;
         }
-        self.sidebar_move_to(drag.id.clone(), project.to_owned(), cx);
+        self.sidebar_move_to(drag.id.clone(), project.to_owned(), window, cx);
     }
     /// Swift's `ThreadActions.addProjects`: the dropped folders become
     /// projects, then the first opens at its latest conversation or a new one.

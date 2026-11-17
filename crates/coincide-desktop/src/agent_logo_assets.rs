@@ -5,38 +5,31 @@ use std::{
     sync::{Arc, Mutex, OnceLock},
 };
 
-// Registry icons are often monochrome currentColor templates. Keep their
-// silhouettes distinct with stable accents that remain legible in both themes.
-fn accent(id: &str, dark: bool) -> u32 {
-    const DARK: [u32; 8] = [
-        0xf4878f, 0xb8a1f4, 0x74cfcc, 0xefc27a, 0x8abaf5, 0xe9a6d0, 0xa5d49c, 0xb3c8e8,
-    ];
-    const LIGHT: [u32; 8] = [
-        0xb83e4a, 0x6545b0, 0x257f80, 0x986322, 0x3561a7, 0xa4467c, 0x4d823f, 0x506a93,
-    ];
-    let index = match id {
-        "amp-acp" => 0,
-        "auggie" | "qwen-code" => 1,
-        "autohand" => 2,
-        "bob" => 3,
-        "cline" | "deepseek-harness" | "gemini" => 4,
-        "codebuddy-code" => 5,
-        _ => {
-            let hash = id.bytes().fold(2_166_136_261_u32, |hash, byte| {
-                (hash ^ u32::from(byte)).wrapping_mul(16_777_619)
-            });
-            hash as usize % DARK.len()
-        }
-    };
-    if dark { DARK[index] } else { LIGHT[index] }
+// Only artwork published by the named provider may override a registry mark.
+// Source URLs and the two IBM Bob theme substitutions are documented beside
+// the files. Unknown or monochrome marks keep neutral, theme-readable ink.
+fn official_svg(id: &str, dark: bool) -> Option<&'static [u8]> {
+    Some(match id {
+        "amp-acp" => include_bytes!("../assets/agent-registry/brand/amp.svg"),
+        "bob" if dark => include_bytes!("../assets/agent-registry/brand/bob-dark.svg"),
+        "bob" => include_bytes!("../assets/agent-registry/brand/bob-light.svg"),
+        "codebuddy-code" => include_bytes!("../assets/agent-registry/brand/codebuddy.svg"),
+        "qwen-code" => include_bytes!("../assets/agent-registry/brand/qwen.svg"),
+        "kiro" => include_bytes!("../assets/agent-registry/brand/kiro.svg"),
+        "kilo" => include_bytes!("../assets/agent-registry/brand/kilo.svg"),
+        _ => return None,
+    })
 }
 
 fn colored_svg(id: &str, bytes: &[u8], dark: bool) -> Vec<u8> {
-    let color = format!("#{:06x}", accent(id, dark));
-    let svg = String::from_utf8_lossy(bytes).replace("currentColor", &color);
+    if let Some(official) = official_svg(id, dark) {
+        return official.to_vec();
+    }
+    let color = if dark { "#f4f4f4" } else { "#171717" };
+    let svg = String::from_utf8_lossy(bytes).replace("currentColor", color);
     // This bundled DeepSeek mark uses a white fill instead of currentColor.
     let svg = if id == "deepseek-harness" {
-        svg.replace("#fff", &color)
+        svg.replace("#fff", color)
     } else {
         svg
     };
@@ -56,12 +49,20 @@ pub(super) fn colored_image(id: &str, source: Arc<[u8]>, dark: bool) -> Arc<Imag
     {
         return image.clone();
     }
-    // GPUI's image renderer keeps the SVG's own fills and gradients. Replace
-    // only template ink, leaving any supplied multicolor artwork intact.
-    let image = Arc::new(Image::from_bytes(
-        ImageFormat::Svg,
-        colored_svg(id, &source, dark),
-    ));
+    // GPUI's image renderer keeps the SVG's own fills and gradients. Only
+    // monochrome template ink is adapted for readability on the selected theme.
+    let (format, bytes) = match id {
+        "gemini" => (
+            ImageFormat::Png,
+            include_bytes!("../assets/agent-registry/brand/gemini.png").to_vec(),
+        ),
+        "kimi-code" => (
+            ImageFormat::Png,
+            include_bytes!("../assets/agent-registry/brand/kimi-code.png").to_vec(),
+        ),
+        _ => (ImageFormat::Svg, colored_svg(id, &source, dark)),
+    };
+    let image = Arc::new(Image::from_bytes(format, bytes));
     images.insert(key, (source, image.clone()));
     image
 }
@@ -145,26 +146,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registry_templates_are_colored_in_both_themes_and_keep_embedded_colors() {
+    fn official_artwork_and_neutral_fallback_render_in_both_themes() {
         let renderer = gpui_kit::SvgRenderer::new(Arc::new(()));
-        let ids = [
+        for id in [
             "amp-acp",
-            "auggie",
-            "autohand",
             "bob",
-            "cline",
             "codebuddy-code",
-            "deepseek-harness",
-        ];
-        assert_eq!(
-            ids[..6]
-                .iter()
-                .map(|id| accent(id, true))
-                .collect::<std::collections::HashSet<_>>()
-                .len(),
-            6
-        );
-        for id in ids {
+            "qwen-code",
+            "kiro",
+            "kilo",
+        ] {
             for dark in [false, true] {
                 let bytes = colored_svg(id, bundled(id).unwrap(), dark);
                 let image = renderer.render_single_frame(&bytes, 1.).unwrap();
@@ -172,15 +163,45 @@ mod tests {
                     image.as_bytes(0).unwrap().chunks_exact(4).any(|pixel| {
                         pixel[3] > 100 && (pixel[0] != pixel[1] || pixel[1] != pixel[2])
                     }),
-                    "{id} must retain visible color in the {} theme",
+                    "{id} must retain its official artwork in the {} theme",
                     if dark { "dark" } else { "light" }
                 );
             }
         }
+        for id in [
+            "auggie",
+            "autohand",
+            "cline",
+            "deepseek-harness",
+            "new-agent",
+        ] {
+            let source = bundled(id).unwrap_or(br#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><path fill="currentColor" d="M0 0h16v16H0z"/></svg>"#);
+            for (dark, ink) in [(true, "#f4f4f4"), (false, "#171717")] {
+                let bytes = colored_svg(id, source, dark);
+                assert!(std::str::from_utf8(&bytes).unwrap().contains(ink));
+                renderer.render_single_frame(&bytes, 1.).unwrap();
+            }
+        }
+        assert!(
+            std::str::from_utf8(official_svg("qwen-code", false).unwrap())
+                .unwrap()
+                .contains("#082DFF")
+        );
+        assert!(
+            std::str::from_utf8(official_svg("bob", true).unwrap())
+                .unwrap()
+                .contains("#bc93fd")
+        );
+        assert!(
+            std::str::from_utf8(official_svg("bob", false).unwrap())
+                .unwrap()
+                .contains("#a16efb")
+        );
         let original = br##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><path fill="#25ad85" d="M0 0h8v16H0z"/><path fill="currentColor" d="M8 0h8v16H8z"/></svg>"##;
         let colored = colored_svg("new-agent", original, true);
         let text = std::str::from_utf8(&colored).unwrap();
         assert!(text.contains("#25ad85"));
+        assert!(text.contains("#f4f4f4"));
         assert!(!text.contains("currentColor"));
         renderer.render_single_frame(&colored, 1.).unwrap();
 

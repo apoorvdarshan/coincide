@@ -127,7 +127,7 @@ impl Coincide {
             if self.thread_bulk.mode {
                 self.thread_bulk.close_selection();
             }
-            self.sidebar_delete_threads(ids, cx);
+            self.sidebar_delete_threads(ids, window, cx);
             return true;
         }
         let Some(typed) = key

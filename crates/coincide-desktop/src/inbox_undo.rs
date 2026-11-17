@@ -148,6 +148,21 @@ impl Coincide {
             cx,
         );
     }
+
+    /// The notification must not undo a later archive of another conversation.
+    pub(super) fn undo_archive_from_notice(&mut self, id: &str, cx: &mut Context<Self>) {
+        if self
+            .inbox_undo
+            .archived
+            .as_ref()
+            .is_some_and(|receipt| receipt.archived && receipt.id.eq_ignore_ascii_case(id))
+        {
+            self.undo_archive(cx);
+        } else {
+            self.status = "That archive can no longer be undone here.".into();
+            cx.notify();
+        }
+    }
 }
 
 #[cfg(test)]

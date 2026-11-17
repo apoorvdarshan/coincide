@@ -232,6 +232,37 @@ impl Coincide {
         }
         self.sidebar_preference("collapsedSections", json!(collapsed), cx);
     }
+
+    pub(super) fn sidebar_preferences_notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let error = self.sidebar_preferences.error.as_ref()?;
+        Some(
+            div()
+                .id("sidebar-preferences-notice")
+                .w(px(360.))
+                .max_w_full()
+                .p_3()
+                .rounded(px(10.))
+                .border_1()
+                .border_color(self.color(0x29303d))
+                .bg(self.color(0x151922))
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(div().flex_1().min_w_0().text_sm().child(error.clone()))
+                .child(
+                    Button::new("sidebar-preferences-dismiss")
+                        .ghost()
+                        .compact()
+                        .icon(gpui_kit::assets::IconName::X)
+                        .accessibility_label("Dismiss notification")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.sidebar_preferences.error = None;
+                            cx.notify();
+                        })),
+                )
+                .into_any_element(),
+        )
+    }
 }
 #[cfg(test)]
 mod tests {

@@ -1559,15 +1559,18 @@ impl Coincide {
             appearance =
                 appearance.child(self.revealable(R::Appearance, self.appearance_picker(cx)));
             display = display
-                .child(self.setting_choices(
-                    "Number format",
-                    "numberFormat",
-                    setting("numberFormat", json!("system")),
-                    vec![
-                        ("System", json!("system")),
-                        ("International", json!("international")),
-                    ],
-                    cx,
+                .child(self.revealable(
+                    R::NumberFormat,
+                    self.setting_choices(
+                        "Number format",
+                        "numberFormat",
+                        setting("numberFormat", json!("system")),
+                        vec![
+                            ("System", json!("system")),
+                            ("International", json!("international")),
+                        ],
+                        cx,
+                    ),
                 ))
                 .child(self.revealable(R::FontSize, self.font_size_row()));
         }
@@ -1644,13 +1647,16 @@ impl Coincide {
         }
         if matches(S::Appearance, "pointing hand cursor links buttons") {
             count += 1;
-            appearance = appearance.child(self.setting_toggle(
-                "Pointing hand over clickable items",
-                "Buttons, links, tabs and list rows show the pointing hand, as on the web.",
-                "showsPointingHand",
-                true,
-                "setting-pointing-hand",
-                cx,
+            appearance = appearance.child(self.revealable(
+                R::PointingHand,
+                self.setting_toggle(
+                    "Pointing hand over clickable items",
+                    "Buttons, links, tabs and list rows show the pointing hand, as on the web.",
+                    "showsPointingHand",
+                    true,
+                    "setting-pointing-hand",
+                    cx,
+                ),
             ));
         }
         workspace = choice_rows(
@@ -1675,13 +1681,16 @@ impl Coincide {
             "terminal translucent background blur transparent",
         ) {
             count += 1;
-            workspace = workspace.child(self.setting_toggle(
-                "Translucent terminal",
-                "The desktop shows through the terminal's background, blurred.",
-                "terminalTranslucentBackground",
-                false,
-                "setting-terminal-translucent",
-                cx,
+            workspace = workspace.child(self.revealable(
+                R::TerminalTranslucent,
+                self.setting_toggle(
+                    "Translucent terminal",
+                    "The desktop shows through the terminal's background, blurred.",
+                    "terminalTranslucentBackground",
+                    false,
+                    "setting-terminal-translucent",
+                    cx,
+                ),
             ));
         }
         if matches(
@@ -1692,11 +1701,13 @@ impl Coincide {
             workspace = workspace.child(self.revealable(R::OpenIn, self.open_target_settings(cx)));
         }
         if filtering == S::General {
-            content = content
-                .gap_4()
-                .child(self.settings_group("Appearance", appearance))
-                .child(self.settings_group("Display & text", display))
-                .child(self.settings_group("Workspace", workspace));
+            use general_settings::Page;
+            content = match self.general_settings.page {
+                Page::Appearance => content.child(self.settings_card(appearance)),
+                Page::Text => content.child(self.settings_card(display)),
+                Page::Workspace => content.child(self.settings_card(workspace)),
+                _ => content,
+            };
         } else if matches(S::Appearance, "") {
             content = content.child(appearance).child(display).child(workspace);
         } else if matches(S::Conversation, "") {
@@ -1812,12 +1823,15 @@ impl Coincide {
             count += 1;
             let default_browser = setting("opensLinksInDefaultBrowser", json!(false)) == true;
             links = links
-                .child(self.setting_choices(
-                    "Open links in your default browser",
-                    "opensLinksInDefaultBrowser",
-                    json!(default_browser),
-                    vec![("On", json!(true)), ("Off", json!(false))],
-                    cx,
+                .child(self.revealable(
+                    R::OpenLinks,
+                    self.setting_choices(
+                        "Open links in your default browser",
+                        "opensLinksInDefaultBrowser",
+                        json!(default_browser),
+                        vec![("On", json!(true)), ("Off", json!(false))],
+                        cx,
+                    ),
                 ))
                 .child(
                     div()
@@ -1833,10 +1847,14 @@ impl Coincide {
         }
         if matches(S::Conversation, "") {
             content = if filtering == S::General {
-                content
-                    .child(self.settings_group("Chat", conversation))
-                    .child(self.settings_group("Safety & shortcuts", safety))
-                    .child(self.settings_group("Links", links))
+                match self.general_settings.page {
+                    general_settings::Page::Chat => content
+                        .gap_4()
+                        .child(self.settings_card(conversation))
+                        .child(self.settings_card(links)),
+                    general_settings::Page::Safety => content.child(self.settings_card(safety)),
+                    _ => content,
+                }
             } else {
                 content.child(conversation).child(safety).child(links)
             };
@@ -1954,20 +1972,51 @@ impl Coincide {
         }
         if matches(S::Automation, "") {
             content = if filtering == S::General {
-                content
-                    .child(self.settings_group("Notifications & power", automation))
-                    .child(self.settings_group("Remote & integrations", integrations))
+                match self.general_settings.page {
+                    general_settings::Page::Notifications => {
+                        content.child(self.settings_card(automation))
+                    }
+                    general_settings::Page::Advanced => {
+                        content.child(self.settings_card(integrations))
+                    }
+                    _ => content,
+                }
             } else {
                 content.child(automation).child(integrations)
             };
         }
-        if filtering == S::General {
-            content = content.child(self.restore_general_defaults_row(cx));
+        if filtering == S::General && self.general_settings.page == general_settings::Page::Advanced
+        {
+            content = content
+                .child(self.revealable(R::RestoreDefaults, self.restore_general_defaults_row(cx)));
         }
         if count == 0 {
             content = content.child(div().p_3().child(
                 "No matching settings in this section. Choose All settings or change the search.",
             ));
+        }
+        let scroll_key = if filtering == S::General {
+            self.general_settings.page.scroll_key()
+        } else {
+            filtering.id()
+        };
+        let mut pages = div().flex().flex_wrap().gap_1();
+        for page in general_settings::Page::ALL {
+            pages = pages.child(
+                Button::new(SharedString::from(format!(
+                    "general-page-{}",
+                    page.scroll_key()
+                )))
+                .ghost()
+                .compact()
+                .selected(self.general_settings.page == page)
+                .label(page.label())
+                .accessibility_label(format!("General: {}", page.label()))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.general_settings.page = page;
+                    cx.notify();
+                })),
+            );
         }
         div()
             .id("settings-detail-form")
@@ -1978,9 +2027,19 @@ impl Coincide {
             .flex()
             .flex_col()
             .child(self.settings_subpage_header(filtering.label(), "settings-done", cx))
+            .when(filtering == S::General, |view| {
+                view.child(
+                    div()
+                        .px_5()
+                        .py_2()
+                        .border_b_1()
+                        .border_color(self.color(0x29303d))
+                        .child(pages),
+                )
+            })
             .child(
                 self.settings_scroll.frame(
-                    filtering.id(),
+                    scroll_key,
                     div()
                         .id("settings-results")
                         .flex_1()

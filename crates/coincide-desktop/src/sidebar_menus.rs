@@ -490,7 +490,7 @@ impl Coincide {
                     self.open_schedule_editor(None, window, cx);
                 }
             }
-            ThreadAction::Move(target) => self.sidebar_move_to(id.to_owned(), target, cx),
+            ThreadAction::Move(target) => self.sidebar_move_to(id.to_owned(), target, window, cx),
             ThreadAction::OpenIn(_) | ThreadAction::Reveal | ThreadAction::CopyPath => {
                 if let Some(folder) = self.thread_folder(id) {
                     self.sidebar_folder_action(folder, action, window, cx);
@@ -547,7 +547,7 @@ impl Coincide {
                     self.set_archived(id, true, cx);
                 }
             }
-            ThreadAction::Delete => self.sidebar_delete_review(id.to_owned(), cx),
+            ThreadAction::Delete => self.sidebar_delete_review(id.to_owned(), window, cx),
         }
     }
 
@@ -579,7 +579,7 @@ impl Coincide {
         &mut self,
         ids: &[String],
         action: BulkAction,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if self.media.shutdown_requested || self.media.close_requested {
@@ -592,6 +592,7 @@ impl Coincide {
                 } else {
                     ThreadFlagAction::Restore
                 },
+                window,
                 cx,
             ),
             BulkAction::Settle(settled) => {
@@ -601,7 +602,7 @@ impl Coincide {
             }
             BulkAction::Delete => {
                 self.thread_bulk.close_selection();
-                self.sidebar_delete_threads(ids.to_vec(), cx);
+                self.sidebar_delete_threads(ids.to_vec(), window, cx);
             }
         }
     }

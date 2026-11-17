@@ -67,6 +67,39 @@ fn filter_project_route_and_summary_changes_revoke_review_without_selecting_a_co
     assert!(state.picked.is_empty());
 }
 #[::core::prelude::v1::test]
+fn cancelling_a_bulk_review_revokes_it_without_discarding_the_selection() {
+    let root = std::env::temp_dir().join(format!("coincide-bulk-cancel-{}", uuid::Uuid::new_v4()));
+    let mut store = Store::open(&root.join("state.sqlite")).unwrap();
+    let thread = store
+        .new_thread("00000000-0000-0000-0000-000000000000")
+        .unwrap();
+    let id = text(&thread, "id");
+    let mut engine = Engine::new(store);
+    let prepared = engine
+        .prepare_thread_flags(&[id.clone()], Action::Pin)
+        .unwrap();
+    let mut state = State::default();
+    state.sync(Binding {
+        rows: vec![(id.clone(), false, false)],
+        available: true,
+        ..Default::default()
+    });
+    state.mode = true;
+    state.toggle(&id).unwrap();
+    state.review = Some(Arc::new(prepared));
+    state.status = "Review the selected conversations".into();
+    let generation = state.epoch.load(Ordering::Acquire);
+
+    state.cancel_review();
+
+    assert!(state.review.is_none());
+    assert!(state.status.is_empty());
+    assert!(state.epoch.load(Ordering::Acquire) > generation);
+    assert!(state.mode && state.picked.contains(&id));
+    drop(engine);
+    std::fs::remove_dir_all(root).unwrap();
+}
+#[::core::prelude::v1::test]
 fn revoked_before_admission_has_zero_effects_and_actual_join_remains_owned() {
     let mut state = State::default();
     state.sync(binding(1));

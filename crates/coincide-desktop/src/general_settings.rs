@@ -12,6 +12,53 @@ use settings::{PALETTES, Palette};
 /// Swift's FontSizeRow slider range. Keyboard commands keep their own steps.
 const FONT_RANGE: (f32, f32) = (11., 20.);
 
+/// Short, independently scrollable pages within General. These describe the
+/// existing preferences; changing pages does not change any saved setting.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum Page {
+    #[default]
+    Appearance,
+    Text,
+    Workspace,
+    Chat,
+    Safety,
+    Notifications,
+    Advanced,
+}
+impl Page {
+    pub(super) const ALL: [Self; 7] = [
+        Self::Appearance,
+        Self::Text,
+        Self::Workspace,
+        Self::Chat,
+        Self::Safety,
+        Self::Notifications,
+        Self::Advanced,
+    ];
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Self::Appearance => "Appearance",
+            Self::Text => "Text",
+            Self::Workspace => "Workspace",
+            Self::Chat => "Chat",
+            Self::Safety => "Safety",
+            Self::Notifications => "Notifications",
+            Self::Advanced => "Advanced",
+        }
+    }
+    pub(super) fn scroll_key(self) -> &'static str {
+        match self {
+            Self::Appearance => "general-appearance",
+            Self::Text => "general-text",
+            Self::Workspace => "general-workspace",
+            Self::Chat => "general-chat",
+            Self::Safety => "general-safety",
+            Self::Notifications => "general-notifications",
+            Self::Advanced => "general-advanced",
+        }
+    }
+}
+
 /// What Swift's `restoreDefaults(in:)` resets. Clearing a key lets each app read
 /// its own default, so this app keeps its safer access fallback.
 const RESTORED_KEYS: &[&str] = &[
@@ -167,6 +214,7 @@ impl CommandLineStatus {
 }
 
 pub(super) struct State {
+    pub(super) page: Page,
     font: Entity<SliderState>,
     command_line: CommandLineStatus,
     /// Theme grids opened by their row: dark, light.
@@ -179,6 +227,7 @@ pub(super) struct State {
 impl State {
     pub(super) fn new(cx: &mut Context<Coincide>) -> Self {
         let mut state = Self {
+            page: Page::default(),
             font: cx.new(|_| {
                 SliderState::new()
                     .min(FONT_RANGE.0)

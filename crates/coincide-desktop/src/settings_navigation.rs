@@ -7,6 +7,7 @@ use settings::SettingsSection as Section;
 
 #[derive(Default)]
 pub(super) struct State {
+    pub(super) appshots_page: appshots_settings::Page,
     width: Option<f32>,
     drag: Option<(f32, f32)>,
     pub(super) agent_view: Value,
@@ -506,7 +507,7 @@ impl Coincide {
             None => label.into(),
         })
         .w_full()
-        .h(px(38.))
+        .h(px(34.))
         .rounded(px(10.))
         .ghost()
         .when(selected, |button| button.bg(self.color(0x202a3b)))
@@ -570,53 +571,24 @@ impl Coincide {
 
     pub(super) fn settings_surface(&self, cx: &mut Context<Self>) -> AnyElement {
         let mut navigation = div().flex().flex_col().gap_1();
-        let groups: &[(&str, &[Section])] = &[
-            (
-                "Workspace",
-                &[
-                    Section::General,
-                    Section::Models,
-                    Section::Usage,
-                    Section::Instructions,
-                ],
-            ),
-            (
-                "Tools",
-                &[
-                    Section::Keyboard,
-                    Section::Voice,
-                    Section::Browser,
-                    Section::ComputerUse,
-                    Section::Appshots,
-                ],
-            ),
-            ("Saved data", &[Section::Archive, Section::Media]),
-        ];
-        for (title, sections) in groups {
-            navigation = navigation.child(
-                div()
-                    .mt_2()
-                    .px_2()
-                    .text_xs()
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(self.color(0xe4e9f2).opacity(0.56))
-                    .child(*title),
-            );
-            for section in *sections {
-                navigation =
-                    navigation.child(self.settings_navigation_row(*section, section.label(), cx));
-            }
+        for section in [
+            Section::General,
+            Section::Models,
+            Section::Usage,
+            Section::Instructions,
+            Section::Keyboard,
+            Section::Voice,
+            Section::Browser,
+            Section::ComputerUse,
+            Section::Appshots,
+            Section::Archive,
+            Section::Media,
+        ] {
+            navigation =
+                navigation.child(self.settings_navigation_row(section, section.label(), cx));
         }
-        navigation = navigation
-            .child(
-                div()
-                    .mt_3()
-                    .px_2()
-                    .text_xs()
-                    .text_color(self.color(0xe4e9f2).opacity(0.6))
-                    .child("Providers"),
-            )
-            .child(self.settings_navigation_row(Section::Accounts, "Overview", cx));
+        navigation =
+            navigation.child(self.settings_navigation_row(Section::Accounts, "Providers", cx));
         for provider in coincide_core::provider_catalog::provider_catalog() {
             let selected = self
                 .selected
@@ -637,7 +609,7 @@ impl Coincide {
                 cx,
             ));
         }
-        navigation = navigation.child(div().mt_3().child(self.settings_navigation_row(
+        navigation = navigation.child(div().child(self.settings_navigation_row(
             Section::About,
             "About",
             cx,
