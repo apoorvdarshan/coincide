@@ -168,6 +168,7 @@ mod terminal_layout;
 mod terminal_selection;
 mod terminal_workspace;
 mod thread_bulk;
+mod thread_navigation;
 mod tool_detail;
 mod transcript;
 mod transcript_find;
@@ -232,6 +233,7 @@ struct PendingNewThread {
     project: String,
     based_on: Option<(std::path::PathBuf, String)>,
     source: Option<String>,
+    generation: u64,
 }
 impl PendingNewThread {
     fn is_current(&self, selected: Option<&str>, requested: Option<&str>) -> bool {
@@ -515,13 +517,10 @@ fn find_snapshot_current(
         && generation == current_generation
         && find_source_matches(thread, sources)
 }
-fn transcript_find_shortcut_routes(
-    thread: Option<&Value>,
-    browser_panels: &std::collections::HashSet<String>,
-) -> bool {
+fn transcript_find_shortcut_routes(thread: Option<&Value>, browser_focused: bool) -> bool {
     thread
         .and_then(|thread| thread["id"].as_str())
-        .is_some_and(|id| !browser_panels.contains(id))
+        .is_some_and(|_| !browser_focused)
 }
 fn consume_open_activation(requested: &mut Option<String>, selected: &str) -> bool {
     if requested.as_deref() == Some(selected) {
@@ -783,7 +782,11 @@ struct Coincide {
     /// A conversation the user asked for while the engine was busy. Retried
     /// each tick instead of failing with "App is busy".
     pending_select: Option<String>,
+    thread_navigation: thread_navigation::State,
+    opening_thread_details: Option<String>,
     pending_new_thread: Option<PendingNewThread>,
+    new_thread_generation: Arc<std::sync::atomic::AtomicU64>,
+    new_thread_inflight: Option<u64>,
     /// Text a refused send puts back in the composer on the next frame, where
     /// a window is available to edit the field.
     restore_composer: Option<(String, String)>,
@@ -1250,7 +1253,11 @@ impl Coincide {
                 .then(|| (id.clone(), draft.text.clone()))
         });
         if let Some((id, text)) = next {
-            self.draft_saver.record(&id, &text);
+            if self.pending_new_thread.is_some() || self.thread_navigation.target().is_some() {
+                self.draft_saver.record_now(&id, &text);
+            } else {
+                self.draft_saver.record(&id, &text);
+            }
         }
     }
     fn pending_successor_waiting(&self, id: &str) -> bool {
@@ -2086,7 +2093,11 @@ impl Coincide {
             reply_media_cache: Default::default(),
             search,
             pending_select: None,
+            thread_navigation: Default::default(),
+            opening_thread_details: None,
             pending_new_thread: None,
+            new_thread_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            new_thread_inflight: None,
             restore_composer: None,
             pending_follow_up: None,
             pending_follow_up_backlog: Default::default(),
@@ -2980,7 +2991,107 @@ impl Coincide {
         cx.notify();
         complete
     }
+    /// Open a sidebar conversation without parsing its transcript on the UI
+    /// thread. The latest requested row wins if several reads finish out of order.
+    fn navigate_to_thread(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if self.media.shutdown_requested || self.media.close_requested {
+            return;
+        }
+        self.startup_selection_pending = false;
+        self.cancel_pending_new_thread();
+        self.dismiss_palette(window, cx);
+        self.dismiss_find(window, cx);
+        self.session_import_open = false;
+        self.hide_inline_settings();
+        if self
+            .created_bot_thread_to_focus
+            .as_deref()
+            .is_some_and(|target| target != id)
+        {
+            self.created_bot_thread_to_focus = None;
+        }
+        if self
+            .selected
+            .as_ref()
+            .is_some_and(|thread| thread["id"] == id)
+        {
+            self.thread_navigation.cancel();
+            self.pending_select = None;
+            cx.notify();
+            return;
+        }
+        let generation = self.thread_navigation.begin(id);
+        self.pending_select = Some(id.to_owned());
+        if let Some(previous) = self.selected.as_ref().map(|thread| text(thread, "id"))
+            && let Some(draft) = self.pending_drafts.get(&previous)
+            && draft.retry
+            && !self.pending_successor_waiting(&previous)
+            && self.draft_saver.available()
+        {
+            self.draft_saver.record_now(&previous, &draft.text);
+        }
+        let engine = self.engine.clone();
+        let requested = id.to_owned();
+        let worker_id = requested.clone();
+        let cancellation = self.thread_navigation.cancellation();
+        let work = cx.background_executor().spawn(async move {
+            thread_navigation::read(&engine, &worker_id, &cancellation, generation)
+        });
+        let owner = self.main_window;
+        let task = cx.spawn_in(window, async move |this, cx| {
+            let result = work.await;
+            let _ = main_window_poll::update(owner, &this, cx, |this, window, cx| {
+                if !this.thread_navigation.matches(generation, &requested)
+                    || this.media.shutdown_requested
+                    || this.media.close_requested
+                {
+                    return;
+                }
+                match result {
+                    Ok(Some(thread)) => {
+                        if this
+                            .thread_navigation
+                            .finish(generation, &requested, thread)
+                        {
+                            this.select(&requested, window, cx);
+                        } else {
+                            this.thread_navigation.cancel();
+                            this.pending_select = None;
+                            this.status = "Unable to open conversation: the result changed.".into();
+                        }
+                    }
+                    Ok(None) => {
+                        this.thread_navigation.cancel();
+                        this.pending_select = None;
+                    }
+                    Err(error) => {
+                        this.thread_navigation.cancel();
+                        this.pending_select = None;
+                        this.status = format!("Unable to open conversation: {error}");
+                    }
+                }
+                cx.notify();
+            });
+        });
+        self.navigation_tasks.push(task);
+        cx.notify();
+    }
     fn select(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .pending_new_thread
+            .as_ref()
+            .is_some_and(|pending| pending.source.as_deref() != Some(id))
+        {
+            self.cancel_pending_new_thread();
+        }
+        if self
+            .thread_navigation
+            .target()
+            .is_some_and(|target| target != id)
+        {
+            self.thread_navigation.cancel();
+            self.pending_select = None;
+        }
         self.collect_draft_results();
         let previous = self.selected.as_ref().map(|thread| text(thread, "id"));
         if previous.as_deref() == Some(id) && self.pending_select.as_deref() != Some(id) {
@@ -3001,6 +3112,19 @@ impl Coincide {
             if !self.draft_saver.available() {
                 self.flush_pending_drafts();
             }
+            if self
+                .pending_drafts
+                .get(&previous)
+                .is_some_and(|draft| draft.failed)
+                && self.thread_navigation.target() == Some(id)
+            {
+                self.thread_navigation.cancel();
+                self.pending_select = None;
+                self.status =
+                    "The current draft could not be saved; it remains in the composer.".into();
+                cx.notify();
+                return;
+            }
             if self.pending_drafts.contains_key(&previous) {
                 // A late write for the old thread must not land after the new
                 // thread starts sending. Retry navigation when the save has a receipt.
@@ -3014,7 +3138,14 @@ impl Coincide {
         self.dismiss_find(window, cx);
         self.credential_panel
             .update(cx, |panel, cx| panel.cancel(cx));
-        match call(&self.engine, "threads.read", json!({"threadId":id})) {
+        if self.thread_navigation.waiting(id) {
+            return;
+        }
+        let loaded = match self.thread_navigation.take(id) {
+            Some(thread) => Ok(thread),
+            None => call(&self.engine, "threads.read", json!({"threadId":id})),
+        };
+        match loaded {
             Err(error) if engine_busy(&error) => {
                 // Opening a conversation must never fail because a turn or a
                 // save holds the engine for a moment: remember the target and
@@ -3024,6 +3155,7 @@ impl Coincide {
                 return;
             }
             Ok(mut v) => {
+                let focus_composer = self.thread_navigation.should_focus_composer(id);
                 let changing_thread = self
                     .selected
                     .as_ref()
@@ -3032,6 +3164,7 @@ impl Coincide {
                     match self.inspector_follow.prepare_destination(&self.engine, id) {
                         Ok(true) => {}
                         Ok(false) => {
+                            self.thread_navigation.put_back(id, v);
                             self.pending_select = Some(id.to_owned());
                             cx.notify();
                             return;
@@ -3082,6 +3215,9 @@ impl Coincide {
                 if self.pending_select.as_deref() == Some(id) {
                     self.pending_select = None;
                 }
+                if self.thread_navigation.target() == Some(id) {
+                    self.thread_navigation.cancel();
+                }
                 self.transcript_count = v["items"].as_array().map_or(0, Vec::len);
                 self.transcript_list.reset(self.transcript_count);
                 self.expanded.clear();
@@ -3108,6 +3244,8 @@ impl Coincide {
                     self.suspend_inspector_presentation(cx);
                 }
                 self.replace_selected_thread(Some(v));
+                self.turn_changes = turn_changes::TurnChanges::default();
+                self.opening_thread_details = Some(id.to_owned());
                 if window.is_window_active()
                     && window.visibility().is_visible()
                     && let Ok(thread) = uuid::Uuid::parse_str(id)
@@ -3115,7 +3253,6 @@ impl Coincide {
                     let _ = self.notification_panel.read(cx).mark_seen(thread);
                     self.remote_panel.read(cx).desktop_seen(thread);
                 }
-                self.refresh_turn_changes();
                 if self.sidebar_preferences.document["unseen"][id].is_string() {
                     self.sidebar_thread_marker("unseen", id, None, cx);
                 }
@@ -3181,8 +3318,15 @@ impl Coincide {
                 self.composer_history = None;
                 self.composer
                     .update(cx, |input, cx| input.set_value(draft, window, cx));
+                if focus_composer {
+                    self.composer.read(cx).focus_handle(cx).focus(window, cx);
+                }
             }
-            Err(e) => self.status = format!("Unable to open conversation: {e}"),
+            Err(e) => {
+                self.thread_navigation.cancel();
+                self.pending_select = None;
+                self.status = format!("Unable to open conversation: {e}");
+            }
         }
         self.sync_transcription_binding(cx);
         self.refresh_queue(cx);
@@ -3534,7 +3678,7 @@ impl Coincide {
             return;
         }
         match command {
-            C::OpenThread { thread_id } => self.select(&thread_id, window, cx),
+            C::OpenThread { thread_id } => self.navigate_to_thread(&thread_id, window, cx),
             C::SelectProject { project_id } => self.selected_project = project_id,
             C::NewThread { project_id } => self.new_thread_in_project(
                 project_id
@@ -3637,6 +3781,11 @@ impl Coincide {
         cx: &mut Context<Self>,
     ) {
         self.startup_selection_pending = false;
+        self.cancel_pending_new_thread();
+        self.thread_navigation.cancel();
+        self.pending_select = None;
+        self.dismiss_palette(window, cx);
+        self.dismiss_find(window, cx);
         if project.eq_ignore_ascii_case(coincide_core::bot_runtime::BOTS_PROJECT_ID) {
             // A virtual bot group has no filesystem project or generic default
             // bot. The user chooses a saved bot in its existing native editor.
@@ -3651,17 +3800,60 @@ impl Coincide {
             cx.notify();
             return;
         }
+        self.session_import_open = false;
+        self.hide_inline_settings();
         let pending = PendingNewThread {
             project: project.to_owned(),
             based_on: based_on.clone(),
             source: self.selected.as_ref().map(|thread| text(thread, "id")),
+            generation: self
+                .new_thread_generation
+                .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+                .wrapping_add(1),
         };
-        let (cwd, branch) = match based_on {
+        if let Some(previous) = pending.source.as_deref()
+            && let Some(draft) = self.pending_drafts.get(previous)
+            && draft.retry
+            && !self.pending_successor_waiting(previous)
+            && self.draft_saver.available()
+        {
+            self.draft_saver.record_now(previous, &draft.text);
+        }
+        self.pending_new_thread = Some(pending);
+        self.try_start_pending_new_thread(window, cx);
+        cx.notify();
+    }
+    fn cancel_pending_new_thread(&mut self) {
+        if self.pending_new_thread.take().is_some() {
+            self.new_thread_generation
+                .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        }
+    }
+    fn try_start_pending_new_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(pending) = self.pending_new_thread.clone() else {
+            return;
+        };
+        if self.new_thread_inflight.is_some() {
+            return;
+        }
+        self.collect_draft_results();
+        if !self.pending_drafts.is_empty() {
+            if self.pending_drafts.values().any(|draft| draft.failed) {
+                self.cancel_pending_new_thread();
+                self.status =
+                    "The current draft could not be saved; it remains in the composer.".into();
+                cx.notify();
+            } else if !self.draft_saver.available() {
+                self.flush_pending_drafts();
+            }
+            return;
+        }
+        let (cwd, branch) = match pending.based_on.clone() {
             Some((folder, branch)) => (Some(folder), Some(branch)),
             None => (
                 self.projects
                     .iter()
-                    .find(|p| p["id"].as_str() == Some(project))
+                    .find(|p| p["id"].as_str() == Some(pending.project.as_str()))
                     .and_then(|p| p["path"].as_str())
                     .filter(|path| !path.is_empty())
                     .map(std::path::PathBuf::from)
@@ -3669,47 +3861,54 @@ impl Coincide {
                 None,
             ),
         };
-        if !self.flush_pending_drafts() {
-            if self.pending_drafts.values().any(|draft| draft.failed) {
-                self.pending_new_thread = None;
-                self.status =
-                    "The current draft could not be saved; it remains in the composer.".into();
+        let mut request = json!({"projectId":pending.project,"cwd":cwd});
+        if let Some(branch) = &branch {
+            request["branch"] = json!(branch);
+        }
+        let generation = pending.generation;
+        let current_generation = self.new_thread_generation.clone();
+        let engine = self.engine.clone();
+        self.new_thread_inflight = Some(generation);
+        let work = cx.background_executor().spawn(async move {
+            thread_navigation::create(&engine, &request, &current_generation, generation)
+        });
+        let owner = self.main_window;
+        let task = cx.spawn_in(window, async move |this, cx| {
+            let result = work.await;
+            let _ = main_window_poll::update(owner, &this, cx, |this, window, cx| {
+                if this.new_thread_inflight == Some(generation) {
+                    this.new_thread_inflight = None;
+                }
+                if this
+                    .pending_new_thread
+                    .as_ref()
+                    .is_none_or(|request| request.generation != generation)
+                    || this.media.shutdown_requested
+                    || this.media.close_requested
+                {
+                    cx.notify();
+                    return;
+                }
+                this.pending_new_thread = None;
+                match result {
+                    Ok(Some(thread)) => {
+                        let created = text(&thread, "id");
+                        this.created_bot_thread_to_focus = Some(created.clone());
+                        this.schedules_open = false;
+                        this.workspace_open = false;
+                        this.session_import_open = false;
+                        let load = this.thread_navigation.begin(&created);
+                        this.thread_navigation.finish(load, &created, thread);
+                        this.pending_select = Some(created.clone());
+                        this.select(&created, window, cx);
+                    }
+                    Ok(None) => {}
+                    Err(error) => this.status = format!("Unable to create conversation: {error}"),
+                }
                 cx.notify();
-            } else {
-                self.pending_new_thread = Some(pending);
-            }
-            return;
-        }
-        let result = (|| -> Result<Value> {
-            let mut engine = try_state(&self.engine)?;
-            let mut request = json!({"projectId":project,"cwd":cwd});
-            if let Some(branch) = &branch {
-                request["branch"] = json!(branch);
-            }
-            let intent = engine.prepare_native_new_thread(&request)?;
-            engine.apply_native_new_thread(intent)
-        })();
-        match result {
-            Ok(v) => {
-                self.pending_new_thread = None;
-                let created = text(&v, "id");
-                self.created_bot_thread_to_focus = Some(created.clone());
-                self.schedules_open = false;
-                self.workspace_open = false;
-                self.session_import_open = false;
-                self.refresh(cx);
-                self.select(&created, window, cx);
-            }
-            Err(e) if engine_busy(&e) => {
-                // The click was not admitted. Retry it once the engine and
-                // draft saver are ready, bound to the originating thread.
-                self.pending_new_thread = Some(pending);
-            }
-            Err(e) => {
-                self.pending_new_thread = None;
-                self.status = e.to_string();
-            }
-        }
+            });
+        });
+        self.navigation_tasks.push(task);
     }
     /// Swift ThreadActions.newThread(in:worktreePath:branch:) after a PR
     /// checkout: the Engine already admitted the conversation, so only
@@ -4174,9 +4373,9 @@ impl Coincide {
             if pending.is_current(current, self.pending_select.as_deref())
                 && !self.media.shutdown_requested
             {
-                self.new_thread_in_folder(&pending.project, pending.based_on, window, cx);
+                self.try_start_pending_new_thread(window, cx);
             } else {
-                self.pending_new_thread = None;
+                self.cancel_pending_new_thread();
             }
         }
         self.poll_sidebar_resize(cx);
@@ -4275,6 +4474,9 @@ impl Coincide {
             self.media.shutdown_requested = true;
         }
         if self.media.shutdown_requested {
+            self.cancel_pending_new_thread();
+            self.thread_navigation.cancel();
+            self.pending_select = None;
             quit_shortcut::cancel(cx);
             // Phones are disconnected before the engine is saved and stopped.
             self.remote_panel.update(cx, |panel, _| panel.shut_down());
@@ -4301,6 +4503,9 @@ impl Coincide {
             true
         };
         if self.media.close_requested {
+            self.cancel_pending_new_thread();
+            self.thread_navigation.cancel();
+            self.pending_select = None;
             self.selected_thread_reader.close();
             self.appshots.close();
             self.shutdown_computer_use(cx);
@@ -4315,6 +4520,7 @@ impl Coincide {
                 && self.computer_use_shutdown_ready()
                 && self.thread_bulk.closed_and_drained()
                 && self.selected_thread_reader.closed_and_drained()
+                && self.navigation_tasks.is_empty()
                 && self.composer_files.closed_and_drained()
                 && self.composer_suggestions.closed_and_drained()
                 && self.prepare_background_window_close(cx)
@@ -4346,6 +4552,9 @@ impl Coincide {
                 cx.notify();
             } else if !self.selected_thread_reader.closed_and_drained() {
                 self.status = "Closing waits for the conversation read to finish.".into();
+                cx.notify();
+            } else if !self.navigation_tasks.is_empty() {
+                self.status = "Closing waits for conversation navigation to finish.".into();
                 cx.notify();
             } else {
                 self.settings_open = true;
@@ -4554,7 +4763,14 @@ impl Coincide {
             app_shell::set_badge(app_shell::pending_approvals(&status), cx);
             let revision = status["revision"].as_u64().unwrap_or(0);
             if self.apply_selected_thread_refresh(cx) {
+                self.opening_thread_details = None;
                 self.sync_diff_thread(true, cx);
+            }
+            if let Some(selected) = self.selected.as_ref()
+                && selected["id"].as_str() == self.opening_thread_details.as_deref()
+            {
+                self.selected_thread_reader
+                    .start(&self.engine, selected, self.selected_generation);
             }
             if revision != self.revision {
                 self.refresh_settings(window, cx);
@@ -7641,8 +7857,11 @@ impl Render for Coincide {
             }
         }
         if let Some(id) = self.pending_select.clone()
-            && let Some(thread) = self.selected.as_ref()
-            && text(thread, "id") != id
+            && self
+                .selected
+                .as_ref()
+                .is_none_or(|thread| text(thread, "id") != id)
+            && !self.thread_navigation.waiting(&id)
         {
             self.select(&id, window, cx);
         }
@@ -7661,14 +7880,24 @@ impl Render for Coincide {
             self.sync_keyboard_recording(window, cx);
         }
         let navigation_rail = self.navigation_rail(window, cx);
+        let sidebar_selected = self.thread_navigation.target().unwrap_or(&selected_id);
         let sidebar = self
             .thread_list_open
-            .then(|| self.navigation_sidebar(&selected_id, window, cx));
-        let title = self
-            .selected
-            .as_ref()
-            .map(|v| text(v, "title"))
-            .unwrap_or_else(|| "Welcome to Coincide".into());
+            .then(|| self.navigation_sidebar(sidebar_selected, window, cx));
+        let title = if let Some(id) = self.thread_navigation.target() {
+            self.sidebar_all_threads
+                .iter()
+                .find(|thread| thread.id == id)
+                .map(|thread| thread.title.clone())
+                .unwrap_or_else(|| "Conversation".into())
+        } else if self.pending_new_thread.is_some() {
+            "New chat".into()
+        } else {
+            self.selected
+                .as_ref()
+                .map(|v| text(v, "title"))
+                .unwrap_or_else(|| "Welcome to Coincide".into())
+        };
         let entity = cx.entity();
         // A long active turn may contain thousands of tool events. Resolve its
         // opener once instead of rescanning the tail for every visible row.
@@ -7763,6 +7992,20 @@ impl Render for Coincide {
                 .into_any_element()
         } else if self.settings_in_main_window() {
             self.settings_surface(cx)
+        } else if self.thread_navigation.target().is_some() || self.pending_new_thread.is_some() {
+            div()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_color(self.color(0xe4e9f2).opacity(0.55))
+                .child(if self.pending_new_thread.is_some() {
+                    "Creating chat…"
+                } else {
+                    "Opening conversation…"
+                })
+                .into_any_element()
         } else if self.selected.is_none() && !self.schedules_open {
             self.empty_workspace_welcome(cx)
         } else {
@@ -7799,6 +8042,8 @@ impl Render for Coincide {
         let implement_button = self.implement_button(cx);
         let historical_image = self.historical_image_overlay(cx);
         let terminal_bottom = self.terminal_surface(false, window, cx);
+        let changing_conversation =
+            self.thread_navigation.target().is_some() || self.pending_new_thread.is_some();
         let empty_conversation = show_composer
             && self.selected.as_ref().is_some_and(|thread| {
                 thread["items"]
@@ -7813,8 +8058,13 @@ impl Render for Coincide {
                     .min_w_0()
                     .h_full()
                     .when_some(cookie_recovery, |view, recovery| view.child(recovery))
-                    .child(self.conversation_toolbar(title, cx))
-                    .when_some(self.thread_management(cx), |view, management| {
+                    .when(!changing_conversation, |view| view.child(self.conversation_toolbar(title.clone(), cx)))
+                    .when(changing_conversation, |view| view.child(
+                        div().flex().items_center().min_h(px(50.)).px_3()
+                            .border_b_1().border_color(self.color(0x29303d).opacity(0.7))
+                            .child(title)
+                    ))
+                    .when_some((!changing_conversation).then(|| self.thread_management(cx)).flatten(), |view, management| {
                         view.child(management)
                     })
                     .when(
@@ -8658,15 +8908,11 @@ mod find_mount_tests {
         assert_eq!(next[1].source.as_ref(), "streaming");
     }
     #[::core::prelude::v1::test]
-    fn browser_visible_find_shortcut_passthrough_is_selected_thread_scoped() {
+    fn browser_focus_not_visibility_controls_transcript_find() {
         let thread = json!({"id":"selected"});
-        let mut panels = std::collections::HashSet::new();
-        assert!(transcript_find_shortcut_routes(Some(&thread), &panels));
-        panels.insert("other".into());
-        assert!(transcript_find_shortcut_routes(Some(&thread), &panels));
-        panels.insert("selected".into());
-        assert!(!transcript_find_shortcut_routes(Some(&thread), &panels));
-        assert!(!transcript_find_shortcut_routes(None, &panels));
+        assert!(transcript_find_shortcut_routes(Some(&thread), false));
+        assert!(!transcript_find_shortcut_routes(Some(&thread), true));
+        assert!(!transcript_find_shortcut_routes(None, false));
     }
     #[::core::prelude::v1::test]
     fn inline_threads_transport_does_not_expose_write_or_arbitrary_routes() {
@@ -8723,6 +8969,7 @@ mod pending_new_thread_tests {
             project: "project".into(),
             based_on: None,
             source: Some("one".into()),
+            generation: 1,
         };
         assert!(pending.is_current(Some("one"), None));
         assert!(pending.is_current(Some("one"), Some("one")));

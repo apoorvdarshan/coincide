@@ -12,7 +12,7 @@ impl Coincide {
             window.activate_window();
             match request {
                 app_shell::DockRequest::NewThread => self.new_thread(window, cx),
-                app_shell::DockRequest::OpenThread(id) => self.select(&id, window, cx),
+                app_shell::DockRequest::OpenThread(id) => self.navigate_to_thread(&id, window, cx),
             }
         }
         let Ok(mut engine) = self.engine.try_lock() else {

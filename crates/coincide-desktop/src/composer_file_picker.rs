@@ -656,8 +656,8 @@ impl Coincide {
     ) -> Option<mentions::Ticket> {
         let binding = self.file_reference_binding(cx)?;
         // A native WebKit responder is not represented by GPUI focus handles.
-        // Explicit @ Files remains available; automatic caret ownership waits.
-        if self.browser_panels.contains(&binding.thread) {
+        // Only its actual focus revokes the composer's caret ownership.
+        if self.browser_owns_reply_focus(window, cx) {
             return None;
         }
         if require_focus && !self.composer.read(cx).focus_handle(cx).is_focused(window) {
@@ -762,15 +762,17 @@ impl Coincide {
     ) {
         // These private actions come only from our exact unmodified bindings;
         // cached Window modifier flags do not describe the matched event.
-        self.composer_file_key(key, false, window, cx);
+        self.composer_file_key(key, gpui_kit::Modifiers::default(), false, window, cx);
     }
     fn composer_file_key(
         &mut self,
         key: keys::Key,
-        modified: bool,
+        modifiers: gpui_kit::Modifiers,
+        held: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let modified = modifiers.modified();
         let thread = self
             .selected
             .as_ref()
@@ -785,7 +787,7 @@ impl Coincide {
                 gpui_kit::EntityInputHandler::marked_text_range(input, window, cx).is_some(),
             )
         });
-        let browser = self.browser_panels.contains(&thread);
+        let browser = self.browser_owns_reply_focus(window, cx);
         let terminal = self
             .terminal_workspaces
             .values()
@@ -819,8 +821,7 @@ impl Coincide {
         }
         let decision = self.composer_files.keys.decide(key, &scope);
         if matches!(decision, keys::Decision::Pass)
-            && key == keys::Key::Tab
-            && modified
+            && capture::is_shift_tab(key, modifiers)
             && focused
             && editable
             && !ime
@@ -828,7 +829,9 @@ impl Coincide {
             && !terminal
         {
             // Swift's Shift-Tab flips Plan/Build without opening the picker.
-            self.toggle_plan_mode(window, cx);
+            if !held {
+                self.toggle_plan_mode(window, cx);
+            }
             window.prevent_default();
             cx.stop_propagation();
             return;

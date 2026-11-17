@@ -111,7 +111,10 @@ impl Coincide {
             }
         }
     }
-    fn browser_owns_reply_focus(&self, window: &Window, cx: &App) -> bool {
+    pub(super) fn browser_owns_reply_focus(&self, window: &Window, cx: &App) -> bool {
+        if !window.is_window_active() {
+            return false;
+        }
         let Some(id) = self.selected.as_ref().map(|thread| text(thread, "id")) else {
             return false;
         };

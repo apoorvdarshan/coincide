@@ -373,7 +373,7 @@ impl Coincide {
             }
             cx.notify();
         } else {
-            self.select(id, window, cx);
+            self.navigate_to_thread(id, window, cx);
         }
     }
     pub(super) fn sidebar_modified_click(
