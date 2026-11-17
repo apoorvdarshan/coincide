@@ -254,6 +254,7 @@ fn named_restore_child() {
     let root = PathBuf::from(std::env::var_os("COINCIDE_NAMED_RESTORE_FIXTURE").unwrap());
     let mut f = fixture(&root, "warm-cold");
     let id = f.source["id"].as_str().unwrap().to_owned();
+    let settings_before = call(&mut f.engine, "settings.read", json!({}));
     let pending = call(
         &mut f.engine,
         "agent.provider.select",
@@ -298,9 +299,33 @@ fn named_restore_child() {
         "warm restore must reuse the exact existing catalog without executing a process"
     );
     let saved_choice = f.engine.store.thread(&id).unwrap();
-    let settings_before = call(&mut f.engine, "settings.read", json!({}));
     assert_eq!(
-        settings_before["defaultSelection"],
+        call(&mut f.engine, "settings.read", json!({})),
+        settings_before,
+        "switching accounts in an existing chat preserves new-chat defaults"
+    );
+    let ordinary = call(
+        &mut f.engine,
+        "threads.create",
+        json!({"projectId":f.source["projectID"]}),
+    );
+    assert_ne!(ordinary["selection"], saved_choice["selection"]);
+    let prepared = f
+        .engine
+        .prepare_native_new_thread(&json!({"projectId":f.source["projectID"],"cwd":root}))
+        .unwrap();
+    let fresh = f.engine.apply_native_new_thread(prepared).unwrap();
+    f.engine
+        .set_active_thread(Some(fresh["id"].as_str().unwrap().into()))
+        .unwrap();
+    let mut explicit = expected(&fresh, "codex");
+    explicit["accountId"] = json!(f.a);
+    let pending = call(&mut f.engine, "agent.provider.select", explicit);
+    let chosen = finish_explicit(&mut f.engine, &fresh, &pending, json!(f.a));
+    assert_eq!(chosen["thread"]["selection"], saved_choice["selection"]);
+    let settings_with_new_default = call(&mut f.engine, "settings.read", json!({}));
+    assert_eq!(
+        settings_with_new_default["defaultSelection"],
         saved_choice["selection"]
     );
     let new_thread = call(
@@ -338,7 +363,7 @@ fn named_restore_child() {
     }
     assert_eq!(
         call(&mut f.engine, "settings.read", json!({})),
-        settings_before,
+        settings_with_new_default,
         "restoring a saved choice does not move app defaults"
     );
     assert_eq!(
