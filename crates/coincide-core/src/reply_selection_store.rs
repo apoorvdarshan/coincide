@@ -94,8 +94,16 @@ impl Store {
         if thread["contextType"].is_null() {
             thread.as_object_mut().unwrap().remove("draftContext");
         }
+        let appended_since_capture = thread["draftContext"].as_array().is_some_and(|rows| {
+            if let Some(previous) = expected_context.value.as_array() {
+                rows.len() > previous.len() && rows.starts_with(previous)
+            } else {
+                expected_context.value.is_null() && !rows.is_empty()
+            }
+        });
         ensure!(
-            expected_context.matches(&thread),
+            expected_context.matches(&thread)
+                || (expected_draft.is_none() && appended_since_capture),
             "Attached context changed; select the text again"
         );
         if let Some(draft) = expected_draft {
@@ -117,7 +125,7 @@ impl Store {
             .collect::<rusqlite::Result<Vec<_>>>()?;
         drop(statement);
         ensure!(items.len() == 1, "Selected message is missing or ambiguous");
-        let mut item: Value = serde_json::from_str(&items[0])?;
+        let item: Value = serde_json::from_str(&items[0])?;
         ensure!(
             item["kind"] == selection.source_kind
                 && item["text"]
@@ -125,10 +133,11 @@ impl Store {
                     .is_some_and(|current| current.starts_with(&selection.source)),
             "The selected message changed; select its text again"
         );
-        item["text"] = json!(selection.quote()?);
-        let next = crate::composer_context::append_quote(
+        let mut card = selection.reference_preview(&item["provider"])?;
+        card["sourceItemID"] = item["id"].clone();
+        let next = crate::composer_context::append_quote_card(
             thread.get("draftContext").unwrap_or(&Value::Null),
-            &item,
+            card,
         )?;
         ensure!(tx.execute("UPDATE threads SET document=json_set(document,'$.draftContext',json(?2)) WHERE id=?1 COLLATE NOCASE",
             params![id,next.to_string()])? == 1, "Conversation is unavailable");

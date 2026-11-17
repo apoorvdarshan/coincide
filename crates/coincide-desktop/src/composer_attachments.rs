@@ -220,9 +220,34 @@ mod tests {
     }
 
     #[::core::prelude::v1::test]
+    fn reply_preview_is_immediate_and_a_cancel_stays_hidden_after_storage_refresh() {
+        let mut imports = ImageImports::default();
+        let reference = json!({"id":uuid::Uuid::new_v4(),"kind":"quote","text":"selected"});
+        let job = imports
+            .reserve_reference("chat", reference.clone())
+            .unwrap();
+        let saved = json!([reference]);
+        assert_eq!(imports.context_preview("chat", &Value::Null), saved);
+        assert_eq!(
+            imports.context_preview("other-chat", &Value::Null),
+            Value::Null
+        );
+        assert_eq!(imports.context_preview("chat", &saved), saved);
+        assert_eq!(imports.reference_job("chat", &reference), Some(job));
+        imports.cancel(job);
+        assert_eq!(imports.context_preview("chat", &saved), json!([]));
+        assert!(imports.contains("chat"));
+        imports.finish(job);
+        assert!(!imports.contains("chat"));
+    }
+
+    #[::core::prelude::v1::test]
     fn reply_reference_joins_the_send_that_was_pressed_while_it_was_saving() {
         let mut imports = ImageImports::default();
-        let job = imports.reserve_reference("chat").unwrap();
+        let reference = json!({"id":uuid::Uuid::new_v4(),"kind":"quote","text":"selected"});
+        let job = imports
+            .reserve_reference("chat", reference.clone())
+            .unwrap();
         let mut pending = PendingSend::new(
             &json!({"id":"chat","selection":{"provider":"codex"}}),
             "answer".into(),
@@ -230,7 +255,6 @@ mod tests {
         );
         pending.add_imports(imports.claim("chat"));
         assert!(pending.waiting_for_import);
-        let reference = json!({"id":uuid::Uuid::new_v4(),"kind":"quote","text":"selected"});
         assert!(pending.complete_attachment_import(job, &[], &[reference.clone()], false));
         assert!(!pending.waiting_for_import);
         assert_eq!(pending.captured["draftContext"], json!([reference]));
@@ -267,6 +291,7 @@ struct ImportJob {
     claimed: bool,
     bytes: usize,
     preview: Option<ImportPreview>,
+    reference: Option<Value>,
     cancelled: bool,
     state: ImportState,
 }
@@ -293,6 +318,7 @@ impl ImageImports {
             claimed: false,
             bytes: 0,
             preview: None,
+            reference: None,
             cancelled: false,
             state: ImportState::Reserved,
         });
@@ -371,7 +397,7 @@ impl ImageImports {
             }
         }
     }
-    fn cancelled(&self, id: u64) -> bool {
+    pub(super) fn cancelled(&self, id: u64) -> bool {
         self.jobs.iter().any(|job| job.id == id && job.cancelled)
     }
     pub fn reserve_removal(&mut self, thread: &str) -> Option<u64> {
@@ -379,8 +405,43 @@ impl ImageImports {
         self.jobs.iter_mut().find(|job| job.id == id)?.state = ImportState::Running;
         Some(id)
     }
-    pub fn reserve_reference(&mut self, thread: &str) -> Option<u64> {
-        self.reserve_removal(thread)
+    pub fn reserve_reference(&mut self, thread: &str, card: Value) -> Option<u64> {
+        let id = self.reserve_removal(thread)?;
+        self.jobs.iter_mut().find(|job| job.id == id)?.reference = Some(card);
+        Some(id)
+    }
+    pub fn context_preview(&self, thread: &str, raw: &Value) -> Value {
+        if !raw.is_array() && !raw.is_null() {
+            return raw.clone();
+        }
+        let mut rows = raw.as_array().cloned().unwrap_or_default();
+        for job in self.jobs.iter().filter(|job| job.thread == thread) {
+            let Some(card) = &job.reference else { continue };
+            if job.claimed || job.cancelled {
+                rows.retain(|row| row["id"] != card["id"]);
+            } else if !rows.iter().any(|row| row["id"] == card["id"]) {
+                rows.push(card.clone());
+            }
+        }
+        if rows.is_empty() && raw.is_null() {
+            Value::Null
+        } else {
+            Value::Array(rows)
+        }
+    }
+    pub fn reference_job(&self, thread: &str, card: &Value) -> Option<u64> {
+        self.jobs
+            .iter()
+            .find(|job| {
+                job.thread == thread
+                    && !job.claimed
+                    && !job.cancelled
+                    && job
+                        .reference
+                        .as_ref()
+                        .is_some_and(|row| row["id"] == card["id"])
+            })
+            .map(|job| job.id)
     }
     fn take_ready(&mut self) -> Vec<(u64, String, Vec<IncomingImage>)> {
         let mut slots = 4usize.saturating_sub(
@@ -884,6 +945,24 @@ impl Coincide {
         error: Option<anyhow::Error>,
         cx: &mut Context<Self>,
     ) {
+        let dismissed = self.attachment_imports.cancelled(job);
+        if dismissed
+            && error.is_none()
+            && let Some(preview) = self
+                .attachment_imports
+                .jobs
+                .iter()
+                .find(|entry| entry.id == job)
+                .and_then(|entry| entry.reference.as_ref())
+            && let Some(rows) = self
+                .selected
+                .as_mut()
+                .filter(|selected| selected["id"] == thread)
+                .and_then(|selected| selected["draftContext"].as_array_mut())
+        {
+            rows.retain(|row| row["id"] != preview["id"]);
+            self.selected_generation = self.selected_generation.wrapping_add(1);
+        }
         self.attachment_imports.finish(job);
         let cards = card.into_iter().collect::<Vec<_>>();
         let mut claimed = false;
@@ -913,19 +992,18 @@ impl Coincide {
             }
             self.selected_generation = self.selected_generation.wrapping_add(1);
         }
-        self.status = match error {
-            Some(error) => format!("Could not attach reply: {error}"),
-            None => "Message reference added to your reply.".into(),
-        };
-        if cards.is_empty()
-            && self
+        if let Some(error) = error {
+            let action = if dismissed { "remove" } else { "attach" };
+            self.status = format!("Could not {action} reply: {error}");
+            if self
                 .selected
                 .as_ref()
                 .is_some_and(|selected| selected["id"] == thread)
-        {
-            self.show_local_error(
-                "The reply reference could not be added. Your message is retained.",
-            );
+            {
+                self.show_local_error(&self.status.clone());
+            }
+        } else if !dismissed {
+            self.status = "Message reference added to your reply.".into();
         }
         self.reconcile_buffered_sends();
         self.pump_image_imports(cx);

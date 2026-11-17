@@ -98,11 +98,12 @@ impl Coincide {
                 text(thread, "id"),
                 coincide_core::composer_context::ExpectedContext::from_thread(thread),
                 projection.into_native(kind)?,
+                item["provider"].clone(),
             ))
         })();
         match captured {
-            Ok((id, context, selection)) => {
-                self.submit_reply_reference(id, context, selection, window, cx)
+            Ok((id, context, selection, provider)) => {
+                self.submit_reply_reference(id, context, selection, &provider, window, cx)
             }
             Err(error) => {
                 self.status = format!("Could not attach reply: {error}");
@@ -171,11 +172,12 @@ impl Coincide {
                 source.to_owned(),
                 coincide_core::composer_context::ExpectedContext::from_thread(thread),
                 selection,
+                row["provider"].clone(),
             ))
         })();
         match capture {
-            Ok((id, context, selection)) => {
-                self.submit_reply_reference(id, context, selection, window, cx)
+            Ok((id, context, selection, provider)) => {
+                self.submit_reply_reference(id, context, selection, &provider, window, cx)
             }
             Err(error) => {
                 self.status = error.to_string();
@@ -190,10 +192,19 @@ impl Coincide {
         id: String,
         context: coincide_core::composer_context::ExpectedContext,
         selection: coincide_core::reply_selection::NativeReplySelection,
+        provider: &Value,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(job) = self.attachment_imports.reserve_reference(&id) else {
+        let preview = match selection.reference_preview(provider) {
+            Ok(preview) => preview,
+            Err(error) => {
+                self.show_local_error(&format!("Could not attach reply: {error}"));
+                cx.notify();
+                return;
+            }
+        };
+        let Some(job) = self.attachment_imports.reserve_reference(&id, preview) else {
             self.show_local_error(
                 "Too many attachment changes are in progress. Try again shortly.",
             );
@@ -224,10 +235,17 @@ impl Coincide {
                         let error = card
                             .is_none()
                             .then(|| anyhow::anyhow!("Saved reply reference was unavailable"));
-                        this.finish_reply_reference(job, &owner, card, error, cx);
+                        if this.attachment_imports.cancelled(job)
+                            && let Some(card) = card
+                        {
+                            this.discard_saved_reply_reference(job, owner, card, cx);
+                        } else {
+                            this.finish_reply_reference(job, &owner, card, error, cx);
+                        }
                     }
                     Err(error) => {
-                        this.finish_reply_reference(job, &owner, None, Some(error), cx);
+                        let failure = (!this.attachment_imports.cancelled(job)).then_some(error);
+                        this.finish_reply_reference(job, &owner, None, failure, cx);
                     }
                 }
                 cx.notify();
@@ -236,6 +254,32 @@ impl Coincide {
         .detach();
         cx.notify();
     }
+    fn discard_saved_reply_reference(
+        &mut self,
+        job: u64,
+        owner: String,
+        card: Value,
+        cx: &mut Context<Self>,
+    ) {
+        let engine = self.engine.clone();
+        cx.spawn(async move |this, cx| {
+            let id = owner.clone();
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    engine
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("Application state is unavailable"))?
+                        .remove_draft_context_card(&id, &card)
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.finish_reply_reference(job, &owner, None, result.err(), cx);
+            });
+        })
+        .detach();
+    }
+
     pub(super) fn selection_to_composer_available(&self, window: &Window, cx: &App) -> bool {
         if self.media.close_requested
             || self.media.shutdown_requested
@@ -314,7 +358,7 @@ impl Coincide {
         let Some(projection) = transcript::focused_reply_projection(window, cx) else {
             return;
         };
-        let kind = self
+        let message = self
             .selected
             .as_ref()
             .filter(|thread| thread["id"] == projection.thread)
@@ -328,9 +372,9 @@ impl Coincide {
                 (matching.next().is_none()
                     && coincide_core::composer_context::quotable_kind(kind)
                     && item["text"].as_str() == Some(projection.source()))
-                .then(|| kind.to_owned())
+                .then(|| (kind.to_owned(), item["provider"].clone()))
             });
-        let Some(kind) = kind else {
+        let Some((kind, provider)) = message else {
             self.status = "The selected reply changed; select its text again.".into();
             cx.notify();
             return;
@@ -357,7 +401,7 @@ impl Coincide {
                 return;
             }
         };
-        self.submit_reply_reference(id, context, selection, window, cx);
+        self.submit_reply_reference(id, context, selection, &provider, window, cx);
     }
     pub(super) fn reply_selection_shortcut(
         &mut self,

@@ -286,8 +286,25 @@ fn create_with_home(store: &mut Store, params: &Value, home: &Path) -> Result<Va
         .find(|bot| bot["id"].as_str().and_then(|id| Uuid::parse_str(id).ok()) == Some(bot_id))
         .context("Bot not found")?;
     let stored_id = required(bot, "id")?;
-    let selection = selection(bot)?;
-    let provider = required(&selection, "provider")?;
+    let configured_selection = selection(bot)?;
+    let settings = store
+        .document("settings.json")
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let defaults = &settings["rustBotComposerDefaults"][stored_id];
+    let remembered = &defaults["selection"];
+    let selection = if defaults["configuredSelection"] == configured_selection
+        && crate::composer_selection::default_account(&remembered["accountID"])
+        && crate::composer_selection::validate_selection(remembered).is_ok()
+        && (bot["interactionMode"] != "plan"
+            || (remembered["provider"] == "codex" && remembered["modelID"] != "default"))
+    {
+        remembered.clone()
+    } else {
+        configured_selection.clone()
+    };
+    let provider = required(&configured_selection, "provider")?;
     let name = required(bot, "name")?.trim();
     ensure!(
         !name.is_empty() && name.chars().count() <= 200 && !name.chars().any(char::is_control),
@@ -305,12 +322,16 @@ fn create_with_home(store: &mut Store, params: &Value, home: &Path) -> Result<Va
     let now = swift_timestamp();
     let access_mode = required(bot, "accessMode")?.to_owned();
     let interaction_mode = required(bot, "interactionMode")?.to_owned();
-    let context = json!({"version":1,"botId":stored_id,"sourceBaseline":baseline,"provider":provider,"selection":selection.clone(),"accessMode":access_mode.clone(),
+    let context = json!({"version":1,"botId":stored_id,"sourceBaseline":baseline,"provider":provider,"selection":configured_selection,"accessMode":access_mode.clone(),
         "cwd":cwd,"name":name,"persona":persona,"instructions":instructions});
-    let thread = json!({"id":id,"projectID":BOTS_PROJECT_ID,"botID":stored_id,"title":"New conversation",
+    let mut thread = json!({"id":id,"projectID":BOTS_PROJECT_ID,"botID":stored_id,"title":"New conversation",
         "selection":selection,"worktreePath":cwd,"accessMode":access_mode,"interactionMode":interaction_mode,
         "createdAt":now,"updatedAt":now,"isPinned":false,"isArchived":false,"items":[],"sessions":{},
         "accountSessions":{},"draft":"","rustMessageQueue":[],"rustDraftImages":[],"rustBotContext":context});
+    if defaults["configuredSelection"] == configured_selection && defaults["selections"].is_object()
+    {
+        thread["rustProviderSelections"] = defaults["selections"].clone();
+    }
     store.create_bot_thread_if_unchanged(source.as_ref(), &thread)?;
     Ok(
         json!({"threadId":id,"botId":stored_id,"created":true,"executionStarted":false,

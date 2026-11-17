@@ -168,7 +168,13 @@ impl Engine {
                 provider_configuration::current()
             };
             let _source = provider_configuration::enter(configuration);
-            crate::composer_selection::validate_thread_base(&current_policy)?;
+            let proof = self.composer_current_selection_proof(&current_policy)?;
+            crate::composer_policy::Policy::parse_with_effort_proof(
+                &current_policy,
+                crate::composer_policy::Origin::Ordinary,
+                proof.as_ref(),
+            )?
+            .preflight_base()?;
         }
         let mut capabilities = crate::composer_selection::capabilities();
         self.append_native_acp_capabilities(&mut capabilities)?;
@@ -193,17 +199,21 @@ impl Engine {
             "This named account type cannot be switched automatically"
         );
 
-        let restored = historical_default_model(&current, provider).and_then(|model| {
-            let executable = self.provider_switch_executable(provider)?;
-            self.model_catalog
-                .reported_default_model(provider, model, &executable)
-        });
+        let preference =
+            crate::composer_selection::remembered_selection(&current, provider, &Value::Null);
+        let restored = preference
+            .and_then(|selection| selection["modelID"].as_str())
+            .or_else(|| historical_default_model(&current, provider))
+            .filter(|model| *model != "default")
+            .and_then(|model| {
+                let executable = self.provider_switch_executable(provider)?;
+                self.model_catalog
+                    .reported_default_model(provider, model, &executable)
+            });
         let model = restored.as_deref().unwrap_or("default");
         let mut selection = json!({"threadId":id,"provider":provider,"model":model,"accountId":null,"effort":null,"speed":null});
-        let preference = &current["rustProviderSelections"][provider];
         if restored.is_some()
-            && crate::composer_selection::default_account(&preference["accountID"])
-            && preference["modelID"] == model
+            && let Some(preference) = preference.filter(|choice| choice["modelID"] == model)
         {
             for key in ["effort", "speed"] {
                 if let Some(value) = preference.get(key) {
@@ -241,7 +251,6 @@ impl Engine {
                 thread[key] = validation[key].clone();
             }
         }
-        remember_source(&mut thread, &current)?;
         self.save_composer_choice(
             &current,
             &mut thread,

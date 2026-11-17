@@ -366,4 +366,30 @@ fn speed_fixture_child() {
     expected["updatedAt"] = repaired["updatedAt"].clone();
     assert_eq!(repaired, expected);
     assert!(!engine.runs.contains_key(&id));
+
+    std::fs::remove_file(root.join("fail-catalog")).unwrap();
+    refresh(&mut engine, "ready");
+    let admission = engine.prepare_native_new_thread(&json!({})).unwrap();
+    let fresh = engine.apply_native_new_thread(admission).unwrap();
+    let fresh_id = text(&fresh, "id");
+    engine.set_active_thread(Some(fresh_id.clone())).unwrap();
+    combined["threadId"] = json!(fresh_id);
+    combined["rememberComposerChoice"] = json!(true);
+    let fast = engine.execute("agent.select", &combined).unwrap();
+    let other = engine
+        .select_default_provider(fast.clone(), "claude")
+        .unwrap();
+    assert!(other["thread"]["selection"]["speed"].is_null());
+    let restored = engine
+        .select_default_provider(other["thread"].clone(), "codex")
+        .unwrap();
+    assert_eq!(restored["thread"]["selection"], fast["selection"]);
+
+    let mut reopened = Engine::fixture(Store::open(&root.join("state.sqlite")).unwrap());
+    let subsequent = reopened.execute("threads.create", &json!({})).unwrap();
+    assert_eq!(subsequent["selection"], fast["selection"]);
+    assert_eq!(
+        subsequent["rustProviderSelections"]["claude"]["modelID"],
+        "default"
+    );
 }

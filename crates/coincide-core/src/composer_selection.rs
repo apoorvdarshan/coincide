@@ -40,6 +40,31 @@ pub fn default_account(value: &Value) -> bool {
     value.is_null() || matches!(value.as_str(), Some("" | "default"))
 }
 
+/// Find the saved model and options for a provider/account in this conversation.
+pub fn remembered_selection<'a>(
+    thread: &'a Value,
+    provider: &str,
+    account: &Value,
+) -> Option<&'a Value> {
+    let account_id = if default_account(account) {
+        "default"
+    } else {
+        account.as_str()?
+    };
+    [
+        &thread["selection"],
+        &thread["rustAccountSelections"][format!("{provider}/{account_id}")],
+        &thread["rustProviderSelections"][provider],
+    ]
+    .into_iter()
+    .find(|selection| {
+        selection["provider"] == provider
+            && selection["modelID"].is_string()
+            && (selection["accountID"] == *account
+                || (default_account(&selection["accountID"]) && default_account(account)))
+    })
+}
+
 pub fn validate_model(value: &str) -> Result<()> {
     ensure!(
         !value.is_empty()

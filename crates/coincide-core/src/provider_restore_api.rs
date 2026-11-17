@@ -135,48 +135,16 @@ impl Engine {
     fn restore_candidate(&self, current: &Value, account: &str) -> Result<Candidate> {
         let mut thread = current.clone();
         let value = account_value(account);
-        let key = format!("codex/{account}");
-        let remembered = &current["rustAccountSelections"][&key];
-        let provider_preference = &current["rustProviderSelections"]["codex"];
-        let preference = if remembered.is_object() {
-            remembered
-        } else {
-            provider_preference
-        };
-        let same = crate::composer_selection::default_account(&current["selection"]["accountID"])
-            == (account == "default")
-            && (account == "default" || current["selection"]["accountID"] == account)
-            && current["selection"]["provider"] == "codex";
-        let remembered_model = if same {
-            current["selection"]["modelID"].as_str()
-        } else {
-            None
-        }
-        .or_else(|| provider_switch_api::historical_account_model(current, "codex", &value))
-        .or_else(|| {
-            let own = if account == "default" {
-                crate::composer_selection::default_account(&preference["accountID"])
-            } else {
-                preference["accountID"] == account
-            };
-            own.then(|| preference["modelID"].as_str()).flatten()
-        });
+        let preference = crate::composer_selection::remembered_selection(current, "codex", &value);
+        let remembered_model = preference
+            .and_then(|selection| selection["modelID"].as_str())
+            .or_else(|| provider_switch_api::historical_account_model(current, "codex", &value));
         let model = remembered_model.unwrap_or("default");
         thread["selection"] = json!({"provider":"codex","modelID":model});
         if account != "default" {
             thread["selection"]["accountID"] = json!(account);
         }
-        let options = if same {
-            &current["selection"]
-        } else {
-            preference
-        };
-        let own = if account == "default" {
-            crate::composer_selection::default_account(&options["accountID"])
-        } else {
-            options["accountID"] == account
-        };
-        if own && options["modelID"] == model {
+        if let Some(options) = preference.filter(|choice| choice["modelID"] == model) {
             for option in ["effort", "speed"] {
                 if let Some(value) = options.get(option) {
                     thread["selection"][option] = value.clone();

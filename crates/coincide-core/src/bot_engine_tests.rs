@@ -278,6 +278,45 @@ fn bot_instruction_refresh_preserves_thread_and_requires_both_current_sources() 
 }
 
 #[test]
+fn new_bot_composer_choices_apply_to_the_next_chat_with_that_bot() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().canonicalize().unwrap();
+    let engine = setup(&root, "codex", None);
+    let first_id = text(&create(&engine), "threadId");
+    engine
+        .lock()
+        .unwrap()
+        .set_active_thread(Some(first_id.clone()))
+        .unwrap();
+    let choose =
+        |thread: &str, provider, model| {
+            call(&engine, "agent.select", json!({
+            "threadId":thread,"provider":provider,"model":model,"rememberComposerChoice":true
+        })).unwrap()
+        };
+    choose(&first_id, "codex", "bot-codex");
+    choose(&first_id, "claude", "bot-claude");
+    let second = create(&engine);
+    let second_id = text(&second, "threadId");
+    assert_eq!(second["selection"]["modelID"], "bot-claude");
+    {
+        let mut engine = engine.lock().unwrap();
+        let thread = engine.store.thread(&second_id).unwrap();
+        assert_eq!(
+            thread["rustProviderSelections"]["codex"]["modelID"],
+            "bot-codex"
+        );
+        assert!(engine.bot_instructions(&thread, &root).unwrap().is_some());
+        engine.set_active_thread(Some(second_id)).unwrap();
+        engine.set_active_thread(Some(first_id.clone())).unwrap();
+    }
+    choose(&first_id, "claude", "bot-thread-only");
+    assert_eq!(create(&engine)["selection"]["modelID"], "bot-claude");
+    let ordinary = call(&engine, "threads.create", json!({})).unwrap();
+    assert_eq!(ordinary["selection"]["modelID"], "default");
+}
+
+#[test]
 fn authorized_bot_selection_changes_like_a_thread_without_changing_its_identity() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().canonicalize().unwrap();

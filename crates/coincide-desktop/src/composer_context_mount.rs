@@ -56,6 +56,10 @@ impl Coincide {
         if self.media.shutdown_requested {
             return;
         }
+        if let Some(job) = self.attachment_imports.reference_job(&source, &card) {
+            self.cancel_image_import(job, cx);
+            return;
+        }
         self.composer_files.invalidate();
         let Some(job) = self.attachment_imports.reserve_removal(&source) else {
             self.show_local_error(
@@ -163,11 +167,12 @@ impl Coincide {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let thread = self.selected.as_ref()?;
-        let raw = thread.get("draftContext").cloned().unwrap_or(Value::Null);
+        let saved = thread.get("draftContext").cloned().unwrap_or(Value::Null);
+        let source = text(thread, "id");
+        let raw = self.attachment_imports.context_preview(&source, &saved);
         if !composer_context::has_context(&raw) {
             return None;
         }
-        let source = text(thread, "id");
         let mut pane = div()
             .id("composer-context-cards")
             .max_h(px(170.))
@@ -195,13 +200,19 @@ impl Coincide {
             };
             let mut title = div().child(card.title.clone()).into_any_element();
             if let Some(id) = card.id.clone() {
+                let pending = row_value.as_ref().is_some_and(|row| {
+                    self.attachment_imports
+                        .reference_job(&source, row)
+                        .is_some()
+                });
                 let source = source.clone();
-                let expected = raw.clone();
+                let expected = saved.clone();
                 title = Button::new(("open-composer-context", index))
                     .child(div().w_full().truncate().child(card.title.clone()))
                     .when(!card.is_file, |button| button.icon(icon))
                     .w_full()
                     .accessibility_label(format!("Open {}", card.title))
+                    .disabled(pending)
                     .ghost()
                     .xsmall()
                     .on_click(cx.listener(move |this, _, window, cx| {
@@ -258,7 +269,7 @@ impl Coincide {
             pane = pane.child(row);
         }
         let source = source.clone();
-        if raw.as_array().is_some_and(|rows| rows.len() > 1) {
+        if raw == saved && saved.as_array().is_some_and(|rows| rows.len() > 1) {
             pane = pane.child(
                 Button::new("clear-composer-context")
                     .label("Clear references")

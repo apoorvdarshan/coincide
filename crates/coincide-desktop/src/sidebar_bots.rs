@@ -296,37 +296,11 @@ impl Coincide {
         {
             return;
         }
-        let conversations = bot_conversations(&self.sidebar_all_threads, &id);
-        let existing = if fresh {
-            conversations.iter().find(|thread| {
-                thread
-                    .navigation
-                    .as_ref()
-                    .is_some_and(|meta| meta.item_count == Some(0) && meta.has_draft == Some(false))
-            })
-        } else {
-            conversations.first()
-        };
-        if let Some(thread) = existing {
+        if !fresh && let Some(thread) = bot_conversations(&self.sidebar_all_threads, &id).first() {
             let target = thread.id.clone();
-            let reusable = !fresh
-                || (!self.pending_drafts.contains_key(&target)
-                    && !self.attachment_imports.contains(&target)
-                    && call(&self.engine, "threads.read", json!({"threadId":target}))
-                        .ok()
-                        .is_some_and(|saved| {
-                            saved["items"].as_array().is_some_and(Vec::is_empty)
-                                && saved["draft"].as_str().is_none_or(str::is_empty)
-                                && saved["draftContext"].as_array().is_none_or(Vec::is_empty)
-                                && saved["rustDraftImages"]
-                                    .as_array()
-                                    .is_none_or(Vec::is_empty)
-                        }));
-            if reusable {
-                self.created_bot_thread_to_focus = Some(target.clone());
-                self.navigate_to_thread(&target, window, cx);
-                return;
-            }
+            self.created_bot_thread_to_focus = Some(target.clone());
+            self.navigate_to_thread(&target, window, cx);
+            return;
         }
         if !self.sidebar_bots.iter().any(|bot| {
             bot["id"]

@@ -8,6 +8,7 @@ impl Engine {
         let result = crate::bot_runtime::create(&mut self.store, params)?;
         self.revision += 1;
         self.requested_open = result["threadId"].as_str().map(str::to_owned);
+        self.new_composer = self.requested_open.clone();
         Ok(result)
     }
 
