@@ -8269,6 +8269,7 @@ impl Render for Coincide {
                                                     Textarea::new(&self.composer)
                                                         .accessibility_id("composer-input")
                                                         .aria_label("Message")
+                                                        .disabled(self.archive_deleting_selected_thread())
                                                         .appearance(false)
                                                         .bordered(false)
                                                         .h({

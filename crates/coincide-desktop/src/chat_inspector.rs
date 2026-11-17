@@ -128,7 +128,8 @@ impl Coincide {
             global_schedules: self.global_schedules_route(),
             importing: self.session_import_open,
             navigating: self.thread_navigation.target().is_some()
-                || self.pending_new_thread.is_some(),
+                || self.pending_new_thread.is_some()
+                || self.archive_deleting_selected_thread(),
         }
     }
     pub(super) fn chat_route_available(&self) -> bool {

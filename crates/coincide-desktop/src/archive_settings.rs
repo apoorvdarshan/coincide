@@ -16,6 +16,7 @@ pub(super) struct ArchiveSettings {
     offset: usize,
     /// The threads the pending review deletes.
     reviewing: Vec<String>,
+    deleting: Vec<String>,
     review: Option<PreparedThreadDeletion>,
     undo: Option<Arc<ThreadDeletionUndo>>,
     mutation: Option<(ArchiveAction, mpsc::Receiver<Result<ArchiveResult>>)>,
@@ -31,6 +32,7 @@ impl ArchiveSettings {
             total: 0,
             offset: 0,
             reviewing: Vec::new(),
+            deleting: Vec::new(),
             review: None,
             undo: None,
             mutation: None,
@@ -251,6 +253,18 @@ impl Coincide {
         cx.notify();
     }
 
+    pub(super) fn archive_deleting_selected_thread(&self) -> bool {
+        self.selected
+            .as_ref()
+            .and_then(|thread| thread["id"].as_str())
+            .is_some_and(|id| {
+                self.archive_settings
+                    .deleting
+                    .iter()
+                    .any(|target| target.eq_ignore_ascii_case(id))
+            })
+    }
+
     pub(super) fn poll_archive_mutation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some((action, receive)) = &self.archive_settings.mutation else {
             return;
@@ -264,6 +278,7 @@ impl Coincide {
             }
         };
         self.archive_settings.mutation = None;
+        self.archive_settings.deleting.clear();
         match result {
             Ok(ArchiveResult::Review(plan)) => {
                 if !self.archive_settings.reviewing.is_empty() {
@@ -377,6 +392,7 @@ impl Coincide {
             cx.notify();
             return;
         }
+        self.archive_settings.deleting = ids;
         self.start_archive_mutation(
             ArchiveAction::Delete,
             move |owner| {
