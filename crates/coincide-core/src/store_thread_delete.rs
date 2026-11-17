@@ -5,22 +5,24 @@ use super::*;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashSet};
 const ROW_LIMIT: usize = 128;
-const ROW_BYTES: usize = 8 * 1024 * 1024;
-const BATCH_BYTES: usize = 32 * 1024 * 1024;
-// The archive can contain long, completed conversations. Keep Undo bounded,
-// with a higher allowance for explicitly reviewed archived batches.
-const ARCHIVE_ROW_BYTES: usize = 32 * 1024 * 1024;
-const ARCHIVE_BATCH_BYTES: usize = 128 * 1024 * 1024;
+const BOT_ROW_BYTES: usize = 8 * 1024 * 1024;
+const BOT_BATCH_BYTES: usize = 32 * 1024 * 1024;
 #[derive(Clone)]
 pub(crate) struct DeleteRow {
     pub id: String,
     pub title: String,
-    pub raw: String,
+    raw: Option<String>,
+    pub bytes: usize,
     pub imported: bool,
     pub native: BTreeSet<[u8; 32]>,
     revision: Option<Vec<u8>>,
 }
 impl DeleteRow {
+    fn bot_document(&self) -> &str {
+        self.raw
+            .as_deref()
+            .expect("bot lifecycle reviewed the original document")
+    }
     pub(crate) fn revoke_native(&mut self, native: &str) -> Result<()> {
         ensure!(
             !native.is_empty() && native.len() <= 512 && !native.chars().any(char::is_control),
@@ -138,7 +140,7 @@ fn rows_match(db: &Connection, rows: &[DeleteRow]) -> Result<()> {
     for row in rows {
         ensure_not_deleted(db, &row.id)?;
         let matches: bool = db.query_row(
-            "SELECT EXISTS(SELECT 1 FROM threads WHERE id=?1 AND document=?2)",
+            "SELECT EXISTS(SELECT 1 FROM threads WHERE id=?1 AND (?2 IS NULL OR document=?2))",
             params![row.id, row.raw],
             |row| row.get(0),
         )?;
@@ -164,7 +166,27 @@ fn delete_rows_in_transaction(
     receipt: &str,
 ) -> Result<()> {
     tx.execute_batch("CREATE TABLE IF NOT EXISTS deleted_threads(id TEXT PRIMARY KEY COLLATE NOCASE,receipt TEXT NOT NULL); CREATE TABLE IF NOT EXISTS revoked_native_sessions(thread_id TEXT NOT NULL COLLATE NOCASE,native_hash BLOB NOT NULL CHECK(length(native_hash)=32),PRIMARY KEY(thread_id,native_hash));")?;
+    if rows.iter().any(|row| row.raw.is_none()) {
+        tx.execute_batch(
+            "CREATE TEMP TABLE IF NOT EXISTS thread_delete_undo(
+                receipt TEXT NOT NULL,
+                id TEXT NOT NULL,
+                document TEXT NOT NULL,
+                PRIMARY KEY(receipt,id)
+            );",
+        )?;
+    }
     for row in rows {
+        if row.raw.is_none() {
+            ensure!(
+                tx.execute(
+                    "INSERT INTO temp.thread_delete_undo(receipt,id,document)
+                     SELECT ?1,id,document FROM threads WHERE id=?2",
+                    params![receipt, row.id],
+                )? == 1,
+                "Conversation changed before its Undo could be saved"
+            );
+        }
         tx.execute(
             "INSERT INTO deleted_threads(id,receipt) VALUES(?1,?2)",
             params![Uuid::parse_str(&row.id)?.to_string(), receipt],
@@ -186,8 +208,9 @@ fn delete_rows_in_transaction(
         )?;
         ensure!(
             tx.execute(
-                "DELETE FROM threads WHERE id=?1 AND document=?2",
-                params![row.id, row.raw]
+                "DELETE FROM threads WHERE id=?1 AND (?2 IS NULL OR document=?2)
+                   AND (SELECT revision FROM thread_review_revisions WHERE id=?1) IS ?3",
+                params![row.id, row.raw, row.revision]
             )? == 1,
             "Conversation changed during deletion"
         );
@@ -216,10 +239,22 @@ fn restore_rows_in_transaction(
         );
     }
     for row in rows {
-        let value: Value = serde_json::from_str(&row.raw)?;
+        let stored;
+        let raw = match row.raw.as_deref() {
+            Some(raw) => raw,
+            None => {
+                stored = tx.query_row(
+                    "SELECT document FROM temp.thread_delete_undo WHERE receipt=?1 AND id=?2",
+                    params![receipt, row.id],
+                    |row| row.get::<_, String>(0),
+                )?;
+                &stored
+            }
+        };
+        let value: Value = serde_json::from_str(raw)?;
         tx.execute(
             "INSERT INTO threads(id,document) VALUES(?1,?2)",
-            params![row.id, row.raw],
+            params![row.id, raw],
         )?;
         index_thread(tx, &value)?;
         cache_thread(tx, &value, true)?;
@@ -230,6 +265,12 @@ fn restore_rows_in_transaction(
             )? == 1,
             "Delete Undo receipt changed"
         );
+    }
+    if rows.iter().any(|row| row.raw.is_none()) {
+        tx.execute(
+            "DELETE FROM temp.thread_delete_undo WHERE receipt=?1",
+            [receipt],
+        )?;
     }
     Ok(())
 }
@@ -342,18 +383,25 @@ impl Store {
         &self,
         ids: &[String],
     ) -> Result<(DeleteVersion, Vec<DeleteRow>)> {
-        self.prepare_delete_rows_scoped(ids, true)
+        self.prepare_delete_rows_scoped(ids, true, false)
     }
-    pub(crate) fn prepare_any_delete_rows(
+    pub(crate) fn prepare_conversation_delete_rows(
         &self,
         ids: &[String],
     ) -> Result<(DeleteVersion, Vec<DeleteRow>)> {
-        self.prepare_delete_rows_scoped(ids, false)
+        self.prepare_delete_rows_scoped(ids, false, false)
+    }
+    pub(crate) fn prepare_bot_delete_rows(
+        &self,
+        ids: &[String],
+    ) -> Result<(DeleteVersion, Vec<DeleteRow>)> {
+        self.prepare_delete_rows_scoped(ids, false, true)
     }
     fn prepare_delete_rows_scoped(
         &self,
         ids: &[String],
         archived_only: bool,
+        bot: bool,
     ) -> Result<(DeleteVersion, Vec<DeleteRow>)> {
         ensure!(
             !ids.is_empty() && ids.len() <= ROW_LIMIT,
@@ -363,43 +411,54 @@ impl Store {
         let mut unique = HashSet::new();
         let mut rows = Vec::new();
         let mut bytes = 0usize;
-        let (row_limit, batch_limit) = if archived_only {
-            (ARCHIVE_ROW_BYTES, ARCHIVE_BATCH_BYTES)
-        } else {
-            (ROW_BYTES, BATCH_BYTES)
-        };
         for id in ids {
             ensure!(
                 unique.insert(Uuid::parse_str(id)?),
                 "Duplicate conversation selection"
             );
-            let (stored,raw):(String,Option<String>)=self.connection()?.query_row("SELECT id,CASE WHEN length(CAST(document AS BLOB))<=?2 THEN document ELSE NULL END FROM threads WHERE id=?1 COLLATE NOCASE",params![id,row_limit as i64],|row|Ok((row.get(0)?,row.get(1)?)))?;
-            let raw = raw.with_context(|| {
-                format!(
-                    "A conversation exceeds the {} MiB deletion limit",
-                    row_limit / 1_048_576
-                )
-            })?;
+            let (stored, size, reviewed): (String, i64, Option<String>) = self.connection()?.query_row(
+                "SELECT id,length(CAST(document AS BLOB)),
+                    CASE WHEN ?2 THEN CASE WHEN length(CAST(document AS BLOB))<=?3 THEN document END
+                    ELSE json_object(
+                        'id', document -> '$.id',
+                        'items', CASE WHEN json_type(document,'$.items')='array' THEN json('[]') END,
+                        'title', CASE WHEN json_type(document,'$.title')='text' THEN substr(json_extract(document,'$.title'),1,120) END,
+                        'isArchived', document -> '$.isArchived',
+                        'botOwned', (COALESCE(json_type(document,'$.botID'),'null')!='null'
+                                  OR COALESCE(json_type(document,'$.rustBotContext'),'null')!='null'),
+                        'sessions', document -> '$.sessions',
+                        'accountSessions', document -> '$.accountSessions'
+                    ) END
+                FROM threads WHERE id=?1 COLLATE NOCASE",
+                params![id, bot, BOT_ROW_BYTES as i64],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?;
+            let size = usize::try_from(size)?;
+            let reviewed = reviewed.context("A bot conversation exceeds the 8 MiB review limit")?;
             bytes = bytes
-                .checked_add(raw.len())
+                .checked_add(size)
                 .context("Archive batch size overflow")?;
             ensure!(
-                bytes <= batch_limit,
-                "These conversations exceed the {} MiB Undo limit. Delete a smaller batch.",
-                batch_limit / 1_048_576
+                !bot || bytes <= BOT_BATCH_BYTES,
+                "These bot conversations exceed the 32 MiB Undo limit."
             );
-            let value: Value = serde_json::from_str(&raw)?;
+            let value: Value = serde_json::from_str(&reviewed)?;
             ensure!(
                 validate_thread(&value)? == stored
                     && (!archived_only || value["isArchived"] == true),
                 "Only current archived conversations can be deleted here"
+            );
+            ensure!(
+                bot || archived_only || value["botOwned"] != 1,
+                "Delete bot conversations through their bot's reviewed lifecycle"
             );
             rows.push(DeleteRow {
                 revision: thread_review_revision(self.connection()?, &stored)?,
                 id: stored.clone(),
                 title: text(&value, "title").chars().take(120).collect(),
                 native: native_ids(&value)?,
-                raw,
+                raw: bot.then_some(reviewed),
+                bytes: size,
                 imported: self.is_imported(&stored)?,
             });
         }
@@ -445,6 +504,13 @@ impl Store {
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         restore_rows_in_transaction(&tx, rows, receipt)?;
         tx.commit()?;
+        Ok(())
+    }
+    pub(crate) fn discard_thread_deletion_backup(&self, receipt: &str) -> Result<()> {
+        self.connection()?.execute(
+            "DELETE FROM temp.thread_delete_undo WHERE receipt=?1",
+            [receipt],
+        )?;
         Ok(())
     }
     /// Deny-only native history guard, deliberately outside thread/import JSON.
@@ -573,6 +639,53 @@ mod tests {
                 .is_err(),
             "Undo cannot replay after consuming its tombstones"
         );
+    }
+    #[test]
+    fn sidebar_and_archive_can_delete_and_undo_a_large_conversation_with_the_exact_original() {
+        let (_dir, mut store, threads) = fixture();
+        for (index, archived) in [(2, false), (0, true)] {
+            let id = threads[index]["id"].as_str().unwrap();
+            let suffix = "x".repeat(if archived { 33 } else { 9 } * 1024 * 1024);
+            let source = format!(
+                "  {{ \"largeToolData\":\"{suffix}\", {}\n",
+                &threads[index].to_string()[1..]
+            );
+            store
+                .connection()
+                .unwrap()
+                .execute(
+                    "UPDATE threads SET document=?2 WHERE id=?1",
+                    params![id, source],
+                )
+                .unwrap();
+            let ids = [id.to_owned()];
+            let (version, reviewed) = if archived {
+                store.prepare_delete_rows(&ids)
+            } else {
+                store.prepare_conversation_delete_rows(&ids)
+            }
+            .unwrap();
+            assert_eq!(reviewed[0].bytes, source.len());
+            assert!(reviewed[0].raw.is_none(), "review retains only metadata");
+            store
+                .delete_archived_rows(version, &reviewed, "large")
+                .unwrap();
+            assert!(store.thread(id).is_err());
+            assert!(
+                store
+                    .is_native_session_revoked(id, &format!("old-codex-{index}"))
+                    .unwrap()
+            );
+            assert_eq!(
+                store.thread(text(&threads[1], "id").as_str()).unwrap(),
+                threads[1]
+            );
+            store.restore_deleted_rows(&reviewed, "large").unwrap();
+            assert!(
+                raw(&store, id) == source,
+                "Undo preserves the exact stored bytes"
+            );
+        }
     }
     #[test]
     fn stale_confirmation_detects_local_and_external_aba_writes() {

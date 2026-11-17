@@ -249,6 +249,7 @@ struct RunClock {
 pub struct Engine {
     appshots_owner: Uuid,
     thread_bulk_owner: Uuid,
+    thread_delete_backups: HashMap<String, std::sync::Weak<String>>,
     native_move_undos: HashMap<String, Uuid>,
     composer_file_owner: Uuid,
     codex_profile_login: Option<agent::codex_profile_login::Operation>,
@@ -470,6 +471,7 @@ impl Engine {
         let mut engine = Self {
             appshots_owner: Uuid::new_v4(),
             thread_bulk_owner: Uuid::new_v4(),
+            thread_delete_backups: HashMap::new(),
             native_move_undos: HashMap::new(),
             composer_file_owner: Uuid::new_v4(),
             codex_profile_login: None,
@@ -2793,6 +2795,7 @@ impl Engine {
             })
     }
     pub fn poll(&mut self) {
+        self.reap_thread_deletion_backups();
         self.poll_provider_restore();
         self.poll_codex_profile_login();
         self.poll_steering();
