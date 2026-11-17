@@ -533,7 +533,7 @@ mod tests {
             now,
         );
         assert_eq!(fallback["appearance"], "system");
-        assert_eq!(fallback["themes"]["dark"]["surface"], 0x161616);
+        assert_eq!(fallback["themes"]["dark"]["surface"], 0x101010);
         assert_eq!(fallback["themes"]["light"]["surface"], 0xFFFFFF);
     }
 

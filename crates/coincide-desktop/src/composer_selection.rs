@@ -4086,10 +4086,8 @@ impl Coincide {
             )
             .into_any_element()
     }
-    /// Swift's start of an empty thread: the serif headline just above the
-    /// composer, with the agent and model the thread will use.
-    pub(super) fn chat_welcome(&self, cx: &mut Context<Self>) -> AnyElement {
-        let _ = cx;
+    /// A project-aware heading for the empty conversation.
+    pub(super) fn chat_welcome(&self) -> AnyElement {
         let Some(thread) = self.selected.as_ref() else {
             return div().into_any_element();
         };
@@ -4109,24 +4107,6 @@ impl Coincide {
         } else {
             "What should we build?".to_owned()
         };
-        let provider = text(&thread["selection"], "provider");
-        let provider_name = provider_label(&self.selection_ui.capabilities, &provider);
-        let model = self
-            .selection_ui
-            .reported_model(
-                thread["id"].as_str().unwrap_or_default(),
-                &provider,
-                &thread["selection"]["accountID"],
-                thread["selection"]["modelID"].as_str().unwrap_or_default(),
-            )
-            .and_then(reported_picker_model_label)
-            .unwrap_or_else(|| text(&thread["selection"], "modelID"));
-        let using = if model.is_empty() || model == "default" {
-            format!("Using {}", provider_name)
-        } else {
-            format!("Using {} · {model}", provider_name)
-        };
-        let mark = chat_layout::provider_mark(&provider, 15.);
         div()
             .flex()
             .flex_col()
@@ -4134,31 +4114,15 @@ impl Coincide {
             .min_h_0()
             .justify_center()
             .items_center()
-            .gap_2()
-            .px(px(24.))
+            .px_6()
             .pb_5()
             .child(
                 div()
+                    .max_w(px(520.))
                     .font_family(crate::settings::reply_font())
                     .text_3xl()
                     .text_center()
                     .child(headline),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .px_3()
-                    .py_1()
-                    .rounded_full()
-                    .border_1()
-                    .border_color(self.color(0x29303d).opacity(0.8))
-                    .bg(self.color(0x111722))
-                    .text_sm()
-                    .text_color(self.color(0xe4e9f2).opacity(0.7))
-                    .when_some(mark, |badge, mark| badge.child(mark))
-                    .child(using),
             )
             .into_any_element()
     }
@@ -4178,13 +4142,8 @@ impl Coincide {
     }
     /// One row in a compact picker menu, with a check, an optional icon and
     /// an optional description, matching Swift's popup rows.
-    /// A neutral selection fill that does not borrow the provider accent.
     fn picker_selection_bg(&self) -> Rgba {
-        if self.appearance_dark {
-            rgb(0x2b2b2b)
-        } else {
-            rgb(0xebebeb)
-        }
+        self.color(0x202a3b)
     }
     pub(super) fn picker_menu_row(
         &self,

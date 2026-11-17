@@ -91,6 +91,7 @@ fn saved_frame(engine: &SharedEngine) -> Option<Frame> {
 
 pub(super) struct SettingsWindow {
     owner: WeakEntity<Coincide>,
+    title: String,
     frame: Option<Frame>,
     save_frame: Option<Task<()>>,
     _observation: Subscription,
@@ -121,6 +122,7 @@ impl SettingsWindow {
         ];
         Self {
             owner: weak,
+            title: String::new(),
             frame: None,
             save_frame: None,
             _observation: observation,
@@ -185,7 +187,10 @@ impl Render for SettingsWindow {
                 } else {
                     owner.settings_section.label()
                 };
-                window.set_window_title(title);
+                if self.title != title {
+                    window.set_window_title(title);
+                    title.clone_into(&mut self.title);
+                }
                 owner.microphone_settings_active =
                     window.is_window_active() && window.visibility().is_visible();
                 owner.sync_transcription_binding(cx);
@@ -200,7 +205,7 @@ impl Render for SettingsWindow {
                     }))
                     .bg(owner.color(0x10141c))
                     .text_color(owner.color(0xe4e9f2))
-                    .child(owner.settings_surface(cx))
+                    .child(owner.settings_surface(cfg!(target_os = "macos"), cx))
                     .into_any_element()
             })
             .unwrap_or_else(|_| {
@@ -406,6 +411,13 @@ impl Coincide {
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     window_min_size: Some(size(px(MIN_SIZE.0), px(MIN_SIZE.1))),
+                    titlebar: Some(TitlebarOptions {
+                        appears_transparent: cfg!(target_os = "macos"),
+                        traffic_light_position: cfg!(target_os = "macos")
+                            .then(|| point(px(18.), px(16.))),
+                        ..Default::default()
+                    }),
+                    app_owns_titlebar_drag: cfg!(target_os = "macos"),
                     ..Default::default()
                 },
                 cx,

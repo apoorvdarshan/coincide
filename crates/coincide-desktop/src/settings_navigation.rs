@@ -641,29 +641,20 @@ impl Coincide {
             None => label.into(),
         })
         .w_full()
-        .h(px(34.))
-        .rounded(px(10.))
+        .h(px(32.))
+        .rounded(px(7.))
         .ghost()
-        .when(selected, |button| button.bg(self.color(0x202a3b)))
+        .selected(selected)
         .child(
             div()
                 .flex()
                 .items_center()
                 .w_full()
                 .gap_2()
-                .child(
-                    div().w(px(3.)).h(px(18.)).rounded_full().bg(self
-                        .color(0x98b1d4)
-                        .opacity(if selected { 1.0 } else { 0.0 })),
-                )
                 .child(icon_tile(
                     section,
-                    22.,
-                    if selected {
-                        self.color(0x98b1d4).opacity(0.16)
-                    } else {
-                        self.color(0x202a3b)
-                    },
+                    20.,
+                    self.color(0x202a3b).opacity(0.),
                     if selected {
                         self.color(0x98b1d4)
                     } else {
@@ -703,8 +694,8 @@ impl Coincide {
         .into_any_element()
     }
 
-    pub(super) fn settings_surface(&self, cx: &mut Context<Self>) -> AnyElement {
-        let mut navigation = div().flex().flex_col().gap_1();
+    fn settings_destinations(&self, cx: &mut Context<Self>) -> Div {
+        let mut navigation = div().flex().flex_col().gap_0p5();
         for section in [
             Section::General,
             Section::Models,
@@ -785,10 +776,20 @@ impl Coincide {
             "About",
             cx,
         )));
-        let query = self.settings_search.read(cx).value().to_string();
-        if !query.trim().is_empty() {
-            navigation = div().child(self.settings_search_results(&query, cx));
-        }
+        navigation
+    }
+
+    pub(super) fn settings_surface(
+        &self,
+        unified_titlebar: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let query = self.settings_search.read(cx).value();
+        let navigation = if query.trim().is_empty() {
+            self.settings_destinations(cx)
+        } else {
+            div().child(self.settings_search_results(&query, cx))
+        };
         let parent = cx.entity().downgrade();
         let resize = gpui_kit::component::resizable::resize_handle(
             "settings-sidebar-resize",
@@ -850,6 +851,7 @@ impl Coincide {
                     .bg(self.color(0x151922))
                     .border_r_1()
                     .border_color(self.color(0x29303d))
+                    .when(unified_titlebar, |sidebar| sidebar.pt(px(37.)))
                     .child(Input::new(&self.settings_search))
                     .child(
                         self.settings_scroll.frame(
@@ -862,6 +864,21 @@ impl Coincide {
                                 .child(navigation),
                         ),
                     )
+                    .when(unified_titlebar, |sidebar| {
+                        sidebar.child(
+                            div()
+                                .id("settings-titlebar-drag")
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .right_0()
+                                .h(px(33.))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    window_chrome::titlebar_mouse_down,
+                                ),
+                        )
+                    })
                     .child(resize),
             )
             .child(
@@ -933,7 +950,7 @@ impl Coincide {
         })();
         match result {
             Ok(settings) => {
-                self.settings_status = "Saved".into();
+                self.settings_status.clear();
                 self.accept_settings(settings, window, cx);
             }
             Err(error) => {
@@ -1072,9 +1089,8 @@ impl Coincide {
         .ghost()
         .w_full()
         .h_auto()
-        .when(selected && !overview, |button| {
-            button.bg(self.color(0x202a3b))
-        })
+        .selected(selected && !overview)
+        .when(!overview, |button| button.h(px(32.)).rounded(px(7.)))
         .child(
             div()
                 .flex()
@@ -1082,7 +1098,7 @@ impl Coincide {
                 .w_full()
                 .gap_2()
                 .py(if overview { px(8.) } else { px(5.) })
-                .child(registry_logo(&id, if overview { 28. } else { 22. }))
+                .child(registry_logo(&id, if overview { 28. } else { 20. }))
                 .child(
                     div()
                         .flex_1()

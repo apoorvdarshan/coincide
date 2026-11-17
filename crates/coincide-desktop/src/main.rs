@@ -613,7 +613,7 @@ struct Coincide {
     settings_status: String,
     settings_refresh_pending: bool,
     appearance_dark: bool,
-    applied_theme: Option<(bool, String)>,
+    applied_theme: Option<&'static settings::Palette>,
     schedules_open: bool,
     schedules: Vec<Value>,
     schedule_editor: scheduling::ScheduleEditor,
@@ -7595,7 +7595,7 @@ impl Render for Coincide {
         let route = self.chat_route();
         let changing_conversation = route.navigating && !route.settings;
         let conversation_content = if route.settings {
-            self.settings_surface(cx)
+            self.settings_surface(false, cx)
         } else if !route.selected {
             self.empty_workspace_welcome(cx)
         } else {
@@ -7623,7 +7623,7 @@ impl Render for Coincide {
         };
         let attachment_count = self.draft_attachment_count();
         let importing_images = self.attachment_imports.contains(&selected_id);
-        let queue_pane = self.queue_pane(window, cx);
+        let queue_pane = show_composer.then(|| self.queue_pane(window, cx)).flatten();
         let local_error_notice = self.local_error_notice.clone();
         let plan_card = if show_composer {
             self.plan_card(window, cx)
@@ -7666,7 +7666,7 @@ impl Render for Coincide {
                         },
                     )
                     .when(!empty_conversation, |view| view.child(conversation_content))
-                    .when(empty_conversation, |view| view.child(self.chat_welcome(cx)))
+                    .when(empty_conversation, |view| view.child(self.chat_welcome()))
                     .when(show_composer, |view| {
                         view.child(
                             div()
@@ -7676,7 +7676,6 @@ impl Render for Coincide {
                                 .flex_col()
                                 .items_center()
                                 .justify_center()
-
                                 .flex_shrink_0()
                                 .overflow_hidden()
                                 .px(px(presentation::CONTENT_GUTTER))
@@ -7730,16 +7729,16 @@ impl Render for Coincide {
                                         .w_full()
                                         .min_w_0()
                                         .min_h_0()
-
                                         .flex()
                                         .flex_col()
                                         .max_w(px(presentation::CONTENT_WIDTH))
-                                        .p_4()
-                                        .rounded(px(20.))
+                                        .px_3()
+                                        .py_2()
+                                        .rounded(px(14.))
                                         .bg(self.color(0x181d28))
                                         .border_1()
                                         .border_color(if self.composer.read(cx).focus_handle(cx).is_focused(window) {
-                                            self.color(0xe4e9f2).opacity(0.24)
+                                            self.color(0x98b1d4).opacity(0.42)
                                         } else {
                                             self.color(0x29303d).opacity(0.8)
                                         })
@@ -7835,7 +7834,7 @@ impl Render for Coincide {
                                                 )
                                         })
                                         .child(
-                                            div().mt_2().pt_2().border_t_1()
+                                            div().mt_1().pt_1().border_t_1()
                                             .border_color(self.color(0x29303d).opacity(0.55))
                                             .child(chat_layout::composer_actions(
                                                 self.composer_selection_footer(window, cx),

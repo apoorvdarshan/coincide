@@ -15,6 +15,33 @@ mod copy_ui;
 #[path = "instructions_git_ui.rs"]
 mod git_ui;
 use std::path::Path;
+fn instruction_file_row(icon: IconName, name: String, cx: &App) -> Div {
+    div()
+        .w_full()
+        .min_w_0()
+        .flex()
+        .items_center()
+        .gap_2()
+        .child(
+            Icon::new(icon)
+                .size(px(14.))
+                .text_color(cx.theme().muted_foreground),
+        )
+        .child(div().min_w_0().truncate().text_left().child(name))
+}
+
+fn instruction_file_label(path: &str) -> String {
+    match path {
+        ".claude/CLAUDE.md" => "Claude Code · CLAUDE.md".into(),
+        ".codex/AGENTS.md" => "Codex · AGENTS.md".into(),
+        ".codex/AGENTS.override.md" => "Codex · Override".into(),
+        ".config/opencode/AGENTS.md" => "OpenCode · AGENTS.md".into(),
+        ".gemini/GEMINI.md" => "Gemini · GEMINI.md".into(),
+        ".grok/AGENTS.md" => "Grok · AGENTS.md".into(),
+        _ => path.into(),
+    }
+}
+
 pub(super) struct Setup {
     engine: SharedEngine,
     copy: copy_ui::State,
@@ -708,15 +735,59 @@ impl InstructionsPanel {
         let selected = self.setup.project.clone();
         let owner = cx.entity().downgrade();
         let current = self.source.as_ref().map(|source| source.path());
-        let mut sidebar = div().id("instructions-sidebar").w(px(210.)).flex_shrink_0().min_h_0().overflow_y_scroll().p_3().flex().flex_col().gap_3()
-            .bg(cx.theme().muted).border_r_1().border_color(cx.theme().border)
-            .child(Button::new("instructions-scope").label(project_name.to_owned()).disabled(pending).dropdown_caret(true)
-                .accessible_menu(move|mut menu,_,_|{for (id,label) in &choices {let owner=owner.clone();let id=id.clone();menu=menu.item(PopupMenuItem::new(label.clone()).checked(id==selected).on_click(move|_,window,cx|{let _=owner.update(cx,|this,cx|this.setup_switch_scope(id.clone(),window,cx));}));}menu}))
-            .child(div().flex().flex_col().gap_2().p_2().rounded_md().bg(cx.theme().background)
-                .child(div().text_sm().font_semibold().child("Shared instructions"))
-                .child(div().text_xs().text_color(cx.theme().muted_foreground).child("Use one master file across your agents. Review changes before linking existing files."))
-                .child(Button::new("instructions-manage").label(if self.setup_open {"Hide setup and sync"} else {"Setup and sync…"}).compact().ghost()
-                    .on_click(cx.listener(|this,_,_,cx|{this.setup_open=!this.setup_open;cx.notify();}))));
+        let mut sidebar = div()
+            .id("instructions-sidebar")
+            .w(px(196.))
+            .flex_shrink_0()
+            .min_h_0()
+            .overflow_y_scroll()
+            .p_2()
+            .flex()
+            .flex_col()
+            .gap_0p5()
+            .bg(cx.theme().muted.opacity(0.46))
+            .border_r_1()
+            .border_color(cx.theme().border)
+            .child(
+                Button::new("instructions-scope")
+                    .accessibility_label(format!("Instruction scope, {project_name}"))
+                    .child(
+                        div()
+                            .w_full()
+                            .truncate()
+                            .text_left()
+                            .child(project_name.to_owned()),
+                    )
+                    .w_full()
+                    .compact()
+                    .disabled(pending)
+                    .dropdown_caret(true)
+                    .accessible_menu(move |mut menu, _, _| {
+                        for (id, label) in &choices {
+                            let owner = owner.clone();
+                            let id = id.clone();
+                            menu = menu.item(
+                                PopupMenuItem::new(label.clone())
+                                    .checked(id == selected)
+                                    .on_click(move |_, window, cx| {
+                                        let _ = owner.update(cx, |this, cx| {
+                                            this.setup_switch_scope(id.clone(), window, cx);
+                                        });
+                                    }),
+                            );
+                        }
+                        menu
+                    }),
+            )
+            .child(
+                div()
+                    .mt_3()
+                    .px_2()
+                    .text_xs()
+                    .font_semibold()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("Shared instructions"),
+            );
         if let Some(scope) = &self.setup.scope {
             let path = scope.master_path();
             let name = path
@@ -725,10 +796,13 @@ impl InstructionsPanel {
                 .unwrap_or_else(|| "Master file".into());
             sidebar = sidebar.child(
                 Button::new("instructions-master-file")
-                    .accessibility_label(name.clone())
-                    .child(div().w_full().text_left().truncate().child(name))
+                    .accessibility_label(format!("Shared instructions, {name}"))
+                    .tooltip(path.display().to_string())
+                    .child(instruction_file_row(IconName::FileText, name, cx))
                     .w_full()
+                    .h(px(30.))
                     .compact()
+                    .ghost()
                     .selected(current == Some(path))
                     .disabled(pending)
                     .on_click(cx.listener(|this, _, window, cx| {
@@ -744,31 +818,72 @@ impl InstructionsPanel {
                     })),
             );
         }
+        let setup_label = if self.setup_open {
+            "Hide setup and sync"
+        } else {
+            "Setup and sync"
+        };
         sidebar = sidebar.child(
-            div()
-                .text_xs()
-                .text_color(cx.theme().muted_foreground)
-                .child("Agent files"),
+            Button::new("instructions-manage")
+                .accessibility_label(setup_label)
+                .tooltip("Manage the shared file and sync it with your agents")
+                .child(
+                    instruction_file_row(IconName::Settings2, setup_label.into(), cx)
+                        .debug_selector(|| "instructions-setup-toggle".into()),
+                )
+                .w_full()
+                .h(px(30.))
+                .compact()
+                .ghost()
+                .selected(self.setup_open)
+                .toggled(self.setup_open)
+                .disabled(pending)
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.setup_open = !this.setup_open;
+                    cx.notify();
+                })),
         );
-        for (index, file) in self
+        let master = self.setup.scope.as_ref().map(NativeScope::master_path);
+        let mut files = self
             .setup
             .files
             .iter()
             .enumerate()
-            .filter(|(_, file)| file.exists)
-        {
+            .filter(|(_, file)| file.exists && master != Some(file.path.as_path()))
+            .peekable();
+        if files.peek().is_some() {
+            sidebar = sidebar.child(
+                div()
+                    .mt_3()
+                    .px_2()
+                    .text_xs()
+                    .font_semibold()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("Agent files"),
+            );
+        }
+        for (index, file) in files {
             sidebar = sidebar.child(
                 Button::new(SharedString::from(format!("instructions-source-{index}")))
-                    .accessibility_label(file.name.clone())
-                    .child(
-                        div()
-                            .w_full()
-                            .text_left()
-                            .truncate()
-                            .child(file.name.clone()),
-                    )
+                    .accessibility_label(if file.linked {
+                        format!("{}, linked", file.name)
+                    } else {
+                        file.name.clone()
+                    })
+                    .tooltip(file.path.display().to_string())
+                    .child(instruction_file_row(
+                        if file.linked {
+                            IconName::Link2
+                        } else {
+                            IconName::FileText
+                        },
+                        instruction_file_label(&file.name),
+                        cx,
+                    ))
                     .w_full()
+                    .h(px(30.))
                     .compact()
+                    .ghost()
                     .selected(current == Some(file.path.as_path()))
                     .disabled(pending || !file.readable)
                     .on_click(cx.listener(move |this, _, window, cx| {
@@ -776,14 +891,14 @@ impl InstructionsPanel {
                     })),
             );
         }
+        let status = self.setup.visible_status();
         sidebar
-            .when(self.setup_open, |view| view.child(self.setup_controls(cx)))
-            .when(!self.setup.visible_status().is_empty(), |view| {
+            .when(!status.is_empty(), |view| {
                 view.child(
                     div()
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
-                        .child(self.setup.visible_status()),
+                        .child(status),
                 )
             })
             .into_any_element()
@@ -793,37 +908,17 @@ impl InstructionsPanel {
             || self.setup.review.is_some()
             || self.setup.has_copy_review()
             || self.setup.git_busy();
-        let mut scopes = div().flex().flex_wrap().gap_1().child(
-            Button::new("instructions-global-scope")
-                .label("Global")
-                .disabled(pending)
-                .when(self.setup.project.is_none(), |b| b.primary())
-                .on_click(
-                    cx.listener(|this, _, window, cx| this.setup_switch_scope(None, window, cx)),
-                ),
-        );
-        for project in self.setup.projects.iter().take(200) {
-            let Some(id) = project["id"].as_str() else {
-                continue;
-            };
-            let id = id.to_owned();
-            let selected = self.setup.project.as_ref() == Some(&id);
-            scopes = scopes.child(
-                Button::new(SharedString::from(format!("instructions-project-{id}")))
-                    .label(project["name"].as_str().unwrap_or("Project").to_owned())
-                    .disabled(pending)
-                    .when(selected, |b| b.primary())
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.setup_switch_scope(Some(id.clone()), window, cx)
-                    })),
-            );
-        }
         let mut pane = div()
             .flex()
             .flex_col()
             .gap_2()
-            .child(scopes)
-            .child(format!("Editing: {}", self.native_target_label()));
+            .child(div().font_semibold().child("Setup and sync"))
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("Use one shared file across agents. Review where it will be linked or copied before syncing."),
+            );
         if let Some(scope) = &self.setup.scope {
             pane = pane.child(format!(
                 "{} master: {}",
@@ -897,34 +992,11 @@ impl InstructionsPanel {
                         })),
                 ),
         );
-        let mut files = div().flex().flex_wrap().gap_1();
-        for (index, file) in self.setup.files.iter().enumerate() {
-            if !file.exists {
-                continue;
-            }
-            files = files.child(
-                Button::new(SharedString::from(format!("instructions-source-{index}")))
-                    .label(format!(
-                        "{}{}",
-                        file.name,
-                        if file.linked { " · Linked" } else { "" }
-                    ))
-                    .disabled(pending || !file.readable)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.setup_open_file(index, window, cx)
-                    })),
-            );
-        }
-        div()
-            .id("instruction-setup-controls")
+        pane.id("instruction-setup-controls")
             .w_full()
             .min_w_0()
-            .child(
-                pane.child(files)
-                    .child(self.copy_controls(cx))
-                    .child(self.git_copy_controls(cx))
-                    .child(self.setup.status.clone()),
-            )
+            .child(self.copy_controls(cx))
+            .child(self.git_copy_controls(cx))
             .into_any_element()
     }
     pub(super) fn setup_review(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -1025,7 +1097,11 @@ impl InstructionsPanel {
                 }
             }
         }
-        pane.child(self.copy_review(cx)).into_any_element()
+        pane.child(self.copy_review(cx))
+            .when(self.setup.git_busy(), |pane| {
+                pane.child(self.git_copy_controls(cx))
+            })
+            .into_any_element()
     }
 }
 

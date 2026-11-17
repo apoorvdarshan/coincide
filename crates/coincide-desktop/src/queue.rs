@@ -636,17 +636,18 @@ impl Coincide {
         }
         let mut pane = div()
             .id("message-queue")
+            .role(Role::Group)
+            .aria_label("Outgoing messages")
             .w_full()
             .max_h(px(190.))
             .overflow_y_scroll()
             .track_scroll(&self.outgoing_queue_scroll)
             .flex()
             .flex_col()
-            .gap_1()
-            .px_2()
-            .py_1()
-            .rounded_md()
-            .bg(self.color(0x181d28));
+            .rounded(px(10.))
+            .border_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().background);
         if !self.queue_error.is_empty() {
             pane = pane.child(
                 div()
@@ -742,13 +743,17 @@ impl Coincide {
                     .id(SharedString::from(format!("queued-message-{id}")))
                     .flex()
                     .items_center()
+                    .min_h(px(32.))
                     .gap_2()
                     .px_2()
                     .py_1()
+                    .when(index > 0, |row| {
+                        row.border_t_1().border_color(cx.theme().border)
+                    })
                     .child(
                         Icon::new(IconName::Clock)
                             .size(px(13.))
-                            .text_color(self.color(0x96a0b2)),
+                            .text_color(cx.theme().muted_foreground),
                     )
                     .child(
                         div()
@@ -773,7 +778,7 @@ impl Coincide {
                                                 .min_w_0()
                                                 .truncate()
                                                 .text_xs()
-                                                .text_color(self.color(0x98a6ba))
+                                                .text_color(cx.theme().muted_foreground)
                                                 .child(if files.is_empty() {
                                                     caption
                                                 } else {

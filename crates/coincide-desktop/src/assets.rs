@@ -126,6 +126,7 @@ icon_assets!(
         EyeOff,
         Eye,
         FileText,
+        Link2,
         FileSearch,
         TextSearch,
         File,

@@ -111,8 +111,8 @@ fn find_escape_routes(
     key == "escape" && plain && find_open && !terminal_owns && !browser_focused
 }
 
-// IDs and surface colors match the original macOS AppTheme catalog. Unknown
-// imported theme IDs fall back for display without rewriting the stored value.
+// Keep the original theme IDs when refining a palette. Unknown imported IDs
+// fall back for display without rewriting the stored value.
 pub(super) struct Palette {
     pub(super) id: &'static str,
     pub(super) name: &'static str,
@@ -128,15 +128,15 @@ pub(super) struct Palette {
 pub(super) const PALETTES: &[Palette] = &[
     Palette {
         id: "carbon",
-        name: "Carbon",
+        name: "Carbon Black",
         dark: true,
-        sidebar: 0x0B0B0B,
+        sidebar: 0x080808,
         content: 0x000000,
-        surface: 0x161616,
-        raised: 0x202020,
-        border: 0x2A2A2A,
-        ink: 0xeaeaec,
-        accent: 0xD4D4D8,
+        surface: 0x101010,
+        raised: 0x191919,
+        border: 0x282828,
+        ink: 0xEAEAEA,
+        accent: 0xD4D4D4,
     },
     Palette {
         id: "graphite",
@@ -451,7 +451,7 @@ impl Coincide {
     }
 
     pub(super) fn color(&self, original: u32) -> Rgba {
-        let p = self.palette();
+        let p = self.applied_theme.unwrap_or_else(|| self.palette());
         rgb(match original {
             0x151922 => p.sidebar,
             0x10141c => p.content,
@@ -480,11 +480,10 @@ impl Coincide {
             _ => ThemeMode::from(window.appearance()).is_dark(),
         };
         let p = self.palette();
-        let binding = (self.appearance_dark, p.id.to_owned());
-        if self.applied_theme.as_ref() == Some(&binding) {
+        if self.applied_theme.is_some_and(|applied| applied.id == p.id) {
             return;
         }
-        self.applied_theme = Some(binding);
+        self.applied_theme = Some(p);
         Theme::change(
             if self.appearance_dark {
                 ThemeMode::Dark
@@ -647,7 +646,7 @@ impl Coincide {
         patch[key] = value;
         match call(&self.engine, "settings.patch", json!({"patch":patch})) {
             Ok(settings) => {
-                self.settings_status = "Saved".into();
+                self.settings_status.clear();
                 self.accept_settings(settings, window, cx);
                 if key == "usageLithosBrowserFallbackEnabled" {
                     self.usage_history.refresh_lithos(&self.settings);
@@ -905,7 +904,7 @@ impl Coincide {
         match call(&self.engine, "host.awake.configure", params) {
             Ok(status) => {
                 self.awake_status = status;
-                self.settings_status = "Saved".into();
+                self.settings_status.clear();
             }
             Err(error) => {
                 self.settings_status = format!("Idle-sleep preference was not saved: {error}")
@@ -1170,21 +1169,6 @@ impl Coincide {
             "About" => Some(SettingsSection::About),
             _ => None,
         };
-        let subtitle = match title.as_ref() {
-            "General" => Some("Appearance, workspace, and everyday preferences"),
-            "Models" => Some("Choose defaults and organize your models"),
-            "Usage" => Some("Activity and limits across your agents"),
-            "Instructions" => Some("Manage the guidance your agents follow"),
-            "Archive" => Some("Find and manage archived conversations"),
-            "Keyboard" => Some("Shortcuts for navigating and working faster"),
-            "Voice" => Some("Dictation, audio, and microphone preferences"),
-            "Browser" => Some("Browsing, profiles, passwords, and privacy"),
-            "Computer Use" => Some("Control and permissions for native apps"),
-            "Appshots" => Some("Capture and manage app screenshots"),
-            "Providers" => Some("Your installed agents and other available integrations"),
-            "About" => Some("Coincide, updates, and helpful links"),
-            _ => None,
-        };
         div()
             .flex_none()
             .min_w_0()
@@ -1192,8 +1176,9 @@ impl Coincide {
             .items_center()
             .justify_between()
             .gap_3()
-            .px_5()
-            .py_4()
+            .px_4()
+            .py_2()
+            .min_h(px(46.))
             .bg(self.color(0x151922))
             .border_b_1()
             .border_color(self.color(0x29303d).opacity(0.7))
@@ -1203,41 +1188,28 @@ impl Coincide {
                     .min_w_0()
                     .flex()
                     .items_center()
-                    .gap_3()
+                    .gap_2()
                     .when_some(icon, |heading, section| {
                         heading.child(settings_navigation::icon_tile(
                             section,
-                            36.,
+                            23.,
                             self.color(0x202a3b),
-                            self.color(0x98b1d4),
+                            self.color(0xe4e9f2).opacity(0.8),
                         ))
                     })
                     .child(
                         div()
-                            .flex_1()
                             .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .text_xl()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(title),
-                            )
-                            .when_some(subtitle, |heading, subtitle| {
-                                heading.child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(self.color(0xe4e9f2).opacity(0.66))
-                                        .child(subtitle),
-                                )
-                            }),
+                            .truncate()
+                            .text_size(px(16.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(title),
                     ),
             )
             .child(
                 Button::new(done_id)
                     .label("Done")
+                    .compact()
                     .disabled(self.media.close_requested || self.media.shutdown_requested)
                     .on_click(
                         cx.listener(|this, _, window, cx| this.close_settings_panel(window, cx)),
@@ -2069,7 +2041,38 @@ impl Coincide {
                 ),
             )
             .when(!self.settings_status.is_empty(), |view| {
-                view.child(div().text_sm().child(self.settings_status.clone()))
+                view.child(
+                    div()
+                        .id("settings-notice")
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .px_4()
+                        .py_2()
+                        .bg(self.color(0x151922))
+                        .border_t_1()
+                        .border_color(self.color(0x29303d))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_sm()
+                                .child(self.settings_status.clone()),
+                        )
+                        .child(
+                            Button::new("settings-notice-dismiss")
+                                .icon(gpui_kit::assets::IconName::Close)
+                                .ghost()
+                                .compact()
+                                .accessibility_label("Dismiss settings notice")
+                                .tooltip("Dismiss")
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.settings_status.clear();
+                                    cx.notify();
+                                })),
+                        ),
+                )
             })
             .into_any_element()
     }
@@ -2247,6 +2250,22 @@ impl Coincide {
 #[cfg(test)]
 mod navigation_tests {
     use super::*;
+    #[::core::prelude::v1::test]
+    fn carbon_black_uses_neutral_black_surfaces_with_clear_elevation() {
+        let carbon = PALETTES.iter().find(|p| p.id == "carbon").unwrap();
+        assert_eq!(carbon.content, 0);
+        for color in [carbon.sidebar, carbon.surface, carbon.raised, carbon.border] {
+            let gray = color & 0xff;
+            assert_eq!(color, gray * 0x010101);
+        }
+        assert!(
+            carbon.content < carbon.sidebar
+                && carbon.sidebar < carbon.surface
+                && carbon.surface < carbon.raised
+                && carbon.raised < carbon.border
+                && carbon.raised < 0x202020
+        );
+    }
     #[::core::prelude::v1::test]
     fn carbon_accents_are_neutral_without_changing_colored_themes() {
         for id in ["carbon", "carbon-light"] {
