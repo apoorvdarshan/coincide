@@ -226,6 +226,14 @@ impl Mapper {
         })
     }
     fn map(&mut self, frame: &Value, events: &Sender<Event>) -> Result<()> {
+        if frame["type"] == "system"
+            && matches!(
+                frame["subtype"].as_str(),
+                Some("background_tasks_changed" | "task_started" | "task_notification")
+            )
+        {
+            return event(events, "provider/backgroundWork", frame.clone());
+        }
         if frame["parent_tool_use_id"].is_string() {
             return Ok(());
         }

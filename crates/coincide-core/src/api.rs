@@ -244,6 +244,7 @@ struct RunClock {
     run_id: Uuid,
     opener: Option<String>,
     connected: bool,
+    work: crate::active_work::Work,
 }
 pub struct Engine {
     appshots_owner: Uuid,
@@ -899,7 +900,7 @@ impl Engine {
             }
             "terminal.close"=>{ensure!(self.terminals.remove(required(p,"terminalId")?).is_some(),"Terminal not found");self.revision+=1;Ok(json!({"closed":true}))}
             "app.status" => Ok(
-                json!({"version":env!("CARGO_PKG_VERSION"),"revision":self.revision,"running":self.runs.keys().collect::<Vec<_>>(),"stagedGoalSelections":self.goal_selection_waiting.iter().collect::<Vec<_>>(),"runClocks":self.run_clocks_status(),"starting":self.runs.keys().filter(|id|!self.answered_runs.contains(*id)).collect::<Vec<_>>(),"preview":true,"activeThread":self.active_thread,"persistencePending":self.unsaved_threads.len(),"schedulerError":self.schedule_error,"pendingApprovals":self.pending_approvals(),"turnResults":self.turn_results.status()}),
+                json!({"version":env!("CARGO_PKG_VERSION"),"revision":self.revision,"running":self.runs.keys().collect::<Vec<_>>(),"stagedGoalSelections":self.goal_selection_waiting.iter().collect::<Vec<_>>(),"runClocks":self.run_clocks_status(),"activeWork":self.active_work_status(),"starting":self.runs.keys().filter(|id|!self.answered_runs.contains(*id)).collect::<Vec<_>>(),"preview":true,"activeThread":self.active_thread,"persistencePending":self.unsaved_threads.len(),"schedulerError":self.schedule_error,"pendingApprovals":self.pending_approvals(),"turnResults":self.turn_results.status()}),
             ),
             "app.capabilities" => {
                 let mut methods = vec![
@@ -2047,6 +2048,7 @@ impl Engine {
                 run_id: Uuid::new_v4(),
                 opener,
                 connected: false,
+                work: crate::active_work::Work::default(),
             },
         );
         self.runs.insert(id, run);
@@ -2064,6 +2066,15 @@ impl Engine {
     }
     pub fn current_run_id(&self, thread_id: &str) -> Option<Uuid> {
         self.run_clocks.get(thread_id).map(|clock| clock.run_id)
+    }
+    fn active_work_status(&self) -> HashMap<&str, crate::active_work::Summary> {
+        self.runs
+            .keys()
+            .filter_map(|id| {
+                let summary = self.run_clocks.get(id)?.work.summary();
+                (summary.total() > 0).then_some((id.as_str(), summary))
+            })
+            .collect()
     }
     /// Each running thread's start (Swift reference seconds) and whether it is
     /// still connecting: its provider has sent nothing since the run began.
@@ -2829,7 +2840,13 @@ impl Engine {
             if let Some(run) = self.runs.get_mut(&id)
                 && run.events.is_empty()
             {
-                run.events.extend(run.session.events.try_iter().take(256));
+                let mut clock = self.run_clocks.get_mut(&id);
+                for event in run.session.events.try_iter().take(256) {
+                    if let (Some(clock), Event::Frame(frame)) = (clock.as_deref_mut(), &event) {
+                        clock.work.observe(&run.provider, frame);
+                    }
+                    run.events.push_back(event);
+                }
             }
             if self.runs[&id].events.is_empty() {
                 continue;

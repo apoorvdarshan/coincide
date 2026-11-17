@@ -3,6 +3,7 @@
 //! failure, then an unseen completion. Turn results come from the engine's
 //! session-only `app.status`; unseen marks persist in ui-state.json.
 use super::*;
+use coincide_core::active_work::Summary as Work;
 use std::collections::HashMap;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -82,11 +83,36 @@ pub(super) fn elapsed(seconds: f64) -> String {
     }
 }
 
+pub(super) fn work_labels(work: Work) -> Option<(String, String)> {
+    let parts = [
+        (work.commands, "command", "commands"),
+        (work.subagents, "subagent", "subagents"),
+        (work.background, "background task", "background tasks"),
+        (work.tools, "tool", "tools"),
+    ]
+    .into_iter()
+    .filter(|(count, _, _)| *count > 0)
+    .map(|(count, singular, plural)| {
+        format!("{count} {}", if count == 1 { singular } else { plural })
+    })
+    .collect::<Vec<_>>();
+    if parts.is_empty() {
+        return None;
+    }
+    let short = if parts.len() == 1 {
+        parts[0].clone()
+    } else {
+        format!("{} active", work.total())
+    };
+    Some((short, parts.join(" · ")))
+}
+
 /// Session-only activity the sidebar draws from `app.status`.
 #[derive(Default)]
 pub(super) struct ThreadActivity {
     running_since: HashMap<String, f64>,
     approvals: HashMap<String, usize>,
+    work: HashMap<String, Work>,
     /// The newest turn result already handled; none before the first reply,
     /// so a reopened window never marks turns it didn't watch end.
     serial: Option<u64>,
@@ -101,6 +127,9 @@ impl ThreadActivity {
     }
     pub(super) fn running_since(&self, id: &str) -> Option<f64> {
         self.running_since.get(id).copied()
+    }
+    pub(super) fn work(&self, id: &str) -> Work {
+        self.work.get(id).copied().unwrap_or_default()
     }
     /// Folds one `app.status` reply. Returns whether a row changed, and keeps
     /// turns that ended since the last reply for `take_finished`.
@@ -120,6 +149,15 @@ impl ThreadActivity {
                     .collect()
             })
             .unwrap_or_default();
+        let work = running
+            .iter()
+            .filter_map(|id| {
+                let counts: Work = serde_json::from_value(status["activeWork"][id].clone()).ok()?;
+                (counts.total() > 0).then(|| (id.clone(), counts))
+            })
+            .collect();
+        let work_changed = self.work != work;
+        self.work = work;
         let results = &status["turnResults"];
         let serial = results["serial"].as_u64().unwrap_or(0);
         if let Some(seen) = self.serial.filter(|seen| *seen <= serial) {
@@ -138,7 +176,9 @@ impl ThreadActivity {
             }
         }
         self.serial = Some(serial);
-        before != (self.running_since.clone(), self.approvals.clone()) || !self.pending.is_empty()
+        work_changed
+            || before != (self.running_since.clone(), self.approvals.clone())
+            || !self.pending.is_empty()
     }
     pub(super) fn take_finished(&mut self) -> Vec<(String, &'static str)> {
         std::mem::take(&mut self.pending)
@@ -277,6 +317,24 @@ mod tests {
     }
 
     use super::*;
+
+    #[::core::prelude::v1::test]
+    fn active_work_updates_the_visible_labels_without_extending_the_run() {
+        let mut activity = ThreadActivity::default();
+        let active = ["thread".to_owned()];
+        let status = json!({"activeWork":{"thread":{"commands":1,"subagents":2,"background":1}}});
+        assert!(activity.observe(&status, &active, 4.));
+        assert_eq!(
+            work_labels(activity.work("thread")),
+            Some((
+                "4 active".into(),
+                "1 command · 2 subagents · 1 background task".into()
+            ))
+        );
+        assert!(!activity.observe(&status, &active, 5.));
+        assert!(activity.observe(&status, &[], 6.));
+        assert_eq!(work_labels(activity.work("thread")), None);
+    }
 
     #[::core::prelude::v1::test]
     fn status_priority_badges_and_elapsed_time_follow_swift() {

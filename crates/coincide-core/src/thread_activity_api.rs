@@ -111,7 +111,7 @@ mod tests {
             .as_array()
             .unwrap()
             .len();
-        engine.runs.insert(
+        engine.insert_running(
             id.into(),
             Running {
                 configuration: None,
@@ -129,6 +129,51 @@ mod tests {
             },
         );
         sender
+    }
+
+    #[test]
+    fn status_reports_live_work_and_clears_it_after_the_turn() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut engine =
+            Engine::fixture(Store::open(&directory.path().join("data.sqlite")).unwrap());
+        let thread = text(
+            &engine
+                .store
+                .new_thread("00000000-0000-0000-0000-000000000000")
+                .unwrap(),
+            "id",
+        );
+        let events = run(&mut engine, &thread);
+        let frame = |method, item| Event::Frame(json!({"method":method,"params":{"item":item}}));
+        events.send(frame("item/started", json!({
+            "id":"exec","type":"commandExecution","status":"inProgress","command":"private text"
+        }))).unwrap();
+        events.send(frame("item/completed", json!({
+            "id":"spawn","type":"collabAgentToolCall","agentsStates":{"agent":{"status":"running"}}
+        }))).unwrap();
+        engine.poll();
+        let status = engine.execute("app.status", &json!({})).unwrap();
+        assert_eq!(
+            status["activeWork"][&thread],
+            json!({"commands":1,"subagents":1,"background":0,"tools":0})
+        );
+        assert!(!status.to_string().contains("private text"));
+
+        events
+            .send(frame(
+                "item/completed",
+                json!({"id":"exec","type":"commandExecution"}),
+            ))
+            .unwrap();
+        engine.poll();
+        let status = engine.execute("app.status", &json!({})).unwrap();
+        assert_eq!(status["activeWork"][&thread]["commands"], 0);
+        assert_eq!(status["activeWork"][&thread]["subagents"], 1);
+
+        events.send(Event::Finished).unwrap();
+        engine.poll();
+        let status = engine.execute("app.status", &json!({})).unwrap();
+        assert_eq!(status["activeWork"], json!({}));
     }
 
     #[test]

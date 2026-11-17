@@ -302,7 +302,17 @@ impl Coincide {
     /// orange "Needs approval"; nothing while the open thread is idle.
     fn run_status_pill(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let status = self.run_status();
-        let label = status.label(coincide_core::store::swift_timestamp())?;
+        let clock = status.label(coincide_core::store::swift_timestamp())?;
+        let work = self
+            .selected
+            .as_ref()
+            .and_then(|thread| thread["id"].as_str())
+            .filter(|_| matches!(status, window_chrome::RunStatus::Running { .. }))
+            .and_then(|id| sidebar_thread_status::work_labels(self.thread_activity.work(id)));
+        let (label, description) = match work {
+            Some((short, detail)) => (short, format!("{clock} · {detail}")),
+            None => (clock.clone(), clock),
+        };
         let theme = cx.theme();
         let approval = matches!(status, window_chrome::RunStatus::Approval(_));
         let tint = if approval {
@@ -314,7 +324,8 @@ impl Coincide {
             div()
                 .id("toolbar-run-status")
                 .role(Role::Group)
-                .aria_label(label.clone())
+                .aria_label(description.clone())
+                .tooltip(move |window, cx| Tooltip::new(description.clone()).build(window, cx))
                 .flex()
                 .flex_shrink_0()
                 .items_center()
