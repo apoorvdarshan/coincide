@@ -182,8 +182,10 @@ impl Coincide {
         let bound = caps["supported"] == true
             && caps["threadId"] == thread["id"]
             && caps["accountID"] == thread["selection"]["accountID"];
-        let disabled =
-            !bound || caps["refreshAllowed"] != true || self.running.contains(&text(thread, "id"));
+        let disabled = !bound
+            || !self.selection_ui.capabilities_match(thread)
+            || caps["refreshAllowed"] != true
+            || self.running.contains(&text(thread, "id"));
         let id = text(thread, "id");
         let selection = thread["selection"].clone();
         let refresh_id = id.clone();
@@ -284,6 +286,9 @@ impl Coincide {
                 .p_3();
         }
         let model = text(&thread["selection"], "modelID");
+        let reported =
+            self.selection_ui
+                .reported_model(&id, "codex", &selection["accountID"], &model);
         let request = text(catalog, "requestId");
         let access_ready = !disabled
             && caps["fullAccessSupported"] == true
@@ -438,8 +443,12 @@ impl Coincide {
             );
         }
         let mut efforts = div().flex().flex_wrap().gap_2();
-        for effort in effort_caps
-            .and_then(|value| value["choices"].as_array())
+        let displayed_efforts = if effort_ready {
+            effort_caps.and_then(|value| value["choices"].as_array())
+        } else {
+            reported.and_then(|row| row["reportedEfforts"].as_array())
+        };
+        for effort in displayed_efforts
             .into_iter()
             .flatten()
             .filter_map(Value::as_str)
@@ -534,12 +543,12 @@ impl Coincide {
             );
         }
         let mut speeds = div().flex().flex_wrap().gap_2();
-        for row in speed_caps
-            .and_then(|value| value["choices"].as_array())
-            .into_iter()
-            .flatten()
-            .take(32)
-        {
+        let displayed_speeds = if speed_ready {
+            speed_caps.and_then(|value| value["choices"].as_array())
+        } else {
+            reported.and_then(|row| row["reportedSpeeds"].as_array())
+        };
+        for row in displayed_speeds.into_iter().flatten().take(32) {
             let Some(speed) = row["id"].as_str().filter(|id| !id.is_empty()) else {
                 continue;
             };
