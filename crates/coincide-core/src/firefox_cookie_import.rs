@@ -407,6 +407,17 @@ impl Plan {
             .map_err(|_| Failure::InvalidSnapshot)?;
         db.execute_batch("PRAGMA query_only=ON; PRAGMA trusted_schema=OFF; BEGIN;")
             .map_err(|_| Failure::InvalidSnapshot)?;
+        // Firefox schema 16 changed the persisted expiry from seconds to
+        // milliseconds. Version 0 is retained for legacy exported snapshots;
+        // unknown future schemas are refused until their semantics are known.
+        let schema_version: i64 = db
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .map_err(|_| Failure::InvalidSnapshot)?;
+        let milliseconds = match schema_version {
+            0..=15 => false,
+            16 => true,
+            _ => return Err(Failure::InvalidSnapshot),
+        };
         let schema: String = db
             .query_row(
                 "SELECT sql FROM sqlite_master WHERE type='table' AND name='moz_cookies'",
@@ -478,7 +489,18 @@ impl Plan {
                 let same: i64 = row.get(7)?;
                 let secure: i64 = row.get(5)?;
                 let http_only: i64 = row.get(6)?;
-                let expiry: i64 = row.get(4)?;
+                let raw_expiry: i64 = row.get(4)?;
+                // Round down so conversion never extends a cookie's lifetime.
+                let expiry = if milliseconds {
+                    raw_expiry / 1000
+                } else {
+                    raw_expiry
+                };
+                let max_expiry = if milliseconds {
+                    253402300799999
+                } else {
+                    253402300799
+                };
                 let partition_flag: i64 = row.get(9)?;
                 let partition_key: String = row.get(10)?;
                 Ok((
@@ -500,8 +522,8 @@ impl Plan {
                     row.get(8)?,
                     if partition_flag == 0
                         && partition_key.is_empty()
-                        && expiry <= 253402300799
-                        && (0..=2).contains(&same)
+                        && (0..=max_expiry).contains(&raw_expiry)
+                        && matches!(same, 0..=2 | 256)
                         && (0..=1).contains(&secure)
                         && (0..=1).contains(&http_only)
                     {
@@ -522,7 +544,8 @@ impl Plan {
                 unsupported += 1;
                 continue;
             }
-            // Firefox persists expiry as Unix seconds. No guessed session expiry.
+            // Persisted Firefox cookies have a concrete expiry; never revive
+            // a zero or expired value as a session cookie.
             if expiry <= now {
                 expired += 1;
                 continue;
@@ -655,6 +678,62 @@ mod tests {
         for suffix in ["-wal", "-shm", "-journal"] {
             assert!(!PathBuf::from(format!("{}{suffix}", path.display())).exists())
         }
+    }
+    #[test]
+    fn firefox_schema_16_imports_millisecond_expiry_and_unset_samesite() {
+        let (_root, path) = fixture();
+        let db = Connection::open(&path).unwrap();
+        db.execute_batch(
+            "PRAGMA user_version=16;
+             UPDATE moz_cookies SET expiry=1700003600123, sameSite=256;
+             INSERT INTO moz_cookies VALUES('example.test','expired','x','/',1699999999999,1,0,1,'');
+             INSERT INTO moz_cookies VALUES('example.test','boundary','x','/',1700000000999,1,0,1,'');
+             INSERT INTO moz_cookies VALUES('example.test','negative','x','/',-1,1,0,1,'');
+             INSERT INTO moz_cookies VALUES('example.test','too-far','x','/',253402300800000,1,0,1,'');
+             INSERT INTO moz_cookies VALUES('example.test','unknown-policy','x','/',1700003600000,1,0,257,'');",
+        )
+        .unwrap();
+        drop(db);
+        let plan = Plan::read(NativeSource::from_native_choice(path), 1700000000).unwrap();
+        assert_eq!(plan.preview().hosts[0].cookies, 1);
+        assert_eq!(plan.preview().expired, 2);
+        assert_eq!(plan.preview().unsupported, 3);
+        let bound = binding();
+        let mut approved = plan
+            .approve(&["example.test".into()], bound.clone())
+            .unwrap();
+        let cookie = approved.next(&bound, 1700000000).unwrap().unwrap();
+        assert_eq!(cookie.expires(), Some(1700003600));
+        assert!(matches!(cookie.same_site(), SameSite::Unspecified));
+        assert!(approved.next(&bound, 1700000000).unwrap().is_none());
+    }
+    #[test]
+    fn firefox_schema_15_keeps_seconds_and_future_schemas_are_refused() {
+        let (_root, path) = fixture();
+        let db = Connection::open(&path).unwrap();
+        db.execute_batch("PRAGMA user_version=15; UPDATE moz_cookies SET expiry=100000000001;")
+            .unwrap();
+        drop(db);
+        let plan = Plan::read(NativeSource::from_native_choice(path.clone()), 1700000000).unwrap();
+        let bound = binding();
+        let mut approved = plan
+            .approve(&["example.test".into()], bound.clone())
+            .unwrap();
+        assert_eq!(
+            approved
+                .next(&bound, 1700000000)
+                .unwrap()
+                .unwrap()
+                .expires(),
+            Some(100000000001)
+        );
+        let db = Connection::open(&path).unwrap();
+        db.execute_batch("PRAGMA user_version=17;").unwrap();
+        drop(db);
+        assert!(matches!(
+            Plan::read(NativeSource::from_native_choice(path), 1700000000),
+            Err(Failure::InvalidSnapshot)
+        ));
     }
     #[test]
     fn changed_source_or_unknown_host_never_yields_approved_cookies() {
