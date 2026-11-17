@@ -101,11 +101,15 @@ impl Entry {
                 .chain(self.keywords.iter().copied())
                 .any(|text| text.to_lowercase().contains(&query))
     }
-    /// The pane shown under the title; none for a pane's own entry, whose
-    /// title already names it.
+    /// The pane shown under the title, unless the title already names it.
     pub(super) fn subtitle(&self) -> Option<&'static str> {
         let pane = self.destination.pane().label();
-        (pane != self.title.as_ref()).then_some(pane)
+        let title = self.title.as_ref();
+        let title_names_pane = title == pane
+            || title
+                .strip_prefix(pane)
+                .is_some_and(|suffix| suffix.starts_with(' '));
+        (!title_names_pane).then_some(pane)
     }
 }
 
@@ -688,10 +692,27 @@ mod tests {
                 .find(|entry| entry.title.as_ref() == title)
                 .unwrap()
         };
-        // A pane's own entry doesn't repeat its name underneath.
+        // Entries whose titles already name their pane don't repeat it underneath.
         assert_eq!(pane("Models").subtitle(), None);
         assert_eq!(pane("Codex").subtitle(), None);
         assert_eq!(pane("Passwords").subtitle(), Some("Browser"));
-        assert_eq!(pane("Keyboard shortcuts").subtitle(), Some("Keyboard"));
+        assert_eq!(pane("Keyboard shortcuts").subtitle(), None);
+    }
+
+    #[::core::prelude::v1::test]
+    fn appshots_search_results_do_not_repeat_the_pane_name() {
+        let results: Vec<_> = entries()
+            .into_iter()
+            .filter(|entry| entry.matches("Appshots"))
+            .map(|entry| (entry.title.to_string(), entry.subtitle()))
+            .collect();
+        assert_eq!(
+            results,
+            [
+                ("Appshots".to_owned(), None),
+                ("Appshots permissions".to_owned(), None),
+                ("Appshots privacy".to_owned(), None),
+            ]
+        );
     }
 }
