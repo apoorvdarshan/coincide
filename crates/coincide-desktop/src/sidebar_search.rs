@@ -3,8 +3,14 @@
 //! threads whose messages hold the text once typing pauses for 250 ms. CLI
 //! threads.list keeps its original literal query.
 use super::*;
+use crate::worker_owner::{ShutdownStatus, WorkerOwner};
 use coincide_core::palette_search::{self, Field, Query};
 use std::collections::HashMap;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+    mpsc::{self, Receiver, TryRecvError},
+};
 
 const MESSAGE_PAUSE: Duration = Duration::from_millis(250);
 
@@ -14,20 +20,40 @@ pub(super) fn terms_match(value: &str, query: &str) -> bool {
 }
 
 /// The message search behind the sidebar's results: it runs once typing
-/// pauses, and earlier matches stay until it replaces them.
+/// pauses. Only the latest query can publish results.
 #[derive(Default)]
 pub(super) struct MessageSearch {
     query: String,
     due: Option<Instant>,
     matches: HashMap<String, String>,
+    generation: Arc<AtomicU64>,
+    archived: Option<bool>,
+    owner: WorkerOwner,
+    reply: Option<Receiver<SearchReply>>,
 }
+
+struct SearchReply {
+    generation: u64,
+    query: String,
+    include_archived: bool,
+    outcome: SearchOutcome,
+}
+
+enum SearchOutcome {
+    Found(HashMap<String, String>),
+    Cancelled,
+    Busy,
+    Failed,
+}
+
 impl MessageSearch {
     /// The search field changed. Under two characters there is nothing to look for.
     pub(super) fn changed(&mut self, query: &str, now: Instant) {
+        self.generation.fetch_add(1, Ordering::AcqRel);
         self.query = query.to_owned();
+        self.matches.clear();
         if query.trim().chars().count() < 2 {
             self.due = None;
-            self.matches.clear();
         } else {
             self.due = Some(now + MESSAGE_PAUSE);
         }
@@ -59,6 +85,125 @@ impl MessageSearch {
     /// The matching line, for the row's tooltip while searching.
     pub(super) fn line(&self, id: &str) -> Option<&str> {
         self.matches.get(id).map(String::as_str)
+    }
+
+    fn archive_changed(&mut self, include_archived: bool, now: Instant) -> bool {
+        let changed = self
+            .archived
+            .replace(include_archived)
+            .is_some_and(|old| old != include_archived);
+        if changed {
+            self.generation.fetch_add(1, Ordering::AcqRel);
+            self.matches.clear();
+            if self.query.trim().chars().count() >= 2 {
+                self.due = Some(now);
+            }
+        }
+        changed
+    }
+
+    fn start_due(&mut self, engine: &SharedEngine, include_archived: bool, now: Instant) {
+        if self.reply.is_some() || !self.owner.can_start() {
+            return;
+        }
+        let Some(query) = self.take_due(now) else {
+            return;
+        };
+        let generation = self.generation.load(Ordering::Acquire);
+        let current = self.generation.clone();
+        let engine = engine.clone();
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let retry_query = query.clone();
+        if self.owner.spawn(move |admission| {
+            let cancelled =
+                || !admission.allowed() || current.load(Ordering::Acquire) != generation;
+            let outcome = if cancelled() {
+                SearchOutcome::Cancelled
+            } else {
+                let source = match engine.try_lock() {
+                    Ok(engine) if !engine.shutdown && !engine.admissions_frozen() => engine
+                        .store
+                        .message_search_source()
+                        .map_err(|_| SearchOutcome::Failed),
+                    Ok(_) => Err(SearchOutcome::Cancelled),
+                    Err(std::sync::TryLockError::WouldBlock) => Err(SearchOutcome::Busy),
+                    Err(std::sync::TryLockError::Poisoned(_)) => Err(SearchOutcome::Failed),
+                };
+                match source {
+                    Ok(source) => match source.search(&query, include_archived, cancelled) {
+                        Ok(Some(found)) => SearchOutcome::Found(found),
+                        Ok(None) => SearchOutcome::Cancelled,
+                        Err(_) => SearchOutcome::Failed,
+                    },
+                    Err(outcome) => outcome,
+                }
+            };
+            let _ = sender.try_send(SearchReply {
+                generation,
+                query,
+                include_archived,
+                outcome,
+            });
+        }) {
+            self.reply = Some(receiver);
+        } else if self.query == retry_query {
+            self.retry(now);
+        }
+    }
+
+    fn poll(&mut self, include_archived: bool, now: Instant) -> Option<bool> {
+        self.owner.poll();
+        let receiver = self.reply.as_ref()?;
+        let reply = match receiver.try_recv() {
+            Ok(reply) => reply,
+            Err(TryRecvError::Empty) => return None,
+            Err(TryRecvError::Disconnected) => {
+                self.reply = None;
+                return Some(false);
+            }
+        };
+        self.reply = None;
+        if reply.generation != self.generation.load(Ordering::Acquire)
+            || reply.query != self.query
+            || reply.include_archived != include_archived
+        {
+            return None;
+        }
+        match reply.outcome {
+            SearchOutcome::Found(matches) => Some(self.finish(&reply.query, matches)),
+            SearchOutcome::Busy => {
+                self.retry(now);
+                None
+            }
+            SearchOutcome::Cancelled => None,
+            SearchOutcome::Failed => Some(false),
+        }
+    }
+
+    pub(super) fn shutdown(&mut self) {
+        self.generation.fetch_add(1, Ordering::AcqRel);
+        self.due = None;
+        self.reply = None;
+        self.owner.close();
+    }
+
+    /// Cancel an in-flight read without permanently disabling search if a
+    /// window-close attempt is held up by another workflow.
+    pub(super) fn prepare_window_close(&mut self) -> bool {
+        self.generation.fetch_add(1, Ordering::AcqRel);
+        self.reply = None;
+        self.due = (self.query.trim().chars().count() >= 2).then(|| Instant::now() + MESSAGE_PAUSE);
+        let status = self.owner.status();
+        status.unjoined == 0 && status.panicked == 0 && status.unclassified == 0
+    }
+
+    pub(super) fn shutdown_status(&mut self) -> ShutdownStatus {
+        self.owner.status()
+    }
+
+    pub(super) fn closed_and_drained(&mut self) -> bool {
+        let status = self.shutdown_status();
+        status.closed && status.unjoined == 0 && status.panicked == 0 && status.unclassified == 0
     }
 }
 
@@ -138,6 +283,19 @@ fn filter(
 }
 
 impl Coincide {
+    pub(super) fn refresh_cached_sidebar_search(&mut self, cx: &mut Context<Self>) {
+        let query = self.search.read(cx).value();
+        self.threads = filter(
+            &self.sidebar_all_threads,
+            &Query::new(&query),
+            self.show_archived,
+            &self.projects,
+            self.sidebar_message_search.matches(),
+            &self.sidebar_branch_prefix(),
+            coincide_core::store::swift_timestamp(),
+        );
+        cx.notify();
+    }
     /// The worktree branch prefix, left out of what a branch says.
     pub(super) fn sidebar_branch_prefix(&self) -> String {
         self.settings["worktreeBranchPrefix"]
@@ -148,20 +306,20 @@ impl Coincide {
     /// Runs the message search once typing has paused, then lists its threads.
     pub(super) fn poll_sidebar_message_search(&mut self, cx: &mut Context<Self>) {
         let now = Instant::now();
-        let Some(query) = self.sidebar_message_search.take_due(now) else {
-            return;
-        };
-        let result = try_state(&self.engine)
-            .and_then(|owner| owner.store.message_matches(&query, self.show_archived));
-        match result {
-            Ok(matches) => {
-                if self.sidebar_message_search.finish(&query, matches) {
-                    self.refresh(cx);
-                }
+        let archive_changed = self
+            .sidebar_message_search
+            .archive_changed(self.show_archived, now);
+        match self.sidebar_message_search.poll(self.show_archived, now) {
+            Some(true) => self.refresh_cached_sidebar_search(cx),
+            Some(false) => {
+                self.status = "Messages could not be searched.".into();
+                cx.notify();
             }
-            Err(error) if engine_busy(&error) => self.sidebar_message_search.retry(now),
-            Err(error) => self.status = format!("Messages could not be searched: {error}"),
+            None if archive_changed => self.refresh_cached_sidebar_search(cx),
+            None => {}
         }
+        self.sidebar_message_search
+            .start_due(&self.engine, self.show_archived, now);
     }
     /// Edit › Find › Search Threads (Option-Command-F; Control-Alt-F elsewhere):
     /// shows the thread list and puts the cursor in its search field.
@@ -285,5 +443,62 @@ mod tests {
         search.changed(" n ", start);
         assert!(search.matches().is_empty());
         assert!(search.take_due(start + MESSAGE_PAUSE).is_none());
+    }
+
+    #[::core::prelude::v1::test]
+    fn background_message_search_retries_a_busy_engine_and_discards_superseded_queries() {
+        let root = tempfile::tempdir().unwrap();
+        let mut store =
+            coincide_core::store::Store::open(&root.path().join("search.sqlite")).unwrap();
+        let old_id = "11111111-1111-4111-8111-111111111111";
+        let new_id = "22222222-2222-4222-8222-222222222222";
+        for (id, text) in [(old_id, "previous phrase"), (new_id, "current phrase")] {
+            store.save(&json!({"id":id,"title":"Synthetic","projectID":"","items":[{"kind":"user","text":text}],"updatedAt":1.0})).unwrap();
+        }
+        let engine = Arc::new(std::sync::Mutex::new(coincide_core::api::Engine::new(
+            store,
+        )));
+        let mut search = MessageSearch::default();
+        let start = Instant::now();
+        search.archive_changed(false, start);
+        search.changed("previous", start);
+        let held = engine.lock().unwrap();
+        search.start_due(&engine, false, start + MESSAGE_PAUSE);
+        // Starting a search while the engine is locked must not wait for it.
+        search.changed("current", start);
+        drop(held);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let now = Instant::now() + MESSAGE_PAUSE;
+            if search.poll(false, now) == Some(true) {
+                break;
+            }
+            search.start_due(&engine, false, now);
+            assert!(Instant::now() < deadline, "latest search did not finish");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(search.line(new_id), Some("current phrase"));
+        assert!(search.line(old_id).is_none());
+        // An interrupted window close must not permanently disable searching.
+        search.prepare_window_close();
+        search.changed("previous", Instant::now());
+        loop {
+            let now = Instant::now() + MESSAGE_PAUSE;
+            if search.poll(false, now) == Some(true) {
+                break;
+            }
+            search.start_due(&engine, false, now);
+            assert!(
+                Instant::now() < deadline,
+                "search did not resume after close was held"
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(search.line(old_id), Some("previous phrase"));
+        search.shutdown();
+        while !search.closed_and_drained() {
+            assert!(Instant::now() < deadline, "search worker did not drain");
+            std::thread::sleep(Duration::from_millis(2));
+        }
     }
 }

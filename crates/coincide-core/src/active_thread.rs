@@ -32,8 +32,7 @@ impl Engine {
             && let Some(prior) = prior
         {
             if let Some(id) = self.store.resolve_thread_id(prior)? {
-                let departing = self.store.thread(&id)?;
-                self.park_named_departure(&departing)?;
+                self.park_named_departure_by_id(&id)?;
             } else {
                 // Observed absence can revoke, never mint. Closed/ambiguous or
                 // failed Store reads still propagate above rather than being
@@ -45,8 +44,7 @@ impl Engine {
         if prior != next
             && let Some(id) = &selected
         {
-            let arriving = self.store.thread(id)?;
-            self.park_named_departure(&arriving)?;
+            self.park_named_departure_by_id(id)?;
         }
         if self.active_thread != selected {
             self.cancel_provider_restore();

@@ -175,6 +175,7 @@ impl Coincide {
         self.selection_ui.close_capability_reads();
         self.thread_bulk.close();
         self.selected_thread_reader.close();
+        self.sidebar_message_search.shutdown();
         self.instructions_panel
             .update(cx, |panel, _| panel.request_instruction_git_shutdown());
         self.provider_configuration_panel
@@ -237,6 +238,7 @@ impl Coincide {
             self.selection_ui.capability_read_shutdown_status(),
             self.thread_bulk.shutdown_status(),
             self.selected_thread_reader.shutdown_status(),
+            self.sidebar_message_search.shutdown_status(),
             self.inspector_follow.shutdown_status(),
             self.instructions_panel
                 .update(cx, |panel, _| panel.instruction_git_shutdown_status()),

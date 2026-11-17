@@ -128,7 +128,7 @@ impl Coincide {
             rows.sort_unstable();
             rows.dedup();
             for row in rows {
-                self.transcript_list.splice(row..row + 1, 1);
+                self.transcript_list.remeasure_items(row..row + 1);
             }
         }
         self.turn_changes = TurnChanges {
