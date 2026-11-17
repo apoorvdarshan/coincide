@@ -646,6 +646,9 @@ impl Coincide {
             Ok(settings) => {
                 self.settings_status = "Saved".into();
                 self.accept_settings(settings, window, cx);
+                if key == "usageLithosBrowserFallbackEnabled" {
+                    self.usage_history.refresh_lithos(&self.settings);
+                }
             }
             Err(error) => {
                 self.settings_status = format!("Settings could not be saved: {error}");

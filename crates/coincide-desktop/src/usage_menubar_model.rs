@@ -314,10 +314,10 @@ fn options_with_current(cards: &[Card], secondary: bool, selected: Option<&Choic
     }
     choices
 }
-fn period(name: &str, totals: &Totals, has_history: bool) -> Value {
+fn period(name: &str, totals: &Totals, has_history: bool, partial: bool) -> Value {
     json!({
         "label": name,
-        "tokens": if has_history { format::tokens(totals.tokens.total()) } else { "—".into() },
+        "tokens": if has_history && (totals.tokens.total() > 0 || !partial) { format::tokens(totals.tokens.total()) } else { "—".into() },
         "cost": if totals.has_priced_tokens() { format!("≈ {}",format::cost_of(totals)) } else { "—".into() },
     })
 }
@@ -371,10 +371,21 @@ pub fn snapshot(
     {
         readings.push(second);
     }
-    let enabled = usage_report::PROVIDERS
+    let mut enabled = usage_report::PROVIDERS
         .into_iter()
         .filter(|provider| is_enabled(provider))
         .collect::<Vec<_>>();
+    if let Some(data) = data {
+        enabled.extend(
+            data.registered
+                .iter()
+                .filter(|agent| {
+                    coincide_core::provider_preferences::enabled(settings, &agent.provider)
+                        .unwrap_or(false)
+                })
+                .map(|agent| agent.provider.as_str()),
+        );
+    }
     let report = data
         .map(|data| {
             data.report(
@@ -389,7 +400,7 @@ pub fn snapshot(
             )
         })
         .unwrap_or_default();
-    let accounts = cards.iter().map(|card| {
+    let mut accounts = cards.iter().map(|card| {
         let limits = current_limits(card, now);
         let rows = limits.as_ref().map(|limits| format::rows(limits, mode, now, &Local))
             .unwrap_or_default().into_iter().map(|row| {
@@ -422,6 +433,42 @@ pub fn snapshot(
             "rows":rows, "placeholder":placeholder, "tracked":tracked,
         })
     }).collect::<Vec<_>>();
+    if let Some(data) = data {
+        for agent in data
+            .registered
+            .iter()
+            .filter(|agent| enabled.contains(&agent.provider.as_str()))
+        {
+            let usage = data.report(
+                settings["usageIncludesOtherSessions"]
+                    .as_bool()
+                    .unwrap_or(true),
+                &enabled,
+                Some(&agent.provider),
+                None,
+                30,
+                now,
+            );
+            let totals = &usage.period;
+            let tracked = (!totals.tokens.is_empty()).then(|| {
+                if totals.has_priced_tokens() {
+                    format!(
+                        "{} tokens · ≈ {}",
+                        format::tokens(totals.tokens.total()),
+                        format::cost_of(totals)
+                    )
+                } else {
+                    format!("{} tokens", format::tokens(totals.tokens.total()))
+                }
+            });
+            accounts.push(json!({
+                "title":agent.name, "provider":agent.provider,
+                "plan":null, "checked":null, "rows":[],
+                "placeholder":"Account limits not reported", "tracked":tracked,
+            }));
+        }
+    }
+    let empty = accounts.is_empty();
     let modes = if mode == DisplayMode::Remaining {
         "remaining"
     } else {
@@ -439,15 +486,18 @@ pub fn snapshot(
                 .join(". ")
         )
     };
+    let partial =
+        |days| data.is_none_or(|data| data.history_partial(&enabled, None, None, days, now));
     json!({
         "readings":readings.iter().map(|r|json!({"provider":r.provider,"text":r.text})).collect::<Vec<_>>(),
         "tooltip":tooltip, "accounts":accounts,
-        "periods":[period("Today",&report.today,data.is_some()),period("7 days",&report.last_week,data.is_some()),period("30 days",&report.last_month,data.is_some())],
+        "periods":[period("Today",&report.today,data.is_some(),partial(1)),period("7 days",&report.last_week,data.is_some(),partial(7)),period("30 days",&report.last_month,data.is_some(),partial(30))],
+        "overviewNote": if partial(30) { "Local history may be incomplete" } else { "Local tokens · estimated cost" },
         "updated":data.map(|d|format::relative(d.read_at,now)), "mode":modes,
         "primary":primary.encode(), "secondary":secondary.as_ref().map(Choice::encode),
         "primaryOptions":options_with_current(cards,false,Some(&primary)),
         "secondaryOptions":options_with_current(cards,true,secondary.as_ref()),
-        "refresh":settings["usageRefresh"].as_str().unwrap_or("automatic"), "empty":cards.is_empty(),
+        "refresh":settings["usageRefresh"].as_str().unwrap_or("automatic"), "empty":empty,
         "appearance":settings["appearance"].as_str().filter(|value| matches!(*value,"dark"|"light")).unwrap_or("system"),
         "themes":{"dark":menu_palette(settings,true),"light":menu_palette(settings,false)},
     })
@@ -635,6 +685,8 @@ mod tests {
             records,
             skipped: 0,
             accounts: vec![],
+            registered: vec![],
+            registered_unavailable: false,
             read_at: now,
             logs: None,
             report_cache: Default::default(),
@@ -663,6 +715,102 @@ mod tests {
                 .iter()
                 .all(|r| r["text"].is_null())
         );
+    }
+    #[test]
+    fn missing_recent_turn_totals_are_not_shown_as_zero_while_logs_load() {
+        use coincide_core::cli_usage_logs::{LoggedEvent, Scan};
+        use coincide_core::usage_report::Event;
+        let now = Utc::now();
+        let cards = vec![card("codex", "default", 20., now)];
+        let mut data = Data {
+            records: vec![TurnRecord {
+                thread_id: None,
+                project_id: None,
+                provider: "codex".into(),
+                account_id: "default".into(),
+                model: None,
+                started_at: None,
+                finished_at: now,
+                turn_totals: None,
+            }],
+            skipped: 0,
+            accounts: vec![],
+            registered: vec![],
+            registered_unavailable: false,
+            read_at: now,
+            logs: None,
+            report_cache: Default::default(),
+        };
+        let loading = snapshot(&cards, Some(&data), &json!({}), None, now);
+        assert_eq!(loading["periods"][0]["tokens"], "—");
+        assert_eq!(loading["periods"][1]["tokens"], "—");
+        let tokens = TokenTotals::new(30, 0, 0, 0, 5, 0);
+        data.set_logs(Some(std::sync::Arc::new(Scan {
+            events: vec![LoggedEvent {
+                event: Event {
+                    date: now,
+                    provider: "codex".into(),
+                    account_id: "default".into(),
+                    model: None,
+                    tokens,
+                    prompt_tokens: 0,
+                    project_id: None,
+                },
+                is_from_coincide: true,
+            }],
+            complete_providers: vec!["codex"],
+            ..Scan::default()
+        })));
+        let loaded = snapshot(&cards, Some(&data), &json!({}), None, now);
+        assert_eq!(loaded["periods"][0]["tokens"], "35");
+        assert_eq!(loaded["periods"][1]["tokens"], "35");
+        assert_eq!(loaded["overviewNote"], "Local tokens · estimated cost");
+    }
+    #[test]
+    fn registered_agent_usage_appears_without_inventing_account_limits() {
+        use crate::usage_dashboard::RegisteredAgent;
+        let now = Utc::now();
+        let data = Data {
+            records: vec![TurnRecord {
+                thread_id: None,
+                project_id: None,
+                provider: "acp-example".into(),
+                account_id: "default".into(),
+                model: None,
+                started_at: None,
+                finished_at: now,
+                turn_totals: Some(TokenTotals::new(25, 0, 0, 0, 5, 0)),
+            }],
+            skipped: 0,
+            accounts: vec![],
+            registered: vec![RegisteredAgent {
+                provider: "acp-example".into(),
+                name: "Example".into(),
+                website: None,
+            }],
+            registered_unavailable: false,
+            read_at: now,
+            logs: None,
+            report_cache: Default::default(),
+        };
+        let view = snapshot(&[], Some(&data), &json!({}), None, now);
+        assert_eq!(view["periods"][0]["tokens"], "30");
+        assert_eq!(view["accounts"][0]["title"], "Example");
+        assert_eq!(
+            view["accounts"][0]["placeholder"],
+            "Account limits not reported"
+        );
+        assert_eq!(view["accounts"][0]["tracked"], "30 tokens");
+        assert_eq!(view["empty"], false);
+        let disabled = snapshot(
+            &[],
+            Some(&data),
+            &json!({"providers":{"acp-example":{"isEnabled":false}}}),
+            None,
+            now,
+        );
+        assert!(disabled["accounts"].as_array().unwrap().is_empty());
+        assert_eq!(disabled["empty"], true);
     }
     #[test]
     fn choices_and_refresh_settings_preserve_swift_values() {
@@ -735,6 +883,8 @@ mod tests {
             ],
             skipped: 0,
             accounts: vec![],
+            registered: vec![],
+            registered_unavailable: false,
             read_at: now,
             logs: None,
             report_cache: Default::default(),

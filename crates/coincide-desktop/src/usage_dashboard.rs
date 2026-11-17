@@ -30,6 +30,15 @@ pub struct Account {
     pub api_key: bool,
     pub key_variable: Option<String>,
 }
+
+/// Configured ACP agents can report additive turns even when they have no
+/// standard account-limit endpoint. Registry websites are optional.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RegisteredAgent {
+    pub provider: String,
+    pub name: String,
+    pub website: Option<String>,
+}
 impl Account {
     pub fn is_default(&self) -> bool {
         self.id == DEFAULT_ACCOUNT
@@ -50,6 +59,8 @@ pub struct Data {
     /// Saved turns without a known provider or finish time.
     pub skipped: usize,
     pub accounts: Vec<Account>,
+    pub registered: Vec<RegisteredAgent>,
+    pub registered_unavailable: bool,
     pub read_at: DateTime<Utc>,
     pub logs: Option<Arc<CliScan>>,
     pub(crate) report_cache: Arc<Mutex<ReportCache>>,
@@ -66,42 +77,203 @@ struct ReportKey {
     local_offset: i32,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct PartialKey {
+    enabled: Vec<String>,
+    provider: Option<String>,
+    account: Option<String>,
+    days: u32,
+    minute: i64,
+    local_offset: i32,
+}
+
 #[derive(Debug, Default)]
-pub(crate) struct ReportCache(VecDeque<(ReportKey, Arc<Report>)>);
+pub(crate) struct ReportCache {
+    reports: VecDeque<(ReportKey, Arc<Report>)>,
+    partial: VecDeque<(PartialKey, bool)>,
+    history_days: Option<(i64, u32)>,
+}
 
 impl Data {
+    /// The full available history need not be rendered as thousands of chart
+    /// columns. The caller can chart a shorter range while summing every day.
+    pub fn history_days(&self, now: DateTime<Utc>) -> u32 {
+        let minute = now.timestamp().div_euclid(60);
+        if let Ok(cache) = self.report_cache.lock()
+            && let Some((when, days)) = cache.history_days
+            && when == minute
+        {
+            return days;
+        }
+        let oldest = self
+            .records
+            .iter()
+            .map(|row| row.finished_at)
+            .chain(
+                self.logs
+                    .iter()
+                    .flat_map(|scan| scan.events.iter().map(|row| row.event.date)),
+            )
+            .filter(|date| *date <= now + chrono::Duration::seconds(60))
+            .min();
+        let days = oldest
+            .map(|date| {
+                let today = now.with_timezone(&Local).date_naive();
+                let first = date.with_timezone(&Local).date_naive();
+                (today - first)
+                    .num_days()
+                    .saturating_add(1)
+                    .clamp(1, i64::from(u32::MAX)) as u32
+            })
+            .unwrap_or(1);
+        if let Ok(mut cache) = self.report_cache.lock() {
+            cache.history_days = Some((minute, days));
+        }
+        days
+    }
+
+    /// Missing turn totals or an unfinished/partial local scan mean that a
+    /// zero cannot be presented as proof that no tokens were used.
+    pub fn history_partial(
+        &self,
+        enabled: &[&str],
+        provider: Option<&str>,
+        account: Option<&str>,
+        days: u32,
+        now: DateTime<Utc>,
+    ) -> bool {
+        let Some(logs) = &self.logs else { return true };
+        let key = PartialKey {
+            enabled: enabled.iter().map(|value| (*value).to_owned()).collect(),
+            provider: provider.map(str::to_owned),
+            account: account.map(str::to_owned),
+            days,
+            minute: now.timestamp().div_euclid(60),
+            local_offset: now.with_timezone(&Local).offset().local_minus_utc(),
+        };
+        if let Ok(cache) = self.report_cache.lock()
+            && let Some((_, partial)) = cache.partial.iter().find(|(cached, _)| *cached == key)
+        {
+            return *partial;
+        }
+        let in_scope = |name: &str| enabled.contains(&name) && provider.is_none_or(|p| p == name);
+        let since = usage_report::days_back(now.with_timezone(&Local).date_naive(), days);
+        let covered = logs
+            .events
+            .iter()
+            .filter(|event| event.is_from_coincide)
+            .map(|event| {
+                (
+                    event.event.provider.as_str(),
+                    event.event.account_id.as_str(),
+                    event.event.date.with_timezone(&Local).date_naive(),
+                )
+            })
+            .collect::<std::collections::HashSet<_>>();
+        let partial = (self.registered_unavailable && provider.is_none())
+            || logs.incomplete_providers.iter().any(|name| in_scope(name))
+            || self.records.iter().any(|record| {
+                in_scope(&record.provider)
+                    && account.is_none_or(|id| record.account_id == id)
+                    && record.finished_at <= now + chrono::Duration::seconds(60)
+                    && record.finished_at.with_timezone(&Local).date_naive() >= since
+                    && record.turn_totals.is_none()
+                    && !(logs.complete_providers.contains(&record.provider.as_str())
+                        && covered.contains(&(
+                            record.provider.as_str(),
+                            record.account_id.as_str(),
+                            record.finished_at.with_timezone(&Local).date_naive(),
+                        )))
+            });
+        if let Ok(mut cache) = self.report_cache.lock() {
+            cache.partial.push_back((key, partial));
+            while cache.partial.len() > 12 {
+                cache.partial.pop_front();
+            }
+        }
+        partial
+    }
+
     pub fn set_logs(&mut self, logs: Option<Arc<CliScan>>) {
         self.logs = logs;
         // Clones may still use the previous scan, so give this Data a new cache.
         self.report_cache = Arc::new(Mutex::new(ReportCache::default()));
     }
 
-    /// A complete provider log with Coincide sessions replaces its saved turn
-    /// totals, so a request present in both sources is never counted twice.
+    /// Merge saved turns and local logs conservatively by provider/day.
+    /// Complete Claude/Codex logs replace overlapping saved days, preserving
+    /// older saved days whose logs are gone. OpenCode's supplemental database
+    /// instead fills days with no saved totals.
     pub fn events(&self, include_other_sessions: bool) -> Vec<usage_report::Event> {
         let Some(logs) = &self.logs else {
             return usage_report::events(&self.records, &[]);
         };
-        // An otherwise valid log scan may only contain sessions started outside
-        // Coincide. In that case it cannot replace Coincide's saved turns.
-        let replace: Vec<_> = logs
-            .complete_providers
+        let has_own = logs
+            .events
             .iter()
-            .copied()
-            .filter(|provider| {
-                logs.events
-                    .iter()
-                    .any(|logged| logged.event.provider == *provider && logged.is_from_coincide)
+            .filter(|logged| logged.is_from_coincide)
+            .map(|logged| {
+                (
+                    logged.event.provider.as_str(),
+                    logged.event.account_id.as_str(),
+                )
             })
-            .collect();
-        let mut events = usage_report::events(&self.records, &replace);
+            .collect::<std::collections::HashSet<_>>();
+        let logged_days = logs
+            .events
+            .iter()
+            .filter(|logged| {
+                logs.complete_providers
+                    .contains(&logged.event.provider.as_str())
+            })
+            .filter(|logged| {
+                has_own.contains(&(
+                    logged.event.provider.as_str(),
+                    logged.event.account_id.as_str(),
+                ))
+            })
+            .filter(|logged| include_other_sessions || logged.is_from_coincide)
+            .map(|logged| {
+                (
+                    logged.event.provider.as_str(),
+                    logged.event.account_id.as_str(),
+                    logged.event.date.with_timezone(&Local).date_naive(),
+                )
+            })
+            .collect::<std::collections::HashSet<_>>();
+        let mut events = usage_report::events(&self.records, &[]);
+        events.retain(|event| {
+            !logged_days.contains(&(
+                event.provider.as_str(),
+                event.account_id.as_str(),
+                event.date.with_timezone(&Local).date_naive(),
+            ))
+        });
+        let saved_days = self
+            .records
+            .iter()
+            .filter(|record| record.turn_totals.is_some())
+            .filter(|record| matches!(record.provider.as_str(), "opencode" | "lithos"))
+            .map(|record| {
+                (
+                    record.provider.as_str(),
+                    record.finished_at.with_timezone(&Local).date_naive(),
+                )
+            })
+            .collect::<std::collections::HashSet<_>>();
         events.extend(
             logs.events
                 .iter()
                 .filter(|logged| {
-                    logs.complete_providers
-                        .contains(&logged.event.provider.as_str())
+                    let provider = logged.event.provider.as_str();
+                    (logs.complete_providers.contains(&provider)
+                        || logs.supplemental_providers.contains(&provider))
                         && (include_other_sessions || logged.is_from_coincide)
+                        && (!logs.supplemental_providers.contains(&provider)
+                            || !saved_days.contains(&(
+                                provider,
+                                logged.event.date.with_timezone(&Local).date_naive(),
+                            )))
                 })
                 .map(|logged| logged.event.clone()),
         );
@@ -129,7 +301,7 @@ impl Data {
             local_offset: now.with_timezone(&Local).offset().local_minus_utc(),
         };
         if let Ok(cache) = self.report_cache.lock()
-            && let Some((_, report)) = cache.0.iter().find(|(cached, _)| *cached == key)
+            && let Some((_, report)) = cache.reports.iter().find(|(cached, _)| *cached == key)
         {
             return report.clone();
         }
@@ -144,10 +316,10 @@ impl Data {
             .collect::<Vec<_>>();
         let report = Arc::new(Report::make(&events, days, now, &Local));
         if let Ok(mut cache) = self.report_cache.lock() {
-            cache.0.retain(|(cached, _)| *cached != key);
-            cache.0.push_back((key, report.clone()));
-            while cache.0.len() > 12 {
-                cache.0.pop_front();
+            cache.reports.retain(|(cached, _)| *cached != key);
+            cache.reports.push_back((key, report.clone()));
+            while cache.reports.len() > 12 {
+                cache.reports.pop_front();
             }
         }
         report
@@ -157,7 +329,7 @@ impl Data {
 /// Worker side: holds the engine only to copy saved bytes and account rows.
 pub(crate) fn read(engine: &SharedEngine) -> Result<Data, String> {
     let deadline = Instant::now() + Duration::from_secs(3);
-    let (bytes, accounts) = loop {
+    let (bytes, accounts, registered, registered_unavailable, registry) = loop {
         match engine.try_lock() {
             Ok(engine) => {
                 if engine.admissions_frozen() {
@@ -167,7 +339,17 @@ pub(crate) fn read(engine: &SharedEngine) -> Result<Data, String> {
                     "Usage history could not be read. Its saved contents have been retained."
                         .to_owned()
                 })?;
-                break (bytes, accounts(&engine));
+                let accounts = accounts(&engine);
+                let registered = engine.native_acp_agents();
+                let registered_unavailable = registered.is_err();
+                let registry = engine.native_acp_usage_sites();
+                break (
+                    bytes,
+                    accounts,
+                    registered.unwrap_or_default(),
+                    registered_unavailable,
+                    registry,
+                );
             }
             Err(std::sync::TryLockError::WouldBlock) if Instant::now() < deadline => {
                 std::thread::sleep(Duration::from_millis(25))
@@ -178,10 +360,50 @@ pub(crate) fn read(engine: &SharedEngine) -> Result<Data, String> {
     let (records, skipped) = turn_records(&bytes).map_err(|_| {
         "Usage history is invalid. Its saved contents have been retained.".to_owned()
     })?;
+    let local = if registered.is_empty() {
+        Vec::new()
+    } else {
+        coincide_core::acp_registry::local_agents()
+    };
+    let registered = registered
+        .into_iter()
+        .filter_map(|row| {
+            let provider = row["provider"].as_str()?;
+            let id = coincide_core::acp_registry::registry_id(provider)?;
+            let name = row["displayName"].as_str()?;
+            let website = registry
+                .iter()
+                .find(|(agent_id, _)| agent_id == id)
+                .and_then(|(_, website)| website.as_deref())
+                .or_else(|| {
+                    local
+                        .iter()
+                        .find(|agent| agent.id == id)
+                        .and_then(|agent| agent.website.as_deref())
+                })
+                .and_then(|site| url::Url::parse(site).ok())
+                .filter(|site| {
+                    site.scheme() == "https"
+                        && site.host_str().is_some()
+                        && site.username().is_empty()
+                        && site.password().is_none()
+                        && site.query().is_none()
+                        && site.fragment().is_none()
+                })
+                .map(|site| site.to_string());
+            Some(RegisteredAgent {
+                provider: provider.into(),
+                name: name.into(),
+                website,
+            })
+        })
+        .collect();
     Ok(Data {
         records,
         skipped,
         accounts,
+        registered,
+        registered_unavailable,
         read_at: Utc::now(),
         logs: None,
         report_cache: Arc::default(),
@@ -197,9 +419,14 @@ fn log_roots(provider: ImportProvider, home: &Path) -> Vec<PathBuf> {
 
 /// Snapshot only authorized paths and account IDs while holding the Engine;
 /// reading the logs and the separate read-only Store happens after release.
-pub(crate) fn cli_sources(
-    engine: &coincide_core::api::Engine,
-) -> Result<(Vec<CliSource>, PathBuf), String> {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct UsageSources {
+    pub cli: Vec<CliSource>,
+    pub database: PathBuf,
+    pub opencode_database: Option<PathBuf>,
+}
+
+pub(crate) fn cli_sources(engine: &coincide_core::api::Engine) -> Result<UsageSources, String> {
     let mut sources = Vec::new();
     let default_home = coincide_core::cli_session_discovery::home_directory();
     for (provider, kind, variable, folder) in [
@@ -275,7 +502,42 @@ pub(crate) fn cli_sources(
         .store
         .usage_database_path()
         .map_err(|_| "Usage store is unavailable.".to_owned())?;
-    Ok((sources, database))
+    let configuration = engine
+        .native_provider_configuration("opencode")
+        .map_err(|_| "OpenCode configuration is unavailable.".to_owned())?;
+    let variable = |key: &str| {
+        configuration
+            .approved
+            .then(|| configuration.environment.get(key).cloned())
+            .flatten()
+            .filter(|value| !value.trim().is_empty())
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os(key)
+                    .filter(|value| !value.is_empty())
+                    .map(PathBuf::from)
+            })
+    };
+    let data_root = variable("XDG_DATA_HOME")
+        .or_else(|| default_home.as_ref().map(|home| home.join(".local/share")));
+    if data_root.as_ref().is_some_and(|path| !path.is_absolute()) {
+        return Err("The OpenCode data folder is not an absolute path.".into());
+    }
+    let opencode_database = data_root.and_then(|root| {
+        let database = variable("OPENCODE_DB").unwrap_or_else(|| PathBuf::from("opencode.db"));
+        if database == Path::new(":memory:") {
+            None
+        } else if database.is_absolute() {
+            Some(database)
+        } else {
+            Some(root.join("opencode").join(database))
+        }
+    });
+    Ok(UsageSources {
+        cli: sources,
+        database,
+        opencode_database,
+    })
 }
 
 /// Every provider's default account, then its saved accounts in their order.
@@ -686,6 +948,8 @@ mod tests {
             ],
             skipped: 0,
             accounts: vec![],
+            registered: vec![],
+            registered_unavailable: false,
             read_at: now,
             logs: Some(Arc::new(Scan {
                 events: vec![logged(30, true), logged(40, false)],
@@ -720,6 +984,148 @@ mod tests {
         assert_eq!(replaced.period.tokens.total(), 600);
         data.set_logs(None);
         assert_eq!(total(data.events(true)), 600);
+    }
+
+    #[::core::prelude::v1::test]
+    fn opencode_supplement_keeps_saved_days_and_adds_nonoverlapping_history() {
+        use coincide_core::cli_usage_logs::{LoggedEvent, Scan};
+        use coincide_core::usage_report::{Event, TokenTotals};
+        let now = Utc::now();
+        let saved = TurnRecord {
+            thread_id: None,
+            project_id: None,
+            provider: "opencode".into(),
+            account_id: "default".into(),
+            model: None,
+            started_at: None,
+            finished_at: now,
+            turn_totals: Some(TokenTotals::new(100, 0, 0, 0, 0, 0)),
+        };
+        let logged = |when, count, own| LoggedEvent {
+            event: Event {
+                date: when,
+                provider: "opencode".into(),
+                account_id: "default".into(),
+                model: None,
+                tokens: TokenTotals::new(count, 0, 0, 0, 0, 0),
+                prompt_tokens: 0,
+                project_id: None,
+            },
+            is_from_coincide: own,
+        };
+        let old = now - chrono::Duration::days(2);
+        let data = Data {
+            records: vec![saved],
+            skipped: 0,
+            accounts: vec![],
+            registered: vec![],
+            registered_unavailable: false,
+            read_at: now,
+            logs: Some(Arc::new(Scan {
+                events: vec![
+                    logged(now, 900, true),
+                    logged(old, 30, true),
+                    logged(old, 40, false),
+                ],
+                supplemental_providers: vec!["opencode"],
+                ..Scan::default()
+            })),
+            report_cache: Arc::default(),
+        };
+        let total = |include| {
+            data.events(include)
+                .iter()
+                .map(|event| event.tokens.total())
+                .sum::<u64>()
+        };
+        assert_eq!(total(true), 170);
+        assert_eq!(total(false), 130);
+    }
+
+    #[::core::prelude::v1::test]
+    fn complete_cli_logs_preserve_saved_days_without_local_logs() {
+        use coincide_core::cli_usage_logs::{LoggedEvent, Scan};
+        use coincide_core::usage_report::{Event, TokenTotals};
+        let now = Utc::now();
+        let saved = |date, count| TurnRecord {
+            thread_id: None,
+            project_id: None,
+            provider: "codex".into(),
+            account_id: "default".into(),
+            model: None,
+            started_at: None,
+            finished_at: date,
+            turn_totals: Some(TokenTotals::new(count, 0, 0, 0, 0, 0)),
+        };
+        let data = Data {
+            records: vec![saved(now, 100), saved(now - chrono::Duration::days(3), 200)],
+            skipped: 0,
+            accounts: vec![],
+            registered: vec![],
+            registered_unavailable: false,
+            read_at: now,
+            logs: Some(Arc::new(Scan {
+                events: vec![LoggedEvent {
+                    event: Event {
+                        date: now,
+                        provider: "codex".into(),
+                        account_id: "default".into(),
+                        model: None,
+                        tokens: TokenTotals::new(30, 0, 0, 0, 0, 0),
+                        prompt_tokens: 0,
+                        project_id: None,
+                    },
+                    is_from_coincide: true,
+                }],
+                complete_providers: vec!["codex"],
+                ..Scan::default()
+            })),
+            report_cache: Arc::default(),
+        };
+        let report = data.report(true, &["codex"], None, None, 30, now);
+        assert_eq!(report.today.tokens.total(), 30);
+        assert_eq!(report.last_month.tokens.total(), 230);
+    }
+
+    #[::core::prelude::v1::test]
+    fn all_available_history_includes_saved_turns_older_than_a_year() {
+        use coincide_core::usage_report::TokenTotals;
+        let now = Utc::now();
+        let data = Data {
+            records: vec![TurnRecord {
+                thread_id: None,
+                project_id: None,
+                provider: "codex".into(),
+                account_id: "default".into(),
+                model: None,
+                started_at: None,
+                finished_at: now - chrono::Duration::days(500),
+                turn_totals: Some(TokenTotals::new(42, 0, 0, 0, 0, 0)),
+            }],
+            skipped: 0,
+            accounts: vec![],
+            registered: vec![],
+            registered_unavailable: false,
+            read_at: now,
+            logs: None,
+            report_cache: Arc::default(),
+        };
+        let days = data.history_days(now);
+        assert!(days >= 500);
+        assert_eq!(
+            data.report(false, &["codex"], None, None, days, now)
+                .period
+                .tokens
+                .total(),
+            42
+        );
+        assert_eq!(
+            data.report(false, &["codex"], None, None, 365, now)
+                .period
+                .tokens
+                .total(),
+            0
+        );
     }
 
     #[::core::prelude::v1::test]

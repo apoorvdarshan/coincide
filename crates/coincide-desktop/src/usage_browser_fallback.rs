@@ -1,4 +1,4 @@
-//! Read only the OpenCode cookies from Coincide's default WebKit profile.
+//! Read only opted-in provider cookies from Coincide's default WebKit profile.
 //! No cookie or account data is exposed to the transcript or browser tools.
 use coincide_core::api::SharedEngine;
 #[cfg(target_os = "macos")]
@@ -40,8 +40,43 @@ fn cookie_applies(domain: &str, path: &str, name: &str, expired: bool) -> bool {
         && path_matches("/console/api/billing/drawer/status")
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn lithos_cookie_applies(
+    domain: &str,
+    path: &str,
+    name: &str,
+    expired: bool,
+    secure: bool,
+) -> bool {
+    domain.eq_ignore_ascii_case("console.lithosai.cloud")
+        && path == "/"
+        && !expired
+        && secure
+        && matches!(name, "__Host-console_session" | "__Host-console_csrf")
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy)]
+enum BrowserSource {
+    Opencode,
+    Lithos,
+}
+
 #[cfg(target_os = "macos")]
 pub(super) fn opencode(engine: &SharedEngine) -> Option<Receiver<Option<Zeroizing<String>>>> {
+    cookies(engine, BrowserSource::Opencode)
+}
+
+#[cfg(target_os = "macos")]
+pub(super) fn lithos(engine: &SharedEngine) -> Option<Receiver<Option<Zeroizing<String>>>> {
+    cookies(engine, BrowserSource::Lithos)
+}
+
+#[cfg(target_os = "macos")]
+fn cookies(
+    engine: &SharedEngine,
+    source: BrowserSource,
+) -> Option<Receiver<Option<Zeroizing<String>>>> {
     use block2::RcBlock;
     use objc2::MainThreadMarker;
     use objc2_foundation::{NSArray, NSHTTPCookie, NSUUID};
@@ -83,7 +118,13 @@ pub(super) fn opencode(engine: &SharedEngine) -> Option<Receiver<Option<Zeroizin
                 let expired = item
                     .expiresDate()
                     .is_some_and(|d| d.timeIntervalSince1970() <= now);
-                if !cookie_applies(&domain, &path, &name, expired) {
+                let applies = match source {
+                    BrowserSource::Opencode => cookie_applies(&domain, &path, &name, expired),
+                    BrowserSource::Lithos => {
+                        lithos_cookie_applies(&domain, &path, &name, expired, item.isSecure())
+                    }
+                };
+                if !applies {
                     continue;
                 }
                 // Only touch the value after its host and path have matched.
@@ -105,6 +146,22 @@ pub(super) fn opencode(engine: &SharedEngine) -> Option<Receiver<Option<Zeroizin
                 || name.starts_with("__Host-console_session.")
                 || name.starts_with("console_session.")
         });
+        let signed_in = signed_in
+            && match source {
+                BrowserSource::Opencode => true,
+                BrowserSource::Lithos => {
+                    selected
+                        .iter()
+                        .filter(|(_, name, _)| name == "__Host-console_session")
+                        .count()
+                        == 1
+                        && selected
+                            .iter()
+                            .filter(|(_, name, _)| name == "__Host-console_csrf")
+                            .count()
+                            <= 1
+                }
+            };
         let header = if signed_in {
             let mut header = Zeroizing::new(String::new());
             for (_, name, value) in selected {
@@ -132,9 +189,66 @@ pub(super) fn opencode(_engine: &SharedEngine) -> Option<Receiver<Option<Zeroizi
     None
 }
 
+#[cfg(not(target_os = "macos"))]
+pub(super) fn lithos(_engine: &SharedEngine) -> Option<Receiver<Option<Zeroizing<String>>>> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
-    use super::cookie_applies;
+    use super::{cookie_applies, lithos_cookie_applies};
+    #[test]
+    fn lithos_cookies_are_host_scoped_secure_and_explicitly_named() {
+        assert!(lithos_cookie_applies(
+            "console.lithosai.cloud",
+            "/",
+            "__Host-console_session",
+            false,
+            true
+        ));
+        assert!(lithos_cookie_applies(
+            "console.lithosai.cloud",
+            "/",
+            "__Host-console_csrf",
+            false,
+            true
+        ));
+        assert!(!lithos_cookie_applies(
+            ".console.lithosai.cloud",
+            "/",
+            "__Host-console_session",
+            false,
+            true
+        ));
+        assert!(!lithos_cookie_applies(
+            "console.lithosai.cloud",
+            "/api",
+            "__Host-console_session",
+            false,
+            true
+        ));
+        assert!(!lithos_cookie_applies(
+            "console.lithosai.cloud",
+            "/",
+            "other",
+            false,
+            true
+        ));
+        assert!(!lithos_cookie_applies(
+            "console.lithosai.cloud",
+            "/",
+            "__Host-console_session",
+            true,
+            true
+        ));
+        assert!(!lithos_cookie_applies(
+            "console.lithosai.cloud",
+            "/",
+            "__Host-console_session",
+            false,
+            false
+        ));
+    }
     #[test]
     fn only_unexpired_opencode_cookies_for_both_billing_paths_are_used() {
         assert!(cookie_applies(

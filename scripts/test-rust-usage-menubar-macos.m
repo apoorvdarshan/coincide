@@ -27,6 +27,7 @@ static void SetFixture(NSUInteger accountCount, NSString *appearance) {
     }
     NSDictionary *fixture = @{
         @"mode": @"used", @"updated": @"just now", @"appearance": appearance,
+        @"overviewNote": @"Local history may be incomplete",
         @"themes": @{@"dark":@{@"surface":@0x18241D, @"ink":@0xD4E2D8, @"accent":@0x6FD08C},
                      @"light":@{@"surface":@0xFBF6EC, @"ink":@0x211B12, @"accent":@0xC26A2E}},
         @"periods": @[@{@"label":@"Today", @"tokens":@"2.3M", @"cost":@"—"},

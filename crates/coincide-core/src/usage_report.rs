@@ -135,7 +135,9 @@ pub fn turn_records(bytes: &[u8]) -> Result<(Vec<TurnRecord>, usize)> {
     let mut turns = Vec::with_capacity(records.records().len());
     let mut skipped = 0;
     for record in records.records() {
-        let provider = text(record.get("provider")).filter(|p| PROVIDERS.contains(&p.as_str()));
+        let provider = text(record.get("provider")).filter(|p| {
+            PROVIDERS.contains(&p.as_str()) || crate::acp_registry::registry_id(p).is_some()
+        });
         let (Some(provider), Some(finished_at)) = (provider, date(record.get("finishedAt"))) else {
             skipped += 1;
             continue;
@@ -366,14 +368,25 @@ impl Report {
         }
         report.days = days
             .into_iter()
-            .flat_map(|(day, providers)| {
-                PROVIDERS.iter().filter_map(move |provider| {
-                    providers.get(provider).map(|totals| DayRow {
-                        day,
-                        provider: (*provider).to_owned(),
-                        totals: totals.clone(),
-                    })
-                })
+            .flat_map(|(day, mut providers)| {
+                let mut ordered = Vec::new();
+                for provider in PROVIDERS {
+                    if let Some(totals) = providers.remove(provider) {
+                        ordered.push(DayRow {
+                            day,
+                            provider: provider.to_owned(),
+                            totals,
+                        });
+                    }
+                }
+                let mut remaining = providers.into_iter().collect::<Vec<_>>();
+                remaining.sort_by_key(|(provider, _)| *provider);
+                ordered.extend(remaining.into_iter().map(|(provider, totals)| DayRow {
+                    day,
+                    provider: provider.to_owned(),
+                    totals,
+                }));
+                ordered
             })
             .collect();
         let mut models = models.into_iter().collect::<Vec<_>>();
@@ -504,6 +517,25 @@ mod tests {
         assert_eq!(events[0].tokens.total(), 1010);
         assert!(super::events(&records, &["cursor"]).is_empty());
         assert!(turn_records(b"{}").is_err());
+    }
+
+    #[test]
+    fn configured_registry_agents_keep_reported_usage_in_totals_and_daily_chart() {
+        let bytes = serde_json::to_vec(&json!([
+            {"id":uuid::Uuid::from_u128(8),"provider":"acp-github-copilot-cli",
+             "finishedAt":"2026-11-07T10:00:00Z", "usage":{"turnTotals":{"input":30,"output":5}}},
+            {"id":uuid::Uuid::from_u128(9),"provider":"acp-../unsafe","finishedAt":"2026-11-07T10:00:00Z"},
+        ])).unwrap();
+        let (records, skipped) = turn_records(&bytes).unwrap();
+        assert_eq!((records.len(), skipped), (1, 1));
+        let report = Report::make(
+            &events(&records, &[]),
+            30,
+            at("2026-11-07T12:00:00Z"),
+            &FixedOffset::east_opt(0).unwrap(),
+        );
+        assert_eq!(report.today.tokens.total(), 35);
+        assert_eq!(report.days[0].provider, "acp-github-copilot-cli");
     }
 
     #[test]

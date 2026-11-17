@@ -2,6 +2,14 @@
 use super::*;
 
 impl Engine {
+    /// Registry website metadata only; callers need no executable or environment values.
+    pub fn native_acp_usage_sites(&self) -> Vec<(String, Option<String>)> {
+        self.acp_registry
+            .iter()
+            .map(|agent| (agent.id.clone(), agent.website.clone()))
+            .collect()
+    }
+
     /// Re-scan local executables after the user installs a provider. Metadata
     /// checks are kept off the UI thread and do not start a provider process.
     pub fn refresh_native_provider_discovery(&mut self) -> Result<()> {

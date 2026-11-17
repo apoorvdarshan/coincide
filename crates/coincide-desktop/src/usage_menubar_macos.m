@@ -417,6 +417,8 @@ static NSBox *UsageSeparator(CGFloat width) {
     }
     [overview addArrangedSubview:overall];
     [overall.widthAnchor constraintEqualToConstant:innerWidth].active = YES;
+    NSString *overviewNote = UsageString(self.snapshot[@"overviewNote"]);
+    if (overviewNote.length) [overview addArrangedSubview:UsageLabel(overviewNote, 10, NSFontWeightRegular, muted)];
     [content addArrangedSubview:overview];
     [overview.widthAnchor constraintEqualToConstant:contentWidth].active = YES;
     [content addArrangedSubview:UsageLabel(@"ACCOUNTS", 10, NSFontWeightSemibold, muted)];
