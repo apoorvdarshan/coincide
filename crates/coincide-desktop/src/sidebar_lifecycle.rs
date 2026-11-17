@@ -5,6 +5,10 @@ use coincide_core::api::{
     BotConversationDisposition as Disposition, BotDeletionUndo, PreparedBotDeletion,
     PreparedThreadDeletion, PreparedThreadMove, ThreadDeletionUndo, ThreadMoveUndo,
 };
+#[cfg(test)]
+#[path = "sidebar_lifecycle_ui_tests.rs"]
+mod sidebar_lifecycle_ui_tests;
+
 #[derive(Clone)]
 enum Intent {
     Move(String, String),
@@ -73,6 +77,23 @@ fn stop_if_running(engine: &mut Engine, id: &str) -> Result<()> {
     }
     Ok(())
 }
+
+/// Menu keyboard activation has no meaningful pointer position. Keep the row
+/// anchor in that case instead of using the synthetic (0, 0) click event.
+fn review_pointer_position(event: &ClickEvent) -> Option<Point<Pixels>> {
+    match event {
+        ClickEvent::Mouse(_) | ClickEvent::Touch(_) => Some(event.position()),
+        ClickEvent::Keyboard(_) => None,
+    }
+}
+
+fn review_popover(anchor: Point<Pixels>, panel: impl IntoElement) -> impl IntoElement {
+    anchored()
+        .position(anchor)
+        .offset(point(px(6.), px(6.)))
+        .child(panel)
+}
+
 impl Coincide {
     /// Use the actual row's last painted bounds, including its scroll offset.
     pub(super) fn sidebar_review_anchor(
@@ -87,6 +108,21 @@ impl Coincide {
             .and_then(|rows| rows.get(&format!("{kind}:{id}")).copied())
             .map(|bounds| point(bounds.right() + px(6.), bounds.top()))
             .unwrap_or_else(|| window.mouse_position())
+    }
+
+    /// A review opened from a pointer-driven menu follows the selected menu
+    /// item, while keyboard shortcuts retain the associated sidebar row.
+    pub(super) fn anchor_sidebar_review_to_click(
+        &mut self,
+        event: &ClickEvent,
+        cx: &mut Context<Self>,
+    ) {
+        if self.sidebar_lifecycle.review_visible()
+            && let Some(position) = review_pointer_position(event)
+        {
+            self.sidebar_lifecycle.anchor = Some(position);
+            cx.notify();
+        }
     }
     /// The move review for a destination already chosen: a Move to Project
     /// submenu item, or threads dropped on a project.
@@ -620,16 +656,12 @@ impl Coincide {
                         this.cancel_sidebar_lifecycle(window, cx);
                     }),
                 )
-                .child(
-                    anchored()
-                        .position(
-                            self.sidebar_lifecycle
-                                .anchor
-                                .unwrap_or(point(px(180.), px(90.))),
-                        )
-                        .snap_to_window_with_margin(px(8.))
-                        .child(panel),
-                )
+                .child(review_popover(
+                    self.sidebar_lifecycle
+                        .anchor
+                        .unwrap_or(point(px(180.), px(90.))),
+                    panel,
+                ))
                 .into_any_element(),
         )
     }

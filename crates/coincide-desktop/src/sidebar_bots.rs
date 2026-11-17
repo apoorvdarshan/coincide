@@ -758,9 +758,10 @@ impl Coincide {
                                 let parent_delete = parent.clone();
                                 let id = menu_id.clone();
                                 menu.item(PopupMenuItem::separator()).item(
-                                    PopupMenuItem::new("Delete Bot…").on_click(move |_, window, cx| {
+                                    PopupMenuItem::new("Delete Bot…").on_click(move |event, window, cx| {
                                         let _ = parent_delete.update(cx, |this, cx| {
-                                            this.sidebar_bot_delete_review(id.clone(), window, cx)
+                                            this.sidebar_bot_delete_review(id.clone(), window, cx);
+                                            this.anchor_sidebar_review_to_click(event, cx);
                                         });
                                     }),
                                 )

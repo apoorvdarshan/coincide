@@ -613,9 +613,12 @@ impl Coincide {
                         .compact()
                         .label(label)
                         .disabled(busy || state.picked.is_empty() || (id == "settle" && running))
-                        .on_click(cx.listener(move |this, _, window, cx| {
+                        .on_click(cx.listener(move |this, event, window, cx| {
                             let ids = this.thread_bulk.picked.iter().cloned().collect::<Vec<_>>();
-                            this.sidebar_bulk_action(&ids, action, window, cx)
+                            this.sidebar_bulk_action(&ids, action, window, cx);
+                            if matches!(action, sidebar_menus::BulkAction::Delete) {
+                                this.anchor_sidebar_review_to_click(event, cx);
+                            }
                         })),
                 );
             }

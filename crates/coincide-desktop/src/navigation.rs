@@ -1558,7 +1558,7 @@ impl Coincide {
                                 })
                                 .tooltip(if is_archived { "Restore" } else { "Archive" })
                                 .on_click(cx.listener(
-                                    move |this, _, window, cx| {
+                                    move |this, event, window, cx| {
                                         if this.thread_bulk.mode
                                             || this.running.contains(&archive_id)
                                         {
@@ -1571,6 +1571,9 @@ impl Coincide {
                                             window,
                                             cx,
                                         );
+                                        if !is_archived {
+                                            this.anchor_sidebar_review_to_click(event, cx);
+                                        }
                                     },
                                 )),
                             ),
