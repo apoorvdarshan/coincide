@@ -1,4 +1,4 @@
-//! Bot avatars, ported from Swift's `BotArtwork` (CoincideRemoteKit): seven
+//! Bot avatars, based on Swift's `BotArtwork` (CoincideRemoteKit): eight
 //! characters laid out on a 100-point grid, top down, with the body in the bot's
 //! tint and its outline and shading mixed from it. Small sizes drop the fine
 //! details and thicken lines, as in Swift. The result is an SVG document, so every
@@ -16,6 +16,7 @@ pub enum Character {
     Cherry,
     Teddy,
     Brulee,
+    Jam,
 }
 
 /// The body colors, by the names the Mac saves (`BotAvatar.Tint`).
@@ -35,7 +36,7 @@ pub enum Tint {
 }
 
 impl Character {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Alien,
         Self::Star,
         Self::Croissant,
@@ -43,6 +44,7 @@ impl Character {
         Self::Cherry,
         Self::Teddy,
         Self::Brulee,
+        Self::Jam,
     ];
     pub fn raw(self) -> &'static str {
         match self {
@@ -53,6 +55,7 @@ impl Character {
             Self::Cherry => "cherry",
             Self::Teddy => "teddy",
             Self::Brulee => "brulee",
+            Self::Jam => "jam",
         }
     }
     /// A saved name, including the plain body shapes of earlier versions, which
@@ -78,7 +81,7 @@ impl Character {
             Self::Star | Self::Bomboloni => Tint::Sunflower,
             Self::Croissant => Tint::Tangerine,
             Self::Cherry => Tint::Cherry,
-            Self::Teddy => Tint::Caramel,
+            Self::Teddy | Self::Jam => Tint::Caramel,
             Self::Brulee => Tint::Rose,
         }
     }
@@ -92,6 +95,7 @@ impl Character {
             Self::Cherry => "Cherry",
             Self::Teddy => "Teddy",
             Self::Brulee => "Brulee",
+            Self::Jam => "Jam",
         }
     }
     /// The personality preset a new bot with this character is offered.
@@ -186,6 +190,7 @@ pub fn svg(character: Character, tint: Tint, side: f64, pixels: u32, openness: f
         Character::Cherry => cherry(&mut pen),
         Character::Teddy => teddy(&mut pen),
         Character::Brulee => brulee(&mut pen),
+        Character::Jam => jam(&mut pen),
     }
     format!(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{pixels}\" height=\"{pixels}\" viewBox=\"0 0 100 100\">{}</svg>",
@@ -1157,6 +1162,119 @@ fn brulee(pen: &mut Pen) {
     });
     pen.fill(&scoop, rgb(0xF7E8C9));
     pen.stroke(&scoop, rgb(0x8C5A2B), 1.3, 0.5);
+}
+
+/// Jam is a little cat peeking out of a slice of toast. Its crust follows the
+/// chosen tint; the cream face and dark features stay readable at every size.
+fn jam(pen: &mut Pen) {
+    let ink = rgb(INK);
+    let cream = rgb(0xFFF9EF);
+    // Hands and feet sit behind the bread, like the supplied illustration.
+    for hand in [
+        path(|p| {
+            p.move_to((18., 55.))
+                .curve(10., 50., 5., 55., 6., 61.)
+                .curve(7., 67., 12., 69., 18., 67.)
+                .close();
+        }),
+        path(|p| {
+            p.move_to((83., 51.))
+                .curve(91., 47., 96., 50., 95., 55.)
+                .curve(94., 59., 90., 62., 84., 63.)
+                .close();
+        }),
+    ] {
+        pen.fill(&hand, cream);
+        pen.stroke(&hand, ink, 2.2, 0.65);
+    }
+    for (x, y) in [(35., 91.), (67., 88.)] {
+        let foot = ellipse((x, y), 5., 7.);
+        pen.fill(&foot, cream);
+        pen.stroke(&foot, ink, 2.4, 0.7);
+    }
+    let toast = path(|p| {
+        p.move_to((15., 37.))
+            .curve(13., 24., 22., 14., 35., 10.)
+            .curve(51., 5., 66., 8., 73., 18.)
+            .curve(76., 22., 80., 24., 85., 20.)
+            .curve(88., 18., 89., 22., 89., 28.)
+            .line((91., 68.))
+            .curve(91., 77., 86., 80., 77., 82.)
+            .line((31., 90.))
+            .curve(21., 91., 17., 86., 16., 77.)
+            .close();
+    });
+    let crust = darker(pen.body, 0.27);
+    pen.fill(&toast, crust);
+    pen.stroke(&toast, darker(pen.body, 0.43), 2., 0.65);
+    let bread = path(|p| {
+        p.move_to((20., 38.))
+            .curve(18., 27., 25., 19., 38., 15.)
+            .curve(52., 11., 64., 13., 70., 22.)
+            .curve(74., 28., 80., 29., 85., 26.)
+            .line((87., 68.))
+            .curve(87., 74., 83., 76., 75., 78.)
+            .line((32., 85.))
+            .curve(24., 86., 21., 82., 21., 75.)
+            .close();
+    });
+    pen.fill(&bread, lighter(pen.body, 0.68));
+    pen.stroke(&bread, lighter(pen.body, 0.05), 2., 0.65);
+    let face = path(|p| {
+        p.move_to((31., 52.))
+            .curve(31., 43., 33., 35., 37., 30.)
+            .curve(39., 27., 41., 34., 44., 39.)
+            .curve(49., 38., 55., 38., 59., 38.)
+            .curve(60., 31., 62., 24., 65., 26.)
+            .curve(70., 30., 73., 38., 75., 44.)
+            .curve(80., 58., 72., 66., 60., 69.)
+            .line((45., 72.))
+            .curve(35., 73., 30., 67., 31., 52.)
+            .close();
+    });
+    pen.fill(&face, Color::WHITE);
+    pen.stroke(&face, ink, 2.4, 0.7);
+    for (x, y) in [(40., 52.), (65., 48.)] {
+        pen.fill(&ellipse((x, y), 2.8, 3.1 * pen.open), ink);
+    }
+    if pen.detail > Detail::Tiny {
+        for (x, y, angle) in [(35., 59., 22.), (69., 56., -24.)] {
+            pen.fill(&rotated_ellipse((x, y), 3.1, 1.55, angle), rgb(0xF19CC1));
+        }
+        let mouth = path(|p| {
+            p.move_to((50., 57.))
+                .quad((54., 58.), (52., 60.))
+                .quad((58., 56.), (56., 59.));
+        });
+        pen.stroke(&mouth, ink, 1.5, 0.6);
+        let tongue = path(|p| {
+            p.move_to((52., 59.))
+                .quad((55., 63.), (54., 64.))
+                .quad((57., 58.), (57., 61.))
+                .close();
+        });
+        pen.fill(&tongue, rgb(0xF69DC1));
+        pen.stroke(&tongue, ink, 1., 0.5);
+    }
+    if pen.detail == Detail::Full {
+        for x in [47., 51., 55.] {
+            let stripe = path(|p| {
+                p.move_to((x, 40.)).quad((x + 1., 44.), (x - 0.5, 43.));
+            });
+            pen.stroke(&stripe, rgb(0xBDB7B5), 1., 0.45);
+        }
+        for (a, b, c) in [
+            ((31., 51.), (25., 50.), (21., 53.)),
+            ((31., 55.), (25., 56.), (23., 61.)),
+            ((75., 48.), (79., 43.), (83., 44.)),
+            ((76., 52.), (81., 51.), (84., 55.)),
+        ] {
+            let whisker = path(|p| {
+                p.move_to(a).quad(c, b);
+            });
+            pen.stroke(&whisker, ink, 1.1, 0.45);
+        }
+    }
 }
 
 #[cfg(test)]

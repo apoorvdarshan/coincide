@@ -1,4 +1,6 @@
-use coincide_core::thread_history::{HistoryOptions, edit_from_user, fork_through_turn};
+use coincide_core::thread_history::{
+    HistoryOptions, edit_from_user, fork_through_message_snapshot, fork_through_turn,
+};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -42,6 +44,44 @@ fn fixture() -> Value {
             {"id":A2,"kind":"assistant","text":"Second answer"}
         ]
     })
+}
+
+#[test]
+fn snapshot_fork_preserves_folder_or_folderless_location_and_is_not_live() {
+    for project in [json!("same-project"), Value::Null] {
+        let mut source = fixture();
+        source["projectID"] = project.clone();
+        source["items"][5]["status"] = json!("running");
+        let plan = fork_through_message_snapshot(&source, A2, options(Some(U2))).unwrap();
+        assert_eq!(plan.thread["projectID"], project);
+        assert_eq!(plan.thread["worktreePath"], source["worktreePath"]);
+        assert_eq!(plan.thread["items"].as_array().unwrap().len(), 6);
+        assert_eq!(plan.thread["items"][5]["status"], "failed");
+        assert_eq!(plan.thread["sessions"], json!({}));
+        assert_eq!(plan.thread["rustMessageQueue"], json!([]));
+        assert_eq!(plan.lineage["parentItemID"], A2);
+        assert_eq!(source["items"][5]["status"], "running");
+    }
+}
+
+#[test]
+fn fork_retargets_quoted_message_identifiers_to_the_fork() {
+    let mut source = fixture();
+    source["items"][4]["context"] = json!([
+        {"kind":"quote","text":"First answer","sourceItemID":A1},
+        {"kind":"quote","text":"Not copied","sourceItemID":A2}
+    ]);
+    let plan = fork_through_message_snapshot(&source, U2, options(None)).unwrap();
+    assert_eq!(
+        plan.thread["items"][4]["context"][0]["sourceItemID"],
+        plan.item_ids[A1]
+    );
+    assert!(
+        plan.thread["items"][4]["context"][1]
+            .get("sourceItemID")
+            .is_none()
+    );
+    assert_eq!(plan.thread["items"][4]["context"][1]["text"], "Not copied");
 }
 
 #[test]

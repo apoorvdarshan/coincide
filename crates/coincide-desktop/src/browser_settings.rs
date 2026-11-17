@@ -60,6 +60,42 @@ fn wait_for_engine<'a>(
         }
     }
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DefaultControlDisplay {
+    Ready(bool),
+    Loading,
+    Unavailable,
+}
+
+fn cached_default_agent_control(
+    engine: Option<&SharedEngine>,
+    cached: &mut Option<bool>,
+) -> DefaultControlDisplay {
+    let Some(engine) = engine else {
+        *cached = None;
+        return DefaultControlDisplay::Unavailable;
+    };
+    match engine.try_lock() {
+        Ok(engine) => match engine.read_browser_default_agent_control() {
+            Ok(value) => {
+                *cached = Some(value);
+                DefaultControlDisplay::Ready(value)
+            }
+            Err(_) => {
+                *cached = None;
+                DefaultControlDisplay::Unavailable
+            }
+        },
+        Err(std::sync::TryLockError::WouldBlock) => cached
+            .map(DefaultControlDisplay::Ready)
+            .unwrap_or(DefaultControlDisplay::Loading),
+        Err(std::sync::TryLockError::Poisoned(_)) => {
+            *cached = None;
+            DefaultControlDisplay::Unavailable
+        }
+    }
+}
 const MAX_DOCUMENT: u64 = 1_048_576;
 #[path = "cookie_import_flow.rs"]
 pub(crate) mod cookie_flow;
@@ -787,6 +823,9 @@ pub struct BrowserSettings {
     status: String,
     /// The address bar's engine; None until read from the trusted engine.
     search_engine: Option<coincide_core::browser_address::SearchEngine>,
+    /// Last confirmed value, retained while the shared engine is busy.
+    default_agent_control: Option<bool>,
+    default_agent_control_display: DefaultControlDisplay,
 }
 impl BrowserSettings {
     pub fn request_shutdown(&mut self) {
@@ -867,6 +906,8 @@ impl BrowserSettings {
                 import_sender,
                 status: "Choose a thread to view its browser profile.".into(),
                 search_engine: None,
+                default_agent_control: None,
+                default_agent_control_display: DefaultControlDisplay::Unavailable,
             },
             requests,
         )
@@ -886,6 +927,8 @@ impl BrowserSettings {
         }
         self.engine = Some(engine);
         self.search_engine = None;
+        self.default_agent_control = None;
+        self.default_agent_control_display = DefaultControlDisplay::Loading;
         self.history.set_binding(None);
         self.generation = self.generation.wrapping_add(1);
         self.epoch.store(self.generation, Ordering::Release);
@@ -1282,6 +1325,21 @@ impl BrowserSettings {
         cx.notify();
     }
     pub fn poll(&mut self, cx: &mut Context<Self>) {
+        if !self.pane_mode {
+            let mut display =
+                cached_default_agent_control(self.engine.as_ref(), &mut self.default_agent_control);
+            // An invalid or unavailable setting stays unavailable while the
+            // engine is busy; it is not a new loading state on every poll.
+            if display == DefaultControlDisplay::Loading
+                && self.default_agent_control_display == DefaultControlDisplay::Unavailable
+            {
+                display = DefaultControlDisplay::Unavailable;
+            }
+            if display != self.default_agent_control_display {
+                self.default_agent_control_display = display;
+                cx.notify();
+            }
+        }
         self.poll_history(cx);
         self.cookie_flow.poll();
         // Worker completion and cleanup custody can change without any input or
@@ -1564,26 +1622,52 @@ impl BrowserSettings {
                     .child("Open a conversation to choose its browser profile."),
             );
         }
-        let default_control = self.engine.as_ref().and_then(|engine| {
-            engine.try_lock().ok().map(|engine| {
-                engine.browser_agent_control_settings()["agentControlByDefault"]
-                    .as_bool()
-                    .unwrap_or(false)
-            })
-        });
-        let expected = default_control.unwrap_or(false);
-        view = view.child(div().flex().items_center().justify_between().gap_3()
-            .child(div().flex_1().min_w_0().child("Agent Control by default").child(div().text_xs().whitespace_normal().child("Let agents use their conversation’s browser. Each conversation can override this in its browser toolbar.")))
-            .child(Switch::new("browser-default-agent-control").checked(expected).disabled(default_control.is_none()).accessibility_label("Agent Control by default")
+        let default_control = self.default_agent_control_display;
+        let control = if let DefaultControlDisplay::Ready(expected) = default_control {
+            Switch::new("browser-default-agent-control")
+                .checked(expected)
+                .disabled(self.workers.closed())
+                .accessibility_label("Agent Control by default")
                 .on_click(cx.listener(move |this, enabled: &bool, _, cx| {
                     let result = (|| -> Result<()> {
-                        let shared = this.engine.as_ref().ok_or_else(|| anyhow::anyhow!("Browser is unavailable"))?;
-                        let mut engine = shared.try_lock().map_err(|_| anyhow::anyhow!("The app is busy. Try again."))?;
-                        ensure!(engine.browser_agent_control_settings()["agentControlByDefault"] == expected, "The browser setting changed. Try again.");
+                        let shared = this
+                            .engine
+                            .as_ref()
+                            .ok_or_else(|| anyhow::anyhow!("Browser is unavailable"))?;
+                        let mut engine = shared
+                            .try_lock()
+                            .map_err(|_| anyhow::anyhow!("The app is busy. Try again."))?;
+                        ensure!(
+                            engine.read_browser_default_agent_control()? == expected,
+                            "The browser setting changed. Try again."
+                        );
                         engine.set_browser_default_agent_control(*enabled)
                     })();
-                    this.status = result.err().map(|error| error.to_string()).unwrap_or_default(); cx.notify();
-                }))));
+                    match result {
+                        Ok(()) => {
+                            this.default_agent_control = Some(*enabled);
+                            this.default_agent_control_display =
+                                DefaultControlDisplay::Ready(*enabled);
+                            this.status.clear();
+                        }
+                        Err(error) => this.status = error.to_string(),
+                    }
+                    cx.notify();
+                }))
+                .into_any_element()
+        } else {
+            div()
+                .text_xs()
+                .child(if default_control == DefaultControlDisplay::Loading {
+                    "Loading…"
+                } else {
+                    "Unavailable"
+                })
+                .into_any_element()
+        };
+        view = view.child(div().flex().items_center().justify_between().gap_3()
+            .child(div().flex_1().min_w_0().child("Agent Control by default").child(div().text_xs().whitespace_normal().child("Let agents use their conversation’s browser. Each conversation can override this in its browser toolbar.")))
+            .child(control));
         view = view.child(
             div()
                 .flex()
@@ -1851,6 +1935,105 @@ impl Render for BrowserSettings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[::core::prelude::v1::test]
+    fn default_agent_control_keeps_the_saved_choice_when_the_engine_is_busy() {
+        const CHILD: &str = "COINCIDE_BROWSER_DEFAULT_CONTROL_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let root = tempfile::tempdir().unwrap();
+            let home = root.path().join("home");
+            std::fs::create_dir(&home).unwrap();
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "browser_settings::tests::default_agent_control_keeps_the_saved_choice_when_the_engine_is_busy",
+                    "--nocapture",
+                    "--test-threads=1",
+                ])
+                .env_clear()
+                .env(CHILD, "1")
+                .env("HOME", &home)
+                .env("USERPROFILE", &home)
+                .env("TMPDIR", root.path())
+                .env("TMP", root.path())
+                .env("TEMP", root.path())
+                .env("PATH", "/usr/bin:/bin")
+                .current_dir(root.path());
+            #[cfg(windows)]
+            for key in ["SystemRoot", "WINDIR"] {
+                if let Some(value) = std::env::var_os(key) {
+                    command.env(key, value);
+                }
+            }
+            let output = command.output().unwrap();
+            assert!(
+                output.status.success()
+                    && String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+                "isolated browser settings test failed:\n{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        let store = coincide_core::store::Store::open(&root.path().join("state.sqlite")).unwrap();
+        let engine = Arc::new(std::sync::Mutex::new(coincide_core::api::Engine::new(
+            store,
+        )));
+        let mut cached = None;
+        let lock = engine.lock().unwrap();
+        assert_eq!(
+            cached_default_agent_control(Some(&engine), &mut cached),
+            DefaultControlDisplay::Loading
+        );
+        drop(lock);
+        assert_eq!(
+            cached_default_agent_control(Some(&engine), &mut cached),
+            DefaultControlDisplay::Ready(true)
+        );
+        let lock = engine.lock().unwrap();
+        assert_eq!(
+            cached_default_agent_control(Some(&engine), &mut cached),
+            DefaultControlDisplay::Ready(true)
+        );
+        drop(lock);
+        engine
+            .lock()
+            .unwrap()
+            .store
+            .save_document("browser.json", &json!({"agentControlByDefault":"invalid"}))
+            .unwrap();
+        assert_eq!(
+            cached_default_agent_control(Some(&engine), &mut cached),
+            DefaultControlDisplay::Unavailable
+        );
+        assert!(!crate::browser_controls::agent_request_allowed(
+            &engine.lock().unwrap().browser_agent_control_settings(),
+            "thread",
+            false
+        ));
+        engine
+            .lock()
+            .unwrap()
+            .set_browser_default_agent_control(false)
+            .unwrap();
+        assert_eq!(
+            cached_default_agent_control(Some(&engine), &mut cached),
+            DefaultControlDisplay::Ready(false)
+        );
+        let lock = engine.lock().unwrap();
+        assert_eq!(
+            cached_default_agent_control(Some(&engine), &mut cached),
+            DefaultControlDisplay::Ready(false)
+        );
+        drop(lock);
+        drop(engine);
+        let reopened = coincide_core::api::Engine::new(
+            coincide_core::store::Store::open(&root.path().join("state.sqlite")).unwrap(),
+        );
+        assert!(!reopened.read_browser_default_agent_control().unwrap());
+    }
     struct Scratch(PathBuf);
     impl Scratch {
         fn new() -> Self {

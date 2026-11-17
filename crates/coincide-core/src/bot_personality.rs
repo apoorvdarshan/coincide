@@ -108,6 +108,7 @@ pub fn default_for_character(character: &str) -> Option<&'static str> {
         "bomboloni" => Some("gentle"),
         "cherry" => Some("witty"),
         "teddy" => Some("mentor"),
+        "jam" => Some("cheerful"),
         _ => None,
     }
 }
@@ -137,6 +138,7 @@ mod tests {
             "cherry",
             "teddy",
             "brulee",
+            "jam",
         ] {
             assert!(preset(default_for_character(character).unwrap()).is_some());
         }

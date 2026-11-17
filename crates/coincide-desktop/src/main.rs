@@ -27,6 +27,7 @@ mod voice_system;
 mod worker_owner;
 use anyhow::{Context as _, Result};
 mod about_settings;
+mod agent_logo_assets;
 mod app_commands;
 mod app_menu;
 mod app_menu_mount;
@@ -337,6 +338,88 @@ struct ImagePreview {
     rows: Vec<(String, usize)>,
 }
 
+#[derive(Clone)]
+struct PendingSent {
+    thread: String,
+    draft: String,
+    baseline_user_messages: usize,
+    row: Value,
+}
+impl PendingSent {
+    /// Keep the complete optimistic row until the corresponding saved message
+    /// appears, even when the user visits another conversation in between.
+    fn reconcile(&self, thread: &mut Value) -> bool {
+        if text(thread, "id") != self.thread {
+            return false;
+        }
+        let Some(items) = thread["items"].as_array_mut() else {
+            return false;
+        };
+        let stored = items
+            .iter()
+            .filter(|item| {
+                item["kind"] == "user"
+                    && item["pendingSend"] != true
+                    && item["bufferedSend"] != true
+            })
+            .skip(self.baseline_user_messages)
+            .any(|item| {
+                let same_context = item["context"] == self.row["context"]
+                    || (!coincide_core::composer_context::has_context(&item["context"])
+                        && !coincide_core::composer_context::has_context(&self.row["context"]));
+                let images = item["rustImages"]
+                    .as_array()
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]);
+                let submitted = self.row["rustImages"]
+                    .as_array()
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]);
+                item["text"].as_str() == Some(self.draft.as_str())
+                    && same_context
+                    && images == submitted
+            });
+        if stored {
+            items.retain(|item| item["id"] != self.row["id"]);
+        } else if !items.iter().any(|item| item["id"] == self.row["id"]) {
+            items.push(self.row.clone());
+        }
+        stored
+    }
+}
+
+#[cfg(test)]
+mod pending_sent_tests {
+    use super::*;
+
+    #[::core::prelude::v1::test]
+    fn preview_survives_refresh_and_thread_switch_until_its_full_message_is_saved() {
+        let pending = PendingSent {
+            thread: "one".into(),
+            draft: "repeat".into(),
+            baseline_user_messages: 1,
+            row: json!({"id":"pending", "kind":"user", "text":"repeat", "pendingSend":true,
+                "context":[{"id":"quote"}], "rustImages":[{"id":"image"}]}),
+        };
+        let mut other = json!({"id":"two", "items":[]});
+        assert!(!pending.reconcile(&mut other));
+        assert_eq!(other["items"], json!([]));
+        let mut stale = json!({"id":"one", "items":[{"kind":"user", "text":"repeat"}]});
+        assert!(!pending.reconcile(&mut stale));
+        assert_eq!(stale["items"][1], pending.row);
+        assert!(!pending.reconcile(&mut stale));
+        assert_eq!(stale["items"].as_array().unwrap().len(), 2);
+        stale["items"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id":"saved", "kind":"user", "text":"repeat",
+            "context":[{"id":"quote"}], "rustImages":[{"id":"image"}]}));
+        assert!(pending.reconcile(&mut stale));
+        assert_eq!(stale["items"].as_array().unwrap().len(), 2);
+        assert_eq!(stale["items"][1]["id"], "saved");
+    }
+}
+
 fn terminal_rgb(value: &Value, fallback: u32) -> Rgba {
     let Some(parts) = value.as_array().filter(|v| v.len() == 3) else {
         return rgb(fallback);
@@ -495,6 +578,7 @@ struct Coincide {
     follow_up_picker: bool,
     follow_up_anchor: Option<Point<Pixels>>,
     follow_up_deliveries: Vec<composer_follow_up_mount::PendingDelivery>,
+    admitted_previews: Vec<composer_follow_up_mount::AdmittedPreview>,
     pending_inputs: std::collections::HashMap<(String, String, String), Entity<InputState>>,
     pending_choices: std::collections::HashMap<(String, String, String), Vec<String>>,
     pending_question_step: std::collections::HashMap<String, usize>,
@@ -709,9 +793,8 @@ struct Coincide {
     /// A Queue/Steer choice made while the engine was busy, written later.
     pending_follow_up_choice: Option<(String, coincide_core::composer_follow_up::Behavior)>,
     follow_up_choice_inflight: bool,
-    /// A just-sent message drawn before the stored thread contains it, with
-    /// the item count it was sent from.
-    pending_sent: Option<(String, String, usize, u64)>,
+    /// Just-sent messages remain visible until each conversation has its saved row.
+    pending_sent: std::collections::HashMap<String, PendingSent>,
     ordinary_sends_inflight: usize,
     pending_images: composer_pending_images::PendingImages,
     /// Identity for the optimistic row, so a refresh keeps the same element.
@@ -1796,6 +1879,7 @@ impl Coincide {
             follow_up_picker: false,
             follow_up_anchor: None,
             follow_up_deliveries: Vec::new(),
+            admitted_previews: Vec::new(),
             pending_inputs: Default::default(),
             pending_choices: Default::default(),
             pending_question_step: Default::default(),
@@ -2005,7 +2089,7 @@ impl Coincide {
             quit_after_pending_sends: false,
             pending_follow_up_choice: None,
             follow_up_choice_inflight: false,
-            pending_sent: None,
+            pending_sent: Default::default(),
             ordinary_sends_inflight: 0,
             pending_images: Default::default(),
             pending_seq: 0,
@@ -5226,6 +5310,7 @@ impl Coincide {
         let Ok(stored) = serde_json::from_value::<StoredImage>(metadata.clone()) else {
             return placeholder("Image unavailable");
         };
+        let dimensions = (stored.width, stored.height);
         // The complete typed metadata is the cache revision. An ID reused with
         // a different path/dimensions never inherits an earlier validation.
         let Ok(key) = serde_json::to_string(&stored) else {
@@ -5349,10 +5434,12 @@ impl Coincide {
                     .update(cx, |cache, cx| cache.remove(&resource, window, cx));
             }
         }
-        img(path)
+        let (picture_width, picture_height) =
+            chat_layout::thumbnail_size(dimensions, (width, height));
+        let picture = img(path.clone())
             .image_cache(&self.image_assets)
-            .w(px(width))
-            .h(px(height))
+            .w(px(picture_width))
+            .h(px(picture_height))
             .flex_shrink_0()
             .object_fit(ObjectFit::Contain)
             .rounded_md()
@@ -5374,7 +5461,67 @@ impl Coincide {
                     .when(!compact, |view| view.child("Image unavailable"))
                     .into_any_element()
             })
-            .into_any_element()
+            .into_any_element();
+        // Keep the clickable wrapper the same size while the image loads and
+        // after it resolves. The virtualized message row can then reserve its
+        // full height and the image cannot paint outside its bubble.
+        let tile = div()
+            .w(px(width))
+            .h(px(height))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_md()
+            .overflow_hidden()
+            .child(picture);
+        if width < 60. {
+            return tile.into_any_element();
+        }
+        let Some(thread_id) = self.selected.as_ref().map(|thread| text(thread, "id")) else {
+            return tile.into_any_element();
+        };
+        let metadata = metadata.clone();
+        let name = text(&metadata, "originalName");
+        let image_id = text(&metadata, "id");
+        tile.id(SharedString::from(format!(
+            "open-image-{}-{image_id}",
+            row.map_or("draft".into(), |row| row.to_string())
+        )))
+        .role(Role::Button)
+        .aria_label("Open image preview")
+        .cursor_pointer()
+        .on_click(cx.listener(move |this, _, window, cx| {
+            let present = this
+                .selected
+                .as_ref()
+                .filter(|thread| thread["id"] == thread_id)
+                .is_some_and(|thread| match row {
+                    Some(index) => thread["items"]
+                        .as_array()
+                        .and_then(|items| items.get(index))
+                        .and_then(|item| item["rustImages"].as_array())
+                        .is_some_and(|images| images.contains(&metadata)),
+                    None => thread["rustDraftImages"].as_array().is_some_and(|images| {
+                        this.pending_images
+                            .visible(&thread_id, images)
+                            .contains(&metadata)
+                    }),
+                });
+            let validated = this.image_previews.get(&key).is_some_and(
+                |entry| matches!(&entry.state, PreviewState::Ready(current) if current == &path),
+            );
+            if present && validated {
+                this.open_attachment_image(
+                    &thread_id,
+                    name.clone(),
+                    legacy_media_mount::AttachmentImage::Path(path.clone(), Some(dimensions)),
+                    window,
+                    cx,
+                );
+            }
+        }))
+        .into_any_element()
     }
     /// Images a reply points at: its Markdown images and image links, then any
     /// generated files it lists in `attachments`, resolved against the thread's
@@ -5425,10 +5572,19 @@ impl Coincide {
     }
     /// Swift's media cards: the image at reply width with its file name, in the
     /// shared image cache so a scrolled row costs nothing to redraw.
-    fn media_cards(&self, media: &[transcript_media::Media]) -> Vec<AnyElement> {
+    fn media_cards(
+        &self,
+        media: &[transcript_media::Media],
+        source: &str,
+        item: &str,
+        cx: &Context<Self>,
+    ) -> Vec<AnyElement> {
         media
             .iter()
             .map(|media| {
+                let source_id = source.to_owned();
+                let item_id = item.to_owned();
+                let selected_media = media.clone();
                 let caption = media
                     .path
                     .file_name()
@@ -5437,7 +5593,15 @@ impl Coincide {
                     .chars()
                     .take(200)
                     .collect::<String>();
+                let preview_name = caption.clone();
                 div()
+                    .id(SharedString::from(format!(
+                        "open-reply-image-{source}-{item}-{}",
+                        media.source
+                    )))
+                    .role(Role::Button)
+                    .aria_label("Open image preview")
+                    .cursor_pointer()
                     .flex()
                     .flex_col()
                     .gap_1()
@@ -5460,6 +5624,27 @@ impl Coincide {
                             }),
                     )
                     .child(div().max_w(px(380.)).truncate().text_xs().child(caption))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        let current = this
+                            .selected
+                            .as_ref()
+                            .filter(|thread| thread["id"] == source_id)
+                            .and_then(|thread| thread["items"].as_array())
+                            .and_then(|items| items.iter().find(|item| item["id"] == item_id))
+                            .is_some_and(|item| this.reply_media(item).contains(&selected_media));
+                        if current {
+                            this.open_attachment_image(
+                                &source_id,
+                                preview_name.clone(),
+                                legacy_media_mount::AttachmentImage::Path(
+                                    selected_media.path.clone(),
+                                    None,
+                                ),
+                                window,
+                                cx,
+                            );
+                        }
+                    }))
                     .into_any_element()
             })
             .collect()
@@ -5569,6 +5754,7 @@ impl Coincide {
                             )
                             .into_any_element();
                     }
+                    let source = preview.clone();
                     let preview = match preview {
                         composer_attachments::ImportPreview::Path(path) => img(path)
                             .w_full()
@@ -5587,7 +5773,44 @@ impl Coincide {
                         .relative()
                         .w(px(76.))
                         .h(px(76.))
-                        .child(preview)
+                        .child({
+                            let owner = id.clone();
+                            div()
+                                .id(SharedString::from(format!("open-import-image-{job}")))
+                                .role(Role::Button)
+                                .aria_label("Open image preview")
+                                .cursor_pointer()
+                                .child(preview)
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    if !this
+                                        .attachment_imports
+                                        .previews(&owner)
+                                        .iter()
+                                        .any(|(current, _)| *current == job)
+                                    {
+                                        return;
+                                    }
+                                    let (name, image) = match &source {
+                                        composer_attachments::ImportPreview::Path(path) => (
+                                            path.file_name()
+                                                .and_then(|name| name.to_str())
+                                                .unwrap_or("Image")
+                                                .to_owned(),
+                                            legacy_media_mount::AttachmentImage::Path(
+                                                path.clone(),
+                                                None,
+                                            ),
+                                        ),
+                                        composer_attachments::ImportPreview::Clipboard(image) => (
+                                            "Pasted image".into(),
+                                            legacy_media_mount::AttachmentImage::Image(
+                                                image.clone(),
+                                            ),
+                                        ),
+                                    };
+                                    this.open_attachment_image(&owner, name, image, window, cx);
+                                }))
+                        })
                         .child(
                             div().absolute().top(px(2.)).right(px(2.)).child(
                                 Button::new(SharedString::from(format!(
@@ -5683,7 +5906,14 @@ impl Coincide {
         let Some(items) = thread["items"].as_array_mut() else {
             return None;
         };
-        let baseline = items.len();
+        let baseline_user_messages = items
+            .iter()
+            .filter(|item| {
+                item["kind"] == "user"
+                    && item["pendingSend"] != true
+                    && item["bufferedSend"] != true
+            })
+            .count();
         let seq = self.pending_seq.wrapping_add(1);
         self.pending_seq = seq;
         let mut pending = json!({
@@ -5701,8 +5931,16 @@ impl Coincide {
         }
         self.pending_images.begin(seq, id, images);
         self.submitted_drafts.begin(seq, id, message);
-        items.push(pending);
-        self.pending_sent = Some((id.to_owned(), message.to_owned(), baseline, seq));
+        items.push(pending.clone());
+        self.pending_sent.insert(
+            id.to_owned(),
+            PendingSent {
+                thread: id.to_owned(),
+                draft: message.to_owned(),
+                baseline_user_messages,
+                row: pending,
+            },
+        );
         let count = items.len();
         let start = self.transcript_count.min(count);
         self.splice_transcript(start..self.transcript_count, count - start);
@@ -5776,15 +6014,14 @@ impl Coincide {
     }
     /// Take the optimistic row away again when the engine refuses the send.
     pub(crate) fn drop_pending_send(&mut self, id: &str) {
-        if !self
-            .pending_sent
-            .as_ref()
-            .is_some_and(|(thread, ..)| thread == id)
-        {
+        if self.pending_sent.remove(id).is_none() {
             return;
         }
-        self.pending_sent = None;
-        let Some(thread) = self.selected.as_mut() else {
+        let Some(thread) = self
+            .selected
+            .as_mut()
+            .filter(|thread| text(thread, "id") == id)
+        else {
             return;
         };
         let Some(items) = thread["items"].as_array_mut() else {
@@ -5798,45 +6035,22 @@ impl Coincide {
     }
     /// Keep the optimistic row until the stored thread contains that message.
     fn reconcile_pending_send(&mut self) {
-        let Some((id, message, baseline, seq)) = self.pending_sent.clone() else {
+        let Some(id) = self.selected.as_ref().map(|thread| text(thread, "id")) else {
+            return;
+        };
+        let Some(pending) = self.pending_sent.get(&id).cloned() else {
             return;
         };
         let Some(thread) = self
             .selected
             .as_mut()
-            .filter(|thread| text(thread, "id") == id)
+            .filter(|thread| text(thread, "id") == pending.thread)
         else {
-            self.pending_sent = None;
             return;
         };
-        let Some(items) = thread["items"].as_array_mut() else {
-            return;
-        };
-        let stored = items
-            .iter()
-            .skip(baseline)
-            .any(|item| item["kind"] == "user" && item["text"].as_str() == Some(message.as_str()));
-        if stored {
-            self.pending_sent = None;
-            return;
+        if pending.reconcile(thread) {
+            self.pending_sent.remove(&id);
         }
-        if items
-            .iter()
-            .any(|item| item["id"] == format!("pending-send-{seq}"))
-        {
-            return;
-        }
-        let mut pending = json!({
-            "id": format!("pending-send-{seq}"),
-            "kind": "user",
-            "text": message,
-            "createdAt": coincide_core::store::swift_timestamp(),
-            "pendingSend": true
-        });
-        if let Some(images) = self.pending_images.images(seq) {
-            pending["rustImages"] = json!(images);
-        }
-        items.push(pending);
     }
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.send_selected(false, window, cx);
@@ -5978,7 +6192,9 @@ impl Coincide {
             .with_behavior(self.captured_follow_up_behavior(v));
             self.exclude_submitted_images(&mut pending);
             if self.wait_for_send_catalog(cx) {
-                self.pending_follow_up = Some(pending);
+                // Capture the message immediately even while discovery is
+                // refreshing. The existing buffer owns it until admission.
+                self.buffer_composer_send(alternate, window, cx);
                 return;
             }
             // Send reads as instant: the draft leaves the composer now, and a
@@ -6143,7 +6359,6 @@ impl Coincide {
             .map(|v| text(v, "id"))
             .unwrap_or_default();
         let source_running = self.running.contains(&source_id);
-        let settled = !source_running || running_start.is_some_and(|start| index < start);
         let find_revealed =
             self.find_revealed
                 .as_ref()
@@ -6185,6 +6400,17 @@ impl Coincide {
         if kind == "plan" && !find_revealed {
             let item = item.clone();
             let row = self.plan_transcript_card(&source_id, &item_id, &item, window, cx);
+            let row = self.message_reply_context_menu(
+                div()
+                    .id(SharedString::from(format!(
+                        "plan-context-{source_id}-{item_id}"
+                    )))
+                    .w_full()
+                    .child(row),
+                &source_id,
+                &item_id,
+                cx,
+            );
             return self.turn_decorated(index, row, plan.header, cx);
         }
         if let Some(group) = plan.group.clone()
@@ -6317,8 +6543,17 @@ impl Coincide {
         // Images a reply points at (Swift's `TranscriptMedia`): Markdown images
         // and image links, plus generated files listed in `attachments`.
         let media = self.reply_media(item);
-        let media_cards = self.media_cards(&media);
-        let pending_send = item["pendingSend"] == true;
+        let media_cards = self.media_cards(&media, &source_id, &item_id, cx);
+        let pending_send = item["pendingSend"] == true || item["bufferedSend"] == true;
+        let delivering_buffer = item["bufferedSend"] == true
+            && self.admitted_previews.iter().any(|preview| {
+                preview.direct && preview.pending.buffer_id.as_deref() == item["id"].as_str()
+            });
+        let pending_label = if item["bufferedSend"] == true && !delivering_buffer {
+            "Preparing…"
+        } else {
+            "Sending…"
+        };
         let context_item =
             coincide_core::composer_context::has_context(&item["context"]).then(|| item.clone());
         let context_pane = context_item.as_ref().and_then(|snapshot| {
@@ -6471,20 +6706,20 @@ impl Coincide {
                     .accessibility_id(SharedString::from(format!(
                         "quote-message-{source_id}-{item_id}"
                     )))
-                    .icon(gpui_kit::assets::IconName::MessagesSquare)
-                    .accessibility_label("Quote message")
+                    .icon(gpui_kit::assets::IconName::Reply)
+                    .accessibility_label("Reply to message")
                     .ghost()
                     .compact()
                     .xsmall()
                     .disabled(copy_empty)
-                    .tooltip("Attach the complete reply as reference material (up to 16,000 bytes)")
+                    .tooltip("Reply to this message or selected text · select text and press Command/Control-L")
                     .on_click(
-                        cx.listener(move |this, _, _, cx| this.quote_message(&source, &item, cx)),
+                        cx.listener(move |this, _, window, cx| this.reply_to_message(&source, &item, window, cx)),
                     ),
                 )
             })
             .when_some(metadata_copy, |header, copy| header.child(copy))
-            .when(kind == "assistant" && settled, |footer| {
+            .when(kind == "assistant" && uuid::Uuid::parse_str(&item_id).is_ok(), |footer| {
                 let source = source_id.clone();
                 let item = item_id.clone();
                 footer.child(
@@ -6497,11 +6732,11 @@ impl Coincide {
                     .accessibility_label(SharedString::from(format!(
                         "Fork through response: {action_excerpt}"
                     )))
-                    .icon(gpui_kit::assets::IconName::GitBranch)
+                    .icon(gpui_kit::assets::IconName::GitFork)
                     .ghost()
                     .compact()
                     .xsmall()
-                    .tooltip("Copy settled conversation through this turn into a separate branch")
+                    .tooltip("Fork the conversation through this message")
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.branch_from_item(&source, &item, false, window, cx)
                     })),
@@ -6541,7 +6776,8 @@ impl Coincide {
                 card.max_w(px((presentation::CONTENT_WIDTH
                     - presentation::RAIL_GUTTER)
                     * 0.75))
-                    .rounded(px(16.))
+                    .p_4()
+                    .rounded(px(18.))
                     .bg(self.color(0x181d28))
                     .border_1()
                     .border_color(self.color(0x29303d).opacity(0.65))
@@ -6614,10 +6850,15 @@ impl Coincide {
                         .mt_1()
                         .text_xs()
                         .text_color(pending_color)
-                        .child("Sending…"),
+                        .child(pending_label),
                 )
             })
             .when_some(footer, |view, footer| view.child(footer));
+        let card = if coincide_core::composer_context::quotable_kind(&kind) && !pending_send {
+            self.message_reply_context_menu(card, &source_id, &item_id, cx)
+        } else {
+            card.into_any_element()
+        };
         // Swift's user card has no permanent author header. Keep both real
         // actions together below the bubble at its outer edge. They stay
         // reachable for keyboard/AX use without adding hover-only state.
@@ -6625,6 +6866,38 @@ impl Coincide {
             let source = source_id.clone();
             let item = item_id.clone();
             let right = self.settings["userMessageSide"].as_str().unwrap_or("right") != "left";
+            let reply_source = source_id.clone();
+            let reply_item = item_id.clone();
+            let reply_action = Button::new(SharedString::from(format!(
+                "reply-user-{source_id}-{item_id}"
+            )))
+            .icon(gpui_kit::assets::IconName::Reply)
+            .ghost()
+            .compact()
+            .xsmall()
+            .accessibility_label("Reply to message")
+            .disabled(copy_empty)
+            .tooltip(
+                "Reply to this message or selected text · select text and press Command/Control-L",
+            )
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.reply_to_message(&reply_source, &reply_item, window, cx)
+            }));
+            let fork_source = source_id.clone();
+            let fork_item = item_id.clone();
+            let fork_action = Button::new(SharedString::from(format!(
+                "fork-user-{source_id}-{item_id}"
+            )))
+            .icon(gpui_kit::assets::IconName::GitFork)
+            .ghost()
+            .compact()
+            .xsmall()
+            .accessibility_label("Fork through this message")
+            .disabled(uuid::Uuid::parse_str(&item_id).is_err())
+            .tooltip("Fork the conversation through this message")
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.branch_from_item(&fork_source, &fork_item, false, window, cx)
+            }));
             let edit_action = if self.turn_changes.rewinds_in_place(&source_id) {
                 self.edit_from_here_button(
                     &source_id,
@@ -6677,11 +6950,13 @@ impl Coincide {
                         .text_color(self.color(0xe4e9f2).opacity(0.7))
                         .when(right, |actions| actions.justify_end())
                         .child(edit_action)
+                        .child(reply_action)
+                        .child(fork_action)
                         .when_some(user_copy, |actions, copy| actions.child(copy)),
                 )
                 .into_any_element()
         } else {
-            card.into_any_element()
+            card
         };
         let row = div()
             .flex()
@@ -6851,24 +7126,47 @@ impl Coincide {
         } else {
             "threads.fork"
         };
-        match call(
-            &self.engine,
-            method,
-            json!({"threadId":source,"itemId":item}),
-        ) {
-            Ok(thread) => {
-                self.schedules_open = false;
-                self.select(&text(&thread, "id"), window, cx);
-                self.refresh(cx);
-                self.composer.read(cx).focus_handle(cx).focus(window, cx);
-                self.status = if edit {
-                    "Opened a separate branch with the message restored as a draft. Original conversation and files are unchanged.".into()
-                } else {
-                    "Opened a separate branch through the settled turn. Original conversation and files are unchanged.".into()
-                };
+        let params = json!({"threadId":source,"itemId":item,"snapshot":!edit});
+        let original = source.to_owned();
+        let engine = self.engine.clone();
+        self.status = "Creating the conversation fork…".into();
+        let work = cx.background_executor().spawn(async move {
+            let mut engine = engine
+                .lock()
+                .map_err(|_| anyhow::anyhow!("App engine is unavailable"))?;
+            let response = engine.dispatch_desktop(json!({"method":method,"params":params}));
+            if let Some(error) = response.get("error") {
+                anyhow::bail!(
+                    "{}",
+                    error["message"].as_str().unwrap_or("Could not create fork")
+                );
             }
-            Err(error) => self.status = format!("Could not create branch: {error}"),
-        }
+            Ok::<_, anyhow::Error>(response["result"].clone())
+        });
+        let owner = self.main_window;
+        let task = cx.spawn_in(window, async move |this, cx| {
+            let result = work.await;
+            let _ = main_window_poll::update(owner, &this, cx, |this, window, cx| {
+                match result {
+                    Ok(thread) => {
+                        this.refresh(cx);
+                        if this
+                            .selected
+                            .as_ref()
+                            .is_some_and(|selected| selected["id"] == original)
+                        {
+                            this.schedules_open = false;
+                            this.select(&text(&thread, "id"), window, cx);
+                            this.composer.read(cx).focus_handle(cx).focus(window, cx);
+                        }
+                        this.status = "Conversation fork created in the same folder.".into();
+                    }
+                    Err(error) => this.status = format!("Could not create fork: {error}"),
+                }
+                cx.notify();
+            });
+        });
+        self.navigation_tasks.push(task);
         cx.notify();
     }
     fn fork(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -7050,7 +7348,7 @@ impl Render for Coincide {
                     self.finish_pending_images(pending.image_send, false);
                     self.remove_buffered_send(&pending);
                     self.status =
-                        "The image could not be imported; paste it again to send it.".into();
+                        "The attachment or reference could not be added; try again.".into();
                     cx.notify();
                 } else {
                     let result = try_state(&self.engine).and_then(|mut engine| {
@@ -7072,7 +7370,7 @@ impl Render for Coincide {
                             self.finish_pending_images(pending.image_send, true);
                             self.remove_buffered_send(&pending);
                             self.status =
-                                "Message saved for editing after an image import failed.".into();
+                                "Message saved for editing after an attachment or reference failed.".into();
                             self.refresh_queue(cx);
                             cx.notify();
                         }
@@ -7082,7 +7380,7 @@ impl Render for Coincide {
                                 && pending.last_error.as_deref() != Some(reason.as_str())
                             {
                                 pending.last_error = Some(reason);
-                                self.show_local_error("The image failed to import; your earlier message is retained and was not sent.");
+                                self.show_local_error("The attachment or reference failed; your earlier message is retained and was not sent.");
                             }
                             self.pending_follow_up = Some(pending);
                         }
@@ -7117,29 +7415,33 @@ impl Render for Coincide {
                 } else {
                     let clear_original =
                         !pending.edited && self.composer.read(cx).value().as_ref() == pending.draft;
+                    let same_selection = pending.captured["selection"] == thread["selection"];
                     if clear_original {
                         self.draft_saver.invalidate();
                     }
-                    let result = try_state(&self.engine).and_then(|mut engine| {
-                        engine.admit_captured_native_send(
-                            &pending.captured,
-                            clear_original,
-                            pending.behavior,
-                            pending.alternate,
-                        )
-                    });
+                    let result = if pending.buffer_id.is_some() {
+                        self.poll_captured_admission(&mut pending, false, cx)
+                    } else {
+                        Some(try_state(&self.engine).and_then(|mut engine| {
+                            engine.admit_captured_native_send(
+                                &pending.captured,
+                                clear_original,
+                                pending.behavior,
+                                pending.alternate,
+                            )
+                        }))
+                    };
                     match result {
-                        Ok(coincide_core::api::CapturedNativeSend::Waiting) => {
+                        None | Some(Ok(coincide_core::api::CapturedNativeSend::Waiting)) => {
                             self.pending_follow_up = Some(pending);
                         }
-                        Ok(coincide_core::api::CapturedNativeSend::Saved {
+                        Some(Ok(coincide_core::api::CapturedNativeSend::Saved {
                             enabled,
                             cleared,
+                            queue_id,
                             ticket,
                             error,
-                        }) => {
-                            let same_selection =
-                                pending.captured["selection"] == thread["selection"];
+                        })) => {
                             if let Some(selected) = self.selected.as_mut() {
                                 if cleared {
                                     selected["draft"] = json!("");
@@ -7152,6 +7454,13 @@ impl Render for Coincide {
                                 }
                                 if selected["draftContext"] == pending.captured["draftContext"] {
                                     selected.as_object_mut().unwrap().remove("draftContext");
+                                } else if let (Some(submitted), Some(current)) = (
+                                    pending.captured["draftContext"].as_array(),
+                                    selected["draftContext"].as_array_mut(),
+                                ) {
+                                    // Remove only the references owned by this
+                                    // submission; keep ones added afterward.
+                                    current.retain(|row| !submitted.contains(row));
                                 }
                             }
                             if cleared {
@@ -7166,8 +7475,16 @@ impl Render for Coincide {
                                     .update(cx, |input, cx| input.set_value("", window, cx));
                             }
                             self.finish_pending_images(pending.image_send, true);
-                            self.remove_buffered_send(&pending);
                             let delivering = ticket.is_some();
+                            if pending.buffer_id.is_some() {
+                                self.admitted_previews.push(
+                                    composer_follow_up_mount::AdmittedPreview {
+                                        pending: pending.clone(),
+                                        queue_id,
+                                        direct: delivering,
+                                    },
+                                );
+                            }
                             if let Some(ticket) = ticket {
                                 self.track_queued_delivery(ticket, pending.thread.clone());
                             }
@@ -7194,7 +7511,7 @@ impl Render for Coincide {
                             self.refresh_queue(cx);
                             cx.notify();
                         }
-                        Err(error) => {
+                        Some(Err(error)) => {
                             let reason = error.to_string();
                             if !engine_busy(&error)
                                 && pending.last_error.as_deref() != Some(reason.as_str())
@@ -7212,24 +7529,29 @@ impl Render for Coincide {
             } else if pending.waiting_for_import || pending.import_failed {
                 self.pending_follow_up = Some(pending);
             } else {
-                let result = try_state(&self.engine).and_then(|mut engine| {
-                    engine.admit_captured_native_send(
-                        &pending.captured,
-                        !pending.edited && pending.buffer_id.is_none(),
-                        pending.behavior,
-                        pending.alternate,
-                    )
-                });
+                let result = if pending.buffer_id.is_some() {
+                    self.poll_captured_admission(&mut pending, false, cx)
+                } else {
+                    Some(try_state(&self.engine).and_then(|mut engine| {
+                        engine.admit_captured_native_send(
+                            &pending.captured,
+                            !pending.edited && pending.buffer_id.is_none(),
+                            pending.behavior,
+                            pending.alternate,
+                        )
+                    }))
+                };
                 match result {
-                    Ok(coincide_core::api::CapturedNativeSend::Waiting) => {
+                    None | Some(Ok(coincide_core::api::CapturedNativeSend::Waiting)) => {
                         self.pending_follow_up = Some(pending);
                     }
-                    Ok(coincide_core::api::CapturedNativeSend::Saved {
+                    Some(Ok(coincide_core::api::CapturedNativeSend::Saved {
                         enabled,
                         cleared,
+                        queue_id,
                         ticket,
                         error,
-                    }) => {
+                    })) => {
                         if cleared
                             && self
                                 .pending_drafts
@@ -7239,6 +7561,15 @@ impl Render for Coincide {
                             self.pending_drafts.remove(&pending.thread);
                         }
                         self.finish_pending_images(pending.image_send, true);
+                        if pending.buffer_id.is_some() {
+                            self.admitted_previews.push(
+                                composer_follow_up_mount::AdmittedPreview {
+                                    pending: pending.clone(),
+                                    queue_id,
+                                    direct: ticket.is_some(),
+                                },
+                            );
+                        }
                         if let Some(ticket) = ticket {
                             self.track_queued_delivery(ticket, pending.thread.clone());
                         }
@@ -7254,7 +7585,7 @@ impl Render for Coincide {
                         }
                         .into();
                     }
-                    Err(error) => {
+                    Some(Err(error)) => {
                         if !engine_busy(&error) {
                             self.status = format!("Earlier message is still waiting: {error}");
                         }
@@ -7530,11 +7861,15 @@ impl Render for Coincide {
                                         .flex()
                                         .flex_col()
                                         .max_w(px(presentation::CONTENT_WIDTH))
-                                        .p_3()
-                                        .rounded(px(18.))
+                                        .p_4()
+                                        .rounded(px(20.))
                                         .bg(self.color(0x181d28))
                                         .border_1()
-                                        .border_color(self.color(0x29303d))
+                                        .border_color(if self.composer.read(cx).focus_handle(cx).is_focused(window) {
+                                            self.color(0xe4e9f2).opacity(0.24)
+                                        } else {
+                                            self.color(0x29303d).opacity(0.8)
+                                        })
                                         .when_some(plan_card, |view, card| view.child(card))
                                         .child(
                                             // The bounded accessory viewport shrinks independently of
@@ -7627,9 +7962,9 @@ impl Render for Coincide {
                                         })
                                         .child(
                                             div().mt_2().pt_2().border_t_1()
-                                            .border_color(self.color(0x29303d).opacity(0.7))
+                                            .border_color(self.color(0x29303d).opacity(0.55))
                                             .child(chat_layout::composer_actions(
-                                                self.composer_selection_footer(window, implement_button.is_some(), cx),
+                                                self.composer_selection_footer(window, cx),
                                                 div()
                                                 .flex()
                                                 .flex_wrap()
@@ -7649,7 +7984,7 @@ impl Render for Coincide {
                                                         })
                                                         .tooltip(if importing_images { "Adding attachments…" } else { "Attach files or folders" })
                                                         .compact().ghost()
-                                                        .xsmall().h(px(26.)).rounded(px(7.))
+                                                        .h(px(28.)).rounded(px(7.))
                                                         .on_click(cx.listener(|this, _, window, cx| {
                                                             this.attach_images(window, cx)
                                                         })),
@@ -7661,7 +7996,7 @@ impl Render for Coincide {
                                                         .accessibility_label("Attach folder")
                                                         .tooltip("Attach folder")
                                                         .compact().ghost()
-                                                        .xsmall().h(px(26.)).rounded(px(7.))
+                                                        .h(px(28.)).rounded(px(7.))
                                                         .on_click(cx.listener(|this, _, window, cx| {
                                                             this.open_composer_folder_picker(window, cx)
                                                         })),
@@ -7708,14 +8043,14 @@ impl Render for Coincide {
                 if this.bot_editor_panel.is_some() {
                     return;
                 }
-                if !this.voice_key_down(event, window, cx)
+                if !this.historical_image_shortcut(event, window, cx)
+                    && !this.voice_key_down(event, window, cx)
                     && !this.escape_dismisses_popover(event, cx)
                     && !this.sidebar_search_shortcut(event, window, cx)
                     && !this.inbox_undo_shortcut(event, window, cx)
                     && !this.context_details_shortcut(event, window, cx)
                     && !this.project_defaults_key(event, window, cx)
                     && !this.project_script_editor_key(event, window, cx)
-                    && !this.historical_image_shortcut(event, window, cx)
                     && !this.reply_selection_shortcut(event, window, cx)
                 {
                     this.app_shortcut(event, window, cx);

@@ -72,7 +72,7 @@ fn headless_composer_controls_fit_and_remain_clickable_at_multiple_widths(cx: &m
     let hits = Rc::new(Cell::new(0));
     let (_view, cx): (Entity<Harness>, &mut VisualTestContext) =
         cx.add_window_view(|_, _| Harness { hits: hits.clone() });
-    for width in [900., 600., 420., 300., 220.] {
+    for width in [900., 760., 700., 600., 420., 300., 220.] {
         cx.simulate_resize(size(px(width), px(700.)));
         cx.update(|window, cx| {
             window.activate_window();
@@ -96,12 +96,7 @@ fn headless_composer_controls_fit_and_remain_clickable_at_multiple_widths(cx: &m
             }
             bounds.push((selector, item));
         }
-        for selector in [
-            "layout-model",
-            "layout-follow",
-            "layout-attach",
-            "layout-send",
-        ] {
+        for (selector, _) in CHIPS.into_iter().chain(ACTIONS) {
             let position = cx.debug_bounds(selector).unwrap().center();
             let before = hits.get();
             cx.simulate_mouse_move(position, None, Modifiers::default());

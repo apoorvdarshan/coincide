@@ -45,7 +45,7 @@ impl Coincide {
             .gap(px(7.))
             .bg(self.color(0x151922))
             .border_r_1()
-            .border_color(self.color(0x29303d).opacity(0.7))
+            .border_color(self.color(0x29303d).opacity(0.6))
             .when(cfg!(target_os = "macos"), |view| {
                 view.child(
                     div()

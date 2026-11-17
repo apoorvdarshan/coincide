@@ -124,6 +124,94 @@ impl Coincide {
     }
     pub(super) fn appshots_settings_panel(&self, cx: &mut Context<Self>) -> AnyElement {
         let settings = Settings::read(&self.settings);
+        let hero = div()
+            .w_full()
+            .min_w_0()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap_4()
+            .p_4()
+            .rounded(px(14.))
+            .border_1()
+            .border_color(self.color(0x29303d).opacity(0.8))
+            .bg(self.color(0x151922))
+            .child(
+                div()
+                    .w(px(92.))
+                    .h(px(68.))
+                    .flex_shrink_0()
+                    .overflow_hidden()
+                    .rounded(px(9.))
+                    .border_1()
+                    .border_color(self.color(0x29303d))
+                    .bg(self.color(0x10141c))
+                    .child(
+                        div()
+                            .h(px(14.))
+                            .px_2()
+                            .flex()
+                            .items_center()
+                            .gap(px(3.))
+                            .border_b_1()
+                            .border_color(self.color(0x29303d))
+                            .children((0..3).map(|_| {
+                                div()
+                                    .size(px(3.))
+                                    .rounded_full()
+                                    .bg(self.color(0xe4e9f2).opacity(0.35))
+                            })),
+                    )
+                    .child(
+                        div()
+                            .h(px(52.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(
+                                Icon::new(gpui_kit::assets::IconName::Camera)
+                                    .small()
+                                    .text_color(self.color(0xe4e9f2).opacity(0.7)),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(180.))
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .whitespace_normal()
+                            .child("Capture a window, keep the context"),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .whitespace_normal()
+                            .text_color(self.color(0xe4e9f2).opacity(0.68))
+                            .child("Add a snapshot to your composer and choose when to send it."),
+                    )
+                    .child(
+                        div()
+                            .mt_1()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .text_xs()
+                            .text_color(self.color(0xe4e9f2).opacity(0.8))
+                            .child(
+                                div()
+                                    .size(px(6.))
+                                    .rounded_full()
+                                    .bg(self.color(0xe4e9f2).opacity(0.55)),
+                            )
+                            .child(self.appshots.status.clone()),
+                    ),
+            );
         let owner = cx.entity().downgrade();
         let trigger = Button::new("appshots-trigger")
             .label(if settings.custom {
@@ -230,37 +318,28 @@ impl Coincide {
         capture = capture
             .child(self.labeled_row("Include the window’s text", Some("Adds accessible window text beside the picture; password fields are excluded.".into()), Switch::new("appshots-text").accessibility_label("Include the window’s text").color(self.color(0x98b1d4)).checked(settings.includes_text).on_click(cx.listener(move|this,checked:&bool,window,cx|this.change_appshot_setting("includesWindowText",json!(*checked),window,cx)))))
             .child(self.labeled_row("Play a sound", None, Switch::new("appshots-sound").accessibility_label("Play a sound").color(self.color(0x98b1d4)).checked(settings.sound).on_click(cx.listener(move|this,checked:&bool,window,cx|this.change_appshot_setting("playsSound",json!(*checked),window,cx)))));
-        let mut permissions = div()
-            .p_4()
-            .flex()
-            .flex_col()
-            .gap_3()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_3()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(self.color(0xe4e9f2).opacity(0.7))
-                            .child("Appshots status"),
-                    )
-                    .child(
-                        Button::new(("appshots-permission", 0usize))
-                            .label("Refresh")
-                            .small()
-                            .accessibility_label("Refresh permissions")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.appshots.permissions = appshots_platform::permissions(0);
-                                this.appshots.invalidate();
-                                this.appshots.sync(&this.settings);
-                                cx.notify();
-                            })),
-                    ),
-            )
-            .child(div().text_sm().child(self.appshots.status.clone()));
+        let mut permissions = div().flex().flex_col().child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap_3()
+                .px_5()
+                .py_3()
+                .child(div().font_weight(FontWeight::MEDIUM).child("System access"))
+                .child(
+                    Button::new(("appshots-permission", 0usize))
+                        .label("Refresh")
+                        .small()
+                        .accessibility_label("Refresh permissions")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.appshots.permissions = appshots_platform::permissions(0);
+                            this.appshots.invalidate();
+                            this.appshots.sync(&this.settings);
+                            cx.notify();
+                        })),
+                ),
+        );
         for (action, title, allowed, label) in [
             (
                 1u8,
@@ -281,13 +360,23 @@ impl Coincide {
                     .items_center()
                     .justify_between()
                     .gap_3()
+                    .px_5()
+                    .py_3()
+                    .border_t_1()
+                    .border_color(self.color(0x29303d).opacity(0.6))
                     .child(
-                        div().flex_1().min_w_0().child(title).child(
-                            div()
-                                .text_xs()
-                                .text_color(self.color(0xe4e9f2).opacity(0.65))
-                                .child(if allowed { "Allowed" } else { "Not granted" }),
-                        ),
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(title)
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(FontWeight::NORMAL)
+                                    .text_color(self.color(0xe4e9f2).opacity(0.65))
+                                    .child(if allowed { "Allowed" } else { "Not granted" }),
+                            ),
                     )
                     .when(cfg!(target_os = "macos") && !allowed, |row| {
                         row.child(
@@ -307,27 +396,28 @@ impl Coincide {
             );
         }
         #[cfg(target_os = "macos")]
-        for (anchor, label) in [
-            ("Privacy_ScreenCapture", "Open Screen Recording settings"),
-            ("Privacy_Accessibility", "Open Accessibility settings"),
-        ] {
-            permissions = permissions.child(
-                div().flex().justify_start().child(
-                    Button::new(anchor)
-                        .label(label)
-                        .small()
-                        .ghost()
-                        .on_click(cx.listener(move |_, _, _, cx| {
+        {
+            let mut system_links = div().px_4().pb_3().flex().flex_wrap().gap_1();
+            for (anchor, label) in [
+                ("Privacy_ScreenCapture", "Open Screen Recording settings"),
+                ("Privacy_Accessibility", "Open Accessibility settings"),
+            ] {
+                system_links =
+                    system_links.child(Button::new(anchor).label(label).small().ghost().on_click(
+                        cx.listener(move |_, _, _, cx| {
                             cx.open_url(&format!(
                                 "x-apple.systempreferences:com.apple.preference.security?{anchor}"
                             ))
-                        })),
-                ),
-            );
+                        }),
+                    ));
+            }
+            permissions = permissions.child(system_links);
         }
         if !self.appshots.permissions.detail.is_empty() {
             permissions = permissions.child(
                 div()
+                    .px_5()
+                    .pb_3()
                     .text_sm()
                     .child(self.appshots.permissions.detail.clone()),
             );
@@ -337,25 +427,25 @@ impl Coincide {
             .child(div().text_sm().text_color(self.color(0xe4e9f2).opacity(0.7)).child("Only the frontmost eligible window is captured. Coincide’s windows, protected windows and detected password entry are skipped. Pictures stay in local attachments until you send them."))
             .when(self.appshots.private_cleanup_pending(), |pane| pane.child(Button::new("appshots-retry-private-cleanup").label("Retry private capture cleanup").on_click(cx.listener(|this,_,_,cx|{this.appshots.retry_private_cleanup();cx.notify();}))))
             .when(!self.appshots.outcome.is_empty(), |pane| pane.child(div().text_sm().child(format!("Last appshot: {}", self.appshots.outcome))));
+        let content = div()
+            .w_full()
+            .max_w(px(880.))
+            .min_w_0()
+            .p_4()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .child(hero)
+            .child(self.settings_group("Capture", capture))
+            .child(self.settings_group("Permissions", permissions))
+            .child(self.settings_group("Privacy", privacy));
         let pane = div()
             .id("appshots-settings")
             .flex_1()
             .min_w_0()
             .min_h_0()
             .overflow_y_scroll()
-            .p_4()
-            .flex()
-            .flex_col()
-            .gap_4()
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(self.color(0xe4e9f2).opacity(0.7))
-                    .child("Capture the window you’re working in and ask an agent about it."),
-            )
-            .child(self.settings_group("Capture", capture))
-            .child(self.settings_group("Permissions", permissions))
-            .child(self.settings_group("Privacy", privacy));
+            .child(div().w_full().flex().justify_center().child(content));
         div()
             .id("appshots-settings-surface")
             .flex_1()

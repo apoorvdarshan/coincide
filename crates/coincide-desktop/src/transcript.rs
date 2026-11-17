@@ -336,6 +336,7 @@ pub fn managed_markdown(
 /// An opaque selection from exactly one focused, registered reply renderer.
 /// Holding the parse snapshot is not permission to apply it after focus, source
 /// or the native selection changes; current() rechecks all three.
+#[derive(Clone)]
 pub struct ReplyProjection {
     owner: WindowId,
     pub thread: String,
@@ -350,6 +351,17 @@ impl ReplyProjection {
         self.rendered.source()
     }
     pub fn current(&self, window: &Window, cx: &App) -> bool {
+        self.current_in_menu(window, cx)
+            && self.state.upgrade().is_some_and(|state| {
+                let state = state.read(cx);
+                state.focus_handle().is_focused(window)
+                    && state.selected_source_range() == Some(self.source_range.clone())
+            })
+    }
+    /// A click on a context menu can clear the native selection before its
+    /// handler runs. Retain the captured range in that case, but reject a new
+    /// selection and always recheck the owning message and its parsed source.
+    pub fn current_in_menu(&self, window: &Window, cx: &App) -> bool {
         if !window.is_window_active() || window.window_handle().window_id() != self.owner {
             return false;
         }
@@ -364,21 +376,27 @@ impl ReplyProjection {
             return false;
         }
         let state = state.read(cx);
-        state.focus_handle().is_focused(window)
-            && state.rendered_text() == self.rendered
-            && state.selected_source_range() == Some(self.source_range.clone())
+        state.rendered_text() == self.rendered
+            && state
+                .selected_source_range()
+                .is_none_or(|range| range == self.source_range)
             && self.rendered.range_for_source(self.source_range.clone())
                 == Some(self.rendered_range.clone())
     }
+    pub fn selected_text(&self) -> &str {
+        &self.rendered.as_str()[self.rendered_range.clone()]
+    }
     pub fn into_native(
         self,
+        kind: &str,
     ) -> anyhow::Result<coincide_core::reply_selection::NativeReplySelection> {
-        coincide_core::reply_selection::NativeReplySelection::from_native_projection(
+        coincide_core::reply_selection::NativeReplySelection::from_native_message_projection(
             &self.item,
             self.rendered.source().into(),
             self.source_range,
             self.rendered.as_str().into(),
             self.rendered_range,
+            kind,
         )
     }
 }

@@ -1,7 +1,7 @@
 use super::*;
 use coincide_core::composer_context::{self, Edit, ExpectedContext};
 impl Coincide {
-    fn edit_context(&mut self, source: &str, edit: Edit, cx: &mut Context<Self>) {
+    fn clear_context(&mut self, source: &str, cx: &mut Context<Self>) {
         if self.media.shutdown_requested {
             return;
         }
@@ -14,38 +14,49 @@ impl Coincide {
             return;
         };
         let expected = ExpectedContext::from_thread(thread);
-        match call(
-            &self.engine,
-            "composer.context.edit",
-            json!({"threadId":source,"expectedContext":expected,"edit":edit}),
-        ) {
-            Ok(saved) => {
-                // Only this field was edited. The composer and pending unsaved
-                // text remain owned by their existing draft-save path.
-                if let Some(thread) = self
-                    .selected
-                    .as_mut()
-                    .filter(|thread| thread["id"] == source)
-                {
-                    thread["draftContext"] = saved["draftContext"].clone();
-                }
-                self.status = "Attached references saved.".into();
-            }
-            Err(error) => self.status = error.to_string(),
+        let original = thread["draftContext"].clone();
+        let Some(job) = self.attachment_imports.reserve_removal(source) else {
+            self.show_local_error(
+                "Too many attachment changes are in progress. Try again shortly.",
+            );
+            cx.notify();
+            return;
+        };
+        let source = source.to_owned();
+        if let Some(thread) = self
+            .selected
+            .as_mut()
+            .filter(|thread| thread["id"] == source)
+        {
+            thread["draftContext"] = json!([]);
         }
+        self.selected_generation = self.selected_generation.wrapping_add(1);
+        let engine = self.engine.clone();
+        let owner = source.clone();
+        cx.spawn(async move |this, cx| {
+            let result = cx.background_executor().spawn(async move {
+                engine.lock().map_err(|_| anyhow::anyhow!("Application state is unavailable"))?
+                    .edit_composer_context(&json!({"threadId":owner,"expectedContext":expected,"edit":Edit::Clear}))
+                    .map(|_| ())
+            }).await;
+            let _ = this.update(cx, |this, cx| {
+                if result.is_err()
+                    && let Some(thread) = this.selected.as_mut().filter(|thread| thread["id"] == source)
+                    && thread["draftContext"] == json!([])
+                {
+                    thread["draftContext"] = original;
+                    this.selected_generation = this.selected_generation.wrapping_add(1);
+                }
+                this.finish_image_import(job, &source, Vec::new(), result.err(), cx);
+            });
+        }).detach();
         cx.notify();
     }
-    pub(super) fn quote_message(&mut self, source: &str, item: &str, cx: &mut Context<Self>) {
-        self.edit_context(
-            source,
-            Edit::Quote {
-                item_id: item.into(),
-            },
-            cx,
-        );
-    }
-
-    fn remove_file_reference(&mut self, source: String, card: Value, cx: &mut Context<Self>) {
+    fn remove_context_reference(&mut self, source: String, card: Value, cx: &mut Context<Self>) {
+        if self.media.shutdown_requested {
+            return;
+        }
+        self.composer_files.invalidate();
         let Some(job) = self.attachment_imports.reserve_removal(&source) else {
             self.show_local_error(
                 "Too many attachment changes are in progress. Try again shortly.",
@@ -82,7 +93,7 @@ impl Coincide {
                     engine
                         .lock()
                         .map_err(|_| anyhow::anyhow!("Application state is unavailable"))?
-                        .remove_cancelled_picked_path(&owner, &expected)
+                        .remove_draft_context_card(&owner, &expected)
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
@@ -228,9 +239,8 @@ impl Coincide {
                 .py_1()
                 .when_some(thumbnail, |row, thumbnail| row.child(thumbnail))
                 .child(content);
-            if let Some(id) = card.id {
+            if card.id.is_some() {
                 let source = source.clone();
-                let is_file = card.is_file;
                 row = row.child(
                     Button::new(("remove-composer-context", index))
                         .icon(gpui_kit::assets::IconName::Close)
@@ -239,12 +249,8 @@ impl Coincide {
                         .ghost()
                         .xsmall()
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            if is_file {
-                                if let Some(row) = row_value.clone() {
-                                    this.remove_file_reference(source.clone(), row, cx);
-                                }
-                            } else {
-                                this.edit_context(&source, Edit::Remove { id: id.clone() }, cx);
+                            if let Some(row) = row_value.clone() {
+                                this.remove_context_reference(source.clone(), row, cx);
                             }
                         })),
                 );
@@ -259,9 +265,7 @@ impl Coincide {
                     .ghost()
                     .xsmall()
                     .text_color(cx.theme().muted_foreground)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.edit_context(&source, Edit::Clear, cx)
-                    })),
+                    .on_click(cx.listener(move |this, _, _, cx| this.clear_context(&source, cx))),
             );
         }
         Some(pane.into_any_element())

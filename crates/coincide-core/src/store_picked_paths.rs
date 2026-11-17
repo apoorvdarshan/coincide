@@ -102,4 +102,35 @@ impl Store {
             })?
             .is_some())
     }
+
+    /// Remove a specific visible draft card without overwriting other changes.
+    /// A changed or ambiguous identity is an error so a waiting send cannot
+    /// accidentally include a reference the user meant to remove.
+    pub(crate) fn remove_exact_context_card(&mut self, id: &str, card: &Value) -> Result<bool> {
+        let card_id = Uuid::parse_str(card["id"].as_str().context("Attachment has no ID")?)?;
+        Ok(self
+            .update_picked_context(id, false, |raw| {
+                let Some(rows) = raw.as_array() else {
+                    return Ok(None);
+                };
+                let matches = rows
+                    .iter()
+                    .filter(|row| {
+                        row["id"].as_str().and_then(|id| Uuid::parse_str(id).ok()) == Some(card_id)
+                    })
+                    .collect::<Vec<_>>();
+                if matches.is_empty() {
+                    return Ok(None);
+                }
+                ensure!(
+                    matches.len() == 1 && matches[0] == card,
+                    "Attached reference changed; reload before removing it"
+                );
+                Ok(Some((
+                    crate::composer_context::remove(raw, &card_id.to_string())?,
+                    Value::Null,
+                )))
+            })?
+            .is_some())
+    }
 }

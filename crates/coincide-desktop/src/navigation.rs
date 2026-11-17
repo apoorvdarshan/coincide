@@ -1422,7 +1422,8 @@ impl Coincide {
                                     .ghost()
                                     .compact()
                                     .justify_start()
-                                    .h(px(28.))
+                                    .h(px(30.))
+                                    .rounded(px(9.))
                                     .min_w_0()
                                     .accessibility_id(SharedString::from(format!("thread-{id}")))
                                     .accessibility_label(SharedString::from(format!(

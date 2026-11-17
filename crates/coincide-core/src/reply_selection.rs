@@ -8,6 +8,7 @@ use uuid::Uuid;
 pub struct NativeReplySelection {
     pub(crate) item: Uuid,
     pub(crate) source: String,
+    pub(crate) source_kind: String,
     source_range: Range<usize>,
     rendered: String,
     rendered_range: Range<usize>,
@@ -32,6 +33,27 @@ impl NativeReplySelection {
         rendered: String,
         rendered_range: Range<usize>,
     ) -> Result<Self> {
+        Self::from_native_message_projection(
+            item,
+            source,
+            source_range,
+            rendered,
+            rendered_range,
+            "assistant",
+        )
+    }
+    pub fn from_native_message_projection(
+        item: &str,
+        source: String,
+        source_range: Range<usize>,
+        rendered: String,
+        rendered_range: Range<usize>,
+        source_kind: &str,
+    ) -> Result<Self> {
+        ensure!(
+            crate::composer_context::quotable_kind(source_kind),
+            "Unsupported message kind"
+        );
         ensure!(
             source.len() <= 8 * 1024 * 1024 && rendered.len() <= 8 * 1024 * 1024,
             "Reply selection source exceeds 8 MiB"
@@ -47,6 +69,7 @@ impl NativeReplySelection {
         let value = Self {
             item: Uuid::parse_str(item)?,
             source,
+            source_kind: source_kind.into(),
             source_range,
             rendered,
             rendered_range,

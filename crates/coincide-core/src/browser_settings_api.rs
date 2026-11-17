@@ -22,6 +22,19 @@ impl Engine {
         };
         json!({"agentControlByDefault":document.get("agentControlByDefault").cloned().unwrap_or(json!(true)), "agentControl":document.get("agentControl").cloned().unwrap_or(json!({}))})
     }
+
+    /// A display read distinguishes an unavailable document from a saved off
+    /// value; request authorization continues to use the fail-closed snapshot.
+    pub fn read_browser_default_agent_control(&self) -> Result<bool> {
+        let Some(document) = self.store.document(DOCUMENT)? else {
+            return Ok(true);
+        };
+        let object = document.as_object().context("Invalid browser settings")?;
+        match object.get("agentControlByDefault") {
+            None => Ok(true),
+            Some(value) => value.as_bool().context("Invalid Agent Control default"),
+        }
+    }
     /// Native parent only. Agent request JSON cannot supply toolbar provenance.
     pub fn set_browser_agent_control(
         &mut self,

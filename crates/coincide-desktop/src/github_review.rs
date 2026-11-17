@@ -2112,6 +2112,8 @@ impl GitHubReviewPanel {
                             .size(px(38.))
                             .rounded(px(12.))
                             .bg(cx.theme().muted)
+                            .border_1()
+                            .border_color(cx.theme().border.opacity(0.7))
                             .flex()
                             .items_center()
                             .justify_center()

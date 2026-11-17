@@ -3,6 +3,9 @@
 use super::*;
 const PANEL_MIN: f64 = 320.;
 const CHAT_MIN: f64 = 420.;
+// When the window itself is narrower than the normal split minimums, keep
+// enough conversation space for the compact composer and shrink the panel.
+const COMPACT_CHAT_MIN: f64 = 300.;
 const HEIGHT_MIN: f64 = 120.;
 /// The divider's hit strip, centred on its line, as Swift's `InspectorDividerHandle.hitWidth`.
 const DIVIDER_HIT_WIDTH: f32 = 10.;
@@ -30,6 +33,7 @@ fn width(share: f64, available: f64) -> f64 {
     (fraction(share) * available.max(0.))
         .min(available - CHAT_MIN)
         .max(PANEL_MIN)
+        .min((available - COMPACT_CHAT_MIN - f64::from(DIVIDER_HIT_WIDTH)).max(0.))
 }
 pub(super) fn inspector_width(share: f64, available: f64) -> f64 {
     width(share, available)
@@ -359,7 +363,7 @@ impl Coincide {
         } else {
             available
         };
-        ((chat as f32 - presentation::CONTENT_GUTTER * 2.).min(presentation::CONTENT_WIDTH) - 24.)
+        ((chat as f32 - presentation::CONTENT_GUTTER * 2.).min(presentation::CONTENT_WIDTH) - 34.)
             .max(0.)
     }
     pub(super) fn ensure_terminal_space(&self, window: &mut Window) {
@@ -640,6 +644,16 @@ mod tests {
         assert!(state.move_to(600.));
         assert_eq!(state.finish(), Some(("terminalHeight", 160.)));
         assert!(state.finish().is_none());
+    }
+
+    #[::core::prelude::v1::test]
+    fn narrow_window_preserves_chat_space_and_restores_saved_panel_share() {
+        let mut state = State::default();
+        assert_eq!(width(state.share_for(false), 472.), 162.);
+        state.begin(true, false, 500., 472.);
+        assert!(!state.move_to(500.));
+        assert!(state.finish().is_none());
+        assert_eq!(width(state.share_for(false), 1000.), 500.);
     }
     #[::core::prelude::v1::test]
     fn completed_resize_changes_only_swift_geometry_key_and_preserves_malformed_documents() {

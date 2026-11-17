@@ -7,6 +7,16 @@ pub(super) fn modal_backdrop() -> Div {
     div().absolute().inset_0().occlude()
 }
 
+/// Fit an image inside its reserved thumbnail without changing its aspect ratio.
+pub(super) fn thumbnail_size(image: (u32, u32), bounds: (f32, f32)) -> (f32, f32) {
+    if image.0 == 0 || image.1 == 0 {
+        return bounds;
+    }
+    let (width, height) = (image.0 as f32, image.1 as f32);
+    let scale = (bounds.0 / width).min(bounds.1 / height);
+    (width * scale, height * scale)
+}
+
 // Provider marks stay local and embedded. The monochrome PDFs and their SVG
 // equivalents come from the Swift app's original template assets; Claude and
 // Antigravity retain their original colored artwork. Lithos uses its official mark.
@@ -51,6 +61,8 @@ fn provider_template(provider: &str) -> Option<&'static [u8]> {
 
 pub(super) fn provider_known(provider: &str) -> bool {
     PROVIDER_LOGOS.iter().any(|(name, _)| *name == provider)
+        || coincide_core::acp_registry::registry_id(provider)
+            .is_some_and(|id| agent_logo_assets::logo(id).is_some())
 }
 
 fn provider_color_logo(provider: &str) -> Option<Arc<Image>> {
@@ -79,6 +91,24 @@ struct ProviderTemplate {
     size: f32,
 }
 
+#[derive(IntoElement)]
+struct RegistryTemplate {
+    id: String,
+    svg: Arc<[u8]>,
+    size: f32,
+}
+impl RenderOnce for RegistryTemplate {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        img(agent_logo_assets::colored_image(
+            &self.id,
+            self.svg,
+            cx.theme().is_dark(),
+        ))
+        .size(px(self.size))
+        .object_fit(ObjectFit::Contain)
+    }
+}
+
 impl RenderOnce for ProviderTemplate {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let ink = if cx.theme().is_dark() {
@@ -93,11 +123,27 @@ impl RenderOnce for ProviderTemplate {
     }
 }
 
-/// Draw the provider's own mark without an invented background. Monochrome
-/// templates use neutral ink appropriate for the current appearance.
+/// Draw the provider's mark without an invented background. Registry
+/// templates receive a stable accent, while existing colored art is retained.
 pub(super) fn provider_mark(provider: &str, size: f32) -> Option<Div> {
     let mark = if let Some(svg) = provider_template(provider) {
         ProviderTemplate { svg, size }.into_any_element()
+    } else if let Some(id) = coincide_core::acp_registry::registry_id(provider) {
+        let original = match id {
+            "claude-acp" => provider_color_logo("claude"),
+            "antigravity-acp" => provider_color_logo("antigravity"),
+            _ => None,
+        };
+        if let Some(image) = original {
+            img(image).size(px(size)).into_any_element()
+        } else {
+            RegistryTemplate {
+                id: id.to_owned(),
+                svg: agent_logo_assets::logo(id)?,
+                size,
+            }
+            .into_any_element()
+        }
     } else {
         img(provider_color_logo(provider)?)
             .size(px(size))
@@ -311,8 +357,16 @@ impl Coincide {
 mod tests {
     use super::{
         ComposerSizing, PROVIDER_LOGOS, composer_height, is_synthetic_turn_end, notice_label,
-        provider_known, provider_template,
+        provider_known, provider_template, thumbnail_size,
     };
+
+    #[test]
+    fn thumbnails_fit_the_reserved_tile_for_square_landscape_and_portrait_images() {
+        assert_eq!(thumbnail_size((96, 96), (104., 78.)), (78., 78.));
+        assert_eq!(thumbnail_size((400, 200), (104., 78.)), (104., 52.));
+        assert_eq!(thumbnail_size((200, 400), (104., 78.)), (39., 78.));
+        assert_eq!(thumbnail_size((0, 400), (104., 78.)), (104., 78.));
+    }
 
     #[test]
     fn provider_marks_render_their_original_templates_and_colors() {

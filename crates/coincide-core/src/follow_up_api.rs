@@ -31,6 +31,7 @@ pub enum CapturedNativeSend {
     Saved {
         enabled: bool,
         cleared: bool,
+        queue_id: String,
         ticket: Option<NativeFollowUpTicket>,
         error: Option<String>,
     },
@@ -255,6 +256,11 @@ impl Engine {
         alternate: bool,
     ) -> Result<CapturedNativeSend> {
         let id = required(captured, "id")?;
+        // A stop already owns this turn. Admit the captured message after its
+        // completion rather than sending a second stop or a stale steer.
+        if self.is_thread_stopping(id) {
+            return Ok(CapturedNativeSend::Waiting);
+        }
         let current = self.store.thread(id)?;
         let provider = text(&captured["selection"], "provider");
         let chosen = if alternate {
@@ -311,10 +317,12 @@ impl Engine {
             });
         let (enabled, cleared, message) =
             self.queue_captured_native_send_inner(captured, clear_original, !auto, None)?;
+        let queue_id = message.id.clone();
         if !auto {
             return Ok(CapturedNativeSend::Saved {
                 enabled,
                 cleared,
+                queue_id,
                 ticket: None,
                 error: None,
             });
@@ -337,6 +345,7 @@ impl Engine {
         Ok(CapturedNativeSend::Saved {
             enabled,
             cleared,
+            queue_id,
             ticket,
             error,
         })
@@ -348,7 +357,7 @@ impl Engine {
             captured,
             false,
             true,
-            Some("Image import failed; edit this message and attach the image again."),
+            Some("Attachment or reference failed; edit this message and try again."),
         )?;
         Ok(())
     }

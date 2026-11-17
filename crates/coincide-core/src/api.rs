@@ -1003,6 +1003,8 @@ impl Engine {
                 };
                 let plan=if method == "threads.edit-branch" {
                     crate::thread_history::edit_from_user(&source,required(p,"itemId")?,options)?
+                } else if p["snapshot"] == true {
+                    crate::thread_history::fork_through_message_snapshot(&source,required(p,"itemId")?,options)?
                 } else {
                     crate::thread_history::fork_through_turn(&source,p["itemId"].as_str(),options)?
                 };

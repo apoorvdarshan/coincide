@@ -190,8 +190,8 @@ pub fn remove(raw: &Value, id: &str) -> Result<Value> {
 pub fn append_quote(raw: &Value, message: &Value) -> Result<Value> {
     validate(raw)?;
     ensure!(
-        message["kind"] == "assistant",
-        "Only an assistant message can be quoted"
+        message["kind"].as_str().is_some_and(quotable_kind),
+        "This message cannot be quoted"
     );
     required(message, "text", 16_000)?;
     ensure!(
@@ -200,6 +200,13 @@ pub fn append_quote(raw: &Value, message: &Value) -> Result<Value> {
     );
     let mut rows = raw.as_array().cloned().unwrap_or_default();
     let mut quote = json!({"id":Uuid::new_v4(),"kind":"quote","text":message["text"]});
+    quote["sourceKind"] = message["kind"].clone();
+    if message["id"]
+        .as_str()
+        .is_some_and(|id| Uuid::parse_str(id).is_ok())
+    {
+        quote["sourceItemID"] = message["id"].clone();
+    }
     if let Some(provider) = message.get("provider").filter(|v| !v.is_null()) {
         bounded(provider, 128, "provider")?;
         quote["provider"] = provider.clone();
@@ -208,6 +215,12 @@ pub fn append_quote(raw: &Value, message: &Value) -> Result<Value> {
     let result = Value::Array(rows);
     validate(&result)?;
     Ok(result)
+}
+pub fn quotable_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "assistant" | "user" | "tool" | "reasoning" | "system" | "error" | "plan"
+    )
 }
 /// Selected visible terminal output is bounded data; never truncate or accept blank/hidden-only text.
 /// A terminal reference under `label`: "Terminal selection" for a selection,

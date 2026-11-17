@@ -133,7 +133,7 @@ pub(super) const PALETTES: &[Palette] = &[
         raised: 0x202020,
         border: 0x2A2A2A,
         ink: 0xeaeaec,
-        accent: 0xFF8A3D,
+        accent: 0xD4D4D8,
     },
     Palette {
         id: "graphite",
@@ -265,7 +265,7 @@ pub(super) const PALETTES: &[Palette] = &[
         raised: 0xE8E8E8,
         border: 0xE1E1E1,
         ink: 0x111111,
-        accent: 0xE8660F,
+        accent: 0x424246,
     },
     Palette {
         id: "paper",
@@ -696,7 +696,7 @@ impl Coincide {
                     .px_1()
                     .text_sm()
                     .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(self.color(0xe4e9f2).opacity(0.8))
+                    .text_color(self.color(0xe4e9f2).opacity(0.88))
                     .child(title.into()),
             )
             .child(self.settings_card(body))
@@ -706,7 +706,7 @@ impl Coincide {
         div()
             .w_full()
             .min_w_0()
-            .rounded(px(14.))
+            .rounded(px(12.))
             .border_1()
             .border_color(self.color(0x29303d).opacity(0.85))
             .bg(self.color(0x111722))
@@ -1148,6 +1148,21 @@ impl Coincide {
         done_id: &'static str,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let icon = match title {
+            "General" => Some(SettingsSection::General),
+            "Models" => Some(SettingsSection::Models),
+            "Usage" => Some(SettingsSection::Usage),
+            "Instructions" => Some(SettingsSection::Instructions),
+            "Archive" => Some(SettingsSection::Archive),
+            "Keyboard" => Some(SettingsSection::Keyboard),
+            "Voice" => Some(SettingsSection::Voice),
+            "Browser" => Some(SettingsSection::Browser),
+            "Computer Use" => Some(SettingsSection::ComputerUse),
+            "Appshots" => Some(SettingsSection::Appshots),
+            "Providers" => Some(SettingsSection::Accounts),
+            "About" => Some(SettingsSection::About),
+            _ => None,
+        };
         let subtitle = match title {
             "General" => Some("Appearance, workspace, and everyday preferences"),
             "Models" => Some("Choose defaults and organize your models"),
@@ -1172,29 +1187,46 @@ impl Coincide {
             .gap_3()
             .px_5()
             .py_4()
+            .bg(self.color(0x151922))
             .border_b_1()
-            .border_color(self.color(0x29303d))
+            .border_color(self.color(0x29303d).opacity(0.7))
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
                     .flex()
-                    .flex_col()
-                    .gap_1()
+                    .items_center()
+                    .gap_3()
+                    .when_some(icon, |heading, section| {
+                        heading.child(settings_navigation::icon_tile(
+                            section,
+                            36.,
+                            self.color(0x202a3b),
+                            self.color(0x98b1d4),
+                        ))
+                    })
                     .child(
                         div()
-                            .text_xl()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(title),
-                    )
-                    .when_some(subtitle, |heading, subtitle| {
-                        heading.child(
-                            div()
-                                .text_xs()
-                                .text_color(self.color(0xe4e9f2).opacity(0.62))
-                                .child(subtitle),
-                        )
-                    }),
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_xl()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(title),
+                            )
+                            .when_some(subtitle, |heading, subtitle| {
+                                heading.child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(self.color(0xe4e9f2).opacity(0.66))
+                                        .child(subtitle),
+                                )
+                            }),
+                    ),
             )
             .child(
                 Button::new(done_id)
@@ -1516,13 +1548,17 @@ impl Coincide {
             }
         }
         use settings_search::Row as R;
+        let mut appearance = div().w_full().min_w_0().flex().flex_col();
+        let mut display = div().w_full().min_w_0().flex().flex_col();
+        let mut workspace = div().w_full().min_w_0().flex().flex_col();
         if matches(
             S::Appearance,
             "appearance system light dark color theme font size text smaller larger",
         ) {
             count += 1;
-            content = content
-                .child(self.revealable(R::Appearance, self.appearance_picker(cx)))
+            appearance =
+                appearance.child(self.revealable(R::Appearance, self.appearance_picker(cx)));
+            display = display
                 .child(self.setting_choices(
                     "Number format",
                     "numberFormat",
@@ -1559,7 +1595,7 @@ impl Coincide {
             }
             content
         };
-        content = choice_rows(
+        display = choice_rows(
             vec![
                 (
                     S::Appearance,
@@ -1590,7 +1626,7 @@ impl Coincide {
                     vec![("Right", json!("right")), ("Left", json!("left"))],
                 ),
             ],
-            content,
+            display,
             &mut count,
             cx,
         );
@@ -1603,12 +1639,12 @@ impl Coincide {
                 && (shown || self.settings_reveal_targets(row))
             {
                 count += 1;
-                content = content.child(self.revealable(row, self.theme_grid_row(dark, cx)));
+                appearance = appearance.child(self.revealable(row, self.theme_grid_row(dark, cx)));
             }
         }
         if matches(S::Appearance, "pointing hand cursor links buttons") {
             count += 1;
-            content = content.child(self.setting_toggle(
+            appearance = appearance.child(self.setting_toggle(
                 "Pointing hand over clickable items",
                 "Buttons, links, tabs and list rows show the pointing hand, as on the web.",
                 "showsPointingHand",
@@ -1617,7 +1653,7 @@ impl Coincide {
                 cx,
             ));
         }
-        content = choice_rows(
+        workspace = choice_rows(
             vec![(
                 S::Appearance,
                 "terminal placement bottom right panel drawer inspector",
@@ -1630,7 +1666,7 @@ impl Coincide {
                     ("Right panel", json!("right")),
                 ],
             )],
-            content,
+            workspace,
             &mut count,
             cx,
         );
@@ -1639,7 +1675,7 @@ impl Coincide {
             "terminal translucent background blur transparent",
         ) {
             count += 1;
-            content = content.child(self.setting_toggle(
+            workspace = workspace.child(self.setting_toggle(
                 "Translucent terminal",
                 "The desktop shows through the terminal's background, blurred.",
                 "terminalTranslucentBackground",
@@ -1653,16 +1689,18 @@ impl Coincide {
             "open project folders editor terminal file manager application automatic",
         ) {
             count += 1;
-            content = content.child(self.revealable(R::OpenIn, self.open_target_settings(cx)));
+            workspace = workspace.child(self.revealable(R::OpenIn, self.open_target_settings(cx)));
         }
         if filtering == S::General {
-            content = div()
-                .w_full()
-                .min_w_0()
-                .flex()
-                .flex_col()
+            content = content
                 .gap_4()
-                .child(self.settings_group("Appearance & workspace", content));
+                .child(self.settings_group("Appearance", appearance))
+                .child(self.settings_group("Display & text", display))
+                .child(self.settings_group("Workspace", workspace));
+        } else if matches(S::Appearance, "") {
+            content = content.child(appearance).child(display).child(workspace);
+        } else if matches(S::Conversation, "") {
+            content = content.child(display);
         }
         let mut conversation = div().w_full().min_w_0().flex().flex_col();
         conversation = choice_rows(
@@ -1701,6 +1739,22 @@ impl Coincide {
                     json!(true),
                     vec![("Show", json!(true)), ("Hide", json!(false))],
                 ),
+                (
+                    S::Conversation,
+                    "new thread starts chat project command n",
+                    R::NewThreadChat,
+                    "New Thread starts a chat",
+                    "newThreadStartsChat",
+                    json!(false),
+                    vec![("On", json!(true)), ("Off", json!(false))],
+                ),
+            ],
+            conversation,
+            &mut count,
+            cx,
+        );
+        let safety = choice_rows(
+            vec![
                 (
                     S::Conversation,
                     "confirm deleting delete threads history",
@@ -1745,27 +1799,19 @@ impl Coincide {
                         ("Full access", json!("fullAccess")),
                     ],
                 ),
-                (
-                    S::Conversation,
-                    "new thread starts chat project command n",
-                    R::NewThreadChat,
-                    "New Thread starts a chat",
-                    "newThreadStartsChat",
-                    json!(false),
-                    vec![("On", json!(true)), ("Off", json!(false))],
-                ),
             ],
-            conversation,
+            div().w_full().min_w_0().flex().flex_col(),
             &mut count,
             cx,
         );
+        let mut links = div().w_full().min_w_0().flex().flex_col();
         if matches(
             S::Conversation,
             "open links default browser web click command control preview",
         ) {
             count += 1;
             let default_browser = setting("opensLinksInDefaultBrowser", json!(false)) == true;
-            conversation = conversation
+            links = links
                 .child(self.setting_choices(
                     "Open links in your default browser",
                     "opensLinksInDefaultBrowser",
@@ -1787,9 +1833,12 @@ impl Coincide {
         }
         if matches(S::Conversation, "") {
             content = if filtering == S::General {
-                content.child(self.settings_group("Chat", conversation))
+                content
+                    .child(self.settings_group("Chat", conversation))
+                    .child(self.settings_group("Safety & shortcuts", safety))
+                    .child(self.settings_group("Links", links))
             } else {
-                content.child(conversation)
+                content.child(conversation).child(safety).child(links)
             };
         }
         if matches(
@@ -1800,6 +1849,7 @@ impl Coincide {
             content = content.child(self.keyboard_settings(cx));
         }
         let mut automation = div().w_full().min_w_0().flex().flex_col();
+        let mut integrations = div().w_full().min_w_0().flex().flex_col();
         if matches(
             S::Automation,
             "notify notifications background alerts permission",
@@ -1817,15 +1867,16 @@ impl Coincide {
             "remote iphone ipad device pairing tailscale network phone tablet",
         ) {
             count += 1;
-            automation = automation.child(self.revealable(R::Remote, self.remote_panel.clone()));
+            integrations =
+                integrations.child(self.revealable(R::Remote, self.remote_panel.clone()));
         }
         if matches(
             S::Automation,
             "command line control coincide-rs terminal cli automation",
         ) {
             count += 1;
-            automation =
-                automation.child(self.revealable(R::CommandLine, self.command_line_rows(cx)));
+            integrations =
+                integrations.child(self.revealable(R::CommandLine, self.command_line_rows(cx)));
         }
         for (section, id, label, terms) in [
             (
@@ -1892,7 +1943,9 @@ impl Coincide {
                             this.open_settings_subpage(id, window, cx)
                         })),
                 );
-                if section == S::Automation {
+                if section == S::Automation && id == "bots" {
+                    integrations = integrations.child(row);
+                } else if section == S::Automation {
                     automation = automation.child(row);
                 } else {
                     content = content.child(row);
@@ -1901,9 +1954,11 @@ impl Coincide {
         }
         if matches(S::Automation, "") {
             content = if filtering == S::General {
-                content.child(self.settings_group("Automation", automation))
+                content
+                    .child(self.settings_group("Notifications & power", automation))
+                    .child(self.settings_group("Remote & integrations", integrations))
             } else {
-                content.child(automation)
+                content.child(automation).child(integrations)
             };
         }
         if filtering == S::General {
@@ -2126,6 +2181,26 @@ impl Coincide {
 #[cfg(test)]
 mod navigation_tests {
     use super::*;
+    #[::core::prelude::v1::test]
+    fn carbon_accents_are_neutral_without_changing_colored_themes() {
+        for id in ["carbon", "carbon-light"] {
+            let accent = PALETTES
+                .iter()
+                .find(|palette| palette.id == id)
+                .unwrap()
+                .accent;
+            let channels = [(accent >> 16) & 0xff, (accent >> 8) & 0xff, accent & 0xff];
+            assert!(channels.iter().max().unwrap() - channels.iter().min().unwrap() <= 5);
+        }
+        assert_eq!(
+            PALETTES
+                .iter()
+                .find(|palette| palette.id == "ember")
+                .unwrap()
+                .accent,
+            0xFF7A45
+        );
+    }
     #[::core::prelude::v1::test]
     fn palette_controls_remain_legible_in_every_theme() {
         let contrast = |a, b| {

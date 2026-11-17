@@ -23,6 +23,9 @@ pub struct Agent {
     pub id: String,
     pub name: String,
     pub website: Option<String>,
+    /// Only the official registry's icon for this exact ID is accepted.
+    #[serde(default)]
+    pub icon: Option<String>,
     pub executable: Option<PathBuf>,
     pub arguments: Vec<String>,
     pub environment: BTreeMap<String, String>,
@@ -229,10 +232,16 @@ fn entry(row: &Value, target: Option<&str>, path: Option<&OsStr>) -> Option<Agen
     let website = text(&row["website"], 2048)
         .filter(|url| url.starts_with("https://"))
         .map(str::to_owned);
+    let icon = text(&row["icon"], 256)
+        .filter(|url| {
+            *url == format!("https://cdn.agentclientprotocol.com/registry/v1/latest/{id}.svg")
+        })
+        .map(str::to_owned);
     Some(Agent {
         id: id.into(),
         name,
         website,
+        icon,
         executable,
         arguments: arguments(&distribution["args"])?,
         environment: environment(&distribution["env"])?,
@@ -274,6 +283,7 @@ pub fn parse(bytes: &[u8], target: Option<&str>, path: Option<&OsStr>) -> Result
                 id: id.into(),
                 name: name.into(),
                 website: None,
+                icon: None,
                 executable: locate(path, command),
                 arguments: args.into_iter().map(str::to_owned).collect(),
                 environment: BTreeMap::new(),
@@ -282,6 +292,73 @@ pub fn parse(bytes: &[u8], target: Option<&str>, path: Option<&OsStr>) -> Result
     }
     agents.sort_by_key(|agent| agent.name.to_lowercase());
     Ok(agents)
+}
+
+/// Fetch a new registry mark off the UI thread from the registry's own source.
+/// Registry metadata cannot select a host or path, and SVGs with external
+/// resources or active content are never handed to the renderer.
+pub fn fetch_icon(id: &str) -> Result<Vec<u8>> {
+    ensure!(valid_id(id), "Invalid agent identifier");
+    let url = format!(
+        "https://raw.githubusercontent.com/agentclientprotocol/registry/main/{id}/icon.svg"
+    );
+    let config = ureq::Agent::config_builder()
+        .proxy(None)
+        .max_redirects(0)
+        .timeout_global(Some(Duration::from_secs(5)))
+        .build();
+    let mut response = config.new_agent().get(&url).call()?;
+    let mut bytes = Vec::new();
+    response
+        .body_mut()
+        .as_reader()
+        .take(128 * 1024 + 1)
+        .read_to_end(&mut bytes)?;
+    ensure!(safe_icon(&bytes), "Unsupported registry logo");
+    Ok(bytes)
+}
+
+fn safe_icon(bytes: &[u8]) -> bool {
+    if bytes.is_empty() || bytes.len() > 128 * 1024 {
+        return false;
+    }
+    let Ok(svg) = std::str::from_utf8(bytes) else {
+        return false;
+    };
+    let Ok(document) = roxmltree::Document::parse(svg) else {
+        return false;
+    };
+    let root = document.root_element();
+    if root.tag_name().name() != "svg" {
+        return false;
+    }
+    let mut count = 0;
+    for node in root.descendants().filter(|node| node.is_element()) {
+        count += 1;
+        if count > 8192 || node.ancestors().take(66).count() > 65 {
+            return false;
+        }
+        if ["script", "foreignobject", "image", "use", "style"]
+            .contains(&node.tag_name().name().to_ascii_lowercase().as_str())
+        {
+            return false;
+        }
+        for attribute in node.attributes() {
+            let name = attribute.name().to_ascii_lowercase();
+            let value = attribute.value().to_ascii_lowercase();
+            if name.starts_with("on")
+                || ["href", "src", "style"].contains(&name.as_str())
+                || value.contains("javascript:")
+                || value.contains("@import")
+                || !value
+                    .match_indices("url(")
+                    .all(|(index, _)| value[index + 4..].trim_start().starts_with('#'))
+            {
+                return false;
+            }
+        }
+    }
+    true
 }
 pub fn fetch() -> Result<Vec<Agent>> {
     let config = ureq::Agent::config_builder()
@@ -317,6 +394,47 @@ pub fn local_agents() -> Vec<Agent> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+    #[test]
+    fn icon_metadata_and_svg_validation_do_not_allow_external_resources() {
+        assert!(safe_icon(
+            br#"<svg xmlns="http://www.w3.org/2000/svg"><path fill="currentColor"/></svg>"#
+        ));
+        for bad in [
+            "<svg><image href='https://example.org/pixel'/></svg>",
+            "<svg><script>test</script></svg>",
+            "<!DOCTYPE svg [<!ENTITY x SYSTEM 'file:///tmp/x'>]><svg></svg>",
+            "<svg><path fill='url(https://example.org/x)'/></svg>",
+            "<svg xmlns:x='urn:evil'><x:script>test</x:script></svg>",
+            "<svg><path style='fill:url(https://example.org/x)'/></svg>",
+        ] {
+            assert!(!safe_icon(bad.as_bytes()));
+        }
+        let mut input = json!({"agents":[{"id":"fixture","name":"Fixture",
+            "icon":"https://evil.example/fixture.svg",
+            "distribution":{"npx":{"package":"fixture"}}}]});
+        let agents = parse(input.to_string().as_bytes(), None, None).unwrap();
+        assert!(
+            agents
+                .iter()
+                .find(|agent| agent.id == "fixture")
+                .unwrap()
+                .icon
+                .is_none()
+        );
+        input["agents"][0]["icon"] =
+            json!("https://cdn.agentclientprotocol.com/registry/v1/latest/fixture.svg");
+        let agents = parse(input.to_string().as_bytes(), None, None).unwrap();
+        assert!(
+            agents
+                .iter()
+                .find(|agent| agent.id == "fixture")
+                .unwrap()
+                .icon
+                .is_some()
+        );
+        assert!(fetch_icon("../fixture").is_err());
+    }
     #[test]
     fn parses_updated_registry_and_only_finds_installed_commands() {
         let root = tempfile::tempdir().unwrap();

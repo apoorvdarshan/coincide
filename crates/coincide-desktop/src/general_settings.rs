@@ -347,7 +347,7 @@ impl Coincide {
             .px_4()
             .py_3()
             .border_b_1()
-            .border_color(self.color(0x29303d).opacity(0.7))
+            .border_color(self.color(0x29303d).opacity(0.6))
             .child(
                 div()
                     .flex_1()
@@ -355,12 +355,18 @@ impl Coincide {
                     .flex()
                     .flex_col()
                     .gap_1()
-                    .child(div().font_weight(FontWeight::MEDIUM).child(title.into()))
+                    .child(
+                        div()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(self.color(0xe4e9f2))
+                            .child(title.into()),
+                    )
                     .when_some(caption, |row, caption| {
                         row.child(
                             div()
                                 .text_xs()
-                                .text_color(self.color(0x98a6ba).opacity(0.68))
+                                .whitespace_normal()
+                                .text_color(self.color(0x98a6ba).opacity(0.7))
                                 .child(caption),
                         )
                     }),

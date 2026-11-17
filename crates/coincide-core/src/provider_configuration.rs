@@ -868,6 +868,7 @@ impl Engine {
             .requested;
         drop(owner);
         self.register_native_acp_agent(&crate::acp_registry::Agent {
+            icon: None,
             id: id.into(),
             name: acp.name,
             website: None,

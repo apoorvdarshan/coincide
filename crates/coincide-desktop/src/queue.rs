@@ -358,6 +358,7 @@ impl Coincide {
                 self.queue_error = format!("Unable to load queued messages: {error}");
             }
         }
+        self.reconcile_buffered_sends();
         cx.notify();
     }
 
@@ -396,6 +397,13 @@ impl Coincide {
             .queued_messages
             .iter()
             .filter(|message| message["state"] != "completed")
+            .filter(|message| {
+                !matches!(message["state"].as_str(), Some("pending" | "dispatching"))
+                    || !self
+                        .admitted_previews
+                        .iter()
+                        .any(|preview| preview.direct && message["id"] == preview.queue_id)
+            })
             .collect::<Vec<_>>();
         if messages.is_empty() && self.queue_error.is_empty() {
             return None;

@@ -45,6 +45,28 @@ impl Engine {
         Ok(())
     }
 
+    /// Remove the exact reference the desktop user dismissed. This compact
+    /// update works for quotes and files without rewriting the conversation.
+    pub fn remove_draft_context_card(&mut self, id: &str, card: &Value) -> Result<()> {
+        self.require_admissions()?;
+        let uuid = Uuid::parse_str(id)?;
+        ensure!(
+            !self.store.is_imported(id)?,
+            "Fork an imported thread before editing context"
+        );
+        ensure!(
+            !self
+                .unsaved_threads
+                .keys()
+                .any(|id| Uuid::parse_str(id).ok() == Some(uuid)),
+            "Transcript persistence is recovering"
+        );
+        if self.store.remove_exact_context_card(id, card)? {
+            self.revision += 1;
+        }
+        Ok(())
+    }
+
     pub fn edit_composer_context(&mut self, p: &Value) -> Result<Value> {
         self.require_admissions()?;
         let object = p.as_object().context("Context edit must be an object")?;
@@ -116,6 +138,33 @@ impl Engine {
 #[cfg(test)]
 mod picked_path_tests {
     use super::*;
+    #[test]
+    fn removing_a_quote_is_exact_and_preserves_newer_draft_context() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = crate::store::Store::open(&directory.path().join("state.sqlite")).unwrap();
+        let mut engine = Engine::fixture(store);
+        let mut thread = engine.store.new_thread("").unwrap();
+        let id = thread["id"].as_str().unwrap().to_owned();
+        let quote = json!({"id":Uuid::new_v4(),"kind":"quote","text":"selected text"});
+        let other = json!({"id":Uuid::new_v4(),"kind":"quote","text":"keep this"});
+        thread["draft"] = json!("new draft");
+        thread["draftContext"] = json!([quote.clone(), other.clone()]);
+        engine.store.save(&thread).unwrap();
+        let mut changed = quote.clone();
+        changed["text"] = json!("newer text");
+        thread["draftContext"] = json!([changed.clone(), other.clone()]);
+        engine.store.save(&thread).unwrap();
+        assert!(engine.remove_draft_context_card(&id, &quote).is_err());
+        assert_eq!(
+            engine.store.thread(&id).unwrap()["draftContext"],
+            json!([changed.clone(), other.clone()])
+        );
+        engine.remove_draft_context_card(&id, &changed).unwrap();
+        let saved = engine.store.thread(&id).unwrap();
+        assert_eq!(saved["draft"], "new draft");
+        assert_eq!(saved["draftContext"], json!([other]));
+        engine.remove_draft_context_card(&id, &changed).unwrap();
+    }
     #[test]
     fn cancel_removes_only_the_exact_selected_path_card() {
         let directory = tempfile::tempdir().unwrap();

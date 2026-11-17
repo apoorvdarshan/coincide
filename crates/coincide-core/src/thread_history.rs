@@ -60,6 +60,22 @@ pub fn fork_through_turn(
     make_plan(source, &items[..end], None, options)
 }
 
+/// Fork an explicit message snapshot, including a currently streaming turn.
+/// The new conversation has no live provider session or pending operations;
+/// the original continues independently.
+pub fn fork_through_message_snapshot(
+    source: &Value,
+    item_id: &str,
+    options: HistoryOptions<'_>,
+) -> Result<HistoryPlan> {
+    let items = validated_items(source, &options)?;
+    let end = item_index(items, item_id)? + 1;
+    let mut plan = make_plan(source, &items[..end], None, options)?;
+    plan.lineage["mode"] = json!("message-snapshot-branch");
+    plan.thread["rustHistory"] = plan.lineage.clone();
+    Ok(plan)
+}
+
 /// Create a separate branch before a selected user message, restoring that
 /// message into its draft. This deliberately does not truncate the source.
 pub fn edit_from_user(
@@ -176,6 +192,21 @@ fn make_plan(
                         object.insert(key.into(), json!(replacement));
                     } else {
                         object.remove(key);
+                    }
+                }
+            }
+            if let Some(context) = object.get_mut("context").and_then(Value::as_array_mut) {
+                for quote in context.iter_mut().filter(|row| row["kind"] == "quote") {
+                    let Some(reference) = quote["sourceItemID"].as_str().map(str::to_owned) else {
+                        continue;
+                    };
+                    let replacement = Uuid::parse_str(&reference)
+                        .ok()
+                        .and_then(|id| remapped_ids.get(&id));
+                    if let Some(replacement) = replacement {
+                        quote["sourceItemID"] = json!(replacement);
+                    } else if let Some(fields) = quote.as_object_mut() {
+                        fields.remove("sourceItemID");
                     }
                 }
             }

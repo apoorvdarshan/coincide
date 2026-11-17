@@ -220,6 +220,24 @@ mod tests {
     }
 
     #[::core::prelude::v1::test]
+    fn reply_reference_joins_the_send_that_was_pressed_while_it_was_saving() {
+        let mut imports = ImageImports::default();
+        let job = imports.reserve_reference("chat").unwrap();
+        let mut pending = PendingSend::new(
+            &json!({"id":"chat","selection":{"provider":"codex"}}),
+            "answer".into(),
+            false,
+        );
+        pending.add_imports(imports.claim("chat"));
+        assert!(pending.waiting_for_import);
+        let reference = json!({"id":uuid::Uuid::new_v4(),"kind":"quote","text":"selected"});
+        assert!(pending.complete_attachment_import(job, &[], &[reference.clone()], false));
+        assert!(!pending.waiting_for_import);
+        assert_eq!(pending.captured["draftContext"], json!([reference]));
+        assert_eq!(pending.draft, "answer");
+    }
+
+    #[::core::prelude::v1::test]
     fn failed_import_does_not_send_a_partial_message_and_can_claim_a_retry() {
         let thread = json!({"id":"chat","selection":{"provider":"codex"}});
         let mut pending = PendingSend::new(&thread, "message".into(), false);
@@ -360,6 +378,9 @@ impl ImageImports {
         let id = self.reserve(thread)?;
         self.jobs.iter_mut().find(|job| job.id == id)?.state = ImportState::Running;
         Some(id)
+    }
+    pub fn reserve_reference(&mut self, thread: &str) -> Option<u64> {
+        self.reserve_removal(thread)
     }
     fn take_ready(&mut self) -> Vec<(u64, String, Vec<IncomingImage>)> {
         let mut slots = 4usize.saturating_sub(
@@ -851,6 +872,64 @@ impl Coincide {
         cx: &mut Context<Self>,
     ) {
         self.finish_attachment_import(job, thread, imported, Vec::new(), error, cx);
+    }
+
+    /// A reply reference is owned by the send that claimed its in-flight job.
+    /// If the user already pressed Send, do not also put it on their next draft.
+    pub(super) fn finish_reply_reference(
+        &mut self,
+        job: u64,
+        thread: &str,
+        card: Option<Value>,
+        error: Option<anyhow::Error>,
+        cx: &mut Context<Self>,
+    ) {
+        self.attachment_imports.finish(job);
+        let cards = card.into_iter().collect::<Vec<_>>();
+        let mut claimed = false;
+        for pending in self
+            .pending_follow_up
+            .iter_mut()
+            .chain(self.pending_follow_up_backlog.iter_mut())
+        {
+            claimed |= pending.complete_attachment_import(job, &[], &cards, error.is_some());
+        }
+        if !claimed
+            && !cards.is_empty()
+            && let Some(selected) = self
+                .selected
+                .as_mut()
+                .filter(|selected| selected["id"] == thread)
+        {
+            if selected["draftContext"].is_null() {
+                selected["draftContext"] = json!([]);
+            }
+            if let Some(context) = selected["draftContext"].as_array_mut() {
+                for card in &cards {
+                    if !context.iter().any(|row| row["id"] == card["id"]) {
+                        context.push(card.clone());
+                    }
+                }
+            }
+            self.selected_generation = self.selected_generation.wrapping_add(1);
+        }
+        self.status = match error {
+            Some(error) => format!("Could not attach reply: {error}"),
+            None => "Message reference added to your reply.".into(),
+        };
+        if cards.is_empty()
+            && self
+                .selected
+                .as_ref()
+                .is_some_and(|selected| selected["id"] == thread)
+        {
+            self.show_local_error(
+                "The reply reference could not be added. Your message is retained.",
+            );
+        }
+        self.reconcile_buffered_sends();
+        self.pump_image_imports(cx);
+        cx.notify();
     }
 
     fn finish_attachment_import(

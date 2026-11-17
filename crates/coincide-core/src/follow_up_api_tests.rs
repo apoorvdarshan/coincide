@@ -78,7 +78,7 @@ fn failed_image_import_keeps_the_captured_message_for_editing_without_auto_deliv
             .error
             .as_ref()
             .unwrap()
-            .contains("Image import failed")
+            .contains("Attachment or reference failed")
     );
     assert!(!engine.enabled_queues.contains(&id));
     assert!(control.try_recv().is_err());
@@ -262,6 +262,34 @@ fn captured_queue_and_interrupt_respect_mode_for_every_provider() {
             finish_fake(&mut engine, &id, release);
         }
     }
+}
+
+#[test]
+fn captured_message_waits_for_an_existing_stop_without_repeating_it() {
+    let Fixture {
+        _dir,
+        mut engine,
+        id,
+        release,
+        control,
+        ..
+    } = fixture();
+    let captured = engine.store.thread(&id).unwrap();
+    engine.runs.get_mut(&id).unwrap().cancelled = true;
+    assert!(matches!(
+        engine
+            .admit_captured_native_send(&captured, false, Behavior::Interrupt, false)
+            .unwrap(),
+        CapturedNativeSend::Waiting
+    ));
+    assert!(
+        crate::message_queue::read(&engine.store.thread(&id).unwrap())
+            .unwrap()
+            .is_empty()
+    );
+    assert!(control.try_recv().is_err());
+    engine.runs.get_mut(&id).unwrap().cancelled = false;
+    finish_fake(&mut engine, &id, release);
 }
 
 #[test]

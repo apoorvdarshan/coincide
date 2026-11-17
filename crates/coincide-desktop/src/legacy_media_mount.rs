@@ -15,6 +15,16 @@ struct DisplayImage {
     name: String,
     image: Arc<Image>,
 }
+#[derive(Clone)]
+pub(super) enum AttachmentImage {
+    Path(std::path::PathBuf, Option<(u32, u32)>),
+    Image(Arc<Image>),
+}
+struct AttachmentView {
+    thread: String,
+    name: String,
+    image: AttachmentImage,
+}
 struct RenderRequest {
     thread: String,
     generation: u64,
@@ -44,6 +54,7 @@ pub(super) struct ParentMedia {
     layout_visibility: visibility::CompletedLayout,
     layout_sequence: std::rc::Rc<std::cell::Cell<u64>>,
     viewer: historical_image_view::Viewer,
+    attachment_viewer: Option<AttachmentView>,
     viewer_focus: FocusHandle,
     viewer_restore: Option<FocusHandle>,
     status: String,
@@ -82,6 +93,7 @@ impl ParentMedia {
             layout_visibility: visibility::CompletedLayout::default(),
             layout_sequence: std::rc::Rc::new(std::cell::Cell::new(0)),
             viewer: historical_image_view::Viewer::default(),
+            attachment_viewer: None,
             viewer_focus: cx.focus_handle(),
             viewer_restore: None,
             status: String::new(),
@@ -777,7 +789,42 @@ impl Coincide {
         cx.notify();
     }
     pub(super) fn historical_image_is_open(&self) -> bool {
-        self.media.viewer.selection().is_some()
+        self.media.viewer.selection().is_some() || self.media.attachment_viewer.is_some()
+    }
+    pub(super) fn open_attachment_image(
+        &mut self,
+        thread: &str,
+        name: String,
+        image: AttachmentImage,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !window.is_window_active()
+            || self.media.shutdown_requested
+            || self.media.close_requested
+            || self
+                .selected
+                .as_ref()
+                .is_none_or(|selected| selected["id"] != thread)
+            || !self.find_context_available()
+        {
+            return;
+        }
+        if !self.historical_image_is_open() {
+            self.media.viewer_restore = window.focused(cx);
+        }
+        self.media.viewer.close();
+        self.media.attachment_viewer = Some(AttachmentView {
+            thread: thread.to_owned(),
+            name,
+            image,
+        });
+        self.media.viewer_focus.focus(window, cx);
+        if let Some(browser) = &mut self.browser {
+            browser.set_thread_visible(None, cx);
+        }
+        self.sync_terminal_workspace(window, cx);
+        cx.notify();
     }
     fn historical_image_selection_current(
         &self,
@@ -835,6 +882,7 @@ impl Coincide {
     }
     fn close_historical_image(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.media.viewer.close();
+        self.media.attachment_viewer = None;
         if let Some(focus) = self.media.viewer_restore.take() {
             focus.focus(window, cx);
         }
@@ -846,6 +894,16 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.media.attachment_viewer.as_ref().is_some_and(|view| {
+            self.media.shutdown_requested
+                || self.media.close_requested
+                || self
+                    .selected
+                    .as_ref()
+                    .is_none_or(|thread| thread["id"] != view.thread)
+        }) {
+            self.media.attachment_viewer = None;
+        }
         if self
             .media
             .viewer
@@ -887,6 +945,97 @@ impl Coincide {
         true
     }
     pub(super) fn historical_image_overlay(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        if let Some(view) = &self.media.attachment_viewer {
+            let (maximum_width, maximum_height) = match &view.image {
+                AttachmentImage::Path(_, Some((width, height))) => (
+                    (*width as f32 * 2.).min(1400.),
+                    (*height as f32 * 2.).min(1400.),
+                ),
+                _ => (1400., 1400.),
+            };
+            let picture = match &view.image {
+                AttachmentImage::Path(path, _) => img(path.clone())
+                    .image_cache(&self.image_assets)
+                    .size_full()
+                    .max_w(px(maximum_width))
+                    .max_h(px(maximum_height))
+                    .object_fit(ObjectFit::Contain)
+                    .into_any_element(),
+                AttachmentImage::Image(image) => img(image.clone())
+                    .size_full()
+                    .max_w(px(maximum_width))
+                    .max_h(px(maximum_height))
+                    .object_fit(ObjectFit::Contain)
+                    .into_any_element(),
+            };
+            return Some(
+                chat_layout::modal_backdrop()
+                    .id("attachment-image-viewer")
+                    .role(Role::Dialog)
+                    .aria_label("Image preview")
+                    .p_6()
+                    .when(cfg!(target_os = "macos"), |view| view.pt(px(40.)))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(cx.theme().background.opacity(0.97))
+                    .text_color(cx.theme().foreground)
+                    .track_focus(&self.media.viewer_focus)
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|_, _, _, cx| cx.stop_propagation()),
+                    )
+                    .child(
+                        div()
+                            .w_full()
+                            .h_full()
+                            .max_w(px(1400.))
+                            .flex()
+                            .flex_col()
+                            .gap_3()
+                            .min_h_0()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_3()
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .truncate()
+                                            .text_sm()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child(view.name.clone()),
+                                    )
+                                    .child(
+                                        Button::new("attachment-image-close")
+                                            .icon(gpui_kit::assets::IconName::Close)
+                                            .ghost()
+                                            .small()
+                                            .accessibility_label("Close image")
+                                            .tooltip("Close image (Escape)")
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.close_historical_image(window, cx)
+                                            })),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .relative()
+                                    .flex_1()
+                                    .min_h_0()
+                                    .w_full()
+                                    .overflow_hidden()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child(picture),
+                            ),
+                    )
+                    .into_any_element(),
+            );
+        }
         let selection = self.media.viewer.selection()?;
         if !self.historical_image_selection_current(selection) {
             return None;

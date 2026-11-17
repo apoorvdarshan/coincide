@@ -1411,7 +1411,7 @@ fn section_label(text: &'static str, cx: &App) -> Div {
     div()
         .mt_3()
         .text_xs()
-        .font_weight(FontWeight::MEDIUM)
+        .font_weight(FontWeight::SEMIBOLD)
         .text_color(cx.theme().muted_foreground)
         .child(text)
 }
@@ -1451,14 +1451,14 @@ impl BotSettingsPanel {
             .accessibility_label(shape.default_name())
             .tooltip(shape.default_name())
             .disabled(locked)
-            .w(px(40.))
-            .h(px(40.))
+            .w(px(44.))
+            .h(px(44.))
             .p_0()
-            .rounded(px(9.))
+            .rounded(px(12.))
             .when(chosen, |button| {
                 button.bg(raised).border_2().border_color(accent)
             })
-            .child(bot_avatar::avatar(shape, tint, 26.))
+            .child(bot_avatar::avatar(shape, tint, 30.))
             .on_click(cx.listener(move |this, _, window, cx| {
                 if let Some(editor) = this.editor_mut() {
                     editor.pick_shape(shape, window, cx);
@@ -1515,8 +1515,8 @@ impl BotSettingsPanel {
                 .label(name)
                 .tooltip(summary)
                 .disabled(locked)
-                .h(px(26.))
-                .rounded(px(8.))
+                .h(px(28.))
+                .rounded(px(9.))
                 .when(chosen, |button| {
                     button.bg(raised).border_2().border_color(accent)
                 })
@@ -1637,7 +1637,11 @@ impl BotSettingsPanel {
                     .flex()
                     .items_end()
                     .gap(px(14.))
-                    .child(bot_avatar::avatar(look.shape, look.tint, 56.))
+                    .child(
+                        div().size(px(64.)).rounded(px(16.)).bg(raised)
+                            .flex().items_center().justify_center()
+                            .child(bot_avatar::avatar(look.shape, look.tint, 54.)),
+                    )
                     .child(
                         div()
                             .flex_1()
@@ -1661,6 +1665,10 @@ impl BotSettingsPanel {
                         .flex()
                         .items_baseline()
                         .gap_2()
+                        .px_3()
+                        .py_2()
+                        .rounded(px(10.))
+                        .bg(raised)
                         .child(
                             div()
                                 .flex_none()
@@ -2106,11 +2114,11 @@ mod tests {
     }
     #[::core::prelude::v1::test]
     fn new_bots_take_a_character_none_of_the_bots_is_yet() {
-        let used = Character::ALL[..6].to_vec();
+        let used = Character::ALL[..Character::ALL.len() - 1].to_vec();
         for pick in 0..20 {
             let fields = Fields::new_bot(&used, pick);
-            assert_eq!(fields.look, Look::character(Character::Brulee));
-            assert_eq!(fields.name, "Brulee");
+            assert_eq!(fields.look, Look::character(Character::Jam));
+            assert_eq!(fields.name, "Jam");
             assert_eq!(
                 fields.personality.unwrap().preset.as_deref(),
                 Some("cheerful")
