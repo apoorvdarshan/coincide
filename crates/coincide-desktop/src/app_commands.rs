@@ -221,7 +221,7 @@ impl Coincide {
             }
             K::Delete => {
                 if let Some(id) = self.selected_id() {
-                    self.sidebar_delete_review(id, cx);
+                    self.sidebar_delete_review(id, window, cx);
                 }
             }
             K::ReportIssue | K::RequestFeature => {

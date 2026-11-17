@@ -15,6 +15,7 @@ enum Review {
     Move(PreparedThreadMove),
     Delete(PreparedThreadDeletion),
     Bot(PreparedBotDeletion),
+    Archive(String, String),
     ChooseBot(String),
     Waiting(Intent),
 }
@@ -31,7 +32,12 @@ pub(super) struct State {
     undo_stamp: u64,
     stopping: bool,
     auto_apply: bool,
+    notice_visible: bool,
+    notice_undo: bool,
+    archive_notice_undo: Option<String>,
     status: String,
+    restore_focus: Option<FocusHandle>,
+    anchor: Option<Point<Pixels>>,
 }
 impl State {
     fn initial_delete(&self) -> bool {
@@ -40,8 +46,21 @@ impl State {
     pub(super) fn undo_stamp(&self) -> Option<u64> {
         self.undo.as_ref().map(|_| self.undo_stamp)
     }
-    pub(super) fn visible(&self) -> bool {
-        self.review.is_some() || self.undo.is_some() || !self.status.is_empty()
+    pub(super) fn review_visible(&self) -> bool {
+        self.review.is_some() && !self.auto_apply
+    }
+    fn cancel_review(&mut self) {
+        self.review = None;
+        self.stopping = false;
+        self.auto_apply = false;
+        self.notice_visible = false;
+        self.notice_undo = false;
+        self.archive_notice_undo = None;
+        self.status.clear();
+        self.anchor = None;
+    }
+    pub(super) fn archive_for_other(&self, id: &str) -> bool {
+        matches!(&self.review, Some(Review::Archive(current, _)) if current != id)
     }
 }
 fn stop_if_running(engine: &mut Engine, id: &str) -> Result<()> {
@@ -55,28 +74,95 @@ fn stop_if_running(engine: &mut Engine, id: &str) -> Result<()> {
     Ok(())
 }
 impl Coincide {
+    /// Use the actual row's last painted bounds, including its scroll offset.
+    pub(super) fn sidebar_review_anchor(
+        &self,
+        kind: &str,
+        id: &str,
+        window: &Window,
+    ) -> Point<Pixels> {
+        self.sidebar_row_bounds
+            .lock()
+            .ok()
+            .and_then(|rows| rows.get(&format!("{kind}:{id}")).copied())
+            .map(|bounds| point(bounds.right() + px(6.), bounds.top()))
+            .unwrap_or_else(|| window.mouse_position())
+    }
     /// The move review for a destination already chosen: a Move to Project
     /// submenu item, or threads dropped on a project.
-    pub(super) fn sidebar_move_to(&mut self, id: String, target: String, cx: &mut Context<Self>) {
+    pub(super) fn sidebar_move_to(
+        &mut self,
+        id: String,
+        target: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.sidebar_lifecycle.anchor = Some(self.sidebar_review_anchor("thread", &id, window));
         self.prepare_sidebar_lifecycle(Intent::Move(id, target), cx);
+        self.focus_sidebar_lifecycle(window, cx);
     }
-    pub(super) fn sidebar_delete_review(&mut self, id: String, cx: &mut Context<Self>) {
-        self.sidebar_delete_threads(vec![id], cx);
+    pub(super) fn sidebar_delete_review(
+        &mut self,
+        id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.sidebar_delete_threads(vec![id], window, cx);
     }
     /// Swift's `ThreadActions.delete(_:in:)` for every selected conversation.
-    pub(super) fn sidebar_delete_threads(&mut self, ids: Vec<String>, cx: &mut Context<Self>) {
+    pub(super) fn sidebar_delete_threads(
+        &mut self,
+        ids: Vec<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !ids.is_empty() {
+            self.sidebar_lifecycle.anchor =
+                Some(self.sidebar_review_anchor("thread", &ids[0], window));
             self.prepare_sidebar_lifecycle(Intent::Delete(ids), cx);
+            self.focus_sidebar_lifecycle(window, cx);
         }
     }
-    pub(super) fn sidebar_bot_delete_review(&mut self, id: String, cx: &mut Context<Self>) {
+    pub(super) fn sidebar_bot_delete_review(
+        &mut self,
+        id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.media.shutdown_requested || self.media.close_requested {
             return;
         }
+        self.sidebar_lifecycle.anchor = Some(self.sidebar_review_anchor("bot", &id, window));
         self.sidebar_lifecycle.review = Some(Review::ChooseBot(id));
         self.sidebar_lifecycle.stopping = false;
-        self.sidebar_lifecycle.status="Choose whether to keep this bot's conversations as ordinary chats or delete them. Linked scheduled tasks will also be removed after confirmation.".into();
+        self.sidebar_lifecycle.notice_visible = false;
+        self.sidebar_lifecycle.archive_notice_undo = None;
+        self.sidebar_lifecycle.status.clear();
+        self.focus_sidebar_lifecycle(window, cx);
         cx.notify();
+    }
+    pub(super) fn sidebar_archive_review(
+        &mut self,
+        id: String,
+        title: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.sidebar_lifecycle.anchor = Some(self.sidebar_review_anchor("thread", &id, window));
+        self.sidebar_lifecycle.review = Some(Review::Archive(id, title));
+        self.sidebar_lifecycle.auto_apply = false;
+        self.sidebar_lifecycle.stopping = false;
+        self.sidebar_lifecycle.notice_visible = false;
+        self.sidebar_lifecycle.archive_notice_undo = None;
+        self.sidebar_lifecycle.status.clear();
+        self.focus_sidebar_lifecycle(window, cx);
+        cx.notify();
+    }
+    fn focus_sidebar_lifecycle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.sidebar_lifecycle.review_visible() {
+            self.sidebar_lifecycle.restore_focus = window.focused(cx);
+            self.sidebar_lifecycle_focus.focus(window, cx);
+        }
     }
     fn prepare_sidebar_lifecycle(&mut self, intent: Intent, cx: &mut Context<Self>) {
         if self.media.shutdown_requested || self.media.close_requested {
@@ -84,6 +170,8 @@ impl Coincide {
         }
         let previously_waiting = !self.sidebar_lifecycle.initial_delete();
         self.sidebar_lifecycle.auto_apply = false;
+        self.sidebar_lifecycle.notice_visible = false;
+        self.sidebar_lifecycle.archive_notice_undo = None;
         if !self.flush_pending_drafts() {
             self.sidebar_lifecycle.review = Some(Review::Waiting(intent));
             self.sidebar_lifecycle.status =
@@ -193,6 +281,29 @@ impl Coincide {
         let Some(review) = self.sidebar_lifecycle.review.take() else {
             return;
         };
+        if let Review::Archive(id, _) = &review {
+            let archived = if self
+                .selected
+                .as_ref()
+                .is_some_and(|thread| thread["id"] == *id)
+                && !self.running.contains(id)
+            {
+                self.archive_open_thread(id, window, cx)
+            } else {
+                self.status =
+                    "The conversation changed or is still running; archive was not applied.".into();
+                false
+            };
+            self.sidebar_lifecycle.status = self.status.clone();
+            self.sidebar_lifecycle.notice_visible = !self.status.is_empty();
+            self.sidebar_lifecycle.notice_undo = false;
+            self.sidebar_lifecycle.archive_notice_undo = archived.then(|| id.clone());
+            self.sidebar_lifecycle.anchor = None;
+            self.sidebar_lifecycle.restore_focus = None;
+            self.thread_list_focus.focus(window, cx);
+            cx.notify();
+            return;
+        }
         let result = (|| -> Result<Undo> {
             let mut engine = try_state(&self.engine)?;
             match review {
@@ -207,10 +318,13 @@ impl Coincide {
                 }
             }
         })();
+        self.sidebar_lifecycle.archive_notice_undo = None;
         match result {
             Ok(undo) => {
                 self.sidebar_lifecycle.undo = Some(undo);
                 self.sidebar_lifecycle.undo_stamp = inbox_undo::stamp();
+                self.sidebar_lifecycle.notice_visible = true;
+                self.sidebar_lifecycle.notice_undo = true;
                 self.sidebar_lifecycle.status =
                     "Completed. Undo is available while the reviewed content remains unchanged."
                         .into();
@@ -232,11 +346,18 @@ impl Coincide {
                 }
             }
             Err(error) => {
+                self.sidebar_lifecycle.notice_visible = true;
+                self.sidebar_lifecycle.notice_undo = false;
                 self.sidebar_lifecycle.status = format!(
                     "Operation was refused: {error}. Review again; no stale confirmation was reused."
                 )
             }
         };
+        if self.sidebar_lifecycle.review.is_none()
+            && let Some(focus) = self.sidebar_lifecycle.restore_focus.take()
+        {
+            focus.focus(window, cx);
+        }
         cx.notify();
     }
     pub(super) fn undo_sidebar_lifecycle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -245,6 +366,8 @@ impl Coincide {
         }
         if !self.flush_pending_drafts() {
             self.sidebar_lifecycle.status = "Save pending drafts before Undo.".into();
+            self.sidebar_lifecycle.notice_visible = true;
+            self.sidebar_lifecycle.notice_undo = self.sidebar_lifecycle.undo.is_some();
             cx.notify();
             return;
         }
@@ -272,27 +395,89 @@ impl Coincide {
             }
             Err(error) => self.sidebar_lifecycle.status = format!("Undo was refused: {error}"),
         };
+        self.sidebar_lifecycle.notice_visible = true;
+        self.sidebar_lifecycle.notice_undo = self.sidebar_lifecycle.undo.is_some();
         cx.notify();
     }
-    pub(super) fn sidebar_lifecycle_controls(&self, cx: &mut Context<Self>) -> AnyElement {
-        let mut pane = div()
-            .id("sidebar-native-lifecycle")
-            .flex()
-            .flex_col()
-            .gap_2()
-            .p_2()
-            .border_1()
-            .border_color(cx.theme().border)
-            .child(self.sidebar_lifecycle.status.clone());
-        match &self.sidebar_lifecycle.review {
-            Some(Review::ChooseBot(id)) => {
+    pub(super) fn cancel_sidebar_lifecycle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sidebar_lifecycle.cancel_review();
+        if let Some(focus) = self.sidebar_lifecycle.restore_focus.take() {
+            focus.focus(window, cx);
+        }
+        cx.notify();
+    }
+
+    /// Reviews are modal and never take space away from the navigation list.
+    pub(super) fn sidebar_lifecycle_dialog(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        use gpui_kit::base::FocusTrapElement;
+        if !self.sidebar_lifecycle.review_visible() {
+            return None;
+        }
+        let review = self.sidebar_lifecycle.review.as_ref()?;
+        let (title, detail) = match review {
+            Review::ChooseBot(id) => {
+                let name = self
+                    .sidebar_bots
+                    .iter()
+                    .find(|bot| text(bot, "id") == *id)
+                    .and_then(|bot| bot["name"].as_str())
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or("this bot");
+                (format!("Delete {name}?"),
+                 "Choose what happens to its conversations. Linked scheduled tasks will be removed.".to_owned())
+            }
+            Review::Waiting(_) => (
+                "Review unavailable".into(),
+                self.sidebar_lifecycle.status.clone(),
+            ),
+            Review::Archive(_, title) => (
+                "Archive conversation?".into(),
+                format!("{title} can be restored from Archive."),
+            ),
+            Review::Move(plan) => (
+                "Move conversation?".into(),
+                format!(
+                    "Move {} to {}. Conversation content will be kept; the new folder starts a fresh session.",
+                    plan.title(),
+                    plan.destination().display()
+                ),
+            ),
+            Review::Delete(plan) => (
+                "Delete conversations?".into(),
+                format!(
+                    "Delete {} conversation(s): {}. Transcripts and drafts will be removed. Undo remains available for this app session.",
+                    plan.count(),
+                    plan.titles().join(", ")
+                ),
+            ),
+            Review::Bot(plan) => (
+                format!("Delete {}?", plan.name()),
+                format!(
+                    "{} conversation(s), {} scheduled task(s). {}.{}",
+                    plan.conversation_count(),
+                    plan.task_count(),
+                    if plan.disposition() == Disposition::Delete {
+                        "Conversations will be deleted"
+                    } else {
+                        "Conversations will be kept as Chats"
+                    },
+                    plan.chats_folder()
+                        .map(|path| format!(" Chats folder: {}", path.display()))
+                        .unwrap_or_default()
+                ),
+            ),
+        };
+        let mut actions = div().flex().flex_col().gap_2();
+        match review {
+            Review::ChooseBot(id) => {
                 for (label, mode) in [
-                    ("Keep Conversations as Chats", Disposition::KeepAsChats),
-                    ("Delete Bot and Conversations", Disposition::Delete),
+                    ("Keep conversations as chats", Disposition::KeepAsChats),
+                    ("Delete conversations", Disposition::Delete),
                 ] {
                     let id = id.clone();
-                    pane = pane.child(
+                    actions = actions.child(
                         Button::new(SharedString::from(format!("sidebar-bot-mode-{mode:?}")))
+                            .w_full()
                             .label(label)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.prepare_sidebar_lifecycle(Intent::Bot(id.clone(), mode), cx)
@@ -300,12 +485,12 @@ impl Coincide {
                     );
                 }
             }
-            Some(Review::Waiting(intent)) => {
+            Review::Waiting(intent) => {
                 let intent = intent.clone();
-                pane = pane
+                actions = actions
                     .child(
                         Button::new("sidebar-lifecycle-retry")
-                            .label("Retry Review")
+                            .label("Retry review")
                             .disabled(self.sidebar_lifecycle.stopping)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.prepare_sidebar_lifecycle(intent.clone(), cx)
@@ -313,80 +498,203 @@ impl Coincide {
                     )
                     .child(
                         Button::new("sidebar-lifecycle-stop")
-                            .label("Stop and Wait for Cleanup")
+                            .label("Stop and wait for cleanup")
                             .disabled(self.sidebar_lifecycle.stopping)
                             .on_click(
                                 cx.listener(|this, _, _, cx| this.stop_sidebar_lifecycle(cx)),
                             ),
                     );
             }
-            Some(review) => {
-                let (summary, label) = match review {
-                    Review::Move(plan) => (
-                        format!(
-                            "Move {} to {}. Keep all conversation content; start fresh in the new folder.",
-                            plan.title(),
-                            plan.destination().display()
-                        ),
-                        "Confirm Move",
-                    ),
-                    Review::Delete(plan) => (
-                        format!(
-                            "Delete {} conversation(s): {}. Transcript and drafts are removed; native Undo is retained for this app session.",
-                            plan.count(),
-                            plan.titles().join(", ")
-                        ),
-                        "Confirm Delete",
-                    ),
-                    Review::Bot(plan) => (
-                        format!(
-                            "Delete bot {}: {} conversation(s), {} scheduled task(s); {}. {}",
-                            plan.name(),
-                            plan.conversation_count(),
-                            plan.task_count(),
-                            if plan.disposition() == Disposition::Delete {
-                                "delete conversations"
-                            } else {
-                                "keep conversations as Chats"
-                            },
-                            plan.chats_folder()
-                                .map(|path| format!("Chats folder: {}", path.display()))
-                                .unwrap_or_default()
-                        ),
-                        "Confirm Bot Deletion",
-                    ),
-                    _ => unreachable!(),
+            _ => {
+                let is_delete = matches!(review, Review::Delete(_) | Review::Bot(_));
+                let label = if matches!(review, Review::Bot(_)) {
+                    "Delete bot"
+                } else if matches!(review, Review::Archive(_, _)) {
+                    "Archive"
+                } else if is_delete {
+                    "Delete"
+                } else {
+                    "Move"
                 };
-                pane = pane.child(summary).child(
+                actions = actions.child(
                     Button::new("sidebar-lifecycle-confirm")
                         .label(label)
+                        .when(is_delete, |button| button.danger())
+                        .when(!is_delete, |button| button.primary())
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.apply_sidebar_lifecycle(window, cx)
                         })),
                 );
             }
-            None => {}
         }
-        if self.sidebar_lifecycle.review.is_some() {
-            pane=pane.child(Button::new("sidebar-lifecycle-cancel").label("Cancel Review").on_click(cx.listener(|this,_,_,cx|{this.sidebar_lifecycle.review=None;this.sidebar_lifecycle.stopping=false;this.sidebar_lifecycle.status="Review cancelled; no metadata was changed. A requested Stop still completes its owned cleanup.".into();cx.notify();})));
-        }
-        if self.sidebar_lifecycle.undo.is_some() {
-            pane = pane.child(
-                Button::new("sidebar-lifecycle-undo")
-                    .label("Undo Last Lifecycle Change")
-                    .on_click(
-                        cx.listener(|this, _, window, cx| this.undo_sidebar_lifecycle(window, cx)),
+        let panel = div()
+            .id("sidebar-lifecycle-dialog")
+            .role(Role::Dialog)
+            .track_focus(&self.sidebar_lifecycle_focus)
+            .focus_trap("sidebar-lifecycle-focus", &self.sidebar_lifecycle_focus)
+            .aria_label(title.clone())
+            .w(px(300.))
+            .max_w_full()
+            .max_h_full()
+            .rounded(px(14.))
+            .border_1()
+            .border_color(self.color(0x29303d))
+            .bg(self.color(0x151922))
+            .flex()
+            .flex_col()
+            .overflow_hidden()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(
+                div()
+                    .px_3()
+                    .pt_3()
+                    .pb_2()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_lg()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(title),
+                    )
+                    .child(
+                        Button::new("sidebar-lifecycle-close")
+                            .ghost()
+                            .compact()
+                            .icon(gpui_kit::assets::IconName::X)
+                            .accessibility_label("Close review")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.cancel_sidebar_lifecycle(window, cx)
+                            })),
+                    ),
+            )
+            .child(
+                div()
+                    .id("sidebar-lifecycle-detail")
+                    .px_3()
+                    .pb_3()
+                    .max_h(px(140.))
+                    .overflow_y_scroll()
+                    .text_sm()
+                    .text_color(self.color(0xe4e9f2).opacity(0.78))
+                    .child(detail)
+                    .when(
+                        !matches!(review, Review::ChooseBot(_) | Review::Waiting(_))
+                            && !self.sidebar_lifecycle.status.is_empty()
+                            && self.sidebar_lifecycle.status
+                                != "Review the exact scope, then confirm. Nothing has changed yet.",
+                        |view| {
+                            view.child(div().pt_2().child(self.sidebar_lifecycle.status.clone()))
+                        },
+                    ),
+            )
+            .child(
+                div()
+                    .px_3()
+                    .pb_3()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(actions)
+                    .child(
+                        Button::new("sidebar-lifecycle-cancel")
+                            .ghost()
+                            .label("Cancel")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.cancel_sidebar_lifecycle(window, cx)
+                            })),
                     ),
             );
+        Some(
+            div()
+                .id("sidebar-lifecycle-overlay")
+                .absolute()
+                .inset_0()
+                .occlude()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, window, cx| {
+                        cx.stop_propagation();
+                        this.cancel_sidebar_lifecycle(window, cx);
+                    }),
+                )
+                .child(
+                    anchored()
+                        .position(
+                            self.sidebar_lifecycle
+                                .anchor
+                                .unwrap_or(point(px(180.), px(90.))),
+                        )
+                        .snap_to_window_with_margin(px(8.))
+                        .child(panel),
+                )
+                .into_any_element(),
+        )
+    }
+
+    /// Completion and errors stay dismissible, while Undo retains its receipt.
+    pub(super) fn sidebar_lifecycle_notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.sidebar_lifecycle.notice_visible || self.sidebar_lifecycle.review_visible() {
+            return None;
         }
-        div()
-            .id("sidebar-lifecycle-scroll")
-            .h(px(220.))
-            .min_h(px(100.))
-            .flex_shrink_0()
-            .overflow_y_scroll()
-            .child(pane)
-            .into_any_element()
+        let archive_undo = self.sidebar_lifecycle.archive_notice_undo.clone();
+        Some(
+            div()
+                .id("sidebar-lifecycle-notice")
+                .w(px(360.))
+                .max_w_full()
+                .p_3()
+                .rounded(px(10.))
+                .border_1()
+                .border_color(self.color(0x29303d))
+                .bg(self.color(0x151922))
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .text_sm()
+                        .child(self.sidebar_lifecycle.status.clone()),
+                )
+                .when(
+                    (self.sidebar_lifecycle.notice_undo && self.sidebar_lifecycle.undo.is_some())
+                        || archive_undo.is_some(),
+                    |view| {
+                        view.child(
+                            Button::new("sidebar-lifecycle-undo")
+                                .ghost()
+                                .compact()
+                                .label("Undo")
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    if let Some(id) = &archive_undo {
+                                        this.undo_archive_from_notice(id, cx);
+                                        this.sidebar_lifecycle.status = this.status.clone();
+                                        this.sidebar_lifecycle.archive_notice_undo = None;
+                                        cx.notify();
+                                    } else {
+                                        this.undo_sidebar_lifecycle(window, cx);
+                                    }
+                                })),
+                        )
+                    },
+                )
+                .child(
+                    Button::new("sidebar-lifecycle-dismiss")
+                        .ghost()
+                        .compact()
+                        .icon(gpui_kit::assets::IconName::X)
+                        .accessibility_label("Dismiss notification")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.sidebar_lifecycle.notice_visible = false;
+                            cx.notify();
+                        })),
+                )
+                .into_any_element(),
+        )
     }
 }
 
@@ -411,5 +719,32 @@ mod confirmation_policy_tests {
             !state.initial_delete(),
             "a Stop path still requires fresh review after worker cleanup"
         );
+    }
+
+    #[::core::prelude::v1::test]
+    fn cancelling_a_bot_review_dismisses_the_entire_notice() {
+        let mut state = State::default();
+        state.review = Some(Review::ChooseBot("synthetic-bot".into()));
+        state.status = "A review was pending".into();
+        state.notice_visible = true;
+        state.stopping = true;
+        state.auto_apply = true;
+        state.cancel_review();
+        assert!(state.review.is_none());
+        assert!(!state.review_visible());
+        assert!(!state.notice_visible);
+        assert!(state.status.is_empty());
+        assert!(!state.stopping && !state.auto_apply);
+    }
+
+    #[::core::prelude::v1::test]
+    fn archive_review_is_bound_to_the_conversation_it_opened_for() {
+        let mut state = State::default();
+        state.review = Some(Review::Archive("thread-a".into(), "A".into()));
+        assert!(!state.archive_for_other("thread-a"));
+        assert!(state.archive_for_other("thread-b"));
+        state.cancel_review();
+        assert!(!state.review_visible());
+        assert!(!state.archive_for_other("thread-b"));
     }
 }

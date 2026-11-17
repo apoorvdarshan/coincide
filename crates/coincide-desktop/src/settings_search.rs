@@ -10,11 +10,15 @@ use std::{cell::RefCell, collections::HashMap};
 pub(super) enum Row {
     Appearance,
     FontSize,
+    NumberFormat,
+    PointingHand,
     DarkTheme,
     LightTheme,
     ReplyTypeface,
     TerminalPlacement,
+    TerminalTranslucent,
     OpenIn,
+    OpenLinks,
     UserMessageSide,
     ShowReasoning,
     SendShortcut,
@@ -28,11 +32,37 @@ pub(super) enum Row {
     KeepAwake,
     Remote,
     CommandLine,
+    RestoreDefaults,
+}
+impl Row {
+    fn general_page(self) -> general_settings::Page {
+        use general_settings::Page;
+        match self {
+            Self::Appearance | Self::DarkTheme | Self::LightTheme | Self::PointingHand => {
+                Page::Appearance
+            }
+            Self::FontSize | Self::NumberFormat | Self::ReplyTypeface | Self::UserMessageSide => {
+                Page::Text
+            }
+            Self::TerminalPlacement | Self::TerminalTranslucent | Self::OpenIn => Page::Workspace,
+            Self::ShowReasoning
+            | Self::SendShortcut
+            | Self::FollowUpBehavior
+            | Self::NewThreadChat
+            | Self::OpenLinks => Page::Chat,
+            Self::AccessMode | Self::HoldToQuit | Self::ConfirmDelete | Self::ConfirmArchive => {
+                Page::Safety
+            }
+            Self::Notifications | Self::KeepAwake => Page::Notifications,
+            Self::Remote | Self::CommandLine | Self::RestoreDefaults => Page::Advanced,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Destination {
     Pane(Section, Option<Row>),
+    Appshots(appshots_settings::Page),
     /// A page opened from a pane, by its Settings button id.
     Subpage(Section, &'static str),
 }
@@ -40,6 +70,7 @@ impl Destination {
     fn pane(self) -> Section {
         match self {
             Self::Pane(section, _) | Self::Subpage(section, _) => section,
+            Self::Appshots(_) => Section::Appshots,
         }
     }
 }
@@ -70,11 +101,15 @@ impl Entry {
                 .chain(self.keywords.iter().copied())
                 .any(|text| text.to_lowercase().contains(&query))
     }
-    /// The pane shown under the title; none for a pane's own entry, whose
-    /// title already names it.
+    /// The pane shown under the title, unless the title already names it.
     pub(super) fn subtitle(&self) -> Option<&'static str> {
         let pane = self.destination.pane().label();
-        (pane != self.title.as_ref()).then_some(pane)
+        let title = self.title.as_ref();
+        let title_names_pane = title == pane
+            || title
+                .strip_prefix(pane)
+                .is_some_and(|suffix| suffix.starts_with(' '));
+        (!title_names_pane).then_some(pane)
     }
 }
 
@@ -84,7 +119,7 @@ const HOLD_TO_QUIT: &str = "Hold Command + Q to quit";
 const HOLD_TO_QUIT: &str = "Hold Control + Q to quit";
 
 pub(super) fn entries() -> Vec<Entry> {
-    use Destination::{Pane, Subpage};
+    use Destination::{Appshots, Pane, Subpage};
     use Section as S;
     let general = |row| Pane(S::General, Some(row));
     let mut entries = vec![
@@ -105,6 +140,16 @@ pub(super) fn entries() -> Vec<Entry> {
             &["Dark mode", "Light mode", "Theme", "System"],
         ),
         Entry::new("Font size", general(Row::FontSize), &["Text size", "Zoom"]),
+        Entry::new(
+            "Number format",
+            general(Row::NumberFormat),
+            &["Region", "International"],
+        ),
+        Entry::new(
+            "Pointing hand",
+            general(Row::PointingHand),
+            &["Cursor", "Clickable items"],
+        ),
         Entry::new(
             "Dark theme",
             general(Row::DarkTheme),
@@ -129,6 +174,16 @@ pub(super) fn entries() -> Vec<Entry> {
             "Terminal",
             general(Row::TerminalPlacement),
             &["Bottom panel", "Right panel", "Shell", "Layout"],
+        ),
+        Entry::new(
+            "Translucent terminal",
+            general(Row::TerminalTranslucent),
+            &["Blur", "Background"],
+        ),
+        Entry::new(
+            "Open links in default browser",
+            general(Row::OpenLinks),
+            &["Web", "Preview", "Browser"],
         ),
         Entry::new(
             "Open project folders in",
@@ -195,7 +250,7 @@ pub(super) fn entries() -> Vec<Entry> {
         ),
         Entry::new(
             "Remote",
-            Pane(S::Automation, Some(Row::Remote)),
+            general(Row::Remote),
             &[
                 "Coincide Remote",
                 "iPhone",
@@ -215,6 +270,11 @@ pub(super) fn entries() -> Vec<Entry> {
                 "CLI",
                 "Automation",
             ],
+        ),
+        Entry::new(
+            "Restore General defaults",
+            general(Row::RestoreDefaults),
+            &["Reset settings"],
         ),
         Entry::new(
             "Desktop notifications",
@@ -363,17 +423,25 @@ pub(super) fn entries() -> Vec<Entry> {
         ),
         Entry::new(
             "Appshots",
-            Pane(S::Appshots, None),
+            Appshots(appshots_settings::Page::Capture),
             &[
                 "Screenshot",
                 "Capture",
                 "Window",
                 "Shortcut",
                 "Window text",
-                "Screen Recording",
-                "Accessibility",
                 "Play a sound",
             ],
+        ),
+        Entry::new(
+            "Appshots permissions",
+            Appshots(appshots_settings::Page::Permissions),
+            &["Screen Recording", "Accessibility", "System access"],
+        ),
+        Entry::new(
+            "Appshots privacy",
+            Appshots(appshots_settings::Page::Privacy),
+            &["Protected windows", "Capture privacy"],
         ),
         Entry::new(
             "Historical images",
@@ -477,6 +545,11 @@ impl Coincide {
     ) {
         match destination {
             Destination::Pane(section, row) => {
+                if section == Section::General
+                    && let Some(row) = row
+                {
+                    self.general_settings.page = row.general_page();
+                }
                 self.navigate_settings_section(section, window, cx);
                 if let Some(row) = row {
                     self.reveal_settings_row(row, window, cx);
@@ -485,6 +558,10 @@ impl Coincide {
             Destination::Subpage(section, id) => {
                 self.navigate_settings_section(section, window, cx);
                 self.open_settings_subpage(id, window, cx);
+            }
+            Destination::Appshots(page) => {
+                self.settings_navigation.appshots_page = page;
+                self.navigate_settings_section(Section::Appshots, window, cx);
             }
         }
     }
@@ -523,7 +600,11 @@ impl Coincide {
     }
 
     fn settings_row_anchor(&self, row: Row) -> ScrollAnchor {
-        let frame = self.settings_section.id();
+        let frame = if self.settings_section == Section::General {
+            self.general_settings.page.scroll_key()
+        } else {
+            self.settings_section.id()
+        };
         self.settings_reveal
             .anchors
             .borrow_mut()
@@ -548,6 +629,28 @@ impl Coincide {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[::core::prelude::v1::test]
+    fn general_search_rows_open_the_page_that_contains_them() {
+        use general_settings::Page;
+        assert_eq!(Row::Appearance.general_page(), Page::Appearance);
+        assert_eq!(Row::FontSize.general_page(), Page::Text);
+        assert_eq!(Row::OpenIn.general_page(), Page::Workspace);
+        assert_eq!(Row::FollowUpBehavior.general_page(), Page::Chat);
+        assert_eq!(Row::ConfirmDelete.general_page(), Page::Safety);
+        assert_eq!(Row::KeepAwake.general_page(), Page::Notifications);
+        assert_eq!(Row::CommandLine.general_page(), Page::Advanced);
+        assert_eq!(Row::Remote.general_page(), Page::Advanced);
+        let permissions = entries()
+            .into_iter()
+            .find(|entry| entry.title.as_ref() == "Appshots permissions")
+            .unwrap();
+        assert_eq!(
+            permissions.destination,
+            Destination::Appshots(appshots_settings::Page::Permissions)
+        );
+        assert!(permissions.matches("Screen Recording"));
+    }
 
     fn titles(query: &str) -> Vec<String> {
         entries()
@@ -589,10 +692,27 @@ mod tests {
                 .find(|entry| entry.title.as_ref() == title)
                 .unwrap()
         };
-        // A pane's own entry doesn't repeat its name underneath.
+        // Entries whose titles already name their pane don't repeat it underneath.
         assert_eq!(pane("Models").subtitle(), None);
         assert_eq!(pane("Codex").subtitle(), None);
         assert_eq!(pane("Passwords").subtitle(), Some("Browser"));
-        assert_eq!(pane("Keyboard shortcuts").subtitle(), Some("Keyboard"));
+        assert_eq!(pane("Keyboard shortcuts").subtitle(), None);
+    }
+
+    #[::core::prelude::v1::test]
+    fn appshots_search_results_do_not_repeat_the_pane_name() {
+        let results: Vec<_> = entries()
+            .into_iter()
+            .filter(|entry| entry.matches("Appshots"))
+            .map(|entry| (entry.title.to_string(), entry.subtitle()))
+            .collect();
+        assert_eq!(
+            results,
+            [
+                ("Appshots".to_owned(), None),
+                ("Appshots permissions".to_owned(), None),
+                ("Appshots privacy".to_owned(), None),
+            ]
+        );
     }
 }

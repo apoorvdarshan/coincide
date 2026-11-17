@@ -66,6 +66,7 @@ impl Coincide {
                 } else {
                     "Finish these conversations' work and approvals before settling them.".into()
                 };
+                self.sidebar_settle_notice = Some((self.status.clone(), false));
             }
             cx.notify();
             return;
@@ -80,6 +81,17 @@ impl Coincide {
         }) {
             self.sidebar_settle_undo = Some(changes);
             self.inbox_undo.settle_stamp = inbox_undo::stamp();
+            self.sidebar_settle_notice = Some((
+                if settled {
+                    "Conversations settled."
+                } else {
+                    "Conversations unsettled."
+                }
+                .into(),
+                true,
+            ));
+        } else if !self.status.is_empty() {
+            self.sidebar_settle_notice = Some((self.status.clone(), false));
         }
     }
     pub(super) fn undo_settle(&mut self, cx: &mut Context<Self>) {
@@ -90,14 +102,63 @@ impl Coincide {
             self.running.iter().any(|running| running == id)
         }) {
             let values = changes
-                .into_iter()
-                .map(|(id, before, _)| (id, before))
+                .iter()
+                .map(|(id, before, _)| (id.clone(), before.clone()))
                 .collect::<Vec<_>>();
             self.sidebar_thread_markers("settledThreads", &values, cx);
+            if values.iter().all(|(id, before)| {
+                self.sidebar_preferences.document["settledThreads"].get(id) == before.as_ref()
+            }) {
+                self.sidebar_settle_notice = Some(("Conversation state restored.".into(), false));
+            } else {
+                self.sidebar_settle_undo = Some(changes);
+                self.sidebar_settle_notice = Some((self.status.clone(), true));
+            }
         } else {
             self.status = "Conversation state changed; settle Undo was not applied.".into();
+            self.sidebar_settle_notice = Some((self.status.clone(), false));
             cx.notify();
         }
+    }
+
+    pub(super) fn sidebar_settle_notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let (message, show_undo) = self.sidebar_settle_notice.as_ref()?;
+        Some(
+            div()
+                .id("settle-notice")
+                .w(px(360.))
+                .max_w_full()
+                .p_3()
+                .rounded(px(10.))
+                .border_1()
+                .border_color(self.color(0x29303d))
+                .bg(self.color(0x151922))
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(div().flex_1().min_w_0().text_sm().child(message.clone()))
+                .when(*show_undo && self.sidebar_settle_undo.is_some(), |view| {
+                    view.child(
+                        Button::new("sidebar-undo-settle")
+                            .ghost()
+                            .compact()
+                            .label("Undo")
+                            .on_click(cx.listener(|this, _, _, cx| this.undo_settle(cx))),
+                    )
+                })
+                .child(
+                    Button::new("settle-notice-dismiss")
+                        .ghost()
+                        .compact()
+                        .icon(gpui_kit::assets::IconName::X)
+                        .accessibility_label("Dismiss notification")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.sidebar_settle_notice = None;
+                            cx.notify();
+                        })),
+                )
+                .into_any_element(),
+        )
     }
 }
 

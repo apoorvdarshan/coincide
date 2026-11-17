@@ -588,7 +588,10 @@ struct Coincide {
     thread_list_open: bool,
     thread_bulk: thread_bulk::State,
     sidebar_lifecycle: sidebar_lifecycle::State,
+    sidebar_lifecycle_focus: FocusHandle,
+    sidebar_row_bounds: Arc<Mutex<std::collections::HashMap<String, Bounds<Pixels>>>>,
     thread_bulk_focus: FocusHandle,
+    bulk_review_focus: FocusHandle,
     sidebar_resize: navigation_resize::State,
     sidebar_list_height: f32,
     thread_list_focus: FocusHandle,
@@ -716,6 +719,7 @@ struct Coincide {
     sidebar_bot_baseline: String,
     sidebar_bot_pending: Option<String>,
     sidebar_settle_undo: Option<Vec<sidebar_settle::SettleChange>>,
+    sidebar_settle_notice: Option<(String, bool)>,
     inbox_undo: inbox_undo::State,
     sidebar_message_search: sidebar_search::MessageSearch,
     /// Projects whose folder is gone, checked when the list refreshes.
@@ -732,7 +736,6 @@ struct Coincide {
     sidebar_rename_candidate: Option<String>,
     sidebar_type_select: sidebar_keys::TypeSelect,
     rename_input: Entity<InputState>,
-    archive_confirmation: Option<String>,
     project_management: project_management_mount::Projects,
     project_defaults: project_defaults_ui::State,
     project_scripts: project_scripts_ui::State,
@@ -1889,7 +1892,10 @@ impl Coincide {
             thread_list_open,
             thread_bulk: Default::default(),
             sidebar_lifecycle: Default::default(),
+            sidebar_lifecycle_focus: cx.focus_handle(),
+            sidebar_row_bounds: Default::default(),
             thread_bulk_focus: cx.focus_handle(),
+            bulk_review_focus: cx.focus_handle(),
             sidebar_resize,
             sidebar_list_height: 560.,
             thread_list_focus: cx.focus_handle(),
@@ -2014,6 +2020,7 @@ impl Coincide {
             sidebar_bot_baseline,
             sidebar_bot_pending: None,
             sidebar_settle_undo: None,
+            sidebar_settle_notice: None,
             inbox_undo: Default::default(),
             sidebar_message_search: Default::default(),
             missing_project_folders: Default::default(),
@@ -2029,7 +2036,6 @@ impl Coincide {
             sidebar_rename_candidate: None,
             sidebar_type_select: Default::default(),
             rename_input,
-            archive_confirmation: None,
             project_management: project_management_mount::Projects::new(window, cx),
             project_defaults: project_defaults_ui::State::new(window, cx),
             project_scripts,
@@ -3115,7 +3121,9 @@ impl Coincide {
                 }
                 self.sync_workspace_context(cx);
                 self.hide_inline_settings();
-                self.archive_confirmation = None;
+                if self.sidebar_lifecycle.archive_for_other(id) {
+                    self.cancel_sidebar_lifecycle(window, cx);
+                }
                 self.pending_requests.clear();
                 self.schedules.clear();
                 self.queued_messages.clear();
@@ -8038,24 +8046,58 @@ impl Render for Coincide {
             .on_modifiers_changed(
                 cx.listener(|this, event, window, cx| this.voice_modifiers(event, window, cx)),
             )
-            .capture_key_down(cx.listener(|this, event, window, cx| {
-                // The bot sheet owns its keyboard input and Escape/Save shortcuts.
-                if this.bot_editor_panel.is_some() {
-                    return;
-                }
-                if !this.historical_image_shortcut(event, window, cx)
-                    && !this.voice_key_down(event, window, cx)
-                    && !this.escape_dismisses_popover(event, cx)
-                    && !this.sidebar_search_shortcut(event, window, cx)
-                    && !this.inbox_undo_shortcut(event, window, cx)
-                    && !this.context_details_shortcut(event, window, cx)
-                    && !this.project_defaults_key(event, window, cx)
-                    && !this.project_script_editor_key(event, window, cx)
-                    && !this.reply_selection_shortcut(event, window, cx)
-                {
-                    this.app_shortcut(event, window, cx);
-                }
-            }))
+            .capture_key_down(
+                cx.listener(|this, event: &gpui_kit::KeyDownEvent, window, cx| {
+                    // The bot sheet owns its keyboard input and Escape/Save shortcuts.
+                    if this.bot_editor_panel.is_some() {
+                        return;
+                    }
+                    if this.sidebar_lifecycle.review_visible() {
+                        let key = &event.keystroke;
+                        if key.key == "escape"
+                            && !key.modifiers.platform
+                            && !key.modifiers.control
+                            && !key.modifiers.alt
+                            && !key.modifiers.shift
+                        {
+                            this.cancel_sidebar_lifecycle(window, cx);
+                            cx.stop_propagation();
+                        } else if !this.sidebar_lifecycle_focus.contains_focused(window, cx) {
+                            this.sidebar_lifecycle_focus.focus(window, cx);
+                            cx.stop_propagation();
+                        }
+                        return;
+                    }
+                    if this.bulk_review_visible() {
+                        let key = &event.keystroke;
+                        if key.key == "escape"
+                            && !key.modifiers.platform
+                            && !key.modifiers.control
+                            && !key.modifiers.alt
+                            && !key.modifiers.shift
+                        {
+                            this.cancel_bulk_review(window, cx);
+                            cx.stop_propagation();
+                        } else if !this.bulk_review_focus.contains_focused(window, cx) {
+                            this.bulk_review_focus.focus(window, cx);
+                            cx.stop_propagation();
+                        }
+                        return;
+                    }
+                    if !this.historical_image_shortcut(event, window, cx)
+                        && !this.voice_key_down(event, window, cx)
+                        && !this.escape_dismisses_popover(event, cx)
+                        && !this.sidebar_search_shortcut(event, window, cx)
+                        && !this.inbox_undo_shortcut(event, window, cx)
+                        && !this.context_details_shortcut(event, window, cx)
+                        && !this.project_defaults_key(event, window, cx)
+                        && !this.project_script_editor_key(event, window, cx)
+                        && !this.reply_selection_shortcut(event, window, cx)
+                    {
+                        this.app_shortcut(event, window, cx);
+                    }
+                }),
+            )
             .on_action(
                 cx.listener(|this, _: &app_menu::AddSelectionToComposer, window, cx| {
                     this.add_selection_to_composer(window, cx)
@@ -8068,6 +8110,30 @@ impl Render for Coincide {
             .child(navigation_rail)
             .when_some(sidebar, |view, sidebar| view.child(sidebar))
             .child(chat_inspector::columns(chat_column, inspector_pane))
+            .when_some(self.bulk_selection_overlay(cx), |view, controls| {
+                view.child(controls)
+            })
+            .child(
+                div()
+                    .absolute()
+                    .top(px(70.))
+                    .right(px(16.))
+                    .w(px(360.))
+                    .max_w_full()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .when_some(self.sidebar_lifecycle_notice(cx), |view, notice| {
+                        view.child(notice)
+                    })
+                    .when_some(self.bulk_notice(cx), |view, notice| view.child(notice))
+                    .when_some(self.sidebar_settle_notice(cx), |view, notice| {
+                        view.child(notice)
+                    })
+                    .when_some(self.sidebar_preferences_notice(cx), |view, notice| {
+                        view.child(notice)
+                    }),
+            )
             .when_some(self.composer_popover(window, cx), |view, popover| {
                 view.child(popover)
             })
@@ -8086,6 +8152,12 @@ impl Render for Coincide {
             })
             .when_some(self.bot_editor_overlay(cx), |view, editor| {
                 view.child(editor)
+            })
+            .when_some(self.bulk_review_dialog(cx), |view, dialog| {
+                view.child(dialog)
+            })
+            .when_some(self.sidebar_lifecycle_dialog(cx), |view, dialog| {
+                view.child(dialog)
             })
             .when_some(self.git_modal(cx), |view, modal| view.child(modal))
             .when_some(self.schedule_editor_overlay(cx), |view, editor| {

@@ -123,8 +123,8 @@ impl RenderOnce for ProviderTemplate {
     }
 }
 
-/// Draw the provider's mark without an invented background. Registry
-/// templates receive a stable accent, while existing colored art is retained.
+/// Draw provider-supplied artwork when available. Monochrome registry
+/// templates use neutral theme ink; their brand colors are never guessed.
 pub(super) fn provider_mark(provider: &str, size: f32) -> Option<Div> {
     let mark = if let Some(svg) = provider_template(provider) {
         ProviderTemplate { svg, size }.into_any_element()

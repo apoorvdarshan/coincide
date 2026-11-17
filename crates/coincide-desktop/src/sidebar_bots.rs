@@ -2,6 +2,7 @@
 //! Creating a conversation uses the saved Core bot validator, never UI drafts.
 use super::*;
 use gpui_kit::assets::IconName;
+use gpui_kit::base::ElementExt as _;
 use gpui_kit::component::menu::{ContextMenuExt, PopupMenuItem};
 use gpui_kit::component::tooltip::Tooltip;
 #[derive(Clone)]
@@ -412,6 +413,8 @@ impl Coincide {
         let mut rows = div().flex().flex_col();
         for bot in bots {
             let id = text(bot, "id");
+            let anchor_bounds = self.sidebar_row_bounds.clone();
+            let anchor_key = format!("bot:{id}");
             let drag_id = id.clone();
             let drop_id = id.clone();
             let baseline = self.sidebar_bot_baseline.clone();
@@ -517,6 +520,11 @@ impl Coincide {
                 div()
                     .id(SharedString::from(format!("sidebar-bot-drag-{id}")))
                     .w_full()
+                    .on_prepaint(move |bounds, _, _| {
+                        if let Ok(mut rows) = anchor_bounds.lock() {
+                            rows.insert(anchor_key, bounds);
+                        }
+                    })
                     .on_drag(BotDrag(drag_id), |drag, _, _, cx| cx.new(|_| drag.clone()))
                     .on_drop(cx.listener(move |this, drag: &BotDrag, _, cx| {
                         if drag.0.eq_ignore_ascii_case(&drop_id)
@@ -750,9 +758,9 @@ impl Coincide {
                                 let parent_delete = parent.clone();
                                 let id = menu_id.clone();
                                 menu.item(PopupMenuItem::separator()).item(
-                                    PopupMenuItem::new("Delete Bot…").on_click(move |_, _, cx| {
+                                    PopupMenuItem::new("Delete Bot…").on_click(move |_, window, cx| {
                                         let _ = parent_delete.update(cx, |this, cx| {
-                                            this.sidebar_bot_delete_review(id.clone(), cx)
+                                            this.sidebar_bot_delete_review(id.clone(), window, cx)
                                         });
                                     }),
                                 )

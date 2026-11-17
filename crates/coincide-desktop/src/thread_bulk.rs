@@ -48,6 +48,10 @@ pub(super) struct State {
     unjoined: bool,
     ambiguous: bool,
     pub status: String,
+    notice_visible: bool,
+    notice_undo: bool,
+    restore_focus: Option<FocusHandle>,
+    anchor: Option<Point<Pixels>>,
 }
 impl Default for State {
     fn default() -> Self {
@@ -67,6 +71,10 @@ impl Default for State {
             unjoined: false,
             ambiguous: false,
             status: String::new(),
+            notice_visible: false,
+            notice_undo: false,
+            restore_focus: None,
+            anchor: None,
         }
     }
 }
@@ -105,6 +113,15 @@ impl State {
         self.invalidate();
         self.mode = false;
         self.picked.clear();
+        self.status.clear();
+        self.notice_visible = false;
+        self.notice_undo = false;
+    }
+    fn cancel_review(&mut self) {
+        self.epoch.fetch_add(1, Ordering::AcqRel);
+        self.review = None;
+        self.status.clear();
+        self.anchor = None;
     }
     pub fn toggle(&mut self, id: &str) -> Result<()> {
         anyhow::ensure!(
@@ -129,7 +146,7 @@ impl State {
         self.invalidate();
         Ok(())
     }
-    fn busy(&self) -> bool {
+    pub(super) fn busy(&self) -> bool {
         self.pending || self.unjoined || self.ambiguous || self.workers.closed()
     }
     fn spawn(&mut self, engine: SharedEngine, request: Request) -> bool {
@@ -211,6 +228,8 @@ impl State {
                 None
             }
             Ok(Effect::Applied(undo)) => {
+                self.notice_visible = true;
+                self.notice_undo = true;
                 self.status = format!(
                     "{} applied to {} conversation(s). Undo is available for this latest batch.",
                     undo.action().label(),
@@ -226,6 +245,8 @@ impl State {
                 Some(Effect::Applied(undo))
             }
             Ok(Effect::Undone(undo)) => {
+                self.notice_visible = true;
+                self.notice_undo = false;
                 self.status = format!(
                     "Undid {} for {} conversation(s).",
                     undo.action().label(),
@@ -237,6 +258,8 @@ impl State {
             }
             Err(error) => {
                 self.status = error;
+                self.notice_visible = true;
+                self.notice_undo = false;
                 None
             }
         }
@@ -276,11 +299,22 @@ impl Coincide {
         }
     }
     pub(super) fn poll_thread_bulk(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let was_review = self.bulk_review_visible();
         self.sync_thread_bulk(cx);
         let previous = self.thread_bulk.status.clone();
         let was_busy = self.thread_bulk.busy();
         let owned_focus = self.thread_bulk_focus.contains_focused(window, cx);
         let effect = self.thread_bulk.poll();
+        let is_review = self.bulk_review_visible();
+        if !was_review && is_review {
+            self.thread_bulk.restore_focus = window.focused(cx);
+            self.bulk_review_focus.focus(window, cx);
+        } else if was_review
+            && !is_review
+            && let Some(focus) = self.thread_bulk.restore_focus.take()
+        {
+            focus.focus(window, cx);
+        }
         if let Some(effect) = effect {
             if owned_focus && self.thread_bulk.binding.available {
                 self.thread_list_focus.focus(window, cx);
@@ -408,7 +442,7 @@ impl Coincide {
     fn bulk_drafts_clean(&self, ids: &[String]) -> bool {
         !ids.iter().any(|id| self.pending_drafts.contains_key(id))
     }
-    pub(super) fn review_bulk(&mut self, action: Action, cx: &mut Context<Self>) {
+    pub(super) fn review_bulk(&mut self, action: Action, window: &Window, cx: &mut Context<Self>) {
         self.sync_thread_bulk(cx);
         let ids: Vec<_> = self.thread_bulk.picked.iter().cloned().collect();
         if ids.is_empty() || !self.bulk_drafts_clean(&ids) {
@@ -417,6 +451,7 @@ impl Coincide {
             cx.notify();
             return;
         }
+        self.thread_bulk.anchor = Some(self.sidebar_review_anchor("thread", &ids[0], window));
         self.thread_bulk.review = None;
         self.thread_bulk
             .spawn(self.engine.clone(), Request::Prepare(ids, action));
@@ -548,16 +583,19 @@ impl Coincide {
             }
             let mut actions = div().flex().flex_wrap().gap_2();
             for action in [Action::Pin, Action::Unpin, Action::Archive, Action::Restore] {
-                actions = actions.child(
-                    Button::new(SharedString::from(format!(
-                        "sidebar-bulk-{}",
-                        action.label().to_lowercase()
-                    )))
-                    .compact()
-                    .label(action.label())
-                    .disabled(busy || state.picked.is_empty())
-                    .on_click(cx.listener(move |this, _, _, cx| this.review_bulk(action, cx))),
-                );
+                actions =
+                    actions.child(
+                        Button::new(SharedString::from(format!(
+                            "sidebar-bulk-{}",
+                            action.label().to_lowercase()
+                        )))
+                        .compact()
+                        .label(action.label())
+                        .disabled(busy || state.picked.is_empty())
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| this.review_bulk(action, window, cx),
+                        )),
+                    );
             }
             // Swift's bulk Settle Threads, Unsettle Threads and Delete Threads.
             let running = state.picked.iter().any(|id| self.running.contains(id));
@@ -583,37 +621,6 @@ impl Coincide {
             }
             panel = panel.child(actions);
         }
-        if let Some(proof) = &state.review {
-            let mut review = div()
-                .id("sidebar-bulk-review")
-                .max_h(px(240.))
-                .overflow_y_scroll()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .p_2()
-                .border_1()
-                .border_color(self.color(0x29303d))
-                .child(format!(
-                    "{} {} conversation(s)?",
-                    proof.action().label(),
-                    proof.count()
-                ));
-            for title in proof.titles() {
-                review = review.child(div().text_xs().truncate().child(title));
-            }
-            if proof.count() > 8 {
-                review = review.child(
-                    div()
-                        .text_xs()
-                        .child(format!("and {} more", proof.count() - 8)),
-                );
-            }
-            review=review.child(div().text_xs().child("Only this flag changes. Undo covers the latest batch and refuses to replace later edits."))
-                .child(Button::new("sidebar-bulk-apply").label("Apply reviewed change").disabled(busy || proof.count()==0).on_click(cx.listener(|this,_,_,cx|this.apply_bulk(cx))))
-                .child(Button::new("sidebar-bulk-discard").ghost().compact().label("Cancel review").disabled(busy).on_click(cx.listener(|this,_,window,cx|{this.thread_bulk.invalidate();this.thread_bulk_focus.focus(window,cx);cx.notify();})));
-            panel = panel.child(review);
-        }
         if let Some(undo) = &state.undo {
             panel = panel.child(
                 Button::new("sidebar-bulk-undo")
@@ -627,6 +634,148 @@ impl Coincide {
             panel = panel.child(div().text_xs().child(state.status.clone()));
         }
         panel.into_any_element()
+    }
+
+    pub(super) fn bulk_review_visible(&self) -> bool {
+        self.thread_bulk
+            .review
+            .as_ref()
+            .is_some_and(|proof| proof.requires_confirmation() || proof.count() == 0)
+    }
+
+    pub(super) fn cancel_bulk_review(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.thread_bulk.busy() {
+            self.thread_bulk.cancel_review();
+            if let Some(focus) = self.thread_bulk.restore_focus.take() {
+                focus.focus(window, cx);
+            }
+            cx.notify();
+        }
+    }
+
+    pub(super) fn bulk_review_dialog(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        use gpui_kit::base::FocusTrapElement;
+        if !self.bulk_review_visible() {
+            return None;
+        }
+        let proof = self.thread_bulk.review.as_ref()?;
+        let busy = self.thread_bulk.busy();
+        let mut titles = div().flex().flex_col().gap_1();
+        for title in proof.titles() {
+            titles = titles.child(div().text_sm().truncate().child(title));
+        }
+        if proof.count() > 8 {
+            titles = titles.child(
+                div()
+                    .text_xs()
+                    .child(format!("and {} more", proof.count() - 8)),
+            );
+        }
+        let title = format!(
+            "{} {} conversation(s)?",
+            proof.action().label(),
+            proof.count()
+        );
+        Some(div().id("bulk-review-overlay").absolute().inset_0().occlude()
+            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| {
+                cx.stop_propagation();
+                this.cancel_bulk_review(window, cx);
+            }))
+            .child(anchored()
+                .position(self.thread_bulk.anchor.unwrap_or(point(px(180.), px(90.))))
+                .snap_to_window_with_margin(px(8.))
+                .child(div().id("bulk-review-dialog").role(Role::Dialog)
+                .track_focus(&self.bulk_review_focus).focus_trap("bulk-review-focus", &self.bulk_review_focus)
+                .aria_label(title.clone())
+                .w(px(300.)).max_w_full().max_h_full().rounded(px(12.)).border_1()
+                .border_color(self.color(0x29303d)).bg(self.color(0x151922))
+                .flex().flex_col().gap_3().p_3()
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child(title))
+                .child(div().id("bulk-review-titles").max_h(px(180.)).overflow_y_scroll().child(titles))
+                .child(div().text_sm().text_color(self.color(0xe4e9f2).opacity(0.7))
+                    .child("Only this setting changes. Undo is available for the latest batch."))
+                .when(!self.thread_bulk.status.is_empty(), |view| view.child(div().text_sm().child(self.thread_bulk.status.clone())))
+                .child(div().flex().justify_end().gap_2()
+                    .child(Button::new("sidebar-bulk-discard").ghost().label("Cancel").disabled(busy)
+                        .on_click(cx.listener(|this, _, window, cx| this.cancel_bulk_review(window, cx))))
+                    .child(Button::new("sidebar-bulk-apply").primary().label("Apply")
+                        .disabled(busy || proof.count() == 0)
+                        .on_click(cx.listener(|this, _, _, cx| this.apply_bulk(cx)))))
+            )).into_any_element())
+    }
+
+    pub(super) fn bulk_selection_overlay(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        self.thread_bulk.mode.then(|| {
+            div()
+                .id("bulk-selection-overlay")
+                .absolute()
+                .right(px(16.))
+                .bottom(px(16.))
+                .w(px(420.))
+                .max_w_full()
+                .p_4()
+                .rounded(px(12.))
+                .border_1()
+                .border_color(self.color(0x29303d))
+                .bg(self.color(0x151922))
+                .child(self.bulk_controls(cx))
+                .into_any_element()
+        })
+    }
+
+    pub(super) fn bulk_notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.thread_bulk.mode
+            || !self.thread_bulk.notice_visible
+            || self.thread_bulk.status.is_empty()
+        {
+            return None;
+        }
+        Some(
+            div()
+                .id("bulk-notice")
+                .w(px(360.))
+                .max_w_full()
+                .p_3()
+                .rounded(px(10.))
+                .border_1()
+                .border_color(self.color(0x29303d))
+                .bg(self.color(0x151922))
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .text_sm()
+                        .child(self.thread_bulk.status.clone()),
+                )
+                .when(
+                    self.thread_bulk.notice_undo && self.thread_bulk.undo.is_some(),
+                    |view| {
+                        view.child(
+                            Button::new("bulk-notice-undo")
+                                .ghost()
+                                .compact()
+                                .label("Undo")
+                                .on_click(cx.listener(|this, _, _, cx| this.undo_bulk(cx))),
+                        )
+                    },
+                )
+                .child(
+                    Button::new("bulk-notice-dismiss")
+                        .ghost()
+                        .compact()
+                        .icon(gpui_kit::assets::IconName::X)
+                        .accessibility_label("Dismiss notification")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.thread_bulk.notice_visible = false;
+                            cx.notify();
+                        })),
+                )
+                .into_any_element(),
+        )
     }
 }
 

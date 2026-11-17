@@ -1,6 +1,31 @@
 use super::*;
 use crate::native_menu::AccessibleMenuExt as _;
 use coincide_core::appshots::{self, Settings};
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum Page {
+    #[default]
+    Capture,
+    Permissions,
+    Privacy,
+}
+impl Page {
+    pub(super) const ALL: [Self; 3] = [Self::Capture, Self::Permissions, Self::Privacy];
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Self::Capture => "Capture",
+            Self::Permissions => "Permissions",
+            Self::Privacy => "Privacy",
+        }
+    }
+    fn scroll_key(self) -> &'static str {
+        match self {
+            Self::Capture => "appshots-capture",
+            Self::Permissions => "appshots-permissions",
+            Self::Privacy => "appshots-privacy",
+        }
+    }
+}
 use gpui_kit::component::{menu::PopupMenuItem, switch::Switch};
 impl Coincide {
     fn change_appshot_setting(
@@ -424,9 +449,7 @@ impl Coincide {
         }
         let privacy = div().p_4().flex().flex_col().gap_2()
             .child("Appshots wait in the composer until you send them. A recently used writable chat receives the picture; otherwise Coincide opens a new chat.")
-            .child(div().text_sm().text_color(self.color(0xe4e9f2).opacity(0.7)).child("Only the frontmost eligible window is captured. Coincide’s windows, protected windows and detected password entry are skipped. Pictures stay in local attachments until you send them."))
-            .when(self.appshots.private_cleanup_pending(), |pane| pane.child(Button::new("appshots-retry-private-cleanup").label("Retry private capture cleanup").on_click(cx.listener(|this,_,_,cx|{this.appshots.retry_private_cleanup();cx.notify();}))))
-            .when(!self.appshots.outcome.is_empty(), |pane| pane.child(div().text_sm().child(format!("Last appshot: {}", self.appshots.outcome))));
+            .child(div().text_sm().text_color(self.color(0xe4e9f2).opacity(0.7)).child("Only the frontmost eligible window is captured. Coincide’s windows, protected windows and detected password entry are skipped. Pictures stay in local attachments until you send them."));
         let content = div()
             .w_full()
             .max_w(px(880.))
@@ -434,11 +457,30 @@ impl Coincide {
             .p_4()
             .flex()
             .flex_col()
-            .gap_4()
-            .child(hero)
-            .child(self.settings_group("Capture", capture))
-            .child(self.settings_group("Permissions", permissions))
-            .child(self.settings_group("Privacy", privacy));
+            .gap_4();
+        let content = match self.settings_navigation.appshots_page {
+            Page::Capture => content.child(hero).child(self.settings_card(capture)),
+            Page::Permissions => content.child(self.settings_card(permissions)),
+            Page::Privacy => content.child(self.settings_card(privacy)),
+        };
+        let content = content
+            .when(self.appshots.private_cleanup_pending(), |pane| {
+                pane.child(
+                    Button::new("appshots-retry-private-cleanup")
+                        .label("Retry private capture cleanup")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.appshots.retry_private_cleanup();
+                            cx.notify();
+                        })),
+                )
+            })
+            .when(!self.appshots.outcome.is_empty(), |pane| {
+                pane.child(
+                    div()
+                        .text_sm()
+                        .child(format!("Last appshot: {}", self.appshots.outcome)),
+                )
+            });
         let pane = div()
             .id("appshots-settings")
             .flex_1()
@@ -446,6 +488,21 @@ impl Coincide {
             .min_h_0()
             .overflow_y_scroll()
             .child(div().w_full().flex().justify_center().child(content));
+        let mut pages = div().flex().flex_wrap().gap_1();
+        for page in Page::ALL {
+            pages = pages.child(
+                Button::new(SharedString::from(format!("{}-tab", page.scroll_key())))
+                    .ghost()
+                    .compact()
+                    .selected(self.settings_navigation.appshots_page == page)
+                    .label(page.label())
+                    .accessibility_label(format!("Appshots: {}", page.label()))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.settings_navigation.appshots_page = page;
+                        cx.notify();
+                    })),
+            );
+        }
         div()
             .id("appshots-settings-surface")
             .flex_1()
@@ -454,7 +511,18 @@ impl Coincide {
             .flex()
             .flex_col()
             .child(self.settings_subpage_header("Appshots", "appshots-settings-done", cx))
-            .child(self.settings_scroll.frame("appshots", pane))
+            .child(
+                div()
+                    .px_5()
+                    .py_2()
+                    .border_b_1()
+                    .border_color(self.color(0x29303d))
+                    .child(pages),
+            )
+            .child(
+                self.settings_scroll
+                    .frame(self.settings_navigation.appshots_page.scroll_key(), pane),
+            )
             .into_any_element()
     }
 }

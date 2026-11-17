@@ -7,6 +7,7 @@ use coincide_core::bot_runtime::BOTS_PROJECT_ID;
 mod sections;
 use crate::native_menu::AccessibleMenuExt as _;
 use gpui_kit::assets::IconName;
+use gpui_kit::base::ElementExt as _;
 use gpui_kit::component::menu::{ContextMenuExt, PopupMenuItem};
 use sections::NO_PROJECT;
 pub(super) const NO_PROJECT_ID: &str = NO_PROJECT;
@@ -730,7 +731,7 @@ impl Coincide {
             })
         });
         let bulk = !self.thread_bulk.mode
-            && self.thread_bulk.status.is_empty()
+            && !self.thread_bulk.busy()
             && self.bulk_sidebar_binding(cx).available;
         let menu_parent = parent.clone();
         let choose = move |id: Option<String>| {
@@ -889,6 +890,9 @@ impl Coincide {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        if let Ok(mut bounds) = self.sidebar_row_bounds.lock() {
+            bounds.clear();
+        }
         let parent = cx.entity().downgrade();
         let resize = gpui_kit::component::resizable::resize_handle(
             "conversation-list-resize",
@@ -1087,8 +1091,8 @@ impl Coincide {
                         // Conversations dropped on a project move there; the
                         // row lights up as the target, as in Swift.
                         .on_drop(cx.listener(
-                            move |this, drag: &sidebar_drop::ThreadDrag, _, cx| {
-                                this.sidebar_drop_on_project(drag, &thread_drop_project, cx)
+                            move |this, drag: &sidebar_drop::ThreadDrag, window, cx| {
+                                this.sidebar_drop_on_project(drag, &thread_drop_project, window, cx)
                             },
                         ))
                         .drag_over::<sidebar_drop::ThreadDrag>(move |style, drag, _, _| {
@@ -1263,9 +1267,11 @@ impl Coincide {
                         .flex_col()
                         .mb_2()
                         // Conversations dropped on Chats move there.
-                        .on_drop(cx.listener(|this, drag: &sidebar_drop::ThreadDrag, _, cx| {
-                            this.sidebar_drop_on_project(drag, NO_PROJECT, cx)
-                        }))
+                        .on_drop(cx.listener(
+                            |this, drag: &sidebar_drop::ThreadDrag, window, cx| {
+                                this.sidebar_drop_on_project(drag, NO_PROJECT, window, cx)
+                            },
+                        ))
                         .drag_over::<sidebar_drop::ThreadDrag>(move |style, drag, _, _| {
                             if sidebar_drop::moves_into(drag, NO_PROJECT) {
                                 style.bg(highlight)
@@ -1347,6 +1353,8 @@ impl Coincide {
                             pinned,
                         };
                         let label = thread.title.clone();
+                        let anchor_bounds = self.sidebar_row_bounds.clone();
+                        let anchor_key = format!("thread:{}", thread.id);
                         let place = pinned
                             .then(|| {
                                 self.projects
@@ -1361,6 +1369,11 @@ impl Coincide {
                                 thread.id
                             )))
                             .w_full()
+                            .on_prepaint(move |bounds, _, _| {
+                                if let Ok(mut rows) = anchor_bounds.lock() {
+                                    rows.insert(anchor_key, bounds);
+                                }
+                            })
                             .flex()
                             .items_center()
                             .group("sidebar-thread-row")
@@ -1368,10 +1381,15 @@ impl Coincide {
                                 row.on_drag(drag, |drag, _, _, cx| cx.new(|_| drag.clone()))
                             })
                             .on_drop(cx.listener(
-                                move |this, drag: &sidebar_drop::ThreadDrag, _, cx| {
+                                move |this, drag: &sidebar_drop::ThreadDrag, window, cx| {
                                     // Among a project's conversations a drop moves it there.
                                     if !pinned {
-                                        this.sidebar_drop_on_project(drag, &drop_project, cx);
+                                        this.sidebar_drop_on_project(
+                                            drag,
+                                            &drop_project,
+                                            window,
+                                            cx,
+                                        );
                                         return;
                                     }
                                     if drag.id.eq_ignore_ascii_case(&pinned_drop)
@@ -1807,26 +1825,7 @@ impl Coincide {
                         ),
                 )
             })
-            .when(
-                self.thread_bulk.mode || !self.thread_bulk.status.is_empty(),
-                |view| view.child(self.bulk_controls(cx)),
-            )
-            .when(self.sidebar_lifecycle.visible(), |view| {
-                view.child(self.sidebar_lifecycle_controls(cx))
-            })
             .child(conversations)
-            .when_some(self.sidebar_preferences.error.as_ref(), |view, error| {
-                view.child(div().text_xs().child(error.clone()))
-            })
-            .when(self.sidebar_settle_undo.is_some(), |view| {
-                view.child(
-                    Button::new("sidebar-undo-settle")
-                        .ghost()
-                        .compact()
-                        .label("Undo Settle")
-                        .on_click(cx.listener(|this, _, _, cx| this.undo_settle(cx))),
-                )
-            })
             .child(resize)
             .into_any_element()
     }
@@ -2064,8 +2063,7 @@ impl Coincide {
             .as_bool()
             .unwrap_or(true)
         {
-            self.archive_confirmation = Some(id);
-            cx.notify();
+            self.sidebar_archive_review(id, text(thread, "title"), window, cx);
         } else {
             self.archive_open_thread(&id, window, cx);
         }
@@ -2101,7 +2099,7 @@ impl Coincide {
 
     pub(super) fn thread_management(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let thread = self.selected.as_ref()?;
-        if !self.thread_actions_open && self.archive_confirmation.is_none() {
+        if !self.thread_actions_open {
             return None;
         }
         let mut pane = div()
@@ -2112,42 +2110,6 @@ impl Coincide {
             .py_2()
             .border_b_1()
             .border_color(self.color(0x29303d));
-        if let Some(id) = self.archive_confirmation.clone() {
-            pane = pane.child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .items_center()
-                    .gap_2()
-                    .child(div().child("Archive this conversation?"))
-                    .child(
-                        Button::new(SharedString::from(format!("archive-confirm-{id}")))
-                            .accessibility_id(SharedString::from(format!("archive-confirm-{id}")))
-                            .label("Confirm archive")
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                if this.archive_confirmation.as_deref() != Some(id.as_str())
-                                    || this
-                                        .selected
-                                        .as_ref()
-                                        .is_none_or(|thread| thread["id"] != id)
-                                {
-                                    return;
-                                }
-                                if this.archive_open_thread(&id, window, cx) {
-                                    this.archive_confirmation = None;
-                                }
-                            })),
-                    )
-                    .child(
-                        Button::new("archive-cancel")
-                            .label("Cancel")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.archive_confirmation = None;
-                                cx.notify();
-                            })),
-                    ),
-            );
-        }
         let snoozed = coincide_core::scheduling::parse_date(&thread["snoozedUntil"])
             .ok()
             .is_some_and(|date| {
