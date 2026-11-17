@@ -126,6 +126,17 @@ impl State {
             op.thread.eq_ignore_ascii_case(thread) && op.status == NativeFollowUpStatus::Pending
         })
     }
+
+    pub(super) fn owns_queue_dispatch(&self, thread: &str, id: &str) -> bool {
+        self.operations.values().any(|operation| {
+            operation.thread == thread
+                && operation.status == NativeFollowUpStatus::Pending
+                && operation
+                    .queue
+                    .as_ref()
+                    .is_some_and(|claim| claim.id() == id)
+        })
+    }
 }
 use choice::scope;
 impl Engine {

@@ -384,6 +384,9 @@ impl Coincide {
                     }
                 })
                 .await;
+            if matches!(&result, Ok(coincide_core::api::CapturedNativeSend::Waiting)) {
+                cx.background_executor().timer(Duration::from_millis(150)).await;
+            }
             if let Ok(mut value) = slot.result.lock() {
                 *value = Some(result);
             }

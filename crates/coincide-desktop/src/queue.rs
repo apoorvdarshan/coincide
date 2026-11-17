@@ -122,14 +122,6 @@ fn queue_execution_scope(thread: &Value) -> Value {
     Value::Object(scope)
 }
 
-fn queue_expected_scope(thread: &Value) -> Value {
-    let mut scope = queue_execution_scope(thread);
-    if let Some(queue) = thread.get("rustMessageQueue") {
-        scope["rustMessageQueue"] = queue.clone();
-    }
-    scope
-}
-
 fn queue_preview_text(text: &str) -> String {
     let display = coincide_core::async_questions::display_reply(text);
     let line = display
@@ -249,7 +241,10 @@ impl Coincide {
                 if engine_busy(&error)
                     || error
                         .to_string()
-                        .contains("another native delivery is pending") =>
+                        .contains("another native delivery is pending")
+                    || error
+                        .to_string()
+                        .contains("Another queued message is still being delivered") =>
             {
                 let expected = expected.clone();
                 let message = message.clone();
@@ -293,7 +288,7 @@ impl Coincide {
             })
             .cloned()
         {
-            let source = queue_expected_scope(thread);
+            let source = queue_execution_scope(thread);
             let interrupt = message["codexQuestionSession"].is_null();
             self.send_queued(&source, &message, interrupt, cx);
             return true;
@@ -623,17 +618,15 @@ impl Coincide {
         interrupt: bool,
         cx: &mut Context<Self>,
     ) {
-        let Some(thread) = self.selected.as_ref().filter(|thread| {
+        if self.selected.as_ref().is_some_and(|thread| {
             queue_execution_scope(thread) == *expected
                 && self
                     .queued_messages
                     .iter()
                     .any(|current| Arc::ptr_eq(current, row))
-        }) else {
-            return;
-        };
-        let source = queue_expected_scope(thread);
-        self.send_queued(&source, row, interrupt, cx);
+        }) {
+            self.send_queued(expected, row, interrupt, cx);
+        }
     }
 
     pub(super) fn queue_pane(
@@ -1143,8 +1136,8 @@ mod tests {
         let paint_scope = queue_execution_scope(&thread);
         assert!(paint_scope.get("rustMessageQueue").is_none());
         assert!(paint_scope.get("items").is_none());
-        let scope = queue_expected_scope(&thread);
-        assert_eq!(scope["rustMessageQueue"], thread["rustMessageQueue"]);
+        let scope = queue_execution_scope(&thread);
+        assert!(scope.get("rustMessageQueue").is_none());
         assert_eq!(scope["selection"], thread["selection"]);
         assert_eq!(scope.get("accessMode"), Some(&Value::Null));
         assert!(scope.get("interactionMode").is_none());

@@ -2242,6 +2242,14 @@ impl Engine {
         self.poll_model_catalog_shutdown_request();
         Ok(self.model_catalog.shutdown_status())
     }
+    fn owns_queue_dispatch(&self, thread: &str, id: &str) -> bool {
+        self.runs
+            .get(thread)
+            .and_then(|run| run.queue_claim.as_deref())
+            == Some(id)
+            || self.native_follow_up.owns_queue_dispatch(thread, id)
+    }
+
     fn queue_command(&mut self, method: &str, p: &Value) -> Result<Value> {
         self.require_admissions()?;
         use crate::message_queue::{self as queue, State};
@@ -2309,9 +2317,10 @@ impl Engine {
                     "Restore this thread before resuming messages"
                 );
                 let mut messages = queue::read(&thread)?;
-                let active = self.runs.get(id).and_then(|run| run.queue_claim.as_deref());
                 for message in &mut messages {
-                    if message.state == State::Dispatching && active != Some(message.id.as_str()) {
+                    if message.state == State::Dispatching
+                        && !self.owns_queue_dispatch(id, &message.id)
+                    {
                         message.state = State::Interrupted;
                         message.error = Some("Previous dispatch was interrupted or unconfirmed; it will not be replayed automatically".into());
                     }
@@ -2332,9 +2341,7 @@ impl Engine {
                     // Removing a row cannot recall a prompt already handed to
                     // a provider. Hide it while retaining its owned claim so
                     // later acknowledgement and recovery remain exactly once.
-                    let owned = self.runs.get(id).and_then(|run| run.queue_claim.as_deref())
-                        == Some(message_id);
-                    if !owned {
+                    if !self.owns_queue_dispatch(id, message_id) {
                         // No current worker can acknowledge this old claim.
                         // It stays non-replayable, but must not keep the queue
                         // and provider switch blocked after the user dismisses it.

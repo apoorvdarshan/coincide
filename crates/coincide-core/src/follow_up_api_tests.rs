@@ -1297,6 +1297,15 @@ fn queued_send_now_requires_real_steering_ack_and_keeps_separate_composer() {
         engine.store.thread(&id).unwrap()["rustMessageQueue"][0]["state"],
         "dispatching"
     );
+    engine
+        .execute(
+            "agent.queue.remove",
+            &json!({"threadId":id,"messageId":visible["id"]}),
+        )
+        .unwrap();
+    let waiting = engine.store.thread(&id).unwrap();
+    assert_eq!(waiting["rustMessageQueue"][0]["dismissed"], true);
+    assert_eq!(waiting["rustMessageQueue"][0]["state"], "dispatching");
     let request = server.next_request().unwrap();
     assert_eq!(
         request["params"]["input"][0]["text"],
