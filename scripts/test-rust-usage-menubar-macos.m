@@ -84,7 +84,9 @@ int main(void) {
                     @"Account card is missing from the accessibility tree");
             Require([card.accessibilityLabel containsString:@"77% used"], @"Account card omitted its usage value");
             Require([card accessibilityPerformPress], @"Account card is not accessible as a button");
-            Require([NextEvent()[@"action"] isEqual:@"usage"], @"Account card did not open Usage");
+            NSDictionary *accountEvent = NextEvent();
+            Require([accountEvent[@"action"] isEqual:@"usage"], @"Account card did not open Usage");
+            Require([accountEvent[@"provider"] isEqual:@"codex"], @"Account card lost its provider filter");
             NSSegmentedControl *mode = [NSSegmentedControl segmentedControlWithLabels:@[@"Used", @"Left"] trackingMode:NSSegmentSwitchTrackingSelectOne target:nil action:nil];
             mode.selectedSegment = 1;
             [usageStatus modeChanged:mode];

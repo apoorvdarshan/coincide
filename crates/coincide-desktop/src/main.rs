@@ -4560,7 +4560,7 @@ impl Coincide {
         self.poll_computer_use(cx);
         self.poll_agent_discovery(cx);
         self.sync_composer_selection(window, cx);
-        self.poll_selection_catalog(cx);
+        self.poll_selection_catalog(window, cx);
         self.sync_palette(window, cx);
         self.sync_notification_activity(window, cx);
         // A successful creation is retained by ID until its read succeeds.

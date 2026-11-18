@@ -65,15 +65,16 @@ pub(super) fn provider_name(provider: &str) -> &'static str {
     })
 }
 
-fn provider_site(provider: &str) -> Option<&'static str> {
+pub(super) fn provider_site(provider: &str) -> Option<&'static str> {
     Some(match provider {
-        "claude" => "https://claude.ai/",
-        "codex" => "https://chatgpt.com/codex",
+        "claude" => "https://claude.ai/settings/usage",
+        "codex" => "https://chatgpt.com/codex/settings/usage",
         "cursor" => "https://cursor.com/dashboard",
-        "grok" => "https://x.ai/cli",
+        "grok" => "https://grok.com/dashboard",
         "opencode" => "https://opencode.ai/console",
         "lithos" => "https://console.lithosai.cloud/",
-        "antigravity" => "https://antigravity.google/",
+        "antigravity" => "https://aistudio.google.com/usage",
+        "acp-devin" => "https://app.devin.ai/settings/usage",
         _ => return None,
     })
 }
@@ -250,18 +251,51 @@ impl Coincide {
             .unwrap_or_else(|| provider_name(provider).to_owned())
     }
 
-    fn usage_site_button(&self, id: String, site: String, cx: &mut Context<Self>) -> AnyElement {
-        Button::new(SharedString::from(id))
-            .label("Open provider website")
-            .small()
-            .on_click(cx.listener(move |this, _, _, cx| {
-                let destination = if this.opens_links_in_default_browser() {
-                    crate::transcript_links::Destination::Default
-                } else {
-                    crate::transcript_links::Destination::BrowserNewTab
-                };
-                this.open_web_link(site.clone(), destination, cx);
-            }))
+    fn usage_site_button(
+        &self,
+        id: String,
+        site: String,
+        title: &'static str,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let external = self.opens_links_in_default_browser()
+            || self.selected.is_none()
+            || self.browser.is_none();
+        let external_site = site.clone();
+        div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .child(
+                Button::new(SharedString::from(id.clone()))
+                    .label(title)
+                    .small()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        let destination = if external {
+                            crate::transcript_links::Destination::Default
+                        } else {
+                            crate::transcript_links::Destination::BrowserNewTab
+                        };
+                        this.open_web_link(site.clone(), destination, cx);
+                    })),
+            )
+            .when(!external, |actions| {
+                actions.child(
+                    Button::new(SharedString::from(format!("{id}-external")))
+                        .icon(gpui_kit::assets::IconName::ExternalLink)
+                        .accessibility_label("Open in default browser")
+                        .tooltip("Open in default browser")
+                        .small()
+                        .ghost()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.open_web_link(
+                                external_site.clone(),
+                                crate::transcript_links::Destination::Default,
+                                cx,
+                            );
+                        })),
+                )
+            })
             .into_any_element()
     }
 
@@ -1136,6 +1170,7 @@ impl Coincide {
             body.push(self.usage_site_button(
                 format!("usage-site-{provider}-{}", card.account.id),
                 site.into(),
+                "Open provider usage",
                 cx,
             ));
         }
@@ -1193,6 +1228,7 @@ impl Coincide {
             .unwrap_or(true);
         let filter_provider = dashboard
             .provider
+            .as_deref()
             .filter(|provider| enabled.contains(provider));
         let filter_account = filter_provider.and(dashboard.account.clone());
         let report = dashboard
@@ -1268,26 +1304,36 @@ impl Coincide {
 
         // Filters.
         let owner = cx.entity().downgrade();
-        let provider_choices = PROVIDERS
-            .into_iter()
-            .filter(|provider| cards.iter().any(|card| card.account.provider == *provider))
+        let provider_choices = std::iter::once((None, "All agents".to_owned()))
+            .chain(enabled.iter().map(|provider| {
+                (
+                    Some((*provider).to_owned()),
+                    self.usage_provider_name(provider),
+                )
+            }))
             .collect::<Vec<_>>();
+        let selected_provider = filter_provider.map(str::to_owned);
         let providers = Button::new("usage-provider-filter")
-            .label(filter_provider.map(provider_name).unwrap_or("All agents"))
+            .label(
+                filter_provider
+                    .map(|id| self.usage_provider_name(id))
+                    .unwrap_or_else(|| "All agents".to_owned()),
+            )
             .accessibility_label("Show usage for agent")
             .compact()
             .dropdown_caret(true)
             .accessible_menu_with_anchor(Anchor::TopRight, move |mut menu, _, _| {
-                for provider in
-                    std::iter::once(None).chain(provider_choices.iter().copied().map(Some))
-                {
+                for (provider, title) in &provider_choices {
                     let owner = owner.clone();
+                    let provider = provider.clone();
                     menu = menu.item(
-                        PopupMenuItem::new(provider.map(provider_name).unwrap_or("All agents"))
-                            .checked(filter_provider == provider)
+                        PopupMenuItem::new(title.clone())
+                            .checked(selected_provider == provider)
                             .on_click(move |_, _, cx| {
                                 let _ = owner.update(cx, |this, cx| {
-                                    this.usage_history.dashboard.select_provider(provider);
+                                    this.usage_history
+                                        .dashboard
+                                        .select_provider(provider.clone());
                                     cx.notify();
                                 });
                             }),
@@ -1636,56 +1682,66 @@ impl Coincide {
                 cx,
             ));
         }
-        if filter_provider.is_none() {
-            for agent in registered {
-                let agent_report = dashboard
-                    .data
-                    .as_ref()
-                    .map(|data| {
-                        data.report(
-                            includes_other_sessions,
-                            &enabled,
-                            Some(&agent.provider),
-                            None,
-                            days,
-                            now,
+        for agent in registered
+            .into_iter()
+            .filter(|agent| filter_provider.is_none_or(|id| id == agent.provider))
+        {
+            let agent_report = dashboard
+                .data
+                .as_ref()
+                .map(|data| {
+                    data.report(
+                        includes_other_sessions,
+                        &enabled,
+                        Some(&agent.provider),
+                        None,
+                        days,
+                        now,
+                    )
+                })
+                .unwrap_or_default();
+            let mut body = vec![div().text_color(muted)
+                    .child(if agent.provider == "acp-devin" {
+                        "Devin shows quota and credits in Usage & limits or with /usage in its CLI."
+                    } else {
+                        "Coincide tracks usage this agent reports. Check your provider account for plan limits."
+                    })
+                    .into_any_element()];
+            let tracked = &agent_report.period;
+            body.push(
+                div()
+                    .child(if tracked.tokens.is_empty() {
+                        "No additive token usage reported in Coincide for this period.".to_owned()
+                    } else {
+                        format!(
+                            "{} tracked tokens · {}",
+                            format::tokens(tracked.tokens.total()),
+                            format::cost_of(tracked, false)
                         )
                     })
-                    .unwrap_or_default();
-                let mut body = vec![div().text_color(muted)
-                    .child("This agent has no standard account-limit report. Its own account may show more.")
-                    .into_any_element()];
-                let tracked = &agent_report.period;
-                body.push(
-                    div()
-                        .child(if tracked.tokens.is_empty() {
-                            "No additive token usage reported in Coincide for this period."
-                                .to_owned()
-                        } else {
-                            format!(
-                                "{} tracked tokens · {}",
-                                format::tokens(tracked.tokens.total()),
-                                format::cost_of(tracked, false)
-                            )
-                        })
-                        .into_any_element(),
-                );
-                if let Some(site) = &agent.website {
-                    body.push(self.usage_site_button(
-                        format!("usage-site-{}", agent.provider),
-                        site.clone(),
-                        cx,
-                    ));
-                }
-                let header = div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(self.usage_logo(&agent.provider, 16.))
-                    .child(agent.name.clone())
-                    .into_any_element();
-                content = content.child(self.usage_section(Some(header), body, None, cx));
+                    .into_any_element(),
+            );
+            let usage_site = provider_site(&agent.provider);
+            if let Some(site) = usage_site.or(agent.website.as_deref()) {
+                body.push(self.usage_site_button(
+                    format!("usage-site-{}", agent.provider),
+                    site.to_owned(),
+                    if usage_site.is_some() {
+                        "Open provider usage"
+                    } else {
+                        "Open provider website"
+                    },
+                    cx,
+                ));
             }
+            let header = div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(self.usage_logo(&agent.provider, 16.))
+                .child(agent.name.clone())
+                .into_any_element();
+            content = content.child(self.usage_section(Some(header), body, None, cx));
         }
 
         if !report.models.is_empty() {
@@ -1860,7 +1916,7 @@ impl Coincide {
                         "usage-browser-fallback",
                         cx,
                     ))
-                    .child(self.usage_site_button("usage-open-opencode-console".into(), "https://opencode.ai/console".into(), cx)),
+                    .child(self.usage_site_button("usage-open-opencode-console".into(), "https://opencode.ai/console".into(), "Open OpenCode console", cx)),
             ));
         }
 
@@ -1876,7 +1932,7 @@ impl Coincide {
                     self.settings["usageLithosBrowserFallbackEnabled"] == true,
                     "usage-lithos-browser-fallback", cx,
                 ))
-                .child(self.usage_site_button("usage-open-lithos-console".into(), "https://console.lithosai.cloud/".into(), cx)),
+                .child(self.usage_site_button("usage-open-lithos-console".into(), "https://console.lithosai.cloud/".into(), "Open Lithos console", cx)),
             ));
         }
 

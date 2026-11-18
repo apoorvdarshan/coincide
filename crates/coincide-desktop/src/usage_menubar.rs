@@ -473,6 +473,7 @@ fn tick(cx: &mut App) -> bool {
         })
         .unwrap_or((None, false, None, None));
     let mut requests = Vec::new();
+    let mut usage_provider = None;
     let mut changed_settings = Vec::new();
     let usage_changed;
     let remote_usage;
@@ -485,6 +486,20 @@ fn tick(cx: &mut App) -> bool {
         }
         for event in native::events() {
             if let Some(request) = bar.event(&event) {
+                if request == "usage" {
+                    usage_provider = event["provider"]
+                        .as_str()
+                        .filter(|provider| {
+                            bar.last_snapshot.as_ref().is_some_and(|snapshot| {
+                                snapshot["accounts"].as_array().is_some_and(|accounts| {
+                                    accounts
+                                        .iter()
+                                        .any(|account| account["provider"] == *provider)
+                                })
+                            })
+                        })
+                        .map(str::to_owned);
+                }
                 requests.push(request);
             }
         }
@@ -530,7 +545,8 @@ fn tick(cx: &mut App) -> bool {
     if requests.contains(&"open") || requests.contains(&"usage") {
         reopen_main_window(cx);
         if requests.contains(&"usage") {
-            with_window(cx, |app, window, cx| {
+            with_window(cx, move |app, window, cx| {
+                app.usage_history.dashboard.select_provider(usage_provider);
                 app.open_settings_panel(window, cx);
                 app.navigate_settings_section(settings::SettingsSection::Usage, window, cx);
             });

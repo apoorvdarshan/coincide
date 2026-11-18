@@ -399,6 +399,14 @@ impl Panel {
         }
     }
 
+    pub(super) fn authenticated_check_at(&self, provider: &str) -> Option<Instant> {
+        let editor = self.editors.get(provider)?;
+        if editor.failed || editor.report.as_ref()?.authenticated != Some(true) {
+            return None;
+        }
+        editor.checked
+    }
+
     pub fn summary(&self, provider: &str) -> String {
         let Some(editor) = self.editors.get(provider) else {
             return "Not checked".into();

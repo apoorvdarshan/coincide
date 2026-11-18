@@ -458,7 +458,7 @@ pub fn snapshot(
             accounts.push(json!({
                 "title":agent.name, "provider":agent.provider,
                 "plan":null, "checked":null, "rows":[],
-                "placeholder":"Account limits not reported", "tracked":tracked,
+                "placeholder":if agent.provider == "acp-devin" { "Open Usage & limits for quota and credits" } else { "Account limits not reported" }, "tracked":tracked,
             }));
         }
     }
