@@ -109,12 +109,37 @@ impl SelectionDraft {
         )
     }
 }
+#[derive(Clone)]
+pub(super) struct SelectionTarget {
+    provider: String,
+    model: String,
+    account: Option<String>,
+}
+impl SelectionTarget {
+    #[cfg(test)]
+    pub(super) fn from_selection(selection: &Value) -> Self {
+        Self {
+            provider: text(selection, "provider"),
+            model: text(selection, "modelID"),
+            account: restore_account_id(&selection["accountID"]).map(str::to_owned),
+        }
+    }
+
+    pub(super) fn matches(&self, thread: &Value) -> bool {
+        let selection = &thread["selection"];
+        selection["provider"] == self.provider
+            && selection["modelID"].as_str().unwrap_or("default") == self.model
+            && restore_account_id(&selection["accountID"]) == self.account.as_deref()
+    }
+}
+
 fn selected_provider<'a>(
     thread: &'a Value,
     drafts: &'a HashMap<String, SelectionDraft>,
 ) -> Option<&'a str> {
     drafts
         .get(thread["id"].as_str()?)
+        .filter(|draft| draft.has_edits())
         .map(|draft| draft.provider.as_str())
         .filter(|provider| !provider.is_empty())
         .or_else(|| {
@@ -976,8 +1001,8 @@ pub(super) enum PickerFacet {
 #[derive(Default)]
 pub(super) struct ComposerSelection {
     drafts: HashMap<String, SelectionDraft>,
+    staged_apply: std::collections::HashSet<String>,
     pending_apply: Option<(String, SelectionDraft)>,
-    goal_yield_attempts: std::collections::HashSet<String>,
     bound: Option<String>,
     context: Option<(String, Value, bool)>,
     displayed_capability_scope: Option<(String, Value)>,
@@ -1822,15 +1847,69 @@ fn picker_scroll_body(id: impl Into<ElementId>, content: impl IntoElement) -> im
 }
 
 impl Coincide {
-    pub(super) fn selection_change_pending(&self) -> bool {
-        self.selection_ui
-            .pending_apply
+    pub(super) fn selection_apply_scheduled(&self, thread_id: &str) -> bool {
+        self.selection_ui.staged_apply.contains(thread_id)
+    }
+
+    pub(super) fn pending_send_selection_target(&self, id: &str) -> Option<SelectionTarget> {
+        if let Some(pending) = self
+            .selection_ui
+            .pending_model
             .as_ref()
-            .is_some_and(|(id, _)| {
-                self.selected
-                    .as_ref()
-                    .is_some_and(|thread| thread["id"] == *id)
-            })
+            .filter(|pending| pending.scope["id"] == id)
+        {
+            return Some(SelectionTarget {
+                provider: pending.provider.clone(),
+                model: pending.model.clone(),
+                account: Some(pending.account.clone()),
+            });
+        }
+        let draft = self
+            .selection_ui
+            .drafts
+            .get(id)
+            .filter(|draft| draft.has_edits())?;
+        Some(SelectionTarget {
+            provider: draft.provider.clone(),
+            model: if draft.use_custom {
+                draft.custom.trim().to_owned()
+            } else {
+                "default".into()
+            },
+            account: restore_account_id(&draft.account).map(str::to_owned),
+        })
+    }
+
+    fn selection_draft_needs_apply(&self) -> bool {
+        self.selected
+            .as_ref()
+            .and_then(|thread| self.selection_ui.drafts.get(thread["id"].as_str()?))
+            .is_some_and(SelectionDraft::has_edits)
+    }
+
+    pub(super) fn apply_unscheduled_selection_for_send(&mut self, cx: &mut Context<Self>) {
+        if self.selection_draft_needs_apply()
+            && let Some(id) = self
+                .selected
+                .as_ref()
+                .and_then(|thread| thread["id"].as_str())
+            && !self.selection_ui.staged_apply.contains(id)
+        {
+            self.apply_selection_draft(cx);
+        }
+    }
+
+    pub(super) fn selection_change_pending(&self) -> bool {
+        self.selection_draft_needs_apply()
+            || self
+                .selection_ui
+                .pending_apply
+                .as_ref()
+                .is_some_and(|(id, _)| {
+                    self.selected
+                        .as_ref()
+                        .is_some_and(|thread| thread["id"] == *id)
+                })
             || self.selection_ui.pending_native_account.is_some()
             || self.selection_ui.pending_provider.is_some()
             || self.selection_ui.pending_model.is_some()
@@ -1947,8 +2026,10 @@ impl Coincide {
         account: Value,
         cx: &mut Context<Self>,
     ) {
-        if self.selection_ui.pending_provider.is_some() {
-            self.cancel_pending_selection_waits();
+        if self.selection_ui.pending_provider.is_some()
+            && let Some(id) = self.selected.as_ref().map(|thread| text(thread, "id"))
+        {
+            self.cancel_view_selection_waits(&id);
         }
         self.selection_ui.pending_provider = None;
         self.switch_provider_account("codex".into(), Some(account), None, cx);
@@ -2271,6 +2352,7 @@ impl Coincide {
     /// that thread; unrelated selection drafts and the message draft survive.
     pub(super) fn accept_saved_provider_selection(&mut self, mut thread: Value) {
         self.preserve_pending_draft(&mut thread);
+        self.selection_ui.staged_apply.remove(&text(&thread, "id"));
         self.selection_ui
             .drafts
             .insert(text(&thread, "id"), SelectionDraft::from_thread(&thread));
@@ -2290,6 +2372,7 @@ impl Coincide {
             || named["refreshAllowed"] != true
             || named["accountCatalogReady"] == true
             || self.running.contains(&text(thread, "id"))
+            || self.selection_draft_needs_apply()
             || self.selection_ui.pending_provider.is_some()
             || self.selection_ui.pending_provider_picker.is_some()
             || self.selection_ui.catalog_request.is_some()
@@ -2399,6 +2482,13 @@ impl Coincide {
             .drafts
             .entry(id.clone())
             .or_insert_with(|| SelectionDraft::from_thread(self.selected.as_ref().unwrap()));
+        if let Some(thread) = self.selected.as_ref()
+            && !draft.has_edits()
+            && !selection_view_matches(thread, &id, draft)
+        {
+            *draft = SelectionDraft::from_thread(thread);
+            self.selection_ui.bound = None;
+        }
         if self.selection_ui.bound.as_ref() != Some(&id) {
             self.selection_ui.bound = Some(id.clone());
             self.model_input.update(cx, |input, cx| {
@@ -2554,7 +2644,9 @@ impl Coincide {
         }
     }
     pub(super) fn invalidate_native_conversation_view(&mut self) {
-        self.cancel_pending_selection_waits();
+        if let Some(id) = self.selected.as_ref().map(|thread| text(thread, "id")) {
+            self.cancel_view_selection_waits(&id);
+        }
         self.selection_ui.capability_cache.invalidate();
         self.selection_ui.context = None;
         self.selection_ui.automatic_profile_context = None;
@@ -2618,7 +2710,10 @@ impl Coincide {
                 self.model_input.update(cx, |input, cx| {
                     input.set_value(draft.custom.clone(), window, cx)
                 });
-                self.selection_ui.drafts.insert(text(&thread, "id"), draft);
+                let id = text(&thread, "id");
+                self.selection_ui.staged_apply.remove(&id);
+                self.finish_pending_selection_with(&id, None);
+                self.selection_ui.drafts.insert(id, draft);
                 self.replace_selected_thread(Some(thread));
                 self.selection_ui.context = None;
                 self.refresh_selection_capabilities(cx);
@@ -2886,15 +2981,19 @@ impl Coincide {
         cx.notify();
     }
     fn apply_selection_draft(&mut self, cx: &mut Context<Self>) {
+        if let Some(id) = self.selected.as_ref().map(|thread| text(thread, "id")) {
+            self.selection_ui.staged_apply.insert(id.clone());
+            self.apply_thread_selection(id, cx);
+        }
+    }
+
+    fn apply_thread_selection(&mut self, id: String, cx: &mut Context<Self>) {
         if self.selection_ui.pending_apply.is_some() {
             return;
         }
-        let Some(id) = self.selected.as_ref().map(|thread| text(thread, "id")) else {
-            return;
-        };
         let Some(draft) = self.selection_ui.drafts.get(&id).cloned() else {
-            self.status = "Selection draft unavailable.".into();
-            cx.notify();
+            self.selection_ui.staged_apply.remove(&id);
+            self.finish_pending_selection_with(&id, None);
             return;
         };
         self.selection_ui.pending_apply = Some((id.clone(), draft.clone()));
@@ -2920,6 +3019,7 @@ impl Coincide {
                 this.selection_ui.context = None;
                 match result {
                     Ok(SelectionApply::Applied(saved)) => {
+                        let was_scheduled = this.selection_ui.staged_apply.remove(&id);
                         let matches_view = this
                             .selected
                             .as_ref()
@@ -2929,43 +3029,52 @@ impl Coincide {
                             let mut next = SelectionDraft::from_thread(&saved);
                             next.custom = draft.custom.clone();
                             this.selection_ui.drafts.insert(id.clone(), next);
-                        }
-                        if matches_view && matches_draft {
-                            this.selected_generation = this.selected_generation.wrapping_add(1);
-                            if let Some(thread) =
-                                this.selected.as_mut().and_then(Value::as_object_mut)
-                            {
-                                for key in [
-                                    "selection",
-                                    "accessMode",
-                                    "interactionMode",
-                                    "modelPreferences",
-                                    "rustProviderSelections",
-                                    "rustAccountSelections",
-                                ] {
-                                    match saved.get(key) {
-                                        Some(value) => {
-                                            thread.insert(key.into(), value.clone());
-                                        }
-                                        None => {
-                                            thread.remove(key);
-                                        }
-                                    }
-                                }
+                        } else if was_scheduled
+                            && let Some(newer) = this.selection_ui.drafts.get_mut(&id)
+                            && newer.original == draft.original
+                            && newer.access == draft.access
+                            && newer.interaction == draft.interaction
+                        {
+                            // A new choice was made while the worker was saving.
+                            // Keep the newer intent but validate it against the receipt.
+                            newer.original = saved["selection"].clone();
+                            newer.access = saved["accessMode"].clone();
+                            newer.interaction = saved["interactionMode"].clone();
+                            if newer.has_edits() {
+                                this.selection_ui.staged_apply.insert(id.clone());
                             }
-                            this.status = "Selection saved.".into();
                         }
-                        this.finish_pending_selection(&id, matches_view && matches_draft);
+                        let before = json!({
+                            "selection": draft.original,
+                            "accessMode": draft.access,
+                            "interactionMode": draft.interaction,
+                        });
+                        this.thread_navigation
+                            .apply_saved_selection(before, saved.clone());
+                        if matches_view {
+                            this.selected_generation = this.selected_generation.wrapping_add(1);
+                            if let Some(thread) = this.selected.composer_metadata_mut() {
+                                crate::thread_navigation::apply_selection_projection(
+                                    thread, &saved,
+                                );
+                            }
+                            if matches_draft {
+                                this.status = "Selection saved.".into();
+                            }
+                        }
+                        if !this.selection_apply_scheduled(&id) {
+                            this.finish_pending_selection_with(&id, Some(&saved));
+                        }
                     }
                     Ok(SelectionApply::Staged) => {
-                        this.selection_ui.goal_yield_attempts.remove(&id);
                         this.status = "This change applies when the current turn ends.".into();
-                        this.finish_pending_selection(&id, true);
-                        if !this.running.contains(&id) {
-                            this.flush_staged_selection(cx);
+                        if !draft.has_edits() {
+                            this.selection_ui.staged_apply.remove(&id);
+                            this.finish_pending_selection(&id, true);
                         }
                     }
                     Err(error) => {
+                        this.selection_ui.staged_apply.remove(&id);
                         this.status = format!("Selection was not changed: {error}");
                         this.finish_pending_selection(&id, false);
                     }
@@ -2976,36 +3085,26 @@ impl Coincide {
         .detach();
         cx.notify();
     }
-    /// Apply the selection the user changed during a turn now that it ended.
-    /// This is the queue: the controls never go dead, and the change lands at
-    /// the first moment the provider can take it.
+    /// Apply a staged selection once its turn settles, even offscreen.
     pub(super) fn flush_staged_selection(&mut self, cx: &mut Context<Self>) {
-        let Some(id) = self.selected.as_ref().map(|thread| text(thread, "id")) else {
-            return;
-        };
-        if self.running.contains(&id) {
+        if self.selection_ui.pending_apply.is_some() {
             return;
         }
-        let staged = self
-            .selection_ui
-            .drafts
-            .get(&id)
-            .is_some_and(SelectionDraft::has_edits);
-        if !staged {
-            return;
-        }
-        self.apply_selection_draft(cx);
-        // The turn ended on its own; the saved-selection note is not news.
-        if self.status.starts_with("Selection saved") {
-            self.status.clear();
-        }
-    }
-    pub(super) fn flush_yielded_goal_selection(&mut self, cx: &mut Context<Self>) {
-        let Some(id) = self.selected.as_ref().map(|thread| text(thread, "id")) else {
-            return;
-        };
-        if self.selection_ui.goal_yield_attempts.insert(id) {
-            self.flush_staged_selection(cx);
+        let ready = |id: &String| !self.running.contains(id);
+        let next = self
+            .selected
+            .as_ref()
+            .map(|thread| text(thread, "id"))
+            .filter(|id| self.selection_ui.staged_apply.contains(id) && ready(id))
+            .or_else(|| {
+                self.selection_ui
+                    .staged_apply
+                    .iter()
+                    .find(|id| ready(id))
+                    .cloned()
+            });
+        if let Some(id) = next {
+            self.apply_thread_selection(id, cx);
         }
     }
     /// Show the last catalog at once and only read again when there is none.
@@ -3665,7 +3764,7 @@ impl Coincide {
                 && thread["selection"]["provider"] == pending.provider
                 && thread["selection"]["modelID"] == pending.model
         });
-        let staged = self.running.contains(&id)
+        let staged = self.selection_apply_scheduled(&id)
             && self.selection_ui.drafts.get(&id).is_some_and(|draft| {
                 draft.provider == pending.provider
                     && draft.custom == pending.model
@@ -3680,8 +3779,8 @@ impl Coincide {
             self.status =
                 "Model change could not be applied. Your previous selection was kept.".into();
         }
-        if !applying {
-            self.finish_pending_selection(&id, applied || staged);
+        if !applying && !staged {
+            self.finish_pending_selection(&id, applied);
         }
     }
 
@@ -4089,6 +4188,14 @@ impl Coincide {
             .into_any_element()
     }
     pub(super) fn composer_provider_for_thread(&self, id: &str) -> Option<&str> {
+        if let Some(draft) = self
+            .selection_ui
+            .drafts
+            .get(id)
+            .filter(|draft| draft.has_edits() && !draft.provider.is_empty())
+        {
+            return Some(draft.provider.as_str());
+        }
         let thread = self
             .selected
             .as_ref()

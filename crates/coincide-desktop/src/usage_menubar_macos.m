@@ -92,19 +92,28 @@ static NSColor *UsageProviderColor(NSString *provider) {
         return [NSColor colorWithSRGBRed:((hex>>16)&255)/255. green:((hex>>8)&255)/255. blue:(hex&255)/255. alpha:1];
     }];
 }
-static NSImage *UsageLogo(NSString *provider, NSImage *logo, CGFloat size) {
-    if (!logo) return nil;
-    BOOL originalColor = [provider isEqual:@"claude"] || [provider isEqual:@"antigravity"];
-    return [NSImage imageWithSize:NSMakeSize(size,size) flipped:NO drawingHandler:^BOOL(NSRect rect) {
-        [logo drawInRect:rect fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1];
+static NSImage *UsageLogo(NSString *provider, NSImage *light, NSImage *dark, CGFloat size) {
+    if (!light) return nil;
+    BOOL originalColor = dark != nil || [provider isEqual:@"claude"] || [provider isEqual:@"antigravity"];
+    NSImage *badge = [NSImage imageWithSize:NSMakeSize(size,size) flipped:NO drawingHandler:^BOOL(NSRect rect) {
+        BOOL darkAppearance = [[NSAppearance.currentDrawingAppearance
+            bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua, NSAppearanceNameDarkAqua]]
+            isEqual:NSAppearanceNameDarkAqua];
+        NSImage *logo = darkAppearance && dark ? dark : light;
+        NSSize source = logo.size;
+        if (source.width <= 0 || source.height <= 0) return NO;
+        CGFloat scale = MIN(NSWidth(rect) / source.width, NSHeight(rect) / source.height);
+        CGFloat width = source.width * scale, height = source.height * scale;
+        NSRect fitted = NSMakeRect(NSMidX(rect) - width / 2, NSMidY(rect) - height / 2, width, height);
+        [logo drawInRect:fitted fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1];
         if (!originalColor) {
-            // The original monochrome assets are templates. Adapt their ink to
-            // the current appearance while preserving their transparent shape.
             [NSColor.labelColor setFill];
-            NSRectFillUsingOperation(rect, NSCompositingOperationSourceAtop);
+            NSRectFillUsingOperation(fitted, NSCompositingOperationSourceAtop);
         }
         return YES;
     }];
+    badge.cacheMode = NSImageCacheNever;
+    return badge;
 }
 @implementation CoincideUsagePanel
 - (BOOL)canBecomeKeyWindow { return YES; }
@@ -120,6 +129,7 @@ static NSImage *UsageLogo(NSString *provider, NSImage *logo, CGFloat size) {
 @property(nonatomic, strong) CoincideUsagePanel *panel;
 @property(nonatomic, strong) NSDictionary *snapshot;
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSImage *> *logos;
+@property(nonatomic, strong) NSMutableDictionary<NSString *, NSImage *> *darkLogos;
 @property(nonatomic, strong) NSMutableArray<NSDictionary *> *events;
 @property(nonatomic, strong) id globalClick;
 @property(nonatomic, strong) id localClick;
@@ -186,6 +196,7 @@ static NSBox *UsageSeparator(CGFloat width) {
 - (instancetype)init {
     if ((self = [super init])) {
         _logos = [NSMutableDictionary new];
+        _darkLogos = [NSMutableDictionary new];
         _events = [NSMutableArray new];
         _snapshot = @{};
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(menuStarted:) name:NSMenuDidBeginTrackingNotification object:nil];
@@ -226,7 +237,7 @@ static NSBox *UsageSeparator(CGFloat width) {
         NSDictionary *reading = UsageDict(raw);
         NSString *provider = UsageString(reading[@"provider"]);
         NSImage *logo = self.logos[provider];
-        NSImage *image = logo ? UsageLogo(provider, logo, icon) : [self gauge];
+        NSImage *image = logo ? UsageLogo(provider, logo, self.darkLogos[provider], icon) : [self gauge];
         NSString *text = UsageString(reading[@"text"]);
         NSAttributedString *label = [[NSAttributedString alloc] initWithString:text attributes:attributes];
         CGFloat segmentWidth = icon + (text.length ? gap + ceil(label.size.width) : 0);
@@ -271,6 +282,9 @@ static NSBox *UsageSeparator(CGFloat width) {
     if (![value isKindOfClass:NSDictionary.class]) return;
     if ([self.snapshot isEqual:value]) return;
     self.snapshot = value;
+    [self redrawUsage];
+}
+- (void)redrawUsage {
     [self updateButton];
     // Do not replace a picker while AppKit is tracking its menu.
     if (self.panel.isVisible) {
@@ -440,8 +454,15 @@ static NSBox *UsageSeparator(CGFloat width) {
         NSStackView *name = UsageStack(NSUserInterfaceLayoutOrientationHorizontal, 6);
         NSString *provider = UsageString(account[@"provider"]);
         card.usageProvider = provider;
-        NSImage *logo = UsageLogo(provider, self.logos[provider], 15);
-        if (logo) { NSImageView *image = [[NSImageView alloc] initWithFrame:NSMakeRect(0,0,15,15)]; image.image = logo; [image.widthAnchor constraintEqualToConstant:15].active=YES; [image.heightAnchor constraintEqualToConstant:15].active=YES; [name addArrangedSubview:image]; }
+        NSImage *logo = UsageLogo(provider, self.logos[provider], self.darkLogos[provider], 15);
+        if (!logo) logo = [NSImage imageWithSystemSymbolName:@"cpu" accessibilityDescription:nil];
+        if (logo) {
+            NSImageView *image = [[NSImageView alloc] initWithFrame:NSMakeRect(0,0,15,15)];
+            image.image = logo;
+            [image.widthAnchor constraintEqualToConstant:15].active = YES;
+            [image.heightAnchor constraintEqualToConstant:15].active = YES;
+            [name addArrangedSubview:image];
+        }
         NSTextField *accountTitle = UsageLabel(UsageString(account[@"title"]), 12, NSFontWeightSemibold, ink);
         [accountTitle setContentCompressionResistancePriority:NSLayoutPriorityDefaultHigh forOrientation:NSLayoutConstraintOrientationHorizontal];
         [name addArrangedSubview:accountTitle];
@@ -552,6 +573,25 @@ void coincide_usage_status_logo(const char *provider, const uint8_t *bytes, size
     NSString *key=[NSString stringWithUTF8String:provider]; NSData *data=[NSData dataWithBytes:bytes length:length]; NSImage *image=[[NSImage alloc] initWithData:data];
     if (key && image) usageStatus.logos[key]=image;
 }
+int coincide_usage_status_registry_logo(const char *provider, const uint8_t *light,
+                                        size_t lightLength, const uint8_t *dark, size_t darkLength) {
+    if (!usageStatus || !provider || !light || !dark || !lightLength || !darkLength
+        || lightLength > 2*1024*1024 || darkLength > 2*1024*1024) return 0;
+    NSString *key = [NSString stringWithUTF8String:provider];
+    NSImage *lightImage = [[NSImage alloc] initWithData:[NSData dataWithBytes:light length:lightLength]];
+    NSImage *darkImage = [[NSImage alloc] initWithData:[NSData dataWithBytes:dark length:darkLength]];
+    if (!key || !lightImage.isValid || !darkImage.isValid) return 0;
+    usageStatus.logos[key] = lightImage;
+    usageStatus.darkLogos[key] = darkImage;
+    return 1;
+}
+void coincide_usage_status_remove_registry_logo(const char *provider) {
+    NSString *key = provider ? [NSString stringWithUTF8String:provider] : nil;
+    if (!key) return;
+    [usageStatus.logos removeObjectForKey:key];
+    [usageStatus.darkLogos removeObjectForKey:key];
+}
+void coincide_usage_status_registry_logos_changed(void) { [usageStatus redrawUsage]; }
 void coincide_usage_status_visible(int visible) { [usageStatus setVisible:visible != 0]; }
 void coincide_usage_status_update(const char *json) { [usageStatus setSnapshotJSON:json]; }
 char *coincide_usage_status_next_event(void) {

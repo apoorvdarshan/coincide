@@ -85,6 +85,7 @@ pub(super) struct PendingSend {
     pub selection: Value,
     pub waiting_for_import: bool,
     pub selection_wait: SelectionWait,
+    expected_choice: Option<super::composer_selection::SelectionTarget>,
     pub wait_for_stopped_turn: bool,
     pub import_jobs: Vec<u64>,
     pub import_failed: bool,
@@ -130,6 +131,7 @@ impl PendingSend {
             selection: pending_scope(thread, false),
             waiting_for_import: false,
             selection_wait: SelectionWait::None,
+            expected_choice: None,
             wait_for_stopped_turn: false,
             import_jobs: Vec::new(),
             import_failed: false,
@@ -186,7 +188,13 @@ impl PendingSend {
         if self.selection_wait != SelectionWait::Waiting {
             return;
         }
-        let Some(thread) = thread.filter(|thread| text(thread, "id") == self.thread) else {
+        let Some(thread) = thread.filter(|thread| {
+            text(thread, "id") == self.thread
+                && self
+                    .expected_choice
+                    .as_ref()
+                    .is_none_or(|target| target.matches(thread))
+        }) else {
             self.selection_wait = SelectionWait::Failed;
             return;
         };
@@ -357,6 +365,21 @@ pub(super) fn init(cx: &mut App) {
         ),
     ]);
 }
+pub(super) fn next_buffered_send(
+    backlog: &mut std::collections::VecDeque<PendingSend>,
+) -> Option<PendingSend> {
+    let mut waiting = std::collections::HashSet::new();
+    let index = backlog.iter().position(|send| {
+        if send.selection_wait == SelectionWait::Waiting {
+            waiting.insert(send.thread.as_str());
+            false
+        } else {
+            !waiting.contains(send.thread.as_str())
+        }
+    })?;
+    backlog.remove(index)
+}
+
 impl Coincide {
     /// A captured send may require reading a very long transcript and writing
     /// the queue. Keep that work off the window thread and submit it once.
@@ -432,13 +455,23 @@ impl Coincide {
                     && pending.selection_wait == SelectionWait::Waiting
             })
     }
-    pub(super) fn cancel_pending_selection_waits(&mut self) {
+    pub(super) fn cancel_view_selection_waits(&mut self, thread_id: &str) {
+        if !self.selection_apply_scheduled(thread_id) {
+            self.finish_pending_selection_with(thread_id, None);
+        }
+    }
+    pub(super) fn finish_pending_selection_with(
+        &mut self,
+        thread_id: &str,
+        selected: Option<&Value>,
+    ) {
         for pending in self
             .pending_follow_up
             .iter_mut()
             .chain(self.pending_follow_up_backlog.iter_mut())
+            .filter(|pending| pending.thread == thread_id)
         {
-            pending.finish_selection(None);
+            pending.finish_selection(selected);
         }
     }
     pub(super) fn finish_pending_selection(&mut self, thread_id: &str, success: bool) {
@@ -460,14 +493,7 @@ impl Coincide {
                 json!({"id":thread["id"],"selection":thread["selection"],
                 "accessMode":thread["accessMode"],"interactionMode":thread["interactionMode"]})
             });
-        for pending in self
-            .pending_follow_up
-            .iter_mut()
-            .chain(self.pending_follow_up_backlog.iter_mut())
-            .filter(|pending| pending.thread == thread_id)
-        {
-            pending.finish_selection(selected.as_ref());
-        }
+        self.finish_pending_selection_with(thread_id, selected.as_ref());
     }
     pub(super) fn captured_follow_up_behavior(&self, thread: &Value) -> Behavior {
         self.pending_follow_up_choice
@@ -522,12 +548,13 @@ impl Coincide {
             .unwrap_or_default();
         let mut next = PendingSend::new(thread, draft, alternate)
             .with_behavior(self.captured_follow_up_behavior(thread));
-        if (!self.running.contains(&id) && self.selection_change_pending())
+        if self.selection_change_pending()
             || self.pending_follow_up.as_ref().is_some_and(|pending| {
                 pending.thread == id && pending.selection_wait == SelectionWait::Waiting
             })
         {
             next.selection_wait = SelectionWait::Waiting;
+            next.expected_choice = self.pending_send_selection_target(&id);
         }
         self.exclude_submitted_images(&mut next);
         separate_buffered_payload(
@@ -593,6 +620,7 @@ impl Coincide {
             first.original_visible = false;
         }
         self.pending_follow_up_backlog.push_back(next);
+        self.apply_unscheduled_selection_for_send(cx);
         self.buffered_send_lease.set_dirty(true);
         self.draft_saver.invalidate();
         if let Some(thread) = self.selected.composer_metadata_mut() {
@@ -935,6 +963,9 @@ impl Coincide {
         self.follow_up_deliveries = retained;
     }
     pub(super) fn composer_send_dispatch(&self, alternate: bool) -> Dispatch {
+        if self.selection_change_pending() {
+            return Dispatch::Queue;
+        }
         let Some(thread) = self.selected.as_ref() else {
             return Dispatch::Send;
         };
@@ -1130,6 +1161,8 @@ mod send_route_tests {
             "cursor",
             "grok",
             "antigravity",
+            "lithos",
+            "acp-devin",
         ] {
             let old = json!({"id":"a", "selection":{"provider":"codex","modelID":"old"},
                 "draftContext":[{"path":"file"}],"rustDraftImages":[{"id":"image"}]});
@@ -1160,6 +1193,44 @@ mod send_route_tests {
             assert_eq!(pending.captured["selection"], thread["selection"]);
             assert_eq!(pending.captured["draft"], "message");
         }
+    }
+
+    #[test]
+    fn a_send_waiting_for_devin_rejects_codex_or_another_devin_model() {
+        use crate::composer_selection::SelectionTarget;
+        let original = json!({"id":"a", "selection":{"provider":"codex","modelID":"old"}});
+        let other_model = json!({"id":"a", "selection":{"provider":"acp-devin","modelID":"auto"}});
+        let devin = json!({"id":"a", "selection":{"provider":"acp-devin","modelID":"swe-2"}});
+        for (result, state) in [
+            (&original, SelectionWait::Failed),
+            (&other_model, SelectionWait::Failed),
+            (&devin, SelectionWait::None),
+        ] {
+            let mut pending = PendingSend::new(&original, "message".into(), false);
+            pending.selection_wait = SelectionWait::Waiting;
+            pending.expected_choice = Some(SelectionTarget::from_selection(&devin["selection"]));
+            pending.finish_selection(Some(result));
+            assert_eq!(pending.selection_wait, state);
+            if state == SelectionWait::None {
+                assert_eq!(pending.captured["selection"], devin["selection"]);
+            }
+        }
+    }
+
+    #[test]
+    fn a_staged_provider_in_one_thread_does_not_block_sends_in_another() {
+        use super::next_buffered_send;
+        let a = json!({"id":"a"});
+        let b = json!({"id":"b"});
+        let mut first = PendingSend::new(&a, "first".into(), false);
+        first.selection_wait = SelectionWait::Waiting;
+        let mut backlog = std::collections::VecDeque::from([
+            first,
+            PendingSend::new(&a, "second".into(), false),
+            PendingSend::new(&b, "third".into(), false),
+        ]);
+        assert_eq!(next_buffered_send(&mut backlog).unwrap().draft, "third");
+        assert!(next_buffered_send(&mut backlog).is_none());
     }
 
     #[test]

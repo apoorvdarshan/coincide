@@ -12,6 +12,7 @@ use std::{
     cell::RefCell,
     collections::{HashMap, VecDeque},
     rc::Rc,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -32,6 +33,7 @@ struct Bar {
     last_retry: Option<Instant>,
     last_settings: Option<Instant>,
     last_snapshot: Option<Value>,
+    registry_logos: HashMap<String, Arc<[u8]>>,
     last_draw: Option<Instant>,
     cached: HashMap<(String, String), coincide_core::usage_limits::Limits>,
     remote_enabled: bool,
@@ -99,6 +101,7 @@ impl Bar {
             last_retry: None,
             last_settings: None,
             last_snapshot: None,
+            registry_logos: HashMap::new(),
             last_draw: None,
             cached: HashMap::new(),
             remote_enabled: false,
@@ -310,6 +313,9 @@ impl Bar {
                 active,
                 chrono::Utc::now(),
             );
+            if self.visible() {
+                native::sync_registry_logos(&snapshot, &mut self.registry_logos);
+            }
             if self.last_snapshot.as_ref() != Some(&snapshot) {
                 native::update(&snapshot);
                 self.last_snapshot = Some(snapshot);
@@ -646,6 +652,8 @@ pub fn shutdown_status(cx: &mut App) -> worker_owner::ShutdownStatus {
     bar.history.shutdown_status()
 }
 mod native {
+    use super::{Arc, HashMap};
+    use crate::agent_logo_assets;
     use serde_json::Value;
     use std::ffi::{CStr, CString};
     unsafe extern "C" {
@@ -655,6 +663,15 @@ mod native {
             bytes: *const u8,
             length: usize,
         );
+        fn coincide_usage_status_registry_logo(
+            provider: *const std::ffi::c_char,
+            light: *const u8,
+            light_length: usize,
+            dark: *const u8,
+            dark_length: usize,
+        ) -> i32;
+        fn coincide_usage_status_remove_registry_logo(provider: *const std::ffi::c_char);
+        fn coincide_usage_status_registry_logos_changed();
         fn coincide_usage_status_visible(visible: i32);
         fn coincide_usage_status_update(json: *const std::ffi::c_char);
         fn coincide_usage_status_next_event() -> *mut std::ffi::c_char;
@@ -668,6 +685,62 @@ mod native {
                 let name = CString::new(name).unwrap();
                 coincide_usage_status_logo(name.as_ptr(), bytes.as_ptr(), bytes.len());
             }
+        }
+    }
+    pub(super) fn sync_registry_logos(snapshot: &Value, saved: &mut HashMap<String, Arc<[u8]>>) {
+        let visible: std::collections::HashSet<_> = ["accounts", "readings"]
+            .into_iter()
+            .flat_map(|key| snapshot[key].as_array().into_iter().flatten())
+            .filter_map(|row| row["provider"].as_str())
+            .filter_map(|provider| {
+                Some((
+                    provider,
+                    coincide_core::acp_registry::registry_id(provider)?,
+                ))
+            })
+            .collect();
+        let mut changed = false;
+        saved.retain(|provider, _| {
+            if visible.iter().any(|(current, _)| *current == provider) {
+                return true;
+            }
+            if let Ok(key) = CString::new(provider.as_str()) {
+                unsafe { coincide_usage_status_remove_registry_logo(key.as_ptr()) };
+                changed = true;
+            }
+            false
+        });
+        for (provider, id) in visible {
+            let Some(source) = agent_logo_assets::logo(id) else {
+                continue;
+            };
+            if saved
+                .get(provider)
+                .is_some_and(|old| old.as_ref() == source.as_ref())
+            {
+                continue;
+            }
+            let (_, light) = agent_logo_assets::artwork(id, &source, false);
+            let (_, dark) = agent_logo_assets::artwork(id, &source, true);
+            let Ok(key) = CString::new(provider) else {
+                continue;
+            };
+            let installed = unsafe {
+                coincide_usage_status_registry_logo(
+                    key.as_ptr(),
+                    light.as_ptr(),
+                    light.len(),
+                    dark.as_ptr(),
+                    dark.len(),
+                )
+            };
+            if installed != 0 {
+                saved.insert(provider.to_owned(), source);
+                changed = true;
+            }
+        }
+        if changed {
+            unsafe { coincide_usage_status_registry_logos_changed() };
         }
     }
     pub fn visible(visible: bool) {

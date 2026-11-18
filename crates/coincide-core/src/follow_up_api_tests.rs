@@ -860,11 +860,15 @@ fn staged_selection_yields_the_goal_without_discarding_queued_messages() {
         release,
         ..
     } = fixture();
+    let other = engine.execute("threads.create", &json!({})).unwrap();
+    let other_id = text(&other, "id");
+    engine.set_active_thread(Some(other_id.clone())).unwrap();
     let source = engine.store.thread(&id).unwrap();
     engine
         .defer_goal_for_staged_selection(&source, true)
         .unwrap();
     assert!(engine.goal_selection_waiting.contains(&id));
+    assert_eq!(engine.active_thread.as_deref(), Some(other_id.as_str()));
     assert!(engine.runs[&id].session.goal_queue_is_waiting());
     let mut stale = source.clone();
     stale["selection"]["modelID"] = json!("other-model");

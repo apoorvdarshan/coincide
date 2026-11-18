@@ -4757,16 +4757,7 @@ impl Coincide {
             } else if was_running != is_running {
                 self.redraw_live_row(cx);
             }
-            let staged_goal_selection = selected_thread.as_ref().is_some_and(|id| {
-                status["stagedGoalSelections"]
-                    .as_array()
-                    .is_some_and(|ids| ids.iter().any(|value| value.as_str() == Some(id.as_str())))
-            });
-            if !is_running && staged_goal_selection {
-                self.flush_yielded_goal_selection(cx);
-            } else if was_running && !is_running {
-                self.flush_staged_selection(cx);
-            }
+            self.flush_staged_selection(cx);
             self.observe_thread_activity(&status, window, cx);
             app_shell::set_badge(app_shell::pending_approvals(&status), cx);
             let revision = status["revision"].as_u64().unwrap_or(0);
@@ -7295,7 +7286,8 @@ impl Render for Coincide {
             }
         }
         if self.ordinary_sends_inflight == 0 && self.pending_follow_up.is_none() {
-            self.pending_follow_up = self.pending_follow_up_backlog.pop_front();
+            self.pending_follow_up =
+                composer_follow_up_mount::next_buffered_send(&mut self.pending_follow_up_backlog);
         }
         if self.ordinary_sends_inflight == 0
             && let Some(mut pending) = self.pending_follow_up.take()

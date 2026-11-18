@@ -18,7 +18,7 @@ static void SetFixture(NSUInteger accountCount, NSString *appearance) {
     NSMutableArray *accounts = [NSMutableArray new];
     for (NSUInteger i = 0; i < accountCount; i++) {
         [accounts addObject:@{
-            @"provider": @"codex",
+            @"provider": i == 0 ? @"acp-devin" : @"codex",
             @"title": @"An account name long enough to need truncation in the menu",
             @"plan": @"Pro", @"checked": @"Checked just now",
             @"rows": @[@{@"title":@"Weekly", @"value":@"77% used", @"fill":@0.77,
@@ -27,6 +27,7 @@ static void SetFixture(NSUInteger accountCount, NSString *appearance) {
     }
     NSDictionary *fixture = @{
         @"mode": @"used", @"updated": @"just now", @"appearance": appearance,
+        @"readings": @[@{@"provider": @"acp-devin", @"text": @"77%"}],
         @"overviewNote": @"Local history may be incomplete",
         @"themes": @{@"dark":@{@"surface":@0x18241D, @"ink":@0xD4E2D8, @"accent":@0x6FD08C},
                      @"light":@{@"surface":@0xFBF6EC, @"ink":@0x211B12, @"accent":@0xC26A2E}},
@@ -58,11 +59,43 @@ static void CheckLayout(void) {
     Require(NSHeight(usageStatus.panel.frame) <= NSHeight(NSScreen.mainScreen.visibleFrame),
             @"Popover is taller than the screen");
 }
+static void InstallDevinLogo(void) {
+    NSString *file = @"crates/coincide-desktop/assets/agent-registry/devin.svg";
+    NSString *source = [NSString stringWithContentsOfFile:file encoding:NSUTF8StringEncoding error:nil];
+    Require(source.length > 0, @"Missing bundled Devin artwork");
+    NSData *light = [[source stringByReplacingOccurrencesOfString:@"currentColor" withString:@"#171717"]
+        dataUsingEncoding:NSUTF8StringEncoding];
+    NSData *dark = [[source stringByReplacingOccurrencesOfString:@"currentColor" withString:@"#f4f4f4"]
+        dataUsingEncoding:NSUTF8StringEncoding];
+    Require(coincide_usage_status_registry_logo("acp-devin", light.bytes, light.length,
+        dark.bytes, dark.length), @"AppKit could not load the Devin logo");
+}
+
+static NSColor *OpaqueLogoPixel(NSImage *image, NSAppearance *appearance) {
+    NSBitmapImageRep *bitmap = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL
+        pixelsWide:15 pixelsHigh:15 bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES
+        isPlanar:NO colorSpaceName:NSDeviceRGBColorSpace bytesPerRow:0 bitsPerPixel:0];
+    [NSGraphicsContext saveGraphicsState];
+    NSGraphicsContext.currentContext = [NSGraphicsContext graphicsContextWithBitmapImageRep:bitmap];
+    [appearance performAsCurrentDrawingAppearance:^{
+        [image drawInRect:NSMakeRect(0,0,15,15) fromRect:NSZeroRect
+            operation:NSCompositingOperationSourceOver fraction:1];
+    }];
+    [NSGraphicsContext restoreGraphicsState];
+    for (NSInteger y = 0; y < 15; y++) {
+        for (NSInteger x = 0; x < 15; x++) {
+            NSColor *pixel = [bitmap colorAtX:x y:y];
+            if (pixel.alphaComponent > 0.95) return [pixel colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+        }
+    }
+    return nil;
+}
 int main(void) {
     @autoreleasepool {
         [NSApplication sharedApplication];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
         coincide_usage_status_install();
+        InstallDevinLogo();
         for (NSAppearanceName appearance in @[NSAppearanceNameDarkAqua, NSAppearanceNameAqua]) {
             NSApp.appearance = [NSAppearance appearanceNamed:appearance];
             SetFixture(12, @"system");
@@ -80,13 +113,21 @@ int main(void) {
             Require(NSHeight(document.frame) > NSHeight(usageStatus.scroll.contentView.bounds),
                     @"Long account lists must remain scrollable");
             CoincideUsageSurface *card = (CoincideUsageSurface *)list.arrangedSubviews.firstObject;
+            NSStackView *cardHeader = (NSStackView *)card.arrangedSubviews.firstObject;
+            NSImageView *providerIcon = (NSImageView *)cardHeader.arrangedSubviews.firstObject;
+            Require([providerIcon isKindOfClass:NSImageView.class], @"Registered account card omitted its logo");
+            NSColor *pixel = OpaqueLogoPixel(providerIcon.image, [NSAppearance appearanceNamed:appearance]);
+            BOOL dark = [appearance isEqual:NSAppearanceNameDarkAqua];
+            Require(pixel && (dark ? pixel.redComponent > 0.8 : pixel.redComponent < 0.2),
+                    @"Devin logo did not draw with the correct appearance");
+            Require([usageStatus statusImage].isValid, @"Devin was missing from the status reading");
             Require(card.isAccessibilityElement && [card.accessibilityRole isEqual:NSAccessibilityButtonRole],
                     @"Account card is missing from the accessibility tree");
             Require([card.accessibilityLabel containsString:@"77% used"], @"Account card omitted its usage value");
             Require([card accessibilityPerformPress], @"Account card is not accessible as a button");
             NSDictionary *accountEvent = NextEvent();
             Require([accountEvent[@"action"] isEqual:@"usage"], @"Account card did not open Usage");
-            Require([accountEvent[@"provider"] isEqual:@"codex"], @"Account card lost its provider filter");
+            Require([accountEvent[@"provider"] isEqual:@"acp-devin"], @"Account card lost its provider filter");
             NSSegmentedControl *mode = [NSSegmentedControl segmentedControlWithLabels:@[@"Used", @"Left"] trackingMode:NSSegmentSwitchTrackingSelectOne target:nil action:nil];
             mode.selectedSegment = 1;
             [usageStatus modeChanged:mode];

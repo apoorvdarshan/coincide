@@ -129,21 +129,12 @@ pub(super) fn provider_mark(provider: &str, size: f32) -> Option<Div> {
     let mark = if let Some(svg) = provider_template(provider) {
         ProviderTemplate { svg, size }.into_any_element()
     } else if let Some(id) = coincide_core::acp_registry::registry_id(provider) {
-        let original = match id {
-            "claude-acp" => provider_color_logo("claude"),
-            "antigravity-acp" => provider_color_logo("antigravity"),
-            _ => None,
-        };
-        if let Some(image) = original {
-            img(image).size(px(size)).into_any_element()
-        } else {
-            RegistryTemplate {
-                id: id.to_owned(),
-                svg: agent_logo_assets::logo(id)?,
-                size,
-            }
-            .into_any_element()
+        RegistryTemplate {
+            id: id.to_owned(),
+            svg: agent_logo_assets::logo(id)?,
+            size,
         }
+        .into_any_element()
     } else {
         img(provider_color_logo(provider)?)
             .size(px(size))

@@ -2422,10 +2422,8 @@ impl Engine {
     ) -> Result<()> {
         self.require_admissions()?;
         let id = required(expected, "id")?;
-        ensure!(
-            self.active_thread.as_deref() == Some(id),
-            "Selection belongs to another conversation"
-        );
+        // The native composer binds the intent to a thread before opening
+        // the worker. Navigation does not revoke that thread's goal handoff.
         let current = self.store.thread(id)?;
         ensure!(
             current["selection"] == expected["selection"],
