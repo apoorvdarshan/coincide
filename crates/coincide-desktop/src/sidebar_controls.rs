@@ -19,6 +19,7 @@ impl Coincide {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let collapsed = !searching && self.sidebar_preferences.collapsed(section);
+        let chat_projects = navigation::chat_project_ids(&self.projects);
         let hidden_status = collapsed
             .then(|| {
                 sidebar_thread_status::strongest_status(
@@ -33,8 +34,9 @@ impl Coincide {
                                 || thread.project_id.eq_ignore_ascii_case(
                                     coincide_core::bot_runtime::BOTS_PROJECT_ID,
                                 );
-                            let chat = thread.project_id.is_empty()
-                                || thread.project_id == navigation::NO_PROJECT_ID;
+                            let chat =
+                                navigation::sidebar_project_key(&thread.project_id, &chat_projects)
+                                    == navigation::NO_PROJECT_ID;
                             match section {
                                 "pinned" => thread.pinned,
                                 "bots" => bot,

@@ -187,6 +187,16 @@ fn is_bots_project(project: &Value) -> bool {
             .is_some_and(|id| id.eq_ignore_ascii_case(BOTS_PROJECT_ID))
 }
 
+pub(super) fn chat_project_ids(projects: &[Value]) -> Vec<&str> {
+    projects
+        .iter()
+        .filter(|project| project["isChats"] == true)
+        .filter_map(|project| project["id"].as_str())
+        .collect()
+}
+
+pub(super) use sections::project_key as sidebar_project_key;
+
 /// Folders of the user's projects that no longer exist, by project ID.
 pub(super) fn missing_project_folders(projects: &[Value]) -> std::collections::HashSet<String> {
     projects
@@ -231,6 +241,7 @@ pub(super) fn new_thread_project(
     projects: &[Value],
     threads: &[ThreadSummary],
 ) -> Option<String> {
+    let chats = chat_project_ids(projects);
     let known = |id: &str| {
         id == NO_PROJECT
             || projects.iter().any(|project| {
@@ -239,23 +250,29 @@ pub(super) fn new_thread_project(
                     .is_some_and(|known| known.eq_ignore_ascii_case(id))
             })
     };
-    if let Some(filter) = filter.filter(|id| known(id) || id.eq_ignore_ascii_case(BOTS_PROJECT_ID))
+    if let Some(filter) = filter
+        .map(|id| sections::project_key(id, &chats))
+        .filter(|id| known(id) || id.eq_ignore_ascii_case(BOTS_PROJECT_ID))
     {
         return Some(filter.to_owned());
     }
     if let Some(project) = selected
-        .map(|thread| sections::project_key(thread["projectID"].as_str().unwrap_or("")))
+        .map(|thread| sections::project_key(thread["projectID"].as_str().unwrap_or(""), &chats))
         .filter(|id| !id.eq_ignore_ascii_case(BOTS_PROJECT_ID) && known(id))
     {
         return Some(project.to_owned());
     }
-    if let Some(first) = projects.iter().find(|project| !is_bots_project(project)) {
+    if let Some(first) = projects
+        .iter()
+        .find(|project| project["isChats"] != true && !is_bots_project(project))
+    {
         return Some(text(first, "id"));
     }
-    threads
-        .iter()
-        .any(|thread| sections::project_key(&thread.project_id) == NO_PROJECT)
-        .then(|| NO_PROJECT.to_owned())
+    (!chats.is_empty()
+        || threads
+            .iter()
+            .any(|thread| sections::project_key(&thread.project_id, &chats) == NO_PROJECT))
+    .then(|| NO_PROJECT.to_owned())
 }
 
 /// The visible sidebar row after `id`, else the one before it, as Swift's
@@ -382,6 +399,7 @@ impl Coincide {
         let mut result = sections::display(
             &self.threads,
             projects,
+            &chat_project_ids(&self.projects),
             self.selected_project.as_deref(),
             true, // Running/approval rows stay visible even while snoozed.
             now,
@@ -725,15 +743,18 @@ impl Coincide {
     /// sidebar's ellipsis instead of an expanded list of full-width buttons.
     pub(super) fn project_filter_menu(&self, label: String, cx: &mut Context<Self>) -> AnyElement {
         let parent = cx.entity().downgrade();
-        let selected = self.selected_project.clone();
+        let chats = chat_project_ids(&self.projects);
+        let selected = self
+            .selected_project
+            .as_deref()
+            .map(|id| sections::project_key(id, &chats).to_owned());
         let projects = self
             .projects
             .iter()
             .filter(|project| {
                 project["id"] != NO_PROJECT
-                    && !project["id"]
-                        .as_str()
-                        .is_some_and(|id| id.eq_ignore_ascii_case(BOTS_PROJECT_ID))
+                    && project["isChats"] != true
+                    && !is_bots_project(project)
             })
             .map(|project| (text(project, "id"), text(project, "name")))
             .collect::<Vec<_>>();
@@ -935,7 +956,12 @@ impl Coincide {
             });
             cx.new(|_| drag.clone())
         });
-        let project_label = match self.selected_project.as_deref() {
+        let chat_projects = chat_project_ids(&self.projects);
+        let project_label = match self
+            .selected_project
+            .as_deref()
+            .map(|id| sections::project_key(id, &chat_projects))
+        {
             None => "All projects".into(),
             Some(NO_PROJECT) => "No project".into(),
             Some(BOTS_PROJECT_ID) => "Bots".into(),
@@ -968,7 +994,8 @@ impl Coincide {
             .iter()
             .any(|project| !is_bots_project(project))
             && !self.sidebar_all_threads.iter().any(|thread| {
-                !sections::project_key(&thread.project_id).eq_ignore_ascii_case(BOTS_PROJECT_ID)
+                !sections::project_key(&thread.project_id, &chat_projects)
+                    .eq_ignore_ascii_case(BOTS_PROJECT_ID)
             });
         if no_projects {
             conversations = conversations.child(self.sidebar_empty_view(None, cx));
@@ -1320,7 +1347,8 @@ impl Coincide {
                         let selecting = self.thread_bulk.mode;
                         let archive_id = id.clone();
                         let pinned_drop = id.clone();
-                        let drop_project = thread.project_id.clone();
+                        let drop_project =
+                            sections::project_key(&thread.project_id, &chat_projects).to_owned();
                         let is_archived = thread.archived;
                         let was_unread =
                             self.sidebar_preferences.document["unseen"][&thread.id].is_string();
@@ -1337,7 +1365,7 @@ impl Coincide {
                         let snoozed = thread.snoozed_until.is_some_and(|date| date > now);
                         let thread_menu = sidebar_menus::ThreadMenu {
                             id: id.clone(),
-                            project: thread.project_id.clone(),
+                            project: drop_project.clone(),
                             pinned: thread.pinned,
                             archived: thread.archived,
                             unseen: was_unread,
@@ -1372,7 +1400,7 @@ impl Coincide {
                         let drag = sidebar_drop::ThreadDrag {
                             id: id.clone(),
                             title: thread.title.clone(),
-                            project: thread.project_id.clone(),
+                            project: drop_project.clone(),
                             pinned,
                         };
                         let label = thread.title.clone();
@@ -2454,6 +2482,30 @@ mod project_tests {
         // …otherwise New Thread asks for a folder to add.
         assert!(new_thread_project(None, None, only_bots, &[thread(BOTS_PROJECT_ID)]).is_none());
         assert!(new_thread_project(None, None, &[], &[]).is_none());
+    }
+
+    #[::core::prelude::v1::test]
+    fn new_threads_recognize_legacy_chats_as_projectless() {
+        let chats = json!({"id":"legacy-chats","name":"Chats","isChats":true});
+        let folder = json!({"id":"folder","name":"Chats"});
+        let projects = [chats, folder];
+        let open_chat = json!({"projectID":"LEGACY-CHATS"});
+        assert_eq!(
+            new_thread_project(None, Some(&open_chat), &projects, &[]).as_deref(),
+            Some(NO_PROJECT)
+        );
+        assert_eq!(
+            new_thread_project(Some("legacy-chats"), None, &projects, &[]).as_deref(),
+            Some(NO_PROJECT)
+        );
+        assert_eq!(
+            new_thread_project(None, None, &projects, &[]).as_deref(),
+            Some("folder")
+        );
+        assert_eq!(
+            new_thread_project(None, None, &projects[..1], &[]).as_deref(),
+            Some(NO_PROJECT)
+        );
     }
 
     #[::core::prelude::v1::test]
