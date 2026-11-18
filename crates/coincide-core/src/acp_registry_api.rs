@@ -106,6 +106,53 @@ mod tests {
     use super::*;
 
     #[test]
+    fn registered_agents_follow_provider_availability_preferences() {
+        let (_root, mut engine, binary) = crate::provider_configuration::tests::fixture();
+        let provider = "acp-devin";
+        engine
+            .register_native_acp_agent(&crate::acp_registry::Agent {
+                id: "devin".into(),
+                name: "Devin".into(),
+                website: None,
+                icon: None,
+                executable: Some(binary),
+                arguments: vec!["--acp".into()],
+                environment: Default::default(),
+            })
+            .unwrap();
+        for enabled in [true, false, true] {
+            engine
+                .store
+                .save_document(
+                    "settings.json",
+                    &json!({"providers":{"acp-devin":{"isEnabled":enabled}}}),
+                )
+                .unwrap();
+            let capabilities = engine
+                .execute("agent.selection.capabilities", &json!({}))
+                .unwrap();
+            assert_eq!(
+                capabilities["providers"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|row| row["provider"] == provider)
+                    .unwrap()["enabled"]
+                    != false,
+                enabled
+            );
+            assert_eq!(engine.require_provider_enabled(provider).is_ok(), enabled);
+            assert!(
+                engine
+                    .native_acp_agents()
+                    .unwrap()
+                    .iter()
+                    .any(|row| row["provider"] == provider)
+            );
+        }
+    }
+
+    #[test]
     fn native_registration_binds_the_selected_executable_and_arguments() {
         let (_root, mut engine, binary) = crate::provider_configuration::tests::fixture();
         let provider = "acp-fixture";

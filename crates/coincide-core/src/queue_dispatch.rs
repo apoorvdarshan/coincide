@@ -32,6 +32,12 @@ impl QueueClaim {
     pub(super) fn id(&self) -> &str {
         &self.message.id
     }
+    pub(super) fn captured_scope(&self) -> Value {
+        crate::composer_follow_up::scope(&self.source)
+    }
+    pub(super) fn presents_immediately(&self) -> bool {
+        self.message.native_immediate
+    }
     pub(super) fn question_session(&self) -> Option<&str> {
         self.message.codex_question_session.as_deref()
     }
@@ -335,9 +341,8 @@ impl Engine {
             "Restore or fork this conversation first"
         );
         ensure!(
-            source["rustMessageQueue"] == expected["rustMessageQueue"]
-                && source["selection"] == expected["selection"],
-            "Visible queue or provider changed; refresh before sending"
+            source["selection"] == expected["selection"],
+            "Visible provider changed; refresh before sending"
         );
         for key in [
             "projectID",
@@ -361,12 +366,16 @@ impl Engine {
                 "Queue message identity is ambiguous"
             );
         }
-        ensure!(
-            !messages
-                .iter()
-                .any(|message| message.state == State::Dispatching),
-            "Queue has an unconfirmed dispatch; resume explicitly first"
-        );
+        if let Some(active) = messages
+            .iter()
+            .find(|message| message.state == State::Dispatching)
+        {
+            ensure!(
+                !self.owns_queue_dispatch(id, &active.id),
+                "Another queued message is still being delivered"
+            );
+            bail!("Queue has an unconfirmed dispatch; resume explicitly first");
+        }
         let id_message = required(visible, "id")?;
         let mut matches = messages
             .iter()
@@ -404,19 +413,6 @@ impl Engine {
             source: target,
             native_now: true,
         })
-    }
-    pub(super) fn complete_native_queue_steer(&mut self, claim: &QueueClaim) -> Result<()> {
-        ensure!(
-            claim.native_now && claim.owner == self.thread_bulk_owner,
-            "Queued steering belongs to another native owner"
-        );
-        let source = self.store.thread(&claim.thread)?;
-        claim.exact_row(&source)?;
-        let mut target = source.clone();
-        queue::finish(&mut target, claim.id(), State::Completed, None)?;
-        self.store.save_native_follow_up_turn(&source, &target)?;
-        self.revision += 1;
-        Ok(())
     }
 }
 

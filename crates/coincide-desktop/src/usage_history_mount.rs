@@ -1,7 +1,7 @@
 //! Background saved-history and provider-usage transport. Provider requests
 //! use separate workers and never hold the desktop engine lock during I/O.
 use crate::{
-    usage_dashboard::{Dashboard, Data, LimitState},
+    usage_dashboard::{Dashboard, Data, LimitState, USAGE_BUSY},
     usage_history_view::{UsageHistoryEvent, UsageHistoryView},
     worker_owner::{Admission, ShutdownStatus, WorkerOwner},
 };
@@ -16,7 +16,7 @@ use std::{
         Arc, Mutex, OnceLock,
         mpsc::{self, Receiver, SyncSender},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 #[path = "usage_browser_fallback.rs"]
 mod usage_browser_fallback;
@@ -110,6 +110,8 @@ pub struct Mount {
     )>,
     cli_cached: Option<Arc<coincide_core::cli_usage_logs::Scan>>,
     pub cli_error: Option<String>,
+    cli_retry_at: Option<Instant>,
+    dashboard_retry_at: Option<Instant>,
     external_readers: HashMap<&'static str, Reader<coincide_core::provider_usage::Completed>>,
     external_pending: HashMap<&'static str, coincide_core::provider_usage::Completed>,
     external_retry: HashSet<&'static str>,
@@ -138,6 +140,8 @@ impl Mount {
             cli_pending: None,
             cli_cached: None,
             cli_error: None,
+            cli_retry_at: None,
+            dashboard_retry_at: None,
             external_readers: HashMap::new(),
             external_pending: HashMap::new(),
             external_retry: HashSet::new(),
@@ -206,9 +210,16 @@ impl Mount {
     }
     /// Reads saved turns and account rows for Settings › Usage in the background.
     pub fn load_dashboard(&mut self) {
-        if self.dashboard.loading {
-            return;
+        if self.start_dashboard_read() {
+            self.start_cli_scan();
         }
+    }
+
+    fn start_dashboard_read(&mut self) -> bool {
+        if self.dashboard.loading || !self.dashboard_reader.owner.can_start() {
+            return false;
+        }
+        self.dashboard_retry_at = None;
         self.dashboard.attempted_at = Some(chrono::Utc::now());
         let engine = self.engine.clone();
         match self
@@ -218,14 +229,15 @@ impl Mount {
             Ok(()) => self.dashboard.loading = true,
             Err(error) => self.dashboard.error = Some(error),
         }
-        self.start_cli_scan();
+        true
     }
 
     fn start_cli_scan(&mut self) {
         // Unit UI fixtures must never discover the developer's real CLI logs.
-        if cfg!(test) {
+        if cfg!(test) || self.cli_pending.is_some() || !self.cli_reader.owner.can_start() {
             return;
         }
+        self.cli_retry_at = None;
         static SCANNER: OnceLock<Mutex<coincide_core::cli_usage_logs::Scanner>> = OnceLock::new();
         let engine = self.engine.clone();
         let _ = self.cli_reader.start_cancellable(move |admission| {
@@ -244,7 +256,10 @@ impl Mount {
                     {
                         std::thread::sleep(Duration::from_millis(20))
                     }
-                    Err(_) => return Err("Local usage is temporarily unavailable.".into()),
+                    Err(std::sync::TryLockError::WouldBlock) => return Err(USAGE_BUSY.into()),
+                    Err(std::sync::TryLockError::Poisoned(_)) => {
+                        return Err("Local usage could not be read.".into());
+                    }
                 }
             };
             let cancelled = || !admission.allowed();
@@ -408,6 +423,9 @@ impl Mount {
             }
         }
         if let Some(result) = self.dashboard_reader.poll() {
+            if result.as_ref().is_err_and(|error| error == USAGE_BUSY) {
+                self.dashboard_retry_at = Some(Instant::now() + Duration::from_secs(1));
+            }
             self.dashboard.accept(result.map(|mut data| {
                 data.set_logs(self.cli_cached.clone());
                 data
@@ -417,6 +435,11 @@ impl Mount {
         if let Some(result) = self.cli_reader.poll() {
             match result {
                 Ok(result) => self.cli_pending = Some(result),
+                Err(error) if error == USAGE_BUSY => {
+                    // Keep the last validated source and retry when the engine
+                    // can provide the next source snapshot.
+                    self.cli_retry_at = Some(Instant::now() + Duration::from_secs(1));
+                }
                 Err(error) => {
                     self.cli_cached = None;
                     if let Some(data) = &mut self.dashboard.data {
@@ -427,7 +450,6 @@ impl Mount {
                 }
             }
         }
-        let mut retry_cli = false;
         if self.cli_pending.is_some()
             && let Ok(engine) = self.engine.try_lock()
         {
@@ -449,13 +471,19 @@ impl Mount {
                     }
                     self.cli_error =
                         Some("Account settings changed; refreshing local usage.".into());
-                    retry_cli = true;
+                    self.cli_retry_at = Some(Instant::now() + Duration::from_secs(1));
                 }
             }
             changed = true;
         }
-        if retry_cli {
-            self.start_cli_scan();
+        let now = Instant::now();
+        if self.dashboard.visible {
+            if self.dashboard_retry_at.is_some_and(|at| at <= now) {
+                self.start_dashboard_read();
+            }
+            if self.cli_retry_at.is_some_and(|at| at <= now) {
+                self.start_cli_scan();
+            }
         }
         for (provider, reader) in &mut self.external_readers {
             if let Some(result) = reader.poll() {
@@ -509,6 +537,8 @@ impl Mount {
         self.dashboard_reader.close();
         self.cli_reader.close();
         self.cli_pending = None;
+        self.cli_retry_at = None;
+        self.dashboard_retry_at = None;
         self.context_reader.close();
         for reader in self.external_readers.values_mut() {
             reader.close();

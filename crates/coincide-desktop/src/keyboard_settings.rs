@@ -1198,6 +1198,18 @@ impl Coincide {
             }
             panel = panel.child(self.settings_group(menu.title(), rows));
         }
+        panel = panel.child(
+            self.settings_group(
+                "Composer",
+                self.labeled_row(
+                    "Send queued message now",
+                    Some("Interrupt the current turn and send the first waiting message.".into()),
+                    div()
+                        .text_sm()
+                        .child(crate::composer_follow_up_mount::SEND_NOW_SHORTCUT_LABEL),
+                ),
+            ),
+        );
         let mut thread_rows = div().w_full().flex().flex_col();
         for command in Command::ALL
             .into_iter()

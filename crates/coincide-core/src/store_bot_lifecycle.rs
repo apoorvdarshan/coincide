@@ -149,7 +149,7 @@ impl Store {
         let rows = if ids.is_empty() {
             Vec::new()
         } else {
-            self.prepare_any_delete_rows(&ids)?.1
+            self.prepare_bot_delete_rows(&ids)?.1
         };
         let mut before = BTreeMap::new();
         let mut after = BTreeMap::new();
@@ -197,7 +197,7 @@ impl Store {
             before.insert("projects.json".into(), projects_source);
             after.insert("projects.json".into(), Some(projects));
             for row in &rows {
-                let mut target: Value = serde_json::from_str(&row.raw)?;
+                let mut target: Value = serde_json::from_str(row.bot_document())?;
                 target["projectID"] = json!(chats);
                 target["sessions"] = json!({});
                 for key in [
@@ -248,7 +248,7 @@ impl Store {
         // Remove only previously local, exact authorization records for this
         // bot, never materialize imported context claims into local authority.
         for row in &rows {
-            let source: Value = serde_json::from_str(&row.raw)?;
+            let source: Value = serde_json::from_str(row.bot_document())?;
             if let Some(context) = source.get("rustBotContext").filter(|v| v.is_object()) {
                 let name = crate::bot_runtime::context_document_name(context)?;
                 if self.local_document(&name)?.as_ref() == Some(context) {
@@ -296,7 +296,7 @@ impl Store {
                 ensure!(
                     tx.execute(
                         "UPDATE threads SET document=?3 WHERE id=?1 AND document=?2",
-                        params![row.id, row.raw, target.to_string()]
+                        params![row.id, row.bot_document(), target.to_string()]
                     )? == 1,
                     "Conversation changed after bot review"
                 );
@@ -334,10 +334,10 @@ impl Store {
                 );
             }
             for row in &plan.rows {
-                let target: Value = serde_json::from_str(&row.raw)?;
+                let target: Value = serde_json::from_str(row.bot_document())?;
                 tx.execute(
                     "UPDATE threads SET document=?2 WHERE id=?1",
-                    params![row.id, row.raw],
+                    params![row.id, row.bot_document()],
                 )?;
                 cache_thread(&tx, &target, true)?;
             }
@@ -345,7 +345,7 @@ impl Store {
         write_documents(&tx, &plan.before)?;
         tx.commit()?;
         for row in &plan.rows {
-            self.note_selection_scope(&serde_json::from_str(&row.raw)?);
+            self.note_selection_scope(&serde_json::from_str(row.bot_document())?);
         }
         if let Some(Some(projects)) = plan.before.get("projects.json") {
             self.note_project_scopes(projects);

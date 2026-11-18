@@ -10,7 +10,7 @@ pub(super) struct State {
     /// The last presentation for each visited thread, including a closed one.
     /// This lets switching stay immediate even while the store is busy.
     choices: std::collections::BTreeMap<String, Option<SavedPanel>>,
-    /// Snapshot loaded before the selected conversation is presented. Local
+    /// Saved panel choices can be read independently of the conversation. Local
     /// edits in `choices` always take precedence over this display-only cache.
     document: Option<Value>,
     deferred_browser_hides: std::collections::BTreeSet<String>,
@@ -70,23 +70,6 @@ impl State {
             }
             None => read_saved_choice(engine, id),
         }
-    }
-    /// Resolve the destination before changing the visible conversation. A
-    /// temporarily busy store keeps the previous layout on screen until the
-    /// target panel and thread can be presented together.
-    pub(super) fn prepare_destination(&mut self, engine: &SharedEngine, id: &str) -> Result<bool> {
-        match self.choice(engine, id)? {
-            SavedChoice::Deferred => Ok(false),
-            SavedChoice::Ready(choice) => {
-                self.choices.insert(id.to_owned(), choice);
-                Ok(true)
-            }
-        }
-    }
-    /// A damaged saved preference must not make the conversation inaccessible.
-    /// Keep the fallback in memory; do not overwrite the saved document.
-    pub(super) fn fallback_destination(&mut self, id: &str) {
-        self.choices.insert(id.to_owned(), None);
     }
     /// Persist outside the UI thread: SQLite can wait on another writer even
     /// after the engine mutex was acquired. Keep newer choices while an older
@@ -634,10 +617,8 @@ mod tests {
             .unwrap();
         let engine = Arc::new(Mutex::new(Engine::new(store)));
         let mut cached = State::load(&engine);
-        let mut cold = State::default();
+        let cold = State::default();
         let held = engine.lock().unwrap();
-        assert!(cached.prepare_destination(&engine, open).unwrap());
-        assert!(cached.prepare_destination(&engine, closed).unwrap());
         assert_eq!(
             cached.choice(&engine, open).unwrap(),
             SavedChoice::Ready(Some(SavedPanel::PullRequests))
@@ -646,7 +627,7 @@ mod tests {
             cached.choice(&engine, closed).unwrap(),
             SavedChoice::Ready(None)
         );
-        assert!(!cold.prepare_destination(&engine, open).unwrap());
+        assert_eq!(cold.choice(&engine, open).unwrap(), SavedChoice::Deferred);
         cached
             .pending
             .insert(open.into(), Some(SavedPanel::Preview));
@@ -655,7 +636,6 @@ mod tests {
             SavedChoice::Ready(Some(SavedPanel::Preview))
         );
         drop(held);
-        assert!(cold.prepare_destination(&engine, open).unwrap());
         assert_eq!(
             cold.choice(&engine, open).unwrap(),
             SavedChoice::Ready(Some(SavedPanel::PullRequests))
@@ -674,8 +654,8 @@ mod tests {
         let engine = Arc::new(Mutex::new(Engine::new(store)));
         let mut state = State::load(&engine);
         let id = "00000000-0000-4000-8000-000000000001";
-        assert!(state.prepare_destination(&engine, id).is_err());
-        state.fallback_destination(id);
+        assert!(state.choice(&engine, id).is_err());
+        state.choices.insert(id.into(), None);
         assert_eq!(state.choice(&engine, id).unwrap(), SavedChoice::Ready(None));
         assert_eq!(
             engine

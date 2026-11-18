@@ -128,6 +128,7 @@ fn a_run_connects_on_its_first_provider_event_and_its_clock_ends_with_it() {
     let project = store.create_project(dir.path(), Some("fixture")).unwrap();
     let mut thread = store.new_thread(project["id"].as_str().unwrap()).unwrap();
     thread["selection"] = json!({"provider":"unsupported-clock-fixture","modelID":"default"});
+    thread["items"] = json!([{"id":"fixture-prompt","kind":"user","text":"synthetic"}]);
     store.save(&thread).unwrap();
     let id = text(&thread, "id");
     let mut engine = Engine::fixture(store);
@@ -145,12 +146,13 @@ fn a_run_connects_on_its_first_provider_event_and_its_clock_ends_with_it() {
         drop(commands);
     });
     let before = swift_timestamp();
-    engine.insert_running(id.clone(), running(session));
+    engine.insert_running_for_turn(id.clone(), running(session), Some("fixture-prompt".into()));
     let status = |engine: &mut Engine| {
         engine.dispatch(json!({"method":"app.status","params":{}}))["result"]["runClocks"].clone()
     };
     let clock = status(&mut engine)[&id].clone();
     assert_eq!(clock["connecting"], true);
+    assert_eq!(clock["openerId"], "fixture-prompt");
     assert_eq!(
         engine.dispatch(json!({"method":"app.status","params":{}}))["result"]["starting"],
         json!([id.clone()])

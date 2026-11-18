@@ -7,6 +7,7 @@ pub(super) struct Operation {
     pub(super) thread: String,
     text: String,
     context: Value,
+    queue_id: Option<String>,
     images: Vec<crate::attachments::StoredImage>,
     ticket: Ticket,
     outcome: Option<Outcome>,
@@ -157,7 +158,7 @@ impl Engine {
         );
         run.session.steer_text(&runtime_text)?;
         let item_id = Uuid::new_v4().to_string();
-        self.persist_text_steer(thread, &item_id, &text, &context, &provider)?;
+        self.persist_text_steer(thread, &item_id, &text, &context, &provider, None)?;
         Ok(json!({"operationId":item_id,"threadId":thread,"status":"delivered","persisted":true}))
     }
 
@@ -170,6 +171,7 @@ impl Engine {
         text: &str,
         context: &Value,
         provider: &str,
+        queue_id: Option<&str>,
     ) -> Result<()> {
         let mut saved = if let Some(unsaved) = self.unsaved_threads.get(thread) {
             unsaved.clone()
@@ -185,6 +187,9 @@ impl Engine {
             item["provider"] = json!(provider);
             if crate::composer_context::has_context(context) {
                 item["context"] = context.clone();
+            }
+            if let Some(queue_id) = queue_id {
+                crate::message_queue::complete_steered(&mut saved, queue_id)?;
             }
         }
         if let Err(error) = self.store.save_with_usage(
@@ -364,6 +369,7 @@ impl Engine {
                 thread: thread.into(),
                 text: text.into(),
                 context,
+                queue_id: queued.map(|claim| claim.id().to_owned()),
                 images,
                 ticket,
                 outcome: None,
@@ -428,6 +434,9 @@ impl Engine {
                     }
                     if !op.images.is_empty() {
                         item["rustImages"] = serde_json::to_value(&op.images)?;
+                    }
+                    if let Some(queue_id) = &op.queue_id {
+                        crate::message_queue::complete_steered(&mut thread, queue_id)?;
                     }
                 }
                 if let Err(error) = self.store.save_with_usage(

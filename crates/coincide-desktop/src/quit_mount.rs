@@ -10,7 +10,155 @@ fn workflow_drained(status: &worker_owner::ShutdownStatus) -> bool {
         && status.unclassified == 0
         && status.pending_pickers == 0
 }
+#[cfg(target_os = "macos")]
+const QUIT_WINDOW_GRACE: Duration = Duration::from_secs(2);
+
+#[cfg(target_os = "macos")]
+fn should_reveal_quit_progress(hidden_for: Duration, blocked: bool) -> bool {
+    blocked || hidden_for >= QUIT_WINDOW_GRACE
+}
+
 impl Coincide {
+    pub(super) fn begin_normal_shutdown(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.media.shutdown_requested {
+            return;
+        }
+        self.media.shutdown_requested = true;
+        #[cfg(target_os = "macos")]
+        if window.visibility().is_visible() {
+            // Hiding keeps the original window and its owner alive while the
+            // normal shutdown tick saves and joins outstanding work.
+            self.quit_windows_hidden_since = Some(Instant::now());
+            cx.hide();
+        }
+        let _ = window;
+        cx.notify();
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn reveal_quit_progress_if_needed(
+        &mut self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.quit_windows_hidden_since.is_some_and(|started| {
+            should_reveal_quit_progress(started.elapsed(), self.quit_blocker(cx).is_some())
+        }) {
+            self.quit_windows_hidden_since = None;
+            cx.activate(false);
+            window.activate_window();
+        }
+    }
+
+    fn quit_blocker(&self, cx: &App) -> Option<String> {
+        use crate::updater_lifecycle::LifecycleState;
+        let runtime_error = self
+            .quit_runtime
+            .as_ref()
+            .and_then(|runtime| runtime.status().error);
+        if let Some(error) = self.quit_runtime_error.clone().or(runtime_error) {
+            return Some(format!("Coincide couldn’t finish saving. {error}"));
+        }
+        if self.pending_drafts.values().any(|draft| draft.failed) {
+            return Some("A draft couldn’t be saved. Retry saving to finish.".into());
+        }
+        if matches!(
+            self.updater_settings.read(cx).model.lifecycle(),
+            Some(LifecycleState::ConsentUncertain(_))
+        ) {
+            return Some(self.status.to_string());
+        }
+        None
+    }
+
+    pub(super) fn quit_progress_view(
+        &self,
+        cookie_recovery: Option<AnyElement>,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let theme = cx.theme();
+        let foreground = theme.foreground;
+        let muted = theme.muted_foreground;
+        let border = theme.border;
+        let background = theme.background;
+        let panel = theme.popover;
+        let blocker = self.quit_blocker(cx);
+        let heading = if blocker.is_some() {
+            "Coincide needs your attention"
+        } else if self.media.shutdown_requested {
+            "Quitting Coincide"
+        } else {
+            "Closing window"
+        };
+        div()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .p_6()
+            .bg(background)
+            .text_color(foreground)
+            .child(
+                div()
+                    .id("quit-progress")
+                    .role(Role::Dialog)
+                    .aria_label(heading)
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .w_full()
+                    .max_w(px(560.))
+                    .max_h_full()
+                    .overflow_y_scroll()
+                    .p_5()
+                    .rounded(px(12.))
+                    .border_1()
+                    .border_color(border)
+                    .bg(panel)
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .when(blocker.is_none(), |row| {
+                                row.child(gpui_kit::component::spinner::Spinner::new().small())
+                            })
+                            .child(heading),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(muted)
+                            .child(blocker.unwrap_or_else(|| "Saving your work…".into())),
+                    )
+                    .when_some(cookie_recovery, |view, recovery| view.child(recovery))
+                    .when(self.appshots.private_cleanup_pending(), |view| {
+                        view.child(div().text_sm().child(self.appshots.outcome.clone()))
+                            .child(
+                                Button::new("quit-retry-appshot-cleanup")
+                                    .label("Retry capture cleanup")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.appshots.retry_private_cleanup();
+                                        cx.notify();
+                                    })),
+                            )
+                    })
+                    .when(!self.pending_drafts.is_empty(), |view| {
+                        view.child(Button::new("quit-retry-save").label("Retry save").on_click(
+                            cx.listener(|this, _, _, cx| {
+                                draft_close::retry_failed(&mut this.pending_drafts);
+                                this.flush_pending_drafts();
+                                cx.notify();
+                            }),
+                        ))
+                    })
+                    .when(!self.media_shutdown_ready(cx), |view| {
+                        view.child(self.media_settings_pane(cx))
+                    }),
+            )
+    }
+
     pub(super) fn poll_cookie_close(&mut self, cx: &mut Context<Self>) -> bool {
         // Synchronous context invalidation precedes any native progress. The
         // closed panel retains worker/picker and cleanup-only retry custody.
@@ -380,5 +528,25 @@ impl Coincide {
                 "Finishing background work. Your data remains open until saving completes.".into();
         }
         status.complete() && external
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::{QUIT_WINDOW_GRACE, should_reveal_quit_progress};
+    use std::time::Duration;
+
+    #[test]
+    fn ordinary_quit_stays_hidden_during_the_grace_period() {
+        assert!(!should_reveal_quit_progress(
+            Duration::from_millis(100),
+            false
+        ));
+        assert!(should_reveal_quit_progress(QUIT_WINDOW_GRACE, false));
+    }
+
+    #[test]
+    fn quit_recovery_can_reveal_the_window_immediately() {
+        assert!(should_reveal_quit_progress(Duration::ZERO, true));
     }
 }

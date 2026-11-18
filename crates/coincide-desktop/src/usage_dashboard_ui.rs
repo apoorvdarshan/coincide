@@ -577,11 +577,7 @@ impl Coincide {
                 div()
                     .text_xs()
                     .text_color(muted)
-                    .child(if totals.has_priced_tokens() {
-                        format!("≈ {}", format::cost(totals.cost))
-                    } else {
-                        "No cost estimate".into()
-                    }),
+                    .child(format::cost_of(totals, partial)),
             )
             .when_some((!partial).then_some(trend).flatten(), |view, trend| {
                 view.child(
@@ -721,6 +717,9 @@ impl Coincide {
             .collect::<Vec<_>>();
         let mut buckets = vec![std::collections::BTreeMap::<&str, f64>::new(); dates.len()];
         for row in &report.days {
+            if cost && !row.totals.has_priced_tokens() {
+                continue;
+            }
             let offset = (row.day - start).num_days();
             if offset >= 0 && row.day <= today {
                 let index = (offset as u64 / u64::from(bucket_days)) as usize;
@@ -968,7 +967,7 @@ impl Coincide {
                     .flex()
                     .justify_end()
                     .text_color(self.usage_muted(cx))
-                    .child(format::cost_of(totals)),
+                    .child(format::cost_of(totals, false)),
             )
             .into_any_element()
     }
@@ -1119,7 +1118,11 @@ impl Coincide {
                         .flex()
                         .gap(px(10.))
                         .child(format::tokens(totals.tokens.total()))
-                        .child(div().text_color(muted).child(format::cost_of(totals)))
+                        .child(
+                            div()
+                                .text_color(muted)
+                                .child(format::cost_of(totals, false)),
+                        )
                         .into_any_element(),
                     None => div()
                         .text_color(muted)
@@ -1508,6 +1511,15 @@ impl Coincide {
                     "No reported usage in this period."
                 })
                 .into_any_element()
+        } else if dashboard.cost && !report.period.has_priced_tokens() {
+            div()
+                .h(px(120.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_color(muted)
+                .child("No cost estimate for this period.")
+                .into_any_element()
         } else {
             self.usage_chart(&report, days, cx)
         };
@@ -1552,13 +1564,13 @@ impl Coincide {
                         div()
                             .text_xs()
                             .text_color(muted)
-                            .child("Estimated API cost"),
+                            .child("Standard API estimate"),
                     )
                     .child(
                         div()
                             .text_lg()
                             .font_weight(FontWeight::MEDIUM)
-                            .child(format::cost_of(&report.period)),
+                            .child(format::cost_of(&report.period, partial(days))),
                     ),
             );
         let mut activity = vec![summary.into_any_element()];
@@ -1653,7 +1665,7 @@ impl Coincide {
                             format!(
                                 "{} tracked tokens · {}",
                                 format::tokens(tracked.tokens.total()),
-                                format::cost_of(tracked)
+                                format::cost_of(tracked, false)
                             )
                         })
                         .into_any_element(),
@@ -1877,7 +1889,7 @@ impl Coincide {
             .text_xs()
             .text_color(muted)
             .child(
-                "Cost estimates use API list prices. Subscription plans aren’t billed per token.",
+                "Estimates apply standard API rates to local token counts. Subscription limits measure plan usage separately.",
             );
         if report.period.unpriced_tokens > 0 {
             notes = notes.child(format!(

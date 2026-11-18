@@ -115,7 +115,9 @@ mod composer_context_api;
 mod composer_file_reference;
 #[path = "composer_suggestions_api.rs"]
 mod composer_suggestions_api;
-pub use composer_suggestions_api::{NativeCommandDiscovery, NativeCommandReceipt};
+pub use composer_suggestions_api::{
+    NativeCommandDiscovery, NativeCommandReceipt, native_command_scope,
+};
 #[path = "terminal_activity_api.rs"]
 mod terminal_activity_api;
 #[path = "terminal_context_api.rs"]
@@ -249,6 +251,7 @@ struct RunClock {
 pub struct Engine {
     appshots_owner: Uuid,
     thread_bulk_owner: Uuid,
+    thread_delete_backups: HashMap<String, std::sync::Weak<String>>,
     native_move_undos: HashMap<String, Uuid>,
     composer_file_owner: Uuid,
     codex_profile_login: Option<agent::codex_profile_login::Operation>,
@@ -343,6 +346,10 @@ impl ThreadReadSnapshot {
 const SAVED_MODEL_CATALOG: &str = "model-catalog.json";
 
 impl Engine {
+    pub fn unsaved_thread_for_navigation(&self, id: &str) -> Option<Value> {
+        self.unsaved_threads.get(id).cloned()
+    }
+
     pub fn capture_thread_read(&self, id: &str) -> Result<(u64, ThreadReadSnapshot, Option<bool>)> {
         let thread = match self.unsaved_threads.get(id) {
             Some(thread) => ThreadReadSnapshot::Unsaved(thread.clone()),
@@ -470,6 +477,7 @@ impl Engine {
         let mut engine = Self {
             appshots_owner: Uuid::new_v4(),
             thread_bulk_owner: Uuid::new_v4(),
+            thread_delete_backups: HashMap::new(),
             native_move_undos: HashMap::new(),
             composer_file_owner: Uuid::new_v4(),
             codex_profile_login: None,
@@ -570,6 +578,7 @@ impl Engine {
                 | "bots.list"
                 | "threads.list"
                 | "threads.read"
+                | "composer.commands"
                 | "schedules.list"
                 | "browser.request"
                 | "browser.result"
@@ -1937,6 +1946,9 @@ impl Engine {
                 let item = v["items"].as_array_mut().unwrap().last_mut().unwrap();
                 item["rustQueueMessageID"] = json!(claim.id());
                 item["rustAwaitingQueueDelivery"] = json!(true);
+                if claim.presents_immediately() {
+                    item["rustImmediateQueueDelivery"] = json!(true);
+                }
             }
             if crate::composer_context::has_context(&context) {
                 v["items"].as_array_mut().unwrap().last_mut().unwrap()["context"] = context;
@@ -2086,7 +2098,12 @@ impl Engine {
                     let clock = self.run_clocks.get(id)?;
                     Some((
                         id.clone(),
-                        json!({"startedAt":clock.started_at,"runId":clock.run_id.to_string(),"connecting":!clock.connected}),
+                        json!({
+                            "startedAt":clock.started_at,
+                            "runId":clock.run_id.to_string(),
+                            "connecting":!clock.connected,
+                            "openerId":clock.opener,
+                        }),
                     ))
                 })
                 .collect(),
@@ -2238,6 +2255,21 @@ impl Engine {
         self.poll_model_catalog_shutdown_request();
         Ok(self.model_catalog.shutdown_status())
     }
+    fn owns_queue_dispatch(&self, thread: &str, id: &str) -> bool {
+        self.active_queue_dispatches(thread)
+            .any(|active| active == id)
+    }
+
+    /// Runtime ownership is separate from the durable claim. A previous
+    /// launch or a missing acknowledgement can leave an unowned receipt.
+    pub fn active_queue_dispatches<'a>(&'a self, thread: &'a str) -> impl Iterator<Item = &'a str> {
+        self.runs
+            .get(thread)
+            .and_then(|run| run.queue_claim.as_deref())
+            .into_iter()
+            .chain(self.native_follow_up.active_queue_dispatches(thread))
+    }
+
     fn queue_command(&mut self, method: &str, p: &Value) -> Result<Value> {
         self.require_admissions()?;
         use crate::message_queue::{self as queue, State};
@@ -2305,9 +2337,10 @@ impl Engine {
                     "Restore this thread before resuming messages"
                 );
                 let mut messages = queue::read(&thread)?;
-                let active = self.runs.get(id).and_then(|run| run.queue_claim.as_deref());
                 for message in &mut messages {
-                    if message.state == State::Dispatching && active != Some(message.id.as_str()) {
+                    if message.state == State::Dispatching
+                        && !self.owns_queue_dispatch(id, &message.id)
+                    {
                         message.state = State::Interrupted;
                         message.error = Some("Previous dispatch was interrupted or unconfirmed; it will not be replayed automatically".into());
                     }
@@ -2328,9 +2361,7 @@ impl Engine {
                     // Removing a row cannot recall a prompt already handed to
                     // a provider. Hide it while retaining its owned claim so
                     // later acknowledgement and recovery remain exactly once.
-                    let owned = self.runs.get(id).and_then(|run| run.queue_claim.as_deref())
-                        == Some(message_id);
-                    if !owned {
+                    if !self.owns_queue_dispatch(id, message_id) {
                         // No current worker can acknowledge this old claim.
                         // It stays non-replayable, but must not keep the queue
                         // and provider switch blocked after the user dismisses it.
@@ -2453,6 +2484,28 @@ impl Engine {
         }
         Ok(())
     }
+    fn launch_next_queue_turn(&mut self, id: &str) -> Result<bool> {
+        let Some(claim) = self.claim_next_queue_turn(id)? else {
+            return Ok(false);
+        };
+        let prompt = claim.text().to_owned();
+        let origin = SendOrigin::Queued(Box::new(claim));
+        match self.send_turn_if_unchanged(
+            &json!({"threadId":id,"text":prompt}),
+            &origin,
+            None,
+            false,
+        ) {
+            Ok(_) => Ok(true),
+            Err(error) => {
+                if let SendOrigin::Queued(claim) = &origin {
+                    self.fail_queue_claim(claim, &error.to_string())?;
+                }
+                Err(error)
+            }
+        }
+    }
+
     fn poll_message_queues(&mut self) {
         if self.admissions_frozen() {
             return;
@@ -2488,27 +2541,7 @@ impl Engine {
                 }
             }
             self.queue_catalog_poll_after.remove(&id);
-            let launched = (|| -> Result<bool> {
-                let Some(claim) = self.claim_next_queue_turn(&id)? else {
-                    return Ok(false);
-                };
-                let prompt = claim.text().to_owned();
-                let origin = SendOrigin::Queued(Box::new(claim));
-                match self.send_turn_if_unchanged(
-                    &json!({"threadId":id,"text":prompt}),
-                    &origin,
-                    None,
-                    false,
-                ) {
-                    Ok(_) => Ok(true),
-                    Err(error) => {
-                        if let SendOrigin::Queued(claim) = &origin {
-                            self.fail_queue_claim(claim, &error.to_string())?;
-                        }
-                        Err(error)
-                    }
-                }
-            })();
+            let launched = self.launch_next_queue_turn(&id);
             if !matches!(launched, Ok(true)) {
                 self.enabled_queues.remove(&id);
                 self.revision += 1;
@@ -2793,6 +2826,7 @@ impl Engine {
             })
     }
     pub fn poll(&mut self) {
+        self.reap_thread_deletion_backups();
         self.poll_provider_restore();
         self.poll_codex_profile_login();
         self.poll_steering();
@@ -2967,10 +3001,7 @@ impl Engine {
                             } else {
                                 Value::Null
                             };
-                            let folder = self
-                                .working_directory(&v)
-                                .ok()
-                                .and_then(|path| path.canonicalize().ok());
+                            let folder = self.composer_command_directory(&v).ok();
                             self.composer_commands.record(
                                 &id,
                                 &provider,
@@ -3259,10 +3290,7 @@ impl Engine {
                                     } else {
                                         Value::Null
                                     };
-                                    let folder = self
-                                        .working_directory(&v)
-                                        .ok()
-                                        .and_then(|path| path.canonicalize().ok());
+                                    let folder = self.composer_command_directory(&v).ok();
                                     self.composer_commands.record(
                                         &id,
                                         &provider,

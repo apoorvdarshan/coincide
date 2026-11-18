@@ -1,7 +1,7 @@
 //! Native profiles and reviewed browser data import.
 use crate::native_menu::AccessibleMenuExt as _;
 use crate::worker_owner::{ShutdownStatus as WorkerOwnerStatus, WorkerOwner};
-use anyhow::{Result, ensure};
+use anyhow::{Context as _, Result, ensure};
 use coincide_core::{
     api::SharedEngine,
     browser_bookmarks::{self, Library, Plan},
@@ -157,6 +157,7 @@ pub struct ProfileSnapshot {
     pub revision: u64,
     pub profiles: Vec<ProfileMetadata>,
     pub selected: ProfileChoice,
+    pub shared_profile: Uuid,
     pub open_tabs: usize,
     pub persistent_profiles_available: bool,
     pub private_by_default: bool,
@@ -166,6 +167,8 @@ pub enum ProfileOperation {
     Select(ProfileChoice),
     CreateFresh(String),
     SetPrivateDefault(bool),
+    SetSharedProfile(Uuid),
+    OpenSharedBrowser,
     ClearData {
         kind: ClearDataKind,
         history_revision: Option<u64>,
@@ -197,6 +200,7 @@ pub(crate) struct ProfileCatalog {
     pub profiles: Vec<ProfileMetadata>,
     selections: BTreeMap<String, ProfileChoice>,
     private_by_default: bool,
+    shared_profile: Uuid,
     raw_document: Value,
 }
 impl ProfileCatalog {
@@ -255,6 +259,16 @@ impl ProfileCatalog {
                     "Rust default profile identity mismatch"
                 );
             }
+            let original_default = parsed.iter().find(|profile| profile.is_default).unwrap().id;
+            let shared_profile = match value.get("sharedProfileID") {
+                None => original_default,
+                Some(value) => {
+                    let id =
+                        Uuid::parse_str(value.as_str().context("Invalid shared browser profile")?)?;
+                    ensure!(ids.contains(&id), "Shared browser profile is missing");
+                    id
+                }
+            };
             ensure!(
                 value.get("threads").is_none_or(Value::is_object),
                 "Invalid browser thread choices"
@@ -283,20 +297,23 @@ impl ProfileCatalog {
                 profiles: parsed,
                 selections,
                 private_by_default: value["usesPrivateSessions"].as_bool().unwrap_or(false),
+                shared_profile,
                 raw_document: value,
             }
         } else {
+            let shared_profile = legacy_rust_default.unwrap_or_else(Uuid::new_v4);
             Self {
                 root,
                 revision: 0,
                 profiles: vec![ProfileMetadata {
-                    id: legacy_rust_default.unwrap_or_else(Uuid::new_v4),
+                    id: shared_profile,
                     name: "Default".into(),
                     is_default: true,
                     cookie_import: None,
                 }],
                 selections: BTreeMap::new(),
                 private_by_default: false,
+                shared_profile,
                 raw_document: json!({"version":1,"profiles":[],"threads":{}}),
             }
         };
@@ -310,9 +327,12 @@ impl ProfileCatalog {
             if self.private_by_default {
                 ProfileChoice::Private
             } else {
-                ProfileChoice::Persistent(self.profiles.iter().find(|p| p.is_default).unwrap().id)
+                ProfileChoice::Persistent(self.shared_profile)
             }
         })
+    }
+    pub fn shared_profile(&self) -> Uuid {
+        self.shared_profile
     }
     pub fn snapshot(&self, thread: &str, open_tabs: usize) -> ProfileSnapshot {
         ProfileSnapshot {
@@ -320,6 +340,7 @@ impl ProfileCatalog {
             revision: self.revision,
             profiles: self.profiles.clone(),
             selected: self.selected(thread),
+            shared_profile: self.shared_profile,
             open_tabs,
             persistent_profiles_available: true,
             private_by_default: self.private_by_default,
@@ -339,11 +360,37 @@ impl ProfileCatalog {
         let old_profiles = self.profiles.clone();
         let old_selections = self.selections.clone();
         let old_default = self.private_by_default;
+        let old_shared = self.shared_profile;
         match request.operation {
             ProfileOperation::ClearData { .. } => {
                 anyhow::bail!("Browsing data must be cleared by its native owner")
             }
+            ProfileOperation::OpenSharedBrowser => {
+                anyhow::bail!("Open the shared browser through its native owner")
+            }
             ProfileOperation::SetPrivateDefault(enabled) => self.private_by_default = enabled,
+            ProfileOperation::SetSharedProfile(id) => {
+                if id == old_shared {
+                    return Ok(());
+                }
+                ensure!(
+                    self.profiles.iter().any(|profile| profile.id == id
+                        && profile.cookie_import != Some(CookieImportMarker::Incomplete)),
+                    "Choose an available browser profile with a completed import"
+                );
+                ensure!(
+                    open_tabs == 0,
+                    "Close tabs using the current shared profile before switching it."
+                );
+                // Earlier versions pinned the default the first time a thread
+                // opened a tab. Move those bindings along with the default.
+                for choice in self.selections.values_mut() {
+                    if *choice == ProfileChoice::Persistent(old_shared) {
+                        *choice = ProfileChoice::Persistent(id);
+                    }
+                }
+                self.shared_profile = id;
+            }
             ProfileOperation::Select(choice) => {
                 ensure!(
                     open_tabs == 0,
@@ -383,6 +430,7 @@ impl ProfileCatalog {
             self.profiles = old_profiles;
             self.selections = old_selections;
             self.private_by_default = old_default;
+            self.shared_profile = old_shared;
             return Err(error);
         }
         self.revision = self.revision.wrapping_add(1);
@@ -524,6 +572,14 @@ impl ProfileCatalog {
         let mut value = self.raw_document.clone();
         if self.private_by_default || value.get("usesPrivateSessions").is_some() {
             value["usesPrivateSessions"] = json!(self.private_by_default);
+        }
+        if value.get("sharedProfileID").is_some()
+            || !self
+                .profiles
+                .iter()
+                .any(|profile| profile.id == self.shared_profile && profile.is_default)
+        {
+            value["sharedProfileID"] = json!(self.shared_profile);
         }
         let old = value["profiles"].as_array().cloned().unwrap_or_default();
         let profiles=self.profiles.iter().map(|profile| {
@@ -1308,6 +1364,12 @@ impl BrowserSettings {
         });
         cx.notify();
     }
+    pub fn set_shared_open_result(&mut self, result: Result<(), String>, cx: &mut Context<Self>) {
+        self.profile_pending = false;
+        if let Err(error) = result {
+            self.set_cookie_import_error(error, cx);
+        }
+    }
     pub fn set_clear_result(
         &mut self,
         thread: &str,
@@ -1603,6 +1665,40 @@ impl BrowserSettings {
                     .on_click(cx.listener(|this, enabled: &bool, _, cx| {
                         this.request(ProfileOperation::SetPrivateDefault(*enabled), cx);
                     }))));
+            let shared = snapshot.shared_profile;
+            let shared_label = snapshot
+                .profiles
+                .iter()
+                .find(|profile| profile.id == shared)
+                .map(|profile| profile.name.clone())
+                .unwrap_or_else(|| "Default".into());
+            let shared_options = snapshot.profiles.clone();
+            let named_supported = snapshot.persistent_profiles_available;
+            let parent = cx.entity().downgrade();
+            view = view.child(
+                div().flex().items_center().justify_between().gap_3()
+                    .child(div().flex_1().min_w_0().child("Shared browser profile")
+                        .child(div().text_xs().whitespace_normal().child("Share sign-ins across conversations. Private sessions and other profiles stay separate.")))
+                    .child(Button::new("browser-shared-profile")
+                        .label(shared_label).small().dropdown_caret(true)
+                        .disabled(busy || !named_supported)
+                        .accessibility_label("Shared browser profile")
+                        .accessible_menu(move |mut menu, _, _| {
+                            for profile in &shared_options {
+                                let id = profile.id;
+                                let parent = parent.clone();
+                                menu = menu.item(PopupMenuItem::new(profile.name.clone())
+                                    .checked(id == shared)
+                                    .disabled(profile.cookie_import == Some(CookieImportMarker::Incomplete))
+                                    .on_click(move |_, _, cx| {
+                                        let _ = parent.update(cx, |this, cx| {
+                                            this.request(ProfileOperation::SetSharedProfile(id), cx)
+                                        });
+                                    }));
+                            }
+                            menu
+                        })),
+            );
             let selected = snapshot.selected.clone();
             let label = match selected {
                 ProfileChoice::Private => "Private session".into(),
@@ -1983,6 +2079,88 @@ mod tests {
         assert_eq!(restarted.selected("new-private"), ProfileChoice::Private);
         assert_eq!(restarted.selected("another-new"), shared);
     }
+    #[::core::prelude::v1::test]
+    fn shared_profile_applies_to_existing_default_threads_and_survives_restart() {
+        let scratch = Scratch::new();
+        let original = Uuid::new_v4();
+        let existing = Uuid::new_v4().to_string();
+        let private = Uuid::new_v4().to_string();
+        let new_thread = Uuid::new_v4().to_string();
+        let mut catalog = ProfileCatalog::open(scratch.0.clone(), Some(original)).unwrap();
+        catalog.pin_selection(&existing).unwrap();
+        catalog
+            .apply(
+                &private,
+                request(
+                    &catalog,
+                    &private,
+                    ProfileOperation::Select(ProfileChoice::Private),
+                ),
+                0,
+            )
+            .unwrap();
+        catalog
+            .apply(
+                &existing,
+                request(
+                    &catalog,
+                    &existing,
+                    ProfileOperation::CreateFresh("Shared".into()),
+                ),
+                0,
+            )
+            .unwrap();
+        let shared = catalog
+            .profiles
+            .iter()
+            .find(|profile| profile.name == "Shared")
+            .unwrap()
+            .id;
+        assert!(
+            catalog
+                .apply(
+                    &existing,
+                    request(
+                        &catalog,
+                        &existing,
+                        ProfileOperation::SetSharedProfile(shared)
+                    ),
+                    1
+                )
+                .is_err()
+        );
+        assert_eq!(catalog.shared_profile(), original);
+
+        catalog
+            .apply(
+                &existing,
+                request(
+                    &catalog,
+                    &existing,
+                    ProfileOperation::SetSharedProfile(shared),
+                ),
+                0,
+            )
+            .unwrap();
+        let reopened = ProfileCatalog::open(scratch.0.clone(), Some(original)).unwrap();
+        assert_eq!(reopened.shared_profile(), shared);
+        assert_eq!(
+            reopened.selected(&existing),
+            ProfileChoice::Persistent(shared)
+        );
+        assert_eq!(
+            reopened.selected(&new_thread),
+            ProfileChoice::Persistent(shared)
+        );
+        assert_eq!(reopened.selected(&private), ProfileChoice::Private);
+        assert!(
+            reopened
+                .profiles
+                .iter()
+                .any(|profile| profile.id == original && profile.is_default)
+        );
+    }
+
     #[::core::prelude::v1::test]
     fn fresh_profiles_preserve_default_and_thread_choices_across_restart() {
         let scratch = Scratch::new();

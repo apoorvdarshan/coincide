@@ -176,28 +176,13 @@ fn registry_logo(id: &str, size: f32) -> AnyElement {
         })
 }
 
-fn enabled_patch(
-    settings: &Value,
-    provider: ProviderId,
-    expected: bool,
-    enabled: bool,
-) -> Result<Value> {
-    enabled_value_patch(settings, provider, expected, enabled)
-}
-
-fn enabled_value_patch(
-    settings: &Value,
-    provider: ProviderId,
-    expected: bool,
-    enabled: bool,
-) -> Result<Value> {
+fn enabled_patch(settings: &Value, key: &str, expected: bool, enabled: bool) -> Result<Value> {
     anyhow::ensure!(settings.is_object(), "Saved settings are malformed");
-    let current = coincide_core::provider_preferences::enabled(settings, provider_key(provider))?;
+    let current = coincide_core::provider_preferences::enabled(settings, key)?;
     anyhow::ensure!(
         current == expected,
         "Provider settings changed; review the current value"
     );
-    let key = provider_key(provider);
     let value = models_settings::provider_value(settings, key);
     anyhow::ensure!(
         value.is_null() || value.is_object(),
@@ -394,10 +379,9 @@ impl Coincide {
                     .label("Check sign-in")
                     .compact()
                     .ghost()
-                    .disabled(busy)
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.provider_configuration_panel.update(cx, |panel, cx| {
-                            panel.check_all(std::slice::from_ref(&target), window, cx);
+                            panel.check_acp_sign_in(&target, window, cx);
                         });
                     })),
             );
@@ -767,7 +751,7 @@ impl Coincide {
                 }
             }
             for agent in registry_agent_rows(&self.settings_navigation.agent_view, false, "") {
-                providers = providers.child(self.registry_agent_link(&agent, false, cx));
+                providers = providers.child(self.registry_agent_link(&agent, cx));
             }
             navigation = navigation.child(providers);
         }
@@ -906,7 +890,7 @@ impl Coincide {
 
     fn set_settings_provider_enabled(
         &mut self,
-        provider: ProviderId,
+        provider: &str,
         expected: bool,
         enabled: bool,
         window: &mut Window,
@@ -924,7 +908,7 @@ impl Coincide {
 
     fn apply_settings_provider_enabled(
         &mut self,
-        provider: ProviderId,
+        provider: &str,
         expected: bool,
         enabled: bool,
         window: &mut Window,
@@ -1044,94 +1028,160 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let provider = format!("acp-{id}");
         self.settings_navigation.registry_agent = Some((id, name));
         self.navigate_settings_section(Section::RegistryAgent, window, cx);
+        if self.settings_section == Section::RegistryAgent
+            && coincide_core::provider_configuration::native_sign_in_supported(&provider)
+            && coincide_core::provider_preferences::enabled(&self.settings, &provider)
+                .unwrap_or(false)
+            && self.settings_navigation.agent_view["registered"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|agent| agent["provider"] == provider)
+        {
+            self.provider_configuration_panel.update(cx, |panel, cx| {
+                panel.refresh_acp_sign_in_on_open(&provider, window, cx);
+            });
+        }
     }
 
-    fn registry_agent_summary(&self, id: &str, registered: bool, cx: &App) -> String {
-        let provider = format!("acp-{id}");
+    fn registry_agent_summary(&self, provider: &str, registered: bool, cx: &App) -> String {
         if !registered {
             "Detected · add to use".into()
-        } else if coincide_core::provider_configuration::native_sign_in_supported(&provider) {
-            self.provider_configuration_panel
-                .read(cx)
-                .summary(&provider)
+        } else if !coincide_core::provider_preferences::enabled(&self.settings, provider)
+            .unwrap_or(false)
+        {
+            "Off".into()
+        } else if coincide_core::provider_configuration::native_sign_in_supported(provider) {
+            self.provider_configuration_panel.read(cx).summary(provider)
         } else {
             "CLI configured".into()
         }
     }
 
-    pub(super) fn registry_agent_link(
-        &self,
-        agent: &Value,
-        overview: bool,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    pub(super) fn registry_agent_link(&self, agent: &Value, cx: &mut Context<Self>) -> AnyElement {
         let id = text(agent, "id");
+        let provider = format!("acp-{id}");
         let name = text(agent, "name");
         let registered = agent["registered"] == true;
-        let summary = self.registry_agent_summary(&id, registered, cx);
+        let summary = self.registry_agent_summary(&provider, registered, cx);
+        let enabled = registered
+            && coincide_core::provider_preferences::enabled(&self.settings, &provider)
+                .unwrap_or(false);
         let status = self
             .provider_configuration_panel
             .read(cx)
-            .status_dot(&format!("acp-{id}"), registered);
+            .status_dot(&provider, enabled);
         let selected = self.settings_section == Section::RegistryAgent
             && self
                 .settings_navigation
                 .registry_agent
                 .as_ref()
                 .is_some_and(|(selected, _)| selected == &id);
-        Button::new(SharedString::from(format!(
-            "settings-{}-acp-{id}",
-            if overview { "overview" } else { "sidebar" }
-        )))
-        .accessibility_label(format!("{name}, {summary}"))
-        .ghost()
-        .w_full()
-        .h_auto()
-        .selected(selected && !overview)
-        .when(!overview, |button| button.h(px(32.)).rounded(px(7.)))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .w_full()
-                .gap_2()
-                .py(if overview { px(8.) } else { px(5.) })
-                .child(registry_logo(&id, if overview { 28. } else { 20. }))
-                .child(
+        Button::new(SharedString::from(format!("settings-sidebar-{provider}")))
+            .accessibility_label(format!("{name}, {summary}"))
+            .ghost()
+            .w_full()
+            .h(px(32.))
+            .rounded(px(7.))
+            .selected(selected)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .w_full()
+                    .gap_2()
+                    .py(px(5.))
+                    .child(registry_logo(&id, 20.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .when(!enabled && !selected, |label| {
+                                label.text_color(self.color(0xe4e9f2).opacity(0.5))
+                            })
+                            .when(selected, |label| label.font_weight(FontWeight::SEMIBOLD))
+                            .child(name.clone()),
+                    )
+                    .child(div().size(px(7.)).rounded_full().bg(rgb(status.1))),
+            )
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.open_registry_agent(id.clone(), name.clone(), window, cx);
+            }))
+            .into_any_element()
+    }
+
+    fn provider_enable_switch(
+        &self,
+        provider: String,
+        name: &str,
+        enabled: bool,
+        id: SharedString,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        gpui_kit::component::switch::Switch::new(id)
+            .accessibility_label(format!("Use {name}"))
+            .checked(enabled)
+            .color(self.color(0x98b1d4))
+            .on_click(cx.listener(move |this, value: &bool, window, cx| {
+                this.set_settings_provider_enabled(&provider, enabled, *value, window, cx);
+            }))
+    }
+
+    fn provider_overview_row(
+        &self,
+        provider: &str,
+        name: String,
+        summary: String,
+        logo: AnyElement,
+        enabled: Option<bool>,
+        open: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let toggle = enabled.map(|enabled| {
+            self.provider_enable_switch(
+                provider.to_owned(),
+                &name,
+                enabled,
+                format!("provider-overview-use-{provider}").into(),
+                cx,
+            )
+            .into_any_element()
+        });
+        div()
+            .flex()
+            .flex_shrink_0()
+            .items_center()
+            .gap_3()
+            .p_4()
+            .rounded(px(10.))
+            .border_1()
+            .border_color(self.color(0x29303d))
+            .bg(self.color(0x111722))
+            .child(logo)
+            .child(
+                div().flex_1().min_w_0().child(name.clone()).child(
                     div()
-                        .flex_1()
-                        .min_w_0()
-                        .flex()
-                        .flex_col()
-                        .child(
-                            div()
-                                .truncate()
-                                .when(selected, |label| label.font_weight(FontWeight::SEMIBOLD))
-                                .child(name.clone()),
-                        )
-                        .when(overview, |label| {
-                            label.child(
-                                div()
-                                    .text_xs()
-                                    .truncate()
-                                    .text_color(self.color(0xe4e9f2).opacity(0.65))
-                                    .child(summary),
-                            )
-                        }),
-                )
-                .when(overview, |row| {
-                    row.child(Icon::new(gpui_kit::assets::IconName::ChevronRight).small())
-                })
-                .when(!overview, |row| {
-                    row.child(div().size(px(7.)).rounded_full().bg(rgb(status.1)))
-                }),
-        )
-        .on_click(cx.listener(move |this, _, window, cx| {
-            this.open_registry_agent(id.clone(), name.clone(), window, cx);
-        }))
-        .into_any_element()
+                        .text_xs()
+                        .text_color(self.color(0xe4e9f2).opacity(0.65))
+                        .child(summary),
+                ),
+            )
+            .when_some(toggle, |row, toggle| row.child(toggle))
+            .child(
+                Button::new(SharedString::from(format!(
+                    "provider-overview-open-{provider}"
+                )))
+                .icon(gpui_kit::assets::IconName::ChevronRight)
+                .ghost()
+                .small()
+                .accessibility_label(format!("Show {name} settings"))
+                .tooltip("Show settings")
+                .on_click(cx.listener(move |this, _, window, cx| open(this, window, cx))),
+            )
     }
 
     pub(super) fn registry_agent_pane(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -1146,10 +1196,13 @@ impl Coincide {
             .is_some_and(|agent| agent["registered"] == true);
         let provider = format!("acp-{id}");
         let summary = if agent.is_some() {
-            self.registry_agent_summary(id, registered, cx)
+            self.registry_agent_summary(&provider, registered, cx)
         } else {
             "Agent is no longer detected".into()
         };
+        let enabled = registered
+            && coincide_core::provider_preferences::enabled(&self.settings, &provider)
+                .unwrap_or(false);
         let action_id = id.clone();
         let actions = div().flex().flex_wrap().items_center().gap_2();
         let actions = if registered {
@@ -1207,7 +1260,16 @@ impl Coincide {
                                         .items_center()
                                         .gap_2()
                                         .child(registry_logo(id, 32.))
-                                        .child(summary),
+                                        .child(div().flex_1().child(summary))
+                                        .when(registered, |row| {
+                                            row.child(self.provider_enable_switch(
+                                                provider.clone(),
+                                                name,
+                                                enabled,
+                                                "provider-preferences-enabled".into(),
+                                                cx,
+                                            ))
+                                        }),
                                 )
                                 .child(actions)
                                 .when(!self.settings_status.is_empty(), |card| {
@@ -1220,7 +1282,6 @@ impl Coincide {
     }
 
     pub(super) fn providers_overview_pane(&self, cx: &mut Context<Self>) -> AnyElement {
-        let panel = self.provider_configuration_panel.read(cx);
         let mut pane = div()
             .id("providers-overview")
             .flex_1()
@@ -1255,77 +1316,43 @@ impl Coincide {
             let section = Section::Provider(provider);
             let enabled = provider_enabled(&self.settings, provider);
             let summary = if enabled {
-                panel.summary(provider_key(provider))
+                self.provider_configuration_panel
+                    .read(cx)
+                    .summary(provider_key(provider))
             } else {
                 "Off".into()
             };
-            pane = pane.child(
-                div()
-                    .flex()
-                    .flex_shrink_0()
-                    .items_center()
-                    .gap_3()
-                    .p_4()
-                    .rounded(px(10.))
-                    .border_1()
-                    .border_color(self.color(0x29303d))
-                    .bg(self.color(0x111722))
-                    .child(icon_tile(
-                        section,
-                        30.,
-                        self.color(0x202a3b),
-                        self.color(0xe4e9f2),
-                    ))
-                    .child(
-                        div().flex_1().child(descriptor.display_name).child(
-                            div()
-                                .text_xs()
-                                .text_color(self.color(0xe4e9f2).opacity(0.65))
-                                .child(summary),
-                        ),
-                    )
-                    .child(
-                        gpui_kit::component::switch::Switch::new(SharedString::from(format!(
-                            "provider-overview-use-{}",
-                            provider_key(provider)
-                        )))
-                        .accessibility_label(format!("Use {}", descriptor.display_name))
-                        .checked(enabled)
-                        .color(self.color(0x98b1d4))
-                        .on_click(cx.listener(
-                            move |this, value: &bool, window, cx| {
-                                this.set_settings_provider_enabled(
-                                    provider, enabled, *value, window, cx,
-                                )
-                            },
-                        )),
-                    )
-                    .child(
-                        Button::new(SharedString::from(format!(
-                            "provider-overview-open-{}",
-                            provider_key(provider)
-                        )))
-                        .icon(gpui_kit::assets::IconName::ChevronRight)
-                        .ghost()
-                        .small()
-                        .accessibility_label(format!("Show {} settings", descriptor.display_name))
-                        .tooltip("Show settings")
-                        .on_click(cx.listener(
-                            move |this, _, window, cx| {
-                                this.navigate_settings_section(section, window, cx)
-                            },
-                        )),
-                    ),
-            );
+            pane = pane.child(self.provider_overview_row(
+                provider_key(provider),
+                descriptor.display_name.into(),
+                summary,
+                icon_tile(section, 30., self.color(0x202a3b), self.color(0xe4e9f2)),
+                Some(enabled),
+                move |this, window, cx| this.navigate_settings_section(section, window, cx),
+                cx,
+            ));
         }
         let registry = &self.settings_navigation.agent_view;
-        let installed = registry_agent_rows(registry, false, "");
-        if !installed.is_empty() {
-            let mut agents = div().flex().flex_col();
-            for agent in installed {
-                agents = agents.child(self.registry_agent_link(&agent, true, cx));
-            }
-            pane = pane.child(self.settings_card(agents).flex_shrink_0());
+        for agent in registry_agent_rows(registry, false, "") {
+            let id = text(&agent, "id");
+            let name = text(&agent, "name");
+            let provider = format!("acp-{id}");
+            let registered = agent["registered"] == true;
+            let enabled = registered.then(|| {
+                coincide_core::provider_preferences::enabled(&self.settings, &provider)
+                    .unwrap_or(false)
+            });
+            pane = pane.child(self.provider_overview_row(
+                &provider,
+                name.clone(),
+                self.registry_agent_summary(&provider, registered, cx),
+                registry_logo(&id, 30.),
+                enabled,
+                move |this, window, cx| {
+                    this.open_registry_agent(id.clone(), name.clone(), window, cx);
+                },
+                cx,
+            ));
         }
         if registry.is_null() || (registry["loading"] == true && registry["agents"].is_null()) {
             pane = pane.child(
@@ -1410,7 +1437,11 @@ impl Coincide {
                                     .on_click(cx.listener(move |this, _, window, cx| {
                                         let enabled = provider_enabled(&this.settings, provider);
                                         this.apply_settings_provider_enabled(
-                                            provider, enabled, true, window, cx,
+                                            provider_key(provider),
+                                            enabled,
+                                            true,
+                                            window,
+                                            cx,
                                         );
                                         this.navigate_settings_section(
                                             Section::Provider(provider),
@@ -1545,7 +1576,8 @@ impl Coincide {
                                         this.settings_navigation.agent_view["registered"].as_array()
                                             .into_iter().flatten()
                                             .filter_map(|agent| agent["provider"].as_str())
-                                            .filter(|provider| coincide_core::provider_configuration::native_sign_in_supported(provider)),
+                                            .filter(|provider| coincide_core::provider_configuration::native_sign_in_supported(provider))
+                                            .filter(|provider| coincide_core::provider_preferences::enabled(&this.settings, provider).unwrap_or(false)),
                                     )
                                     .map(str::to_owned)
                                     .collect::<Vec<_>>();
@@ -1667,15 +1699,13 @@ impl Coincide {
                             }
                             .into(),
                         ),
-                        gpui_kit::component::switch::Switch::new("provider-preferences-enabled")
-                            .accessibility_label(format!("Use {}", section.label()))
-                            .checked(enabled)
-                            .color(self.color(0x98b1d4))
-                            .on_click(cx.listener(move |this, value: &bool, window, cx| {
-                                this.set_settings_provider_enabled(
-                                    provider, enabled, *value, window, cx,
-                                )
-                            })),
+                        self.provider_enable_switch(
+                            provider_key(provider).to_owned(),
+                            section.label(),
+                            enabled,
+                            "provider-preferences-enabled".into(),
+                            cx,
+                        ),
                     ),
                 ),
             );
@@ -1767,7 +1797,7 @@ mod tests {
     #[::core::prelude::v1::test]
     fn provider_toggle_preserves_unknown_fields_and_other_provider_records() {
         let current = json!({"providers":{"claude":{"future":{"keep":1},"customModels":["x"]},"codex":{"isEnabled":false,"future":2}},"future":3});
-        let patch = enabled_patch(&current, P::Claude, true, false).unwrap();
+        let patch = enabled_patch(&current, "claude", true, false).unwrap();
         assert_eq!(
             patch,
             json!({"providers":{"claude":{"future":{"keep":1},"customModels":["x"],"isEnabled":false},"codex":{"isEnabled":false,"future":2}}})
@@ -1780,11 +1810,24 @@ mod tests {
         let current =
             json!({"providers":["future",{"keep":7},"codex",{"isEnabled":false,"future":8}]});
         assert_eq!(
-            enabled_patch(&current, P::Codex, false, true).unwrap(),
+            enabled_patch(&current, "codex", false, true).unwrap(),
             json!({"providers":["future",{"keep":7},"codex",{"isEnabled":true,"future":8}]})
         );
-        assert!(enabled_patch(&current, P::Codex, true, false).is_err());
-        assert!(enabled_patch(&json!({"providers":["codex"]}), P::Codex, true, false).is_err());
+        assert!(enabled_patch(&current, "codex", true, false).is_err());
+        assert!(enabled_patch(&json!({"providers":["codex"]}), "codex", true, false).is_err());
+    }
+
+    #[::core::prelude::v1::test]
+    fn registered_agents_use_the_same_persisted_toggle_as_built_ins() {
+        let initial = json!({"providers":["codex",{"isEnabled":true},"acp-devin",{"opaque":7}]});
+        let off = enabled_patch(&initial, "acp-devin", true, false).unwrap();
+        assert_eq!(
+            off,
+            json!({"providers":["codex",{"isEnabled":true},"acp-devin",{"opaque":7,"isEnabled":false}]})
+        );
+        assert!(enabled_patch(&off, "acp-devin", true, true).is_err());
+        let on = enabled_patch(&off, "acp-devin", false, true).unwrap();
+        assert!(coincide_core::provider_preferences::enabled(&on, "acp-devin").unwrap());
     }
 
     #[::core::prelude::v1::test]
@@ -1807,7 +1850,7 @@ mod tests {
             json!(["antigravity",{"isEnabled":false,"opaque":42,"environment":{"SYNTHETIC_TEST_MODE":"fixture"}}]),
         ] {
             let initial = json!({"providers":providers});
-            let on = super::enabled_value_patch(&initial, P::Antigravity, false, true).unwrap();
+            let on = enabled_patch(&initial, "antigravity", false, true).unwrap();
             let value = super::models_settings::provider_value(&on, "antigravity");
             assert_eq!(value["isEnabled"], true);
             assert_eq!(value["opaque"], 42);
@@ -1815,20 +1858,20 @@ mod tests {
                 value["environment"],
                 json!({"SYNTHETIC_TEST_MODE":"fixture"})
             );
-            assert!(super::enabled_value_patch(&on, P::Antigravity, false, true).is_err());
-            let off = super::enabled_value_patch(&on, P::Antigravity, true, false).unwrap();
+            assert!(enabled_patch(&on, "antigravity", false, true).is_err());
+            let off = enabled_patch(&on, "antigravity", true, false).unwrap();
             assert!(!provider_enabled(&off, P::Antigravity));
             assert_eq!(
                 super::models_settings::provider_value(&off, "antigravity")["opaque"],
                 42
             );
-            assert!(enabled_patch(&initial, P::Antigravity, false, true).is_ok());
+            assert!(enabled_patch(&initial, "antigravity", false, true).is_ok());
         }
     }
     #[::core::prelude::v1::test]
     fn antigravity_can_be_enabled_for_api_key_setup_without_oauth_prompt() {
         assert!(provider_enabled(&json!({}), P::Antigravity));
-        assert!(enabled_patch(&json!({}), P::Antigravity, true, false).is_ok());
+        assert!(enabled_patch(&json!({}), "antigravity", true, false).is_ok());
     }
 
     #[::core::prelude::v1::test]

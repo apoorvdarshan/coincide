@@ -34,17 +34,25 @@ impl Engine {
     pub(super) fn create_terminal(&mut self, p: &Value, shell: &str) -> Result<Value> {
         ensure!(self.terminals.len() < 32, "Too many terminal panes");
         let thread = required(p, "threadId")?;
-        let v = self.store.thread(thread)?;
-        let cwd = self.working_directory(&v)?;
+        let v = self.store.thread_terminal_context(thread)?;
         let launch = match p.get("scriptId") {
             None | Some(Value::Null) => None,
             Some(id) => Some(self.project_script_launch(&v, id)?),
         };
-        let environment = launch
-            .as_ref()
-            .map_or(&[][..], |launch| &launch.environment);
-        let mut terminal =
-            crate::terminal::Terminal::spawn_with_environment(&cwd, shell, 24, 100, environment)?;
+        let mut terminal = if let Some(launch) = &launch {
+            let cwd = self.working_directory(&v)?;
+            crate::terminal::Terminal::spawn_with_environment(
+                &cwd,
+                shell,
+                24,
+                100,
+                &launch.environment,
+            )?
+        } else {
+            let start = self.terminal_start_directory(&v)?;
+            crate::terminal::Terminal::spawn_in(&start, shell, 24, 100)?
+        };
+        terminal.number = self.next_terminal_number(thread);
         let id = Uuid::new_v4().to_string();
         if let Some(launch) = &launch {
             // Swift TerminalSession.run: the command and Return, queued until

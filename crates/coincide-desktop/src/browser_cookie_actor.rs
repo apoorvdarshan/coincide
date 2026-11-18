@@ -427,6 +427,7 @@ mod tests {
             revision: 1,
             profiles: Vec::new(),
             selected: ProfileChoice::Private,
+            shared_profile: Uuid::nil(),
             open_tabs: 0,
             persistent_profiles_available: true,
             private_by_default: false,
