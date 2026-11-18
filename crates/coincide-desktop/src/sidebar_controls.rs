@@ -337,23 +337,17 @@ impl Coincide {
             self.toggle_sidebar_section("chats", cx);
             return;
         }
-        match call(
-            &self.engine,
-            "projects.patch",
-            json!({"projectId":id,"patch":{"isExpanded":expanded}}),
-        ) {
-            Ok(_) => {
-                if expanded {
-                    self.collapsed_projects.remove(id);
-                } else {
-                    self.collapsed_projects.insert(id.into());
-                }
-                self.refresh(cx);
-            }
-            Err(error) => {
-                self.status = format!("Project expansion could not be saved: {error}");
-                cx.notify();
-            }
+        if expanded {
+            self.collapsed_projects.remove(id);
+        } else {
+            self.collapsed_projects.insert(id.into());
         }
+        self.sidebar_preferences.set_project_expanded(id, expanded);
+        cx.notify();
+    }
+
+    pub(super) fn sidebar_toggle_project(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.thread_bulk.invalidate();
+        self.sidebar_expand_project(id, self.collapsed_projects.contains(id), cx);
     }
 }

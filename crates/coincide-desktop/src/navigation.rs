@@ -1127,8 +1127,7 @@ impl Coincide {
                             &group_id,
                             !renaming && !searching,
                             cx.listener(move |this, _, _, cx| {
-                                this.thread_bulk.invalidate();
-                                this.sidebar_expand_project(&row_target, collapsed, cx);
+                                this.sidebar_toggle_project(&row_target, cx);
                             }),
                         )
                         .when(!renaming, |row| {
@@ -1235,8 +1234,7 @@ impl Coincide {
                                 )
                                 .on_click(without_parent_click(cx.listener(
                                     move |this, _, _, cx| {
-                                        this.thread_bulk.invalidate();
-                                        this.sidebar_expand_project(&target, collapsed, cx);
+                                        this.sidebar_toggle_project(&target, cx);
                                     },
                                 )))
                                 .context_menu(

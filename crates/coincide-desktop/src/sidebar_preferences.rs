@@ -1,12 +1,19 @@
 //! Swift-compatible interface preferences. Every write merges one field into
 //! ui-state.json; unknown keys and sections survive this version's controls.
 use super::*;
+use std::collections::BTreeMap;
 pub(super) const SECTIONS: [&str; 4] = ["bots", "pinned", "projects", "chats"];
 #[derive(Clone)]
 pub(super) struct Preferences {
     pub document: Value,
     pub pending: bool,
     pub error: Option<String>,
+    expansion: Expansion,
+}
+#[derive(Clone, Default)]
+struct Expansion {
+    project_expansion: BTreeMap<String, bool>,
+    section_collapse: BTreeMap<String, bool>,
 }
 impl Preferences {
     pub fn load(engine: &SharedEngine) -> Self {
@@ -14,6 +21,7 @@ impl Preferences {
             document: json!({}),
             pending: true,
             error: None,
+            expansion: Expansion::default(),
         };
         state.retry(engine);
         state
@@ -57,9 +65,31 @@ impl Preferences {
         normalized_order(&self.strings("sidebarSections"))
     }
     pub fn collapsed(&self, section: &str) -> bool {
-        self.strings("collapsedSections")
-            .iter()
-            .any(|id| id == section)
+        self.expansion
+            .section_collapse
+            .get(section)
+            .copied()
+            .unwrap_or_else(|| {
+                self.document["collapsedSections"]
+                    .as_array()
+                    .is_some_and(|ids| ids.iter().any(|id| id == section))
+            })
+    }
+    pub fn toggle_section(&mut self, section: &str) {
+        let collapsed = !self.collapsed(section);
+        self.expansion
+            .section_collapse
+            .insert(section.into(), collapsed);
+    }
+    pub fn set_project_expanded(&mut self, id: &str, expanded: bool) {
+        self.expansion.project_expansion.insert(id.into(), expanded);
+    }
+    pub fn project_expanded(&self, project: &Value) -> bool {
+        project["id"]
+            .as_str()
+            .and_then(|id| self.expansion.project_expansion.get(id))
+            .copied()
+            .unwrap_or(project["isExpanded"] != false)
     }
     pub fn sort(&self, key: &str) -> &str {
         if key == "botSort" && !self.flag("choseBotSort") {
@@ -78,6 +108,63 @@ impl Preferences {
             .as_u64()
             .map(|value| value.min(10000) as usize)
             .unwrap_or_else(|| super::navigation::automatic_sidebar_limit(height))
+    }
+}
+
+impl Expansion {
+    fn is_empty(&self) -> bool {
+        self.project_expansion.is_empty() && self.section_collapse.is_empty()
+    }
+
+    fn save(&self, engine: &SharedEngine) -> Result<Option<Value>> {
+        let mut engine = try_state(engine)?;
+        anyhow::ensure!(!engine.admissions_frozen(), "App is closing");
+        let sections = if self.section_collapse.is_empty() {
+            None
+        } else {
+            let current = engine.store.document("ui-state.json")?.unwrap_or(json!({}));
+            anyhow::ensure!(current.is_object(), "Interface preferences are invalid");
+            let mut collapsed = current["collapsedSections"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            for (id, closed) in &self.section_collapse {
+                collapsed.retain(|entry| entry != id);
+                if *closed {
+                    collapsed.push(json!(id));
+                }
+            }
+            let mut document = engine
+                .store
+                .patch_document("ui-state.json", &json!({"collapsedSections": collapsed}))?;
+            Some(document["collapsedSections"].take())
+        };
+        if !self.project_expansion.is_empty() {
+            let mut document = engine.store.projects()?;
+            let projects = document.as_array_mut().context("Invalid projects")?;
+            self.apply_projects(projects);
+            engine.store.save_document("projects.json", &document)?;
+            engine.revision += 1;
+        }
+        Ok(sections)
+    }
+
+    fn apply_projects(&self, projects: &mut [Value]) {
+        for project in projects {
+            if let Some(expanded) = project["id"]
+                .as_str()
+                .and_then(|id| self.project_expansion.get(id))
+            {
+                project["isExpanded"] = json!(expanded);
+            }
+        }
+    }
+
+    fn remove_saved(&mut self, saved: &Self) {
+        self.project_expansion
+            .retain(|id, value| saved.project_expansion.get(id) != Some(value));
+        self.section_collapse
+            .retain(|id, value| saved.section_collapse.get(id) != Some(value));
     }
 }
 /// Numeric runs compare by value, matching the sidebar's natural name order.
@@ -224,13 +311,60 @@ impl Coincide {
         cx.notify();
     }
     pub(super) fn toggle_sidebar_section(&mut self, section: &str, cx: &mut Context<Self>) {
-        let mut collapsed = self.sidebar_preferences.strings("collapsedSections");
-        if self.sidebar_preferences.collapsed(section) {
-            collapsed.retain(|id| id != section);
-        } else {
-            collapsed.push(section.into());
+        self.sidebar_preferences.toggle_section(section);
+        self.thread_bulk.invalidate();
+        self.expanded_sidebar_lists.clear();
+        cx.notify();
+    }
+
+    pub(super) fn flush_sidebar_expansion(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.sidebar_expansion_saving {
+            return false;
         }
-        self.sidebar_preference("collapsedSections", json!(collapsed), cx);
+        if self.sidebar_preferences.expansion.is_empty() {
+            return true;
+        }
+        // A small SQLite write can still wait on a checkpoint. Keep it, and
+        // the engine lock attempt, off the input and rendering thread.
+        self.sidebar_expansion_saving = true;
+        let expansion = self.sidebar_preferences.expansion.clone();
+        let engine = self.engine.clone();
+        let work = cx.background_executor().spawn(async move {
+            let result = expansion.save(&engine);
+            (expansion, result)
+        });
+        cx.spawn(async move |this, cx| {
+            let (attempt, result) = work.await;
+            this.update(cx, |this, cx| {
+                this.sidebar_expansion_saving = false;
+                if let Err(error) = &result
+                    && engine_busy(error)
+                {
+                    return;
+                }
+                this.sidebar_preferences.expansion.remove_saved(&attempt);
+                match result {
+                    Ok(sections) => {
+                        if let Some(sections) = sections {
+                            this.sidebar_preferences.document["collapsedSections"] = sections;
+                        }
+                        if !attempt.project_expansion.is_empty() {
+                            attempt.apply_projects(&mut this.projects);
+                            this.sync_collapsed_projects();
+                        }
+                    }
+                    Err(error) => {
+                        this.sidebar_preferences.error =
+                            Some(format!("Sidebar expansion could not be saved: {error}"));
+                        this.sync_collapsed_projects();
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        false
     }
 
     pub(super) fn sidebar_preferences_notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -311,6 +445,67 @@ mod tests {
 #[cfg(test)]
 mod readiness_tests {
     use super::*;
+
+    #[::core::prelude::v1::test]
+    fn expansion_updates_during_contention_and_merges_with_newer_saved_fields() {
+        let root = tempfile::tempdir().unwrap();
+        let mut store = Store::open(&root.path().join("ui.sqlite")).unwrap();
+        let mut projects = json!([
+            {"id":"one","name":"One","isExpanded":true},
+            {"id":"two","name":"Two","isExpanded":true},
+        ]);
+        store.save_document("projects.json", &projects).unwrap();
+        let engine = Arc::new(Mutex::new(coincide_core::api::Engine::new(store)));
+        let mut preferences = Preferences::load(&engine);
+        let mut busy = engine.lock().unwrap();
+        preferences.set_project_expanded("one", false);
+        preferences.toggle_section("chats");
+        assert!(!preferences.project_expanded(&projects[0]));
+        assert!(preferences.collapsed("chats"));
+        let first_attempt = preferences.expansion.clone();
+        assert!(
+            first_attempt
+                .save(&engine)
+                .is_err_and(|error| engine_busy(&error))
+        );
+
+        // A second click supersedes the pending write while another owner
+        // changes other parts of the same saved documents.
+        preferences.set_project_expanded("one", true);
+        preferences.set_project_expanded("two", false);
+        projects[0]["name"] = json!("Renamed");
+        busy.store
+            .save_document("projects.json", &projects)
+            .unwrap();
+        busy.store
+            .save_document(
+                "ui-state.json",
+                &json!({
+                    "collapsedSections":["future-section"], "future":{"keep":true}
+                }),
+            )
+            .unwrap();
+        drop(busy);
+        first_attempt.save(&engine).unwrap();
+        preferences.expansion.remove_saved(&first_attempt);
+        let old_projects = engine.lock().unwrap().store.projects().unwrap();
+        assert_eq!(old_projects[0]["isExpanded"], false);
+        assert!(preferences.project_expanded(&old_projects[0]));
+        let latest_attempt = preferences.expansion.clone();
+        latest_attempt.save(&engine).unwrap();
+        preferences.expansion.remove_saved(&latest_attempt);
+        let owner = engine.lock().unwrap();
+        let saved = owner.store.projects().unwrap();
+        assert_eq!(saved[0]["name"], "Renamed");
+        assert_eq!(saved[0]["isExpanded"], true);
+        assert_eq!(saved[1]["isExpanded"], false);
+        preferences.document = owner.store.document("ui-state.json").unwrap().unwrap();
+        assert!(preferences.collapsed("chats"));
+        assert!(preferences.collapsed("future-section"));
+        assert_eq!(preferences.document["future"]["keep"], true);
+        assert!(preferences.expansion.is_empty());
+    }
+
     #[::core::prelude::v1::test]
     fn busy_owner_retains_pending_preferences_and_reloads_saved_values_after_release() {
         let root = std::env::temp_dir().join(format!("sidebar-readiness-{}", uuid::Uuid::new_v4()));
