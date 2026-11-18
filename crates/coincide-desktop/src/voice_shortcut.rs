@@ -25,6 +25,22 @@ impl SendIntent {
             && self.voice == *voice
     }
 }
+struct StartIntent {
+    thread: String,
+    voice: Value,
+    expires: Instant,
+}
+
+impl StartIntent {
+    fn matches(&self, thread: &Value, voice: &Value) -> bool {
+        thread["id"] == self.thread && self.voice == *voice
+    }
+
+    fn expired(&self, now: Instant) -> bool {
+        now >= self.expires
+    }
+}
+
 pub(super) struct State {
     pub recording_shortcut: bool,
     /// What macOS also does on 🌐, as of the last time Voice opened.
@@ -35,6 +51,7 @@ pub(super) struct State {
     was_active: bool,
     interceptor: Option<Subscription>,
     pub ticket: Option<SendIntent>,
+    pending_start: Option<StartIntent>,
     pub(super) preview: Option<dictation_preview::Preview>,
     pub(super) restored_preview: Option<gpui_base::input::NativeTextRevision>,
     /// macOS's 🌐 key setting, re-read at most every two seconds.
@@ -51,6 +68,7 @@ impl Default for State {
             was_active: false,
             interceptor: None,
             ticket: None,
+            pending_start: None,
             preview: None,
             restored_preview: None,
             fn_usage_cache: Default::default(),
@@ -68,13 +86,17 @@ impl State {
         self.fn_usage_cache.set(Some((Instant::now(), usage)));
         usage
     }
+    pub(super) fn start_pending(&self) -> bool {
+        self.pending_start.is_some()
+    }
     pub(super) fn recording_ended(&mut self) {
+        self.pending_start = None;
         self.machine.recording_ended();
     }
     pub(super) fn close(&mut self) {
         self.interceptor = None;
         self.ticket = None;
-        self.machine.recording_ended();
+        self.recording_ended();
         self.machine.reset();
     }
 }
@@ -141,16 +163,64 @@ impl Coincide {
         }));
     }
     pub(super) fn begin_composer_dictation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.voice_target_available(window, cx) {
+        if !Settings::decode(&self.settings).enabled || !self.voice_target_available(window, cx) {
+            return;
+        }
+        let Some(thread) = self.selected.as_ref() else {
+            return;
+        };
+        let intent = StartIntent {
+            thread: text(thread, "id"),
+            voice: self.settings["voice"].clone(),
+            expires: Instant::now() + std::time::Duration::from_secs(8),
+        };
+        self.try_begin_composer_dictation(intent, window, cx);
+        cx.notify();
+    }
+
+    fn try_begin_composer_dictation(
+        &mut self,
+        intent: StartIntent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.voice_target_available(window, cx)
+            || !self
+                .selected
+                .as_ref()
+                .is_some_and(|thread| intent.matches(thread, &self.settings["voice"]))
+        {
+            self.voice.recording_ended();
+            cx.notify();
+            return;
+        }
+        if intent.expired(Instant::now()) {
+            self.voice.recording_ended();
+            self.show_local_error("Dictation couldn't start while Coincide was busy.");
+            cx.notify();
+            return;
+        }
+
+        // Verify the authoritative conversation only when capture is requested.
+        // The poll and shortcut release paths stay available during store writes.
+        let authorized = match try_state(&self.engine) {
+            Ok(engine) if !engine.admissions_frozen() => {
+                engine.store.is_imported(&intent.thread).ok() == Some(false)
+            }
+            Err(error) if engine_busy(&error) => {
+                self.voice.pending_start = Some(intent);
+                return;
+            }
+            _ => false,
+        };
+        if !authorized {
+            self.voice.recording_ended();
+            self.show_local_error("Dictation is unavailable for this conversation.");
+            cx.notify();
             return;
         }
         if self.voice.preview.is_some() {
             self.cancel_composer_dictation(cx);
-        }
-        if !self.flush_pending_drafts() {
-            self.status = "Save the current draft before dictating; your text was retained.".into();
-            cx.notify();
-            return;
         }
         if self.composer_files.opened {
             self.close_composer_file_picker(window, cx);
@@ -201,20 +271,23 @@ impl Coincide {
         {
             return false;
         }
-        let Some(thread) = self.selected.as_ref() else {
-            return false;
-        };
-        let Ok(owner) = try_state(&self.engine) else {
-            return false;
-        };
-        !owner.admissions_frozen() && !owner.store.is_imported(&text(thread, "id")).unwrap_or(true)
+        self.pending_select.is_none()
+            && self.pending_new_thread.is_none()
+            && self.selected.as_ref().is_some_and(|thread| {
+                thread["importedSession"].is_null() && thread["isArchived"] != true
+            })
     }
     fn voice_action(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
         match action {
             Action::Start => self.begin_composer_dictation(window, cx),
-            Action::Stop => self
-                .microphone_panel
-                .update(cx, |p, cx| p.stop_dictation(cx)),
+            Action::Stop => {
+                if self.voice.start_pending() {
+                    self.cancel_composer_dictation(cx);
+                } else {
+                    self.microphone_panel
+                        .update(cx, |p, cx| p.stop_dictation(cx));
+                }
+            }
             Action::Cancel => {
                 self.cancel_composer_dictation(cx);
             }
@@ -240,6 +313,14 @@ impl Coincide {
             }
             self.voice.machine = Trigger::new(settings.mode, lone(&settings.shortcut));
             self.voice.settings = Some(settings.clone());
+        }
+        if let Some(intent) = self.voice.pending_start.take() {
+            if available {
+                self.try_begin_composer_dictation(intent, window, cx);
+            } else {
+                self.voice.recording_ended();
+                cx.notify();
+            }
         }
         if available && settings.shortcut_enabled && self.voice.machine.is_pressed() {
             let action = self
@@ -328,7 +409,7 @@ impl Coincide {
         let settings = Settings::decode(&self.settings);
         if self.voice_target_available(window, cx)
             && event.keystroke.key == "escape"
-            && self.microphone_panel.read(cx).dictation_active()
+            && (self.microphone_panel.read(cx).dictation_active() || self.voice.start_pending())
         {
             self.cancel_composer_dictation(cx);
             cx.stop_propagation();
@@ -437,9 +518,28 @@ impl Coincide {
 
 #[cfg(test)]
 mod tests {
-    use super::SendIntent;
+    use super::{SendIntent, StartIntent};
     use crate::transcription_settings::{ComposerBinding, TextReady};
     use serde_json::json;
+    use std::time::{Duration, Instant};
+    #[::core::prelude::v1::test]
+    fn deferred_start_expires_and_cannot_follow_a_thread_or_voice_change() {
+        let now = Instant::now();
+        let voice = json!({"enabled":true,"engine":"appleSpeech"});
+        let thread = json!({"id":"thread-one"});
+        let expires = now + Duration::from_secs(8);
+        let intent = StartIntent {
+            thread: "thread-one".into(),
+            voice: voice.clone(),
+            expires,
+        };
+        assert!(intent.matches(&thread, &voice));
+        assert!(!intent.matches(&json!({"id":"thread-two"}), &voice));
+        assert!(!intent.matches(&thread, &json!({"enabled":false})));
+        assert!(!intent.expired(now));
+        assert!(intent.expired(expires));
+    }
+
     #[::core::prelude::v1::test]
     fn send_intent_requires_exact_actual_producer_generation_and_voice_target() {
         let voice = json!({"engine":"whisper","sendsWhenStopped":true,"language":"en-US"});

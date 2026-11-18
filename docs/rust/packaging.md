@@ -147,6 +147,12 @@ Failure removes only the unique output directory created by that invocation.
 Resources cannot replace generated files; scratch roots inside the resource input
 are refused. Nothing executes a staged binary. Source files remain untouched.
 
+For Developer ID signing of the macOS desktop app, pass
+`--entitlements crates/coincide-desktop/macos/desktop.entitlements` when signing
+the outer app bundle with Hardened Runtime. Audio Input lets the signed bundle
+request normal macOS microphone authorization for dictation. Keep the
+microphone and speech-recognition usage descriptions in its Info.plist.
+
 Coordinator-only build allocation, from the exact checkout to stage:
 
 ```sh

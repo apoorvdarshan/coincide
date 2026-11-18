@@ -179,20 +179,25 @@ mod tests {
 }
 #[derive(Clone)]
 struct Chosen {
-    path: PathBuf,
+    source: MetadataSource,
     plan: Arc<HistoryPlan>,
     rows: Arc<Vec<browser_history::RecordView>>,
     revision: u64,
 }
 impl Chosen {
     fn new(path: PathBuf, plan: HistoryPlan, revision: u64) -> Result<Self> {
+        let source = MetadataSource::export(path, plan.fingerprint.clone());
+        Self::with_source(source, plan, revision)
+    }
+
+    fn with_source(source: MetadataSource, plan: HistoryPlan, revision: u64) -> Result<Self> {
         let rows = plan
             .history
             .iter()
             .map(browser_history::record_view)
             .collect::<Result<Vec<_>>>()?;
         Ok(Self {
-            path,
+            source,
             plan: Arc::new(plan),
             rows: Arc::new(rows),
             revision,
@@ -226,13 +231,7 @@ impl Loaded {
     }
 }
 fn verify(chosen: &Chosen) -> Result<()> {
-    let bytes = read_document(&chosen.path).map_err(|_| {
-        anyhow::anyhow!("Chosen history export is unavailable; choose and review it again")
-    })?;
-    ensure!(
-        browser_bookmarks::fingerprint(&bytes) == chosen.plan.fingerprint,
-        "History export changed after review; nothing imported"
-    );
+    chosen.source.verify()?;
     chosen.plan.validate()
 }
 pub(crate) struct Open {
@@ -469,6 +468,34 @@ impl BrowserSettings {
             },
         );
     }
+    #[cfg(target_os = "macos")]
+    pub(super) fn preview_installed_history(
+        &mut self,
+        profile: installed_import::Profile,
+        cx: &mut Context<Self>,
+    ) {
+        self.history_work(
+            "Reading the selected browser's history…",
+            cx,
+            move |engine, admission, epoch, generation, binding| {
+                let active = || allowed(&admission, &epoch, generation);
+                active()?;
+                let bytes = profile.read(installed_import::Kind::History)?;
+                let plan = browser_history::preview(&bytes)?;
+                let guard = wait_for_engine(&engine, active)?;
+                ensure!(
+                    guard.active_thread() == Some(binding.snapshot.thread.as_str()),
+                    "Selected conversation changed; preview again"
+                );
+                let library = guard.saved_browser_history(binding.profile()?)?;
+                drop(guard);
+                let chosen =
+                    Chosen::with_source(MetadataSource::InstalledSnapshot, plan, library.revision)?;
+                Ok(Reply::Preview(chosen, Loaded::new(library)?))
+            },
+        );
+    }
+
     fn history_choose(&mut self, cx: &mut Context<Self>) {
         if self.import_busy
             || self.profile_pending
@@ -720,28 +747,27 @@ impl BrowserSettings {
                 })
             })
             .unwrap_or_else(|| "No persistent profile".into());
-        let mut panel = div()
-            .flex()
-            .flex_col()
-            .gap_3()
-            .child(if enabled {
-                format!("Choose a browser metadata JSON export to add history to {destination}.")
-            } else {
-                "Choose a persistent browser profile in Settings to import history.".to_owned()
-            })
-            .child(
-                div().flex().items_center().flex_wrap().gap_2().child(
-                    Button::new("history-import-choose")
-                        .label(if self.history.chosen.is_some() {
-                            "Choose another file…"
-                        } else {
-                            "Choose file…"
-                        })
-                        .small()
-                        .disabled(busy || !enabled)
-                        .on_click(cx.listener(|this, _, _, cx| this.history_choose(cx))),
-                ),
-            );
+        let panel = div().flex().flex_col().gap_3().child(if enabled {
+            format!("Add reviewed history to {destination}.")
+        } else {
+            "Choose a persistent browser profile in Settings to import history.".to_owned()
+        });
+        #[cfg(target_os = "macos")]
+        let panel = panel.child(self.installed_browser_profiles(
+            installed_import::Kind::History,
+            busy || !enabled,
+            cx,
+        ));
+        let panel = panel.child(
+            div().flex().items_center().flex_wrap().gap_2().child(
+                Button::new("history-import-choose")
+                    .label("Import from file…")
+                    .small()
+                    .disabled(busy || !enabled)
+                    .on_click(cx.listener(|this, _, _, cx| this.history_choose(cx))),
+            ),
+        );
+        let mut panel = panel;
         if let Some(chosen) = &self.history.chosen {
             let count = chosen.rows.len();
             let pages = count.div_ceil(10).max(1);

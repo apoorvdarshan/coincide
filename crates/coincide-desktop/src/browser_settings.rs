@@ -102,6 +102,8 @@ pub(crate) mod cookie_flow;
 pub(crate) mod history_flow;
 #[path = "browser_import_view.rs"]
 mod import_view;
+#[cfg(target_os = "macos")]
+use coincide_core::browser_installed_import as installed_import;
 #[path = "browser_search_settings.rs"]
 mod search_settings;
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -795,22 +797,47 @@ fn finish_import_choice(workers: &mut WorkerOwner, expected: u64, current: u64) 
     workers.finish_picker() && expected == current
 }
 #[derive(Clone)]
+enum MetadataSource {
+    Export {
+        path: PathBuf,
+        fingerprint: String,
+    },
+    #[cfg(target_os = "macos")]
+    InstalledSnapshot,
+}
+impl MetadataSource {
+    fn export(path: PathBuf, fingerprint: String) -> Self {
+        Self::Export { path, fingerprint }
+    }
+
+    fn verify(&self) -> Result<()> {
+        match self {
+            Self::Export { path, fingerprint } => {
+                let bytes = read_document(path).map_err(|_| {
+                    anyhow::anyhow!("The chosen export is unavailable; choose and review it again")
+                })?;
+                ensure!(
+                    browser_bookmarks::fingerprint(&bytes) == *fingerprint,
+                    "The export changed after preview; choose and review it again. Nothing imported"
+                );
+            }
+            // An installed database can change while the browser is open.
+            // Confirm the captured rows rather than rereading live data.
+            #[cfg(target_os = "macos")]
+            Self::InstalledSnapshot => {}
+        }
+        Ok(())
+    }
+}
+#[derive(Clone)]
 struct ChosenBookmarks {
-    path: PathBuf,
-    fingerprint: String,
+    source: MetadataSource,
     plan: Plan,
     expected_revision: Option<u64>,
 }
 fn verify_chosen_bookmarks(chosen: &ChosenBookmarks) -> Result<()> {
-    let bytes = read_document(&chosen.path).map_err(|_| {
-        anyhow::anyhow!("The chosen export is unavailable; choose and review it again")
-    })?;
-    ensure!(
-        browser_bookmarks::fingerprint(&bytes) == chosen.fingerprint,
-        "The export changed after preview; choose and review it again. Nothing imported"
-    );
-    chosen.plan.validate()?;
-    Ok(())
+    chosen.source.verify()?;
+    chosen.plan.validate()
 }
 pub struct BookmarkOpen {
     pub thread: String,
@@ -1531,6 +1558,45 @@ impl BrowserSettings {
         .into();
         cx.notify();
     }
+    #[cfg(target_os = "macos")]
+    fn preview_installed_bookmarks(
+        &mut self,
+        profile: installed_import::Profile,
+        cx: &mut Context<Self>,
+    ) {
+        self.library_work(
+            "Reading the selected browser's bookmarks…",
+            cx,
+            move |engine, admission, epoch, generation, snapshot| {
+                let active = || library_context_allowed(&admission, &epoch, generation);
+                active()?;
+                let bytes = profile.read(installed_import::Kind::Bookmarks)?;
+                let plan = browser_bookmarks::preview(&bytes)?;
+                let preview = ImportPreview {
+                    profiles: 0,
+                    bookmarks: plan.bookmarks.len(),
+                    history: 0,
+                    cookies_not_imported: 0,
+                    legacy_profile: false,
+                    bookmark_plan: None,
+                    bookmark_problem: None,
+                };
+                let guard = wait_for_engine(&engine, active)?;
+                ensure!(
+                    guard.active_thread() == Some(snapshot.thread.as_str()),
+                    "Selected conversation changed; preview again"
+                );
+                let library = guard.saved_browser_bookmarks()?;
+                let chosen = ChosenBookmarks {
+                    source: MetadataSource::InstalledSnapshot,
+                    plan,
+                    expected_revision: Some(library.revision),
+                };
+                Ok(LibraryReply::Preview(preview, Some(chosen), Some(library)))
+            },
+        );
+    }
+
     fn choose_import(&mut self, cx: &mut Context<Self>) {
         if self.import_busy
             || self.profile_pending
@@ -1583,8 +1649,10 @@ impl BrowserSettings {
                                 });
                                 let chosen =
                                     preview.bookmark_plan.clone().map(|plan| ChosenBookmarks {
-                                        path,
-                                        fingerprint: browser_bookmarks::fingerprint(&bytes),
+                                        source: MetadataSource::export(
+                                            path,
+                                            browser_bookmarks::fingerprint(&bytes),
+                                        ),
                                         plan,
                                         expected_revision: library
                                             .as_ref()
@@ -2360,8 +2428,7 @@ mod tests {
         let source=r#"{"bookmarks":[{"url":"https://example.com/?q=rust#installation","title":"Saved café"}]}"#.as_bytes();
         fs::write(&path, source).unwrap();
         let chosen = ChosenBookmarks {
-            path: path.clone(),
-            fingerprint: browser_bookmarks::fingerprint(source),
+            source: MetadataSource::export(path.clone(), browser_bookmarks::fingerprint(source)),
             plan: browser_bookmarks::preview(source).unwrap(),
             expected_revision: Some(0),
         };
@@ -2389,8 +2456,7 @@ mod tests {
         fs::write(&path, bytes).unwrap();
         fs::write(&target, bytes).unwrap();
         let chosen = ChosenBookmarks {
-            path: path.clone(),
-            fingerprint: browser_bookmarks::fingerprint(bytes),
+            source: MetadataSource::export(path.clone(), browser_bookmarks::fingerprint(bytes)),
             plan: browser_bookmarks::preview(bytes).unwrap(),
             expected_revision: Some(0),
         };
