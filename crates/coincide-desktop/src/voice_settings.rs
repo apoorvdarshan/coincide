@@ -165,7 +165,7 @@ impl Coincide {
         pane = pane.child(div().px_3().text_xs().text_color(self.color(0x98a6ba)).child(match voice.engine {
             Engine::Whisper => "Transcribes on this device using your selected Whisper model.",
             Engine::Apple if voice_speech::compiled() => "Transcribes on this device. Speech authorization is requested when you start dictation.",
-            Engine::Apple => "Apple Speech is unavailable on this platform. Choose Local Whisper for offline dictation.",
+            Engine::Apple => "This platform uses Local Whisper for on-device dictation. Select a local model to get started.",
             Engine::OpenAi | Engine::Groq => "Sends recordings to this service using your Voice API key.",
         }));
         let models: &[(&str, &str)] = match voice.engine {
@@ -454,7 +454,8 @@ impl Coincide {
     pub(super) fn composer_voice_control(&self, cx: &mut Context<Self>) -> AnyElement {
         let voice = Settings::decode(&self.settings);
         let active = self.microphone_panel.read(cx).dictation_active();
-        if !voice.enabled && !active {
+        let starting = self.voice.start_pending();
+        if !voice.enabled && !active && !starting {
             return div().into_any_element();
         }
         div()
@@ -463,31 +464,29 @@ impl Coincide {
             .child(
                 Button::new("composer-dictation")
                     .icon(gpui_kit::assets::IconName::Mic)
-                    .accessibility_label(if active {
+                    .accessibility_label(if starting {
+                        "Cancel starting dictation"
+                    } else if active {
                         "Stop dictation"
                     } else {
                         "Start dictation"
                     })
-                    .tooltip(if active {
+                    .tooltip(if starting {
+                        "Cancel starting dictation"
+                    } else if active {
                         "Stop dictation"
                     } else {
                         "Start dictation"
                     })
                     .compact()
                     .ghost()
-                    .xsmall()
-                    .h(px(26.))
+                    .h(px(28.))
                     .rounded(px(7.))
-                    .disabled(
-                        !voice.enabled
-                            || (voice.engine == Engine::Apple && !voice_speech::compiled())
-                            || !microphone::compiled_backend_available(),
-                    )
+                    .disabled(!voice.enabled || !microphone::compiled_backend_available())
                     .on_click(cx.listener(|this, _, window, cx| {
-                        this.microphone_window_active =
-                            window.is_window_active() && window.visibility().is_visible();
-                        this.sync_transcription_binding(cx);
-                        if this.microphone_panel.read(cx).dictation_active() {
+                        if this.voice.start_pending() {
+                            this.cancel_composer_dictation(cx);
+                        } else if this.microphone_panel.read(cx).dictation_active() {
                             this.microphone_panel
                                 .update(cx, |panel, cx| panel.stop_dictation(cx));
                         } else {
@@ -495,6 +494,9 @@ impl Coincide {
                         }
                     })),
             )
+            .when(starting, |pane| {
+                pane.child(div().text_xs().child("Starting dictation…"))
+            })
             .when(active, |pane| {
                 pane.child(
                     Button::new("composer-dictation-cancel")

@@ -101,7 +101,12 @@ pub(super) fn icon_tile(section: Section, size: f32, surface: Rgba, ink: Rgba) -
         .flex()
         .items_center()
         .justify_center()
-        .child(Icon::new(section_icon(section)).size(px(size * 0.55)))
+        .child(Icon::new(section_icon(section)).size(px(size
+            * if section == Section::Voice {
+                0.69
+            } else {
+                0.55
+            })))
         .into_any_element()
 }
 

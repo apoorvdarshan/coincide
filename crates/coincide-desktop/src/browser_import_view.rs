@@ -18,6 +18,10 @@ pub(super) struct ImportDialog {
     kind: ImportKind,
     focus: FocusHandle,
     restore: Option<FocusHandle>,
+    #[cfg(target_os = "macos")]
+    installed: Option<Vec<installed_import::Profile>>,
+    #[cfg(target_os = "macos")]
+    scanning: bool,
 }
 impl ImportDialog {
     pub fn new(cx: &mut Context<BrowserSettings>) -> Self {
@@ -26,6 +30,10 @@ impl ImportDialog {
             kind: ImportKind::default(),
             focus: cx.focus_handle(),
             restore: None,
+            #[cfg(target_os = "macos")]
+            installed: None,
+            #[cfg(target_os = "macos")]
+            scanning: false,
         }
     }
     pub fn deactivate(&mut self) {
@@ -79,6 +87,8 @@ impl BrowserSettings {
         self.import_dialog.open = true;
         self.import_dialog.restore = window.focused(cx);
         self.import_dialog.focus.focus(window, cx);
+        #[cfg(target_os = "macos")]
+        self.scan_installed_browsers(cx);
         cx.notify();
     }
 
@@ -217,19 +227,129 @@ impl BrowserSettings {
             .into_any_element()
     }
 
+    #[cfg(target_os = "macos")]
+    fn scan_installed_browsers(&mut self, cx: &mut Context<Self>) {
+        if self.import_dialog.scanning {
+            return;
+        }
+        self.import_dialog.scanning = true;
+        cx.spawn(async move |this, cx| {
+            let profiles = cx
+                .background_executor()
+                .spawn(async { installed_import::discover() })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.import_dialog.installed = Some(profiles);
+                this.import_dialog.scanning = false;
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn installed_browser_profiles(
+        &self,
+        kind: installed_import::Kind,
+        disabled: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = cx.theme();
+        let mut list = div().flex().flex_col().gap_1p5().child(
+            div()
+                .text_xs()
+                .font_weight(FontWeight::SEMIBOLD)
+                .child("Installed browsers"),
+        );
+        let Some(profiles) = self.import_dialog.installed.as_ref() else {
+            return list
+                .child(div().text_xs().child("Looking for browser profiles…"))
+                .into_any_element();
+        };
+        let choices: Vec<_> = profiles
+            .iter()
+            .filter(|profile| profile.source_exists(kind))
+            .collect();
+        if choices.is_empty() {
+            return list
+                .child(div().text_xs().child("No readable browser profiles found."))
+                .into_any_element();
+        }
+        for (index, profile) in choices.into_iter().enumerate() {
+            let icon = browser_logos()
+                .iter()
+                .find(|(name, _)| *name == profile.browser)
+                .map(|(_, logo)| logo.clone());
+            let choice = profile.clone();
+            let caption = format!("{} · {}", profile.browser, profile.label);
+            list = list.child(
+                Button::new(("installed-browser", index))
+                    .small()
+                    .ghost()
+                    .w_full()
+                    .accessibility_label(caption.clone())
+                    .debug_selector(move || caption.clone())
+                    .disabled(disabled)
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .min_w_0()
+                            .w_full()
+                            .when_some(icon, |row, icon| {
+                                row.child(gpui_kit::img(icon).size(px(17.)))
+                            })
+                            .child(
+                                div()
+                                    .text_color(theme.foreground)
+                                    .flex_shrink_0()
+                                    .child(profile.browser),
+                            )
+                            .child(div().text_xs().truncate().child(profile.label.clone()))
+                            .child(div().flex_1())
+                            .child(
+                                gpui_kit::component::Icon::new(
+                                    gpui_kit::assets::IconName::ChevronRight,
+                                )
+                                .size(px(14.)),
+                            ),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| match kind {
+                        installed_import::Kind::Bookmarks => {
+                            this.preview_installed_bookmarks(choice.clone(), cx)
+                        }
+                        installed_import::Kind::History => {
+                            this.preview_installed_history(choice.clone(), cx)
+                        }
+                    })),
+            );
+        }
+        list.into_any_element()
+    }
+
     fn bookmark_import_form(&self, cx: &mut Context<Self>) -> AnyElement {
         let busy = self.import_busy
             || self.profile_pending
             || self.history.busy()
             || self.workers.closed();
         let can_choose = self.engine.is_some() && self.snapshot.is_some();
-        let mut form = div().flex().flex_col().gap_3()
-            .child("Choose a Coincide browser metadata JSON export. Bookmarks are added to your saved library.")
-            .child(div().flex().items_center().gap_2().flex_wrap()
-                .child(Button::new("browser-import-preview")
-                    .label(if self.preview.is_some() { "Choose another file…" } else { "Choose file…" })
-                    .small().disabled(busy || !can_choose)
-                    .on_click(cx.listener(|this, _, _, cx| this.choose_import(cx)))));
+        let form = div().flex().flex_col().gap_3();
+        #[cfg(target_os = "macos")]
+        let form = form.child(self.installed_browser_profiles(
+            installed_import::Kind::Bookmarks,
+            busy || !can_choose,
+            cx,
+        ));
+        let mut form = form.child(
+            div().flex().items_center().gap_2().flex_wrap().child(
+                Button::new("browser-import-preview")
+                    .label("Import from file…")
+                    .small()
+                    .disabled(busy || !can_choose)
+                    .on_click(cx.listener(|this, _, _, cx| this.choose_import(cx))),
+            ),
+        );
         if !can_choose {
             form = form.child(
                 div()
@@ -319,7 +439,7 @@ impl BrowserSettings {
     }
 }
 
-pub(super) fn browser_import_sources(cx: &App) -> impl IntoElement {
+fn browser_logos() -> &'static [(&'static str, Arc<gpui_kit::Image>)] {
     // Browser Logos collection (alrra/browser-logos, 58881b84); Arc's site favicon.
     const LOGOS: [(&str, &[u8]); 8] = [
         ("Chrome", include_bytes!("../assets/browsers/chrome.png")),
@@ -333,7 +453,7 @@ pub(super) fn browser_import_sources(cx: &App) -> impl IntoElement {
     ];
     static IMAGES: std::sync::OnceLock<[(&str, Arc<gpui_kit::Image>); 8]> =
         std::sync::OnceLock::new();
-    let images = IMAGES.get_or_init(|| {
+    IMAGES.get_or_init(|| {
         LOGOS.map(|(name, bytes)| {
             (
                 name,
@@ -343,13 +463,16 @@ pub(super) fn browser_import_sources(cx: &App) -> impl IntoElement {
                 )),
             )
         })
-    });
+    })
+}
+
+pub(super) fn browser_import_sources(cx: &App) -> impl IntoElement {
     let theme = cx.theme();
     div()
         .flex()
         .flex_wrap()
         .gap_1p5()
-        .children(images.iter().map(|(name, image)| {
+        .children(browser_logos().iter().map(|(name, image)| {
             div()
                 .flex()
                 .items_center()
@@ -440,6 +563,16 @@ mod tests {
         vcx.update(draw);
         assert!(vcx.debug_bounds("browser-settings-background").is_some());
         assert!(vcx.debug_bounds("browser-import-dialog").is_some());
+        #[cfg(target_os = "macos")]
+        {
+            vcx.run_until_parked();
+            vcx.update(draw);
+            assert!(vcx.debug_bounds("Chrome · Default").is_some());
+            let history = vcx.debug_bounds("History").expect("History tab");
+            vcx.simulate_click(history.center(), Modifiers::default());
+            vcx.update(draw);
+            assert!(vcx.debug_bounds("Chrome · Default").is_none());
+        }
 
         let cookies = vcx.debug_bounds("Cookies").expect("Cookies tab");
         vcx.simulate_click(cookies.center(), Modifiers::default());
@@ -470,6 +603,13 @@ mod tests {
         let root =
             std::env::temp_dir().join(format!("coincide-browser-dialog-{}", uuid::Uuid::new_v4()));
         coincide_core::native_file::private_directory(&root).unwrap();
+        #[cfg(target_os = "macos")]
+        {
+            let profile = root.join("Library/Application Support/Google/Chrome/Default");
+            std::fs::create_dir_all(root.join("Applications/Google Chrome.app")).unwrap();
+            std::fs::create_dir_all(&profile).unwrap();
+            std::fs::write(profile.join("Bookmarks"), b"{}").unwrap();
+        }
         let output = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--ignored",

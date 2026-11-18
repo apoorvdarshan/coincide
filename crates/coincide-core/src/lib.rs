@@ -96,6 +96,8 @@ pub mod composer_suggestions;
 
 pub mod browser_bookmarks;
 pub mod browser_history;
+#[cfg(target_os = "macos")]
+pub mod browser_installed_import;
 
 pub mod browser_cookie_import;
 
