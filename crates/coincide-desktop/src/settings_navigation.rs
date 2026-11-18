@@ -379,10 +379,9 @@ impl Coincide {
                     .label("Check sign-in")
                     .compact()
                     .ghost()
-                    .disabled(busy)
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.provider_configuration_panel.update(cx, |panel, cx| {
-                            panel.check_all(std::slice::from_ref(&target), window, cx);
+                            panel.check_acp_sign_in(&target, window, cx);
                         });
                     })),
             );
@@ -1029,8 +1028,23 @@ impl Coincide {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let provider = format!("acp-{id}");
         self.settings_navigation.registry_agent = Some((id, name));
         self.navigate_settings_section(Section::RegistryAgent, window, cx);
+        if self.settings_section == Section::RegistryAgent
+            && coincide_core::provider_configuration::native_sign_in_supported(&provider)
+            && coincide_core::provider_preferences::enabled(&self.settings, &provider)
+                .unwrap_or(false)
+            && self.settings_navigation.agent_view["registered"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|agent| agent["provider"] == provider)
+        {
+            self.provider_configuration_panel.update(cx, |panel, cx| {
+                panel.refresh_acp_sign_in_on_open(&provider, window, cx);
+            });
+        }
     }
 
     fn registry_agent_summary(&self, provider: &str, registered: bool, cx: &App) -> String {
@@ -1562,7 +1576,8 @@ impl Coincide {
                                         this.settings_navigation.agent_view["registered"].as_array()
                                             .into_iter().flatten()
                                             .filter_map(|agent| agent["provider"].as_str())
-                                            .filter(|provider| coincide_core::provider_configuration::native_sign_in_supported(provider)),
+                                            .filter(|provider| coincide_core::provider_configuration::native_sign_in_supported(provider))
+                                            .filter(|provider| coincide_core::provider_preferences::enabled(&this.settings, provider).unwrap_or(false)),
                                     )
                                     .map(str::to_owned)
                                     .collect::<Vec<_>>();

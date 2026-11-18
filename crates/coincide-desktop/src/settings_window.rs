@@ -487,7 +487,7 @@ impl Coincide {
                     _ => false,
                 };
                 if proceed {
-                    if quit { this.media.shutdown_requested = true; }
+                    if quit { this.begin_normal_shutdown(window, cx); }
                     else { this.media.close_requested = true; }
                 } else {
                     if let Some(guard) = &this.native_quit { guard.cancel_request(); }

@@ -125,10 +125,10 @@ impl Probe {
         };
         match self.provider.as_str() {
             "claude" => {
-                if let Ok((true, out, _)) = capture(&["auth", "status", "--json"])
+                if let Ok((success, out, _)) = capture(&["auth", "status", "--json"])
                     && let Ok(value) = serde_json::from_slice::<Value>(&out)
                 {
-                    report.authenticated = value["loggedIn"].as_bool();
+                    report.authenticated = confirmed_status(success, value["loggedIn"].as_bool());
                     if report.authenticated == Some(true) {
                         report.account = bounded_text(&value["email"])
                             .or_else(|| bounded_text(&value["authMethod"]));
@@ -136,17 +136,19 @@ impl Probe {
                 }
             }
             "acp-devin" => {
-                if let Ok((true, out, _)) =
+                if let Ok((success, out, err)) =
                     capture(&["auth", "status", "--process-model", "in-process"])
                 {
-                    report.authenticated = devin_auth_status(&out);
+                    let status = devin_auth_status(&out)
+                        .or_else(|| devin_auth_status(&err).filter(|authenticated| !authenticated));
+                    report.authenticated = confirmed_status(success, status);
                 }
             }
             "cursor" => {
-                if let Ok((true, out, _)) = capture(&["status", "--format", "json"])
+                if let Ok((success, out, _)) = capture(&["status", "--format", "json"])
                     && let Ok(value) = serde_json::from_slice::<Value>(&out)
                 {
-                    report.authenticated =
+                    let status =
                         value["isAuthenticated"].as_bool().or_else(|| {
                             match value["status"].as_str() {
                                 Some("authenticated") => Some(true),
@@ -156,6 +158,7 @@ impl Probe {
                                 _ => None,
                             }
                         });
+                    report.authenticated = confirmed_status(success, status);
                     if report.authenticated == Some(true) {
                         report.account = bounded_text(&value["userInfo"]["email"]);
                     }
@@ -167,22 +170,23 @@ impl Probe {
                 }
             }
             "grok" => {
-                if let Ok((true, out, err)) = capture(&["models"]) {
+                if let Ok((success, out, err)) = capture(&["models"]) {
                     let text = format!(
                         "{}\n{}",
                         String::from_utf8_lossy(&out),
                         String::from_utf8_lossy(&err)
                     );
                     let lower = text.to_lowercase();
-                    report.authenticated = if lower.contains("you are logged in") {
-                        Some(true)
-                    } else if lower.contains("not authenticated") || lower.contains("not logged in")
-                    {
-                        Some(false)
-                    } else {
-                        None
-                    };
-                    for line in text.lines() {
+                    let status =
+                        if lower.contains("not authenticated") || lower.contains("not logged in") {
+                            Some(false)
+                        } else if lower.contains("you are logged in") {
+                            Some(true)
+                        } else {
+                            None
+                        };
+                    report.authenticated = confirmed_status(success, status);
+                    for line in text.lines().filter(|_| success) {
                         let line = line.trim();
                         if let Some(rest) =
                             line.strip_prefix("* ").or_else(|| line.strip_prefix("- "))
@@ -226,6 +230,15 @@ impl Probe {
             _ => bail!("Unsupported provider check"),
         }
         ensure!(allowed(), "Provider check cancelled");
+        if report.authenticated.is_none()
+            && matches!(
+                self.provider.as_str(),
+                "claude" | "acp-devin" | "cursor" | "grok"
+            )
+        {
+            report.status_note =
+                Some("The provider didn’t return a recognized sign-in status.".into());
+        }
         Ok(report)
     }
 }
@@ -329,6 +342,11 @@ fn bounded_text(value: &Value) -> Option<String> {
         })
         .map(str::to_owned)
 }
+// Some CLI status commands deliberately return a nonzero exit code when signed out.
+fn confirmed_status(success: bool, status: Option<bool>) -> Option<bool> {
+    status.filter(|authenticated| success || !authenticated)
+}
+
 fn devin_auth_status(output: &[u8]) -> Option<bool> {
     let status = std::str::from_utf8(output)
         .ok()?
@@ -367,6 +385,14 @@ fn version(bytes: &[u8]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn failed_status_requires_an_explicit_signed_out_result() {
+        assert_eq!(confirmed_status(false, Some(false)), Some(false));
+        assert_eq!(confirmed_status(false, Some(true)), None);
+        assert_eq!(confirmed_status(false, None), None);
+        assert_eq!(confirmed_status(true, Some(true)), Some(true));
+    }
+
     #[test]
     fn devin_sign_in_status_only_interprets_the_cli_status_line() {
         assert_eq!(

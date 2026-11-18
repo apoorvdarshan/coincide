@@ -544,7 +544,7 @@ impl Accounts {
     pub(super) fn needs_load(&self, provider: &str) -> bool {
         self.editors
             .get(provider)
-            .is_none_or(|editor| !editor.loaded && editor.load_requested)
+            .is_some_and(|editor| !editor.loaded && editor.load_requested)
     }
     pub(super) fn select(&mut self, provider: &str) {
         self.editors
