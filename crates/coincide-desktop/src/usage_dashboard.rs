@@ -838,7 +838,7 @@ pub fn codex_state(phase: &CodexPhase) -> LimitState {
 /// Settings › Usage's filters and what it last read.
 pub struct Dashboard {
     /// None for every provider.
-    pub provider: Option<&'static str>,
+    pub provider: Option<String>,
     /// An account of `provider`, or None for all of them.
     pub account: Option<String>,
     pub days: u32,
@@ -899,7 +899,7 @@ impl Dashboard {
                 .attempted_at
                 .is_none_or(|attempted| (now - attempted).num_seconds() >= 60)
     }
-    pub fn select_provider(&mut self, provider: Option<&'static str>) {
+    pub fn select_provider(&mut self, provider: Option<String>) {
         if self.provider != provider {
             self.provider = provider;
             self.account = None;

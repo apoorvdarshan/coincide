@@ -230,8 +230,6 @@ impl Coincide {
                 pane = pane.child(div().text_xs().child("Subscription authentication checked for this catalog read; model execution is checked by Codex when used."));
                 let mut models = div()
                     .id("named-profile-model-list")
-                    .max_h(px(160.))
-                    .overflow_y_scroll()
                     .flex()
                     .flex_col()
                     .gap_1();

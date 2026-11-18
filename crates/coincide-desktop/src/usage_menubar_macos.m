@@ -49,6 +49,7 @@
 @property(nonatomic) BOOL hovered;
 @property(nonatomic, weak) id pressTarget;
 @property(nonatomic) SEL pressAction;
+@property(nonatomic, copy) NSString *usageProvider;
 @property(nonatomic, strong) NSTrackingArea *usageTrackingArea;
 @end
 @implementation CoincideUsageSurface
@@ -328,7 +329,14 @@ static NSBox *UsageSeparator(CGFloat width) {
 }
 - (void)refresh:(id)sender { [self enqueue:@{@"action":@"refresh"}]; }
 - (void)openApp:(id)sender { [self closePanel]; [self enqueue:@{@"action":@"open"}]; }
-- (void)openUsage:(id)sender { [self closePanel]; [self enqueue:@{@"action":@"usage"}]; }
+- (void)openUsage:(id)sender {
+    NSView *source = [sender isKindOfClass:NSGestureRecognizer.class] ? [sender view] : sender;
+    NSString *provider = [source isKindOfClass:CoincideUsageSurface.class]
+        ? [(CoincideUsageSurface *)source usageProvider] : nil;
+    [self closePanel];
+    if (provider.length) [self enqueue:@{@"action":@"usage", @"provider":provider}];
+    else [self enqueue:@{@"action":@"usage"}];
+}
 - (void)modeChanged:(NSSegmentedControl *)sender {
     [self enqueue:@{@"action":@"setting",@"key":@"usageDisplayMode",@"value":sender.selectedSegment == 1 ? @"remaining" : @"used"}];
 }
@@ -431,6 +439,7 @@ static NSBox *UsageSeparator(CGFloat width) {
         card.interactive = YES; card.pressTarget = self; card.pressAction = @selector(openUsage:);
         NSStackView *name = UsageStack(NSUserInterfaceLayoutOrientationHorizontal, 6);
         NSString *provider = UsageString(account[@"provider"]);
+        card.usageProvider = provider;
         NSImage *logo = UsageLogo(provider, self.logos[provider], 15);
         if (logo) { NSImageView *image = [[NSImageView alloc] initWithFrame:NSMakeRect(0,0,15,15)]; image.image = logo; [image.widthAnchor constraintEqualToConstant:15].active=YES; [image.heightAnchor constraintEqualToConstant:15].active=YES; [name addArrangedSubview:image]; }
         NSTextField *accountTitle = UsageLabel(UsageString(account[@"title"]), 12, NSFontWeightSemibold, ink);
