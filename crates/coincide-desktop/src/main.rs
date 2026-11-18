@@ -379,7 +379,7 @@ struct FindReveal {
     serial: u64,
 }
 fn transcript_search_text(item: &Value) -> &str {
-    if item["rustAwaitingQueueDelivery"] == true {
+    if queue::transcript_waits_for_queue(item) {
         ""
     } else {
         item["text"].as_str().unwrap_or("")
@@ -2897,8 +2897,10 @@ impl Coincide {
             complete = false;
         }
         self.missing_project_folders = navigation::missing_project_folders(&self.projects);
+        let reader = self.thread_navigation.reader(&self.engine);
         match sidebar_search::read(
             &self.engine,
+            reader.as_ref(),
             &self.search.read(cx).value(),
             self.show_archived,
             &self.projects,
@@ -6303,7 +6305,7 @@ impl Coincide {
         else {
             return div().into_any_element();
         };
-        if item["rustAwaitingQueueDelivery"] == true {
+        if queue::transcript_waits_for_queue(item) {
             return self.turn_decorated(index, div().into_any_element(), None, cx);
         }
         let kind = text(item, "kind");

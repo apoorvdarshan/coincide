@@ -21,6 +21,10 @@ pub struct Message {
     /// the provider acknowledges or finishes so it cannot be dispatched twice.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub dismissed: bool,
+    /// The native composer started delivery immediately. This affects only
+    /// presentation while the existing durable claim awaits acknowledgment.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub native_immediate: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     /// A question reply must never migrate to a different native session.
@@ -180,6 +184,7 @@ fn add_payload_inner(
         state: State::Pending,
         created_at: crate::store::swift_timestamp(),
         dismissed: false,
+        native_immediate: false,
         error: None,
         codex_question_session: None,
     };
@@ -241,6 +246,7 @@ pub fn finish(thread: &mut Value, id: &str, state: State, error: Option<&str>) -
         && let Some(item) = item.as_object_mut()
     {
         item.remove("rustAwaitingQueueDelivery");
+        item.remove("rustImmediateQueueDelivery");
     }
     Ok(())
 }

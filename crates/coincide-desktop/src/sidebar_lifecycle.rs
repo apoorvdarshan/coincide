@@ -424,16 +424,10 @@ impl Coincide {
         };
         if let Review::Archive(id, _) = &review {
             drop(owner);
-            let archived = if self
-                .selected
-                .as_ref()
-                .is_some_and(|thread| thread["id"] == *id)
-                && !self.running.contains(id)
-            {
+            let archived = if !self.running.contains(id) {
                 self.archive_open_thread(id, window, cx)
             } else {
-                self.status =
-                    "The conversation changed or is still running; archive was not applied.".into();
+                self.status = "Stop this conversation before archiving it.".into();
                 false
             };
             self.sidebar_lifecycle.status = self.status.clone();

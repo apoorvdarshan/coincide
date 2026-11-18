@@ -32,6 +32,12 @@ impl QueueClaim {
     pub(super) fn id(&self) -> &str {
         &self.message.id
     }
+    pub(super) fn captured_scope(&self) -> Value {
+        crate::composer_follow_up::scope(&self.source)
+    }
+    pub(super) fn presents_immediately(&self) -> bool {
+        self.message.native_immediate
+    }
     pub(super) fn question_session(&self) -> Option<&str> {
         self.message.codex_question_session.as_deref()
     }

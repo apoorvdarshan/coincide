@@ -80,10 +80,20 @@ pub struct Store {
 pub struct ThreadNavigationReader(std::path::PathBuf);
 
 impl ThreadNavigationReader {
-    pub fn read(&self, id: &str) -> Result<Value> {
+    fn open(&self, timeout: std::time::Duration) -> Result<Connection> {
         let db = Connection::open_with_flags(&self.0, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-        db.busy_timeout(std::time::Duration::from_millis(250))?;
-        read_thread(&db, id)
+        db.busy_timeout(timeout)?;
+        Ok(db)
+    }
+
+    pub fn read(&self, id: &str) -> Result<Value> {
+        read_thread(&self.open(std::time::Duration::from_millis(250))?, id)
+    }
+
+    /// The sidebar can read the last committed metadata during a transcript
+    /// write. Return promptly if SQLite itself is busy.
+    pub fn summaries(&self) -> Result<Vec<ThreadSummary>> {
+        Store::summaries_from(&self.open(std::time::Duration::ZERO)?, "", true)
     }
 }
 
@@ -615,7 +625,14 @@ impl Store {
     /// index for queries of three or more Unicode characters, with a literal
     /// substring recheck; short queries scan cached text, never JSON transcripts.
     pub fn summaries(&self, query: &str, include_archived: bool) -> Result<Vec<ThreadSummary>> {
-        self.connection()?;
+        Self::summaries_from(self.connection()?, query, include_archived)
+    }
+
+    fn summaries_from(
+        db: &Connection,
+        query: &str,
+        include_archived: bool,
+    ) -> Result<Vec<ThreadSummary>> {
         let query = query.trim().to_lowercase();
         let indexed = query.chars().count() >= 3;
         let filter = if query.is_empty() {
@@ -630,7 +647,7 @@ impl Store {
              (SELECT metadata FROM thread_navigation WHERE thread_navigation.id=thread_summaries.id COLLATE NOCASE)
              FROM thread_summaries WHERE (?1 OR archived=0){filter} ORDER BY pinned DESC,updated_at DESC,id"
         );
-        let mut stmt = self.connection()?.prepare(&sql)?;
+        let mut stmt = db.prepare(&sql)?;
         let mapper = |r: &rusqlite::Row<'_>| {
             Ok(ThreadSummary {
                 id: r.get(0)?,
@@ -661,16 +678,14 @@ impl Store {
         // Pending indexes retain a durable marker through crashes. Verify
         // their current transcript only when someone actually searches, so
         // streaming text is searchable without reindexing the whole chat.
-        let mut pending = self
-            .connection()?
-            .prepare("SELECT id FROM thread_search_pending")?;
+        let mut pending = db.prepare("SELECT id FROM thread_search_pending")?;
         let pending: std::collections::HashSet<String> = pending
             .query_map([], |row| row.get(0))?
             .collect::<rusqlite::Result<_>>()?;
         let mut verified = Vec::with_capacity(result.len());
         for summary in result {
             if !pending.contains(&summary.id)
-                || search_text(&self.thread(&summary.id)?)
+                || search_text(&read_thread(db, &summary.id)?)
                     .to_lowercase()
                     .contains(&query)
             {
@@ -719,7 +734,7 @@ impl Store {
     /// holding the engine lock. Preserve the complete queue and JSON types.
     pub(crate) fn thread_selection_snapshot(&self, id: &str) -> Result<Value> {
         let document: String = self.connection()?.query_row(
-            "SELECT json_object('id', document -> '$.id', 'selection', document -> '$.selection', 'accessMode', document -> '$.accessMode', 'interactionMode', document -> '$.interactionMode', 'botID', document -> '$.botID', 'rustBotContext', document -> '$.rustBotContext', 'projectID', document -> '$.projectID', 'worktreePath', document -> '$.worktreePath', 'rustMessageQueue', document -> '$.rustMessageQueue') FROM threads WHERE id=?1",
+            "SELECT json_object('id', document -> '$.id', 'selection', document -> '$.selection', 'accessMode', document -> '$.accessMode', 'interactionMode', document -> '$.interactionMode', 'botID', document -> '$.botID', 'rustBotContext', document -> '$.rustBotContext', 'projectID', document -> '$.projectID', 'projectPath', document -> '$.projectPath', 'worktreePath', document -> '$.worktreePath', 'rustMessageQueue', document -> '$.rustMessageQueue') FROM threads WHERE id=?1",
             [id],
             |row| row.get(0),
         )?;

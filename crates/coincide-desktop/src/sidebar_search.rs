@@ -209,14 +209,20 @@ impl MessageSearch {
 
 pub(super) fn read(
     engine: &SharedEngine,
+    reader: Option<&coincide_core::store::ThreadNavigationReader>,
     query: &str,
     include_archived: bool,
     projects: &[Value],
     messages: &HashMap<String, String>,
     branch_prefix: &str,
 ) -> Result<(Vec<ThreadSummary>, Vec<ThreadSummary>)> {
-    let owner = try_state(engine)?;
-    let all = owner.store.summaries("", true)?;
+    let all = match try_state(engine) {
+        Ok(owner) => owner.store.summaries("", true)?,
+        Err(error) if engine_busy(&error) => {
+            reader.map_or(Err(error), |reader| reader.summaries())?
+        }
+        Err(error) => return Err(error),
+    };
     let visible = filter(
         &all,
         &Query::new(query),
@@ -361,6 +367,23 @@ impl Coincide {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_sidebar_rows_are_available_while_the_engine_is_busy() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = coincide_core::store::Store::open(&directory.path().join("sidebar.sqlite")).unwrap();
+        let reader = store.thread_navigation_reader().unwrap();
+        let engine = Arc::new(Mutex::new(Engine::new(store)));
+        let mut busy = engine.lock().unwrap();
+        let created = busy.dispatch_desktop(json!({"method":"threads.create","params":{}}));
+        let id = created["result"]["id"].as_str().unwrap();
+
+        let (visible, all) = read(&engine, Some(&reader), "", false, &[], &HashMap::new(), "")
+            .expect("a busy engine should not block committed sidebar rows");
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].id, id);
+        assert_eq!(all.len(), 1);
+    }
 
     fn row(
         id: &str,
