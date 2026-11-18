@@ -450,7 +450,6 @@ impl Mount {
                 }
             }
         }
-        let mut retry_cli = false;
         if self.cli_pending.is_some()
             && let Ok(engine) = self.engine.try_lock()
         {
@@ -472,7 +471,7 @@ impl Mount {
                     }
                     self.cli_error =
                         Some("Account settings changed; refreshing local usage.".into());
-                    retry_cli = true;
+                    self.cli_retry_at = Some(Instant::now() + Duration::from_secs(1));
                 }
             }
             changed = true;
@@ -482,7 +481,7 @@ impl Mount {
             if self.dashboard_retry_at.is_some_and(|at| at <= now) {
                 self.start_dashboard_read();
             }
-            if retry_cli || self.cli_retry_at.is_some_and(|at| at <= now) {
+            if self.cli_retry_at.is_some_and(|at| at <= now) {
                 self.start_cli_scan();
             }
         }
