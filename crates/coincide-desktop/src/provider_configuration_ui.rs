@@ -77,6 +77,7 @@ enum Request {
         environment: BTreeMap<String, String>,
     },
     Check,
+    CheckSignIn,
     Setup {
         action: SetupAction,
         baseline: String,
@@ -88,10 +89,38 @@ enum Outcome {
     Saved(Snapshot),
     Checked(ProbeReport, Option<Value>),
     ManagedChecked(usize),
-    SetupHandedOff,
+    SetupHandedOff(SetupAction),
 }
+const DEVIN_PROVIDER: &str = "acp-devin";
+const SIGN_IN_CHECK_INTERVAL: Duration = Duration::from_secs(5);
+
+struct SignInRefresh {
+    next: Instant,
+    deadline: Instant,
+    waiting_for_login: bool,
+}
+impl SignInRefresh {
+    fn new(now: Instant, waiting_for_login: bool) -> Self {
+        let timeout = if waiting_for_login { 180 } else { 20 };
+        Self {
+            next: now,
+            deadline: now + Duration::from_secs(timeout),
+            waiting_for_login,
+        }
+    }
+
+    fn keep_waiting(&self, authenticated: Option<bool>) -> bool {
+        match authenticated {
+            Some(true) => false,
+            Some(false) => self.waiting_for_login,
+            None => true,
+        }
+    }
+}
+
 struct Reply {
     accounts: bool,
+    sign_in_only: bool,
     provider: String,
     generation: u64,
     result: Result<Outcome>,
@@ -108,6 +137,7 @@ pub(super) struct Panel {
     active: String,
     check_queue: std::collections::VecDeque<String>,
     queued_acp_sign_in: Option<String>,
+    devin_sign_in_refresh: Option<SignInRefresh>,
     last_clock_refresh: Instant,
     enabled: bool,
     pickers: Vec<Task<()>>,
@@ -157,6 +187,7 @@ impl Panel {
             active: String::new(),
             check_queue: Default::default(),
             queued_acp_sign_in: None,
+            devin_sign_in_refresh: None,
             last_clock_refresh: Instant::now(),
             enabled: true,
             pickers: Vec::new(),
@@ -236,6 +267,30 @@ impl Panel {
         }
     }
 
+    pub fn check_acp_sign_in(
+        &mut self,
+        provider: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if provider != DEVIN_PROVIDER {
+            self.check_all(&[provider.to_owned()], window, cx);
+            return;
+        }
+        let active = self.active.clone();
+        let enabled = self.enabled;
+        self.select(provider, true, window, cx);
+        self.active = active;
+        self.enabled = enabled;
+
+        if let Some(watch) = &mut self.devin_sign_in_refresh {
+            watch.next = Instant::now();
+        } else {
+            self.devin_sign_in_refresh = Some(SignInRefresh::new(Instant::now(), false));
+        }
+        cx.notify();
+    }
+
     pub fn check_all(&mut self, providers: &[String], window: &mut Window, cx: &mut Context<Self>) {
         if self.has_pending_write() || !self.check_queue.is_empty() {
             return;
@@ -259,6 +314,14 @@ impl Panel {
         };
         if editor.needs_approval {
             return "Imported settings need review".into();
+        }
+        if provider == DEVIN_PROVIDER
+            && self
+                .devin_sign_in_refresh
+                .as_ref()
+                .is_some_and(|watch| watch.waiting_for_login)
+        {
+            return "Waiting for sign-in…".into();
         }
         if self.pending.as_deref() == Some(provider) {
             return editor.notice.clone();
@@ -465,6 +528,7 @@ impl Panel {
         let provider = provider.to_owned();
         let selected = provider.clone();
         let accounts = matches!(&request, Request::Accounts(_));
+        let sign_in_only = matches!(&request, Request::CheckSignIn);
         if self.workers.spawn(move |admission| {
             let _custody = custody;
             let result = (|| -> Result<Outcome> {
@@ -510,7 +574,7 @@ impl Panel {
                         super::provider_setup_terminal::hand_off(&mut handoff, &helper, &|| {
                             admission.allowed()
                         })?;
-                        Ok(Outcome::SetupHandedOff)
+                        Ok(Outcome::SetupHandedOff(action))
                     }
                     Request::Check if provider == "antigravity" => {
                         let count = try_state(&engine)?
@@ -518,7 +582,7 @@ impl Panel {
                             .len();
                         Ok(Outcome::ManagedChecked(count))
                     }
-                    Request::Check => {
+                    Request::Check | Request::CheckSignIn => {
                         let plan = {
                             let owner = try_state(&engine)?;
                             anyhow::ensure!(
@@ -529,13 +593,18 @@ impl Panel {
                             owner.prepare_native_provider_check(&provider)?
                         };
                         let report = plan.run(&|| admission.allowed())?;
-                        let catalog = checked_catalog(&engine, &provider, &|| admission.allowed());
+                        let catalog = if sign_in_only {
+                            None
+                        } else {
+                            checked_catalog(&engine, &provider, &|| admission.allowed())
+                        };
                         Ok(Outcome::Checked(report, catalog))
                     }
                 }
             })();
             let _ = sender.send(Reply {
                 accounts,
+                sign_in_only,
                 provider,
                 generation,
                 result,
@@ -635,16 +704,46 @@ impl Panel {
                 .editors
                 .get(&reply.provider)
                 .is_some_and(|editor| editor.generation == reply.generation);
+            if reply.sign_in_only {
+                if unchanged {
+                    self.accept_sign_in_check(reply.result, cx);
+                } else {
+                    self.devin_sign_in_refresh = None;
+                }
+                continue;
+            }
+            if reply.provider == DEVIN_PROVIDER
+                && matches!(&reply.result, Ok(Outcome::Checked(report, _)) if report.authenticated == Some(true))
+            {
+                self.devin_sign_in_refresh = None;
+            }
             match reply.result {
                 Ok(Outcome::Accounts(outcome)) => {
                     self.apply_accounts(&reply.provider, outcome, unchanged, window, cx)
                 }
-                Ok(Outcome::Loaded(snapshot)) | Ok(Outcome::Saved(snapshot)) => {
+                Ok(Outcome::Loaded(snapshot)) => {
+                    if reply.provider == DEVIN_PROVIDER
+                        && !snapshot.imported
+                        && self.devin_sign_in_refresh.is_none()
+                    {
+                        self.devin_sign_in_refresh =
+                            Some(SignInRefresh::new(Instant::now(), false));
+                    }
                     self.load_snapshot(&reply.provider, snapshot, unchanged, window, cx)
                 }
-                Ok(Outcome::SetupHandedOff) => {
+                Ok(Outcome::Saved(snapshot)) => {
+                    self.load_snapshot(&reply.provider, snapshot, unchanged, window, cx)
+                }
+                Ok(Outcome::SetupHandedOff(action)) => {
+                    let watch_devin =
+                        reply.provider == DEVIN_PROVIDER && action == SetupAction::SignIn;
+                    if watch_devin && unchanged {
+                        self.devin_sign_in_refresh = Some(SignInRefresh::new(Instant::now(), true));
+                    }
                     if let Some(editor) = self.editors.get_mut(&reply.provider) {
-                        editor.notice = if coincide_core::acp_registry::registry_id(&reply.provider)
+                        editor.notice = if watch_devin {
+                            "Handed off to Terminal. Coincide will check for Devin sign-in automatically.".into()
+                        } else if coincide_core::acp_registry::registry_id(&reply.provider)
                             .is_some()
                         {
                             "Handed off to the setup terminal. Finish signing in, then choose Check sign-in.".into()
@@ -689,7 +788,78 @@ impl Panel {
             }
             cx.notify();
         }
+        self.poll_devin_sign_in(cx);
     }
+
+    fn accept_sign_in_check(&mut self, result: Result<Outcome>, cx: &mut Context<Self>) {
+        let Some(watch) = &self.devin_sign_in_refresh else {
+            return;
+        };
+        match result {
+            Ok(Outcome::Checked(report, _)) => {
+                if !watch.keep_waiting(report.authenticated) {
+                    self.devin_sign_in_refresh = None;
+                }
+                if let Some(editor) = self.editors.get_mut(DEVIN_PROVIDER) {
+                    let confirmed = report.authenticated == Some(true);
+                    editor.report = Some(report);
+                    editor.checked = Some(Instant::now());
+                    editor.failed = false;
+                    if confirmed {
+                        editor.notice.clear();
+                    }
+                }
+            }
+            Err(error) if engine_busy(&error) => return,
+            Err(error) => {
+                self.devin_sign_in_refresh = None;
+                if let Some(editor) = self.editors.get_mut(DEVIN_PROVIDER) {
+                    editor.notice = error.to_string();
+                    editor.failed = true;
+                }
+            }
+            Ok(_) => self.devin_sign_in_refresh = None,
+        }
+        cx.notify();
+    }
+
+    fn poll_devin_sign_in(&mut self, cx: &mut Context<Self>) {
+        let Some(watch) = &mut self.devin_sign_in_refresh else {
+            return;
+        };
+        let now = Instant::now();
+        if now >= watch.deadline {
+            self.devin_sign_in_refresh = None;
+            if let Some(editor) = self.editors.get_mut(DEVIN_PROVIDER)
+                && editor.notice.starts_with("Handed off")
+            {
+                editor.notice = "Finish the Terminal sign-in, then choose Check sign-in.".into();
+                editor.failed = true;
+            }
+            cx.notify();
+            return;
+        }
+        if now < watch.next
+            || self.pending.is_some()
+            || !self.check_queue.is_empty()
+            || !self.workers.can_start()
+        {
+            return;
+        }
+        let request = match self.editors.get(DEVIN_PROVIDER) {
+            Some(editor) if !editor.loaded && editor.load_requested => Request::Load,
+            Some(editor) if editor.loaded && !editor.needs_approval && !editor.dirty(cx) => {
+                Request::CheckSignIn
+            }
+            _ => {
+                self.devin_sign_in_refresh = None;
+                return;
+            }
+        };
+        watch.next = now + SIGN_IN_CHECK_INTERVAL;
+        self.start(DEVIN_PROVIDER, request, cx);
+    }
+
     fn save(&mut self, provider: &str, cx: &mut Context<Self>) {
         let Some(editor) = self.editors.get(provider) else {
             return;
@@ -1280,12 +1450,25 @@ fn setup_website(provider: &str) -> &'static str {
 // the independently source-bound configuration acknowledgement intact.
 fn configuration_request_notice(request: &Request) -> Option<&'static str> {
     match request {
-        Request::Accounts(_) => None,
+        Request::Accounts(_) | Request::CheckSignIn => None,
         Request::Load => Some("Loading saved settings…"),
         Request::Save { .. } => Some("Saving settings…"),
         Request::Check => Some("Checking provider…"),
         Request::Setup { .. } => Some("Opening setup in a separate terminal…"),
     }
+}
+
+#[cfg(test)]
+#[::core::prelude::v1::test]
+fn devin_login_refresh_waits_for_confirmation_but_opening_settings_accepts_signed_out() {
+    let now = Instant::now();
+    let initial = SignInRefresh::new(now, false);
+    let after_login = SignInRefresh::new(now, true);
+    assert!(initial.keep_waiting(None));
+    assert!(!initial.keep_waiting(Some(false)));
+    assert!(after_login.keep_waiting(Some(false)));
+    assert!(!after_login.keep_waiting(Some(true)));
+    assert_eq!(after_login.deadline, now + Duration::from_secs(180));
 }
 
 #[cfg(test)]

@@ -382,7 +382,7 @@ impl Coincide {
                     .disabled(busy)
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.provider_configuration_panel.update(cx, |panel, cx| {
-                            panel.check_all(std::slice::from_ref(&target), window, cx);
+                            panel.check_acp_sign_in(&target, window, cx);
                         });
                     })),
             );
