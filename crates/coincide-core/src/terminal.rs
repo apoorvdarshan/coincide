@@ -4,7 +4,7 @@ use alacritty_terminal::{
     grid::{Dimensions, Scroll},
     index::{Column, Line},
     term::{Config, Term, TermMode, cell::Flags, color::Colors},
-    vte::ansi::{Color, CursorShape, Processor},
+    vte::ansi::{Color, CursorShape, Processor, Rgb},
 };
 use anyhow::{Context, Result, ensure};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
@@ -75,6 +75,7 @@ pub struct Terminal {
     events: Receiver<Event>,
     term: Term<Listener>,
     processor: Processor,
+    palette: Palette,
     shell: shell::ShellObserver,
     shell_anchors: shell::Anchors,
     history_limit: usize,
@@ -107,6 +108,7 @@ impl Terminal {
             events,
             term: Term::new(Config::default(), &Size { rows, cols }, Listener(sender)),
             processor: Processor::new(),
+            palette: Palette::default(),
             shell: Default::default(),
             shell_anchors: Default::default(),
             history_limit: Config::default().scrolling_history,
@@ -241,6 +243,7 @@ impl Terminal {
             events,
             term: Term::new(Config::default(), &Size { rows, cols }, Listener(sender)),
             processor: Processor::new(),
+            palette: Palette::default(),
             shell: Default::default(),
             shell_anchors: Default::default(),
             history_limit: Config::default().scrolling_history,
@@ -397,15 +400,31 @@ impl Terminal {
             changed = true;
         }
         for event in self.events.try_iter() {
-            match event {
-                Event::PtyWrite(text) => self
-                    .writer
+            let reply = match event {
+                Event::PtyWrite(text) => Some(text),
+                Event::ColorRequest(index, respond) => {
+                    let [r, g, b] = resolve_color_index(
+                        index,
+                        self.term.renderable_content().colors,
+                        &self.palette,
+                    );
+                    Some(respond(Rgb { r, g, b }))
+                }
+                Event::Title(title) => {
+                    self.title = title;
+                    None
+                }
+                Event::Bell => {
+                    self.bells = self.bells.wrapping_add(1);
+                    None
+                }
+                _ => None,
+            };
+            if let Some(reply) = reply {
+                self.writer
                     .as_ref()
                     .context("Terminal is stopping")?
-                    .try_send(text.into_bytes())?,
-                Event::Title(title) => self.title = title,
-                Event::Bell => self.bells = self.bells.wrapping_add(1),
-                _ => {}
+                    .try_send(reply.into_bytes())?;
             }
         }
         if self.shell.state.progress.is_some()
@@ -790,12 +809,14 @@ impl Terminal {
             (1..=MAX_STYLED_ROWS).contains(&row_limit),
             "Styled row limit must be 1–10"
         );
+        self.palette = *palette;
         self.poll()?;
         self.styled_rows(row_offset, row_limit, palette)
     }
     /// The whole viewport from one poll, for the in-process renderer (Swift
     /// sizes the terminal to its pane). Not bounded by the API's page size.
     pub fn styled_viewport(&mut self, palette: &Palette) -> Result<Value> {
+        self.palette = *palette;
         self.poll()?;
         self.styled_rows(0, self.term.screen_lines(), palette)
     }
@@ -1397,6 +1418,10 @@ fn resolve_color(color: Color, colors: &Colors, palette: &Palette) -> [u8; 3] {
         Color::Indexed(index) => usize::from(index),
         Color::Named(name) => name as usize,
     };
+    resolve_color_index(index, colors, palette)
+}
+
+fn resolve_color_index(index: usize, colors: &Colors, palette: &Palette) -> [u8; 3] {
     if let Some(rgb) = colors[index] {
         return [rgb.r, rgb.g, rgb.b];
     }
@@ -1958,6 +1983,28 @@ mod shutdown_tests {
 #[cfg(test)]
 mod appearance_tests {
     use super::*;
+
+    #[test]
+    fn replies_to_foreground_and_background_queries_with_display_colors() {
+        let mut terminal =
+            Terminal::fixture_output(24, 80, b"\x1b]10;#123456\x07\x1b]10;?\x07\x1b]11;?\x1b\\");
+        let (writer, replies) = mpsc::sync_channel(2);
+        terminal.writer = Some(writer);
+        terminal.palette = Palette {
+            dark: false,
+            foreground: [1, 2, 3],
+            background: [238, 240, 242],
+        };
+        terminal.poll().unwrap();
+        assert_eq!(
+            replies.try_recv().unwrap(),
+            b"\x1b]10;rgb:1212/3434/5656\x07"
+        );
+        assert_eq!(
+            replies.try_recv().unwrap(),
+            b"\x1b]11;rgb:eeee/f0f0/f2f2\x1b\\"
+        );
+    }
 
     #[test]
     fn light_and_dark_palettes_resolve_ansi_defaults_and_the_caret() {
