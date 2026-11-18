@@ -2,7 +2,7 @@
 //! Cookie bytes and the Chrome Safe Storage key stay in memory; no values or
 //! provider responses are written to logs, settings, or the app database.
 use aes::Aes128;
-use cbc::cipher::{BlockDecryptMut, KeyIvInit, block_padding::Pkcs7};
+use cbc::cipher::{BlockModeDecrypt, KeyIvInit, block_padding::Pkcs7};
 use ring::pbkdf2;
 use rusqlite::{Connection, OpenFlags};
 use sha2::{Digest, Sha256};
@@ -253,7 +253,7 @@ fn decrypt(
     }
     let mut buf = Zeroizing::new(payload.to_vec());
     let decrypted = cbc::Decryptor::<Aes128>::new(key.into(), (&[b' '; 16]).into())
-        .decrypt_padded_mut::<Pkcs7>(&mut buf)
+        .decrypt_padded::<Pkcs7>(&mut buf)
         .map_err(|_| "Chrome's OpenCode sign-in could not be unlocked.")?;
     let value = if version >= 24 {
         let (digest, value) = decrypted
@@ -324,7 +324,7 @@ pub(crate) fn opencode_header() -> Result<Zeroizing<String>, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cbc::cipher::BlockEncryptMut;
+    use cbc::cipher::BlockModeEncrypt;
     fn encrypt(value: &[u8], key: &[u8; 16], host: &str, version: i64) -> Vec<u8> {
         let mut plain = if version >= 24 {
             Sha256::digest(host.as_bytes()).to_vec()
@@ -335,7 +335,7 @@ mod tests {
         let length = plain.len();
         plain.resize(length + 16, 0);
         let encrypted = cbc::Encryptor::<Aes128>::new(key.into(), (&[b' '; 16]).into())
-            .encrypt_padded_mut::<Pkcs7>(&mut plain, length)
+            .encrypt_padded::<Pkcs7>(&mut plain, length)
             .unwrap();
         [b"v10".as_slice(), encrypted].concat()
     }
