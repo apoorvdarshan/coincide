@@ -49,9 +49,23 @@ pub(super) fn colored_image(id: &str, source: Arc<[u8]>, dark: bool) -> Arc<Imag
     {
         return image.clone();
     }
-    // GPUI's image renderer keeps the SVG's own fills and gradients. Only
-    // monochrome template ink is adapted for readability on the selected theme.
-    let (format, bytes) = match id {
+    let (format, bytes) = artwork(id, &source, dark);
+    let image = Arc::new(Image::from_bytes(format, bytes));
+    images.insert(key, (source, image.clone()));
+    image
+}
+
+/// Both GPUI and the native menu use the same provider artwork.
+pub(super) fn artwork(id: &str, source: &[u8], dark: bool) -> (ImageFormat, Vec<u8>) {
+    match id {
+        "claude-acp" => (
+            ImageFormat::Png,
+            include_bytes!("../assets/providers/logo-claude.png").to_vec(),
+        ),
+        "antigravity-acp" => (
+            ImageFormat::Png,
+            include_bytes!("../assets/providers/logo-antigravity.png").to_vec(),
+        ),
         "gemini" => (
             ImageFormat::Png,
             include_bytes!("../assets/agent-registry/brand/gemini.png").to_vec(),
@@ -60,11 +74,8 @@ pub(super) fn colored_image(id: &str, source: Arc<[u8]>, dark: bool) -> Arc<Imag
             ImageFormat::Png,
             include_bytes!("../assets/agent-registry/brand/kimi-code.png").to_vec(),
         ),
-        _ => (ImageFormat::Svg, colored_svg(id, &source, dark)),
-    };
-    let image = Arc::new(Image::from_bytes(format, bytes));
-    images.insert(key, (source, image.clone()));
-    image
+        _ => (ImageFormat::Svg, colored_svg(id, source, dark)),
+    }
 }
 
 fn cache() -> &'static Mutex<HashMap<String, Arc<[u8]>>> {

@@ -146,9 +146,14 @@ impl Coincide {
         } else {
             self.selected
                 .as_ref()
-                .and_then(|thread| thread["selection"]["provider"].as_str())
-                .and_then(|provider| chat_layout::provider_mark(provider, 16.))
-                .map(IntoElement::into_any_element)
+                .and_then(|thread| self.composer_provider_for_thread(thread["id"].as_str()?))
+                .map(|provider| {
+                    chat_layout::provider_mark(provider, 16.)
+                        .map(IntoElement::into_any_element)
+                        .unwrap_or_else(|| {
+                            Icon::new(IconName::Cpu).size(px(16.)).into_any_element()
+                        })
+                })
         };
         let (title, subtitle) = match bot {
             Some((name, conversation)) => (name, Some(conversation).filter(|c| !c.is_empty())),

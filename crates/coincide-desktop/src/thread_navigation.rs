@@ -100,11 +100,50 @@ fn fits_recent(view: &Value) -> bool {
     serde_json::to_writer(Budget(2 * 1024 * 1024), view).is_ok()
 }
 
+const SELECTION_FIELDS: [&str; 6] = [
+    "selection",
+    "accessMode",
+    "interactionMode",
+    "modelPreferences",
+    "rustProviderSelections",
+    "rustAccountSelections",
+];
+
+pub(super) fn apply_selection_projection(view: &mut Value, saved: &Value) {
+    let Some(view) = view.as_object_mut() else {
+        return;
+    };
+    for key in SELECTION_FIELDS {
+        if let Some(value) = saved.get(key) {
+            view.insert(key.into(), value.clone());
+        } else {
+            view.remove(key);
+        }
+    }
+}
+
+struct SelectionReceipt {
+    before: Value,
+    saved: Value,
+}
+impl SelectionReceipt {
+    fn apply(&self, view: &mut Value) {
+        if view["id"] == self.saved["id"]
+            && ["selection", "accessMode", "interactionMode"]
+                .iter()
+                .all(|key| view[*key] == self.before[*key])
+        {
+            apply_selection_projection(view, &self.saved);
+        }
+    }
+}
+
 #[derive(Default)]
 pub(super) struct State {
     generation: Arc<AtomicU64>,
     target: Option<String>,
     ready: Option<Value>,
+    selection_receipts: Vec<SelectionReceipt>,
     focus_composer: bool,
     reader: Option<ThreadNavigationReader>,
     recent: VecDeque<Value>,
@@ -143,8 +182,24 @@ impl State {
         (!summary.archived
             && summary.title == thread["title"]
             && navigation.updated_at == thread["updatedAt"].as_f64()
-            && navigation.item_count == thread["items"].as_array().map(Vec::len))
+            && navigation.item_count == thread["items"].as_array().map(Vec::len)
+            && navigation
+                .provider
+                .as_deref()
+                .is_none_or(|provider| thread["selection"]["provider"] == provider))
         .then_some(thread)
+    }
+
+    pub fn apply_saved_selection(&mut self, before: Value, saved: Value) {
+        let receipt = SelectionReceipt { before, saved };
+        for thread in &mut self.recent {
+            receipt.apply(thread);
+        }
+        if let Some(thread) = &mut self.ready {
+            receipt.apply(thread);
+        } else if self.target() == receipt.saved["id"].as_str() {
+            self.selection_receipts.push(receipt);
+        }
     }
 
     pub fn begin(&mut self, id: &str) -> u64 {
@@ -153,6 +208,7 @@ impl State {
             .fetch_add(1, Ordering::AcqRel)
             .wrapping_add(1);
         self.target = Some(id.to_owned());
+        self.selection_receipts.clear();
         self.ready = None;
         self.focus_composer = false;
         generation
@@ -170,9 +226,12 @@ impl State {
         self.generation.clone()
     }
 
-    pub fn finish(&mut self, generation: u64, id: &str, thread: Value) -> bool {
+    pub fn finish(&mut self, generation: u64, id: &str, mut thread: Value) -> bool {
         if !self.matches(generation, id) || thread["id"].as_str() != Some(id) {
             return false;
+        }
+        for receipt in self.selection_receipts.drain(..) {
+            receipt.apply(&mut thread);
         }
         self.ready = Some(thread);
         true
@@ -202,6 +261,7 @@ impl State {
         self.generation.fetch_add(1, Ordering::AcqRel);
         self.target = None;
         self.ready = None;
+        self.selection_receipts.clear();
         self.focus_composer = false;
     }
 }
@@ -330,6 +390,29 @@ mod tests {
         assert!(state.take_recent("a", &[changed]).is_none());
         state.remember(thread);
         assert!(state.take_recent("a", &[]).is_none());
+    }
+
+    #[test]
+    fn selection_receipt_updates_cached_and_inflight_thread_views_only() {
+        let old = json!({"id":"a","title":"A","updatedAt":1.0,"items":[],
+            "selection":{"provider":"codex","modelID":"old"}, "draft":"keep"});
+        let saved = json!({"id":"a","selection":{"provider":"acp-devin","modelID":"swe-2"}});
+        let mut state = State::default();
+        state.remember(old.clone());
+        let generation = state.begin("a");
+        state.apply_saved_selection(old.clone(), saved.clone());
+        assert!(state.finish(generation, "a", old.clone()));
+        let refreshed = state.take("a").unwrap();
+        assert_eq!(refreshed["selection"], saved["selection"]);
+        assert_eq!(refreshed["draft"], "keep");
+        assert_eq!(state.recent[0]["selection"], saved["selection"]);
+
+        let generation = state.begin("a");
+        let mut newer = old.clone();
+        newer["selection"] = json!({"provider":"grok","modelID":"newest"});
+        state.apply_saved_selection(old, saved);
+        assert!(state.finish(generation, "a", newer.clone()));
+        assert_eq!(state.take("a"), Some(newer));
     }
 
     #[test]
