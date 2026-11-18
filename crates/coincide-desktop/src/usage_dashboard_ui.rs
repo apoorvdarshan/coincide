@@ -60,6 +60,9 @@ pub(super) fn provider_id(provider: &str) -> Option<ProviderId> {
     })
 }
 pub(super) fn provider_name(provider: &str) -> &'static str {
+    if provider == "acp-devin" {
+        return "Devin";
+    }
     provider_id(provider).map_or("Agent", |id| {
         coincide_core::provider_catalog::provider(id).display_name
     })
@@ -232,6 +235,28 @@ pub(super) fn cards_for(
                 state,
             });
         }
+    }
+    if dashboard.data.as_ref().is_some_and(|data| {
+        data.registered
+            .iter()
+            .any(|agent| agent.provider == "acp-devin")
+    }) && coincide_core::provider_preferences::enabled(settings, "acp-devin").unwrap_or(false)
+    {
+        cards.push(Card {
+            account: Account {
+                provider: "acp-devin",
+                id: report::DEFAULT_ACCOUNT.into(),
+                name: "Default".into(),
+                api_key: false,
+                key_variable: None,
+            },
+            shows_name: false,
+            state: dashboard
+                .external
+                .get("acp-devin")
+                .cloned()
+                .unwrap_or(LimitState::NotChecked),
+        });
     }
     cards
 }
@@ -1682,10 +1707,12 @@ impl Coincide {
                 cx,
             ));
         }
-        for agent in registered
-            .into_iter()
-            .filter(|agent| filter_provider.is_none_or(|id| id == agent.provider))
-        {
+        for agent in registered.into_iter().filter(|agent| {
+            filter_provider.is_none_or(|id| id == agent.provider)
+                && !cards
+                    .iter()
+                    .any(|card| card.account.provider == agent.provider)
+        }) {
             let agent_report = dashboard
                 .data
                 .as_ref()
@@ -1701,12 +1728,8 @@ impl Coincide {
                 })
                 .unwrap_or_default();
             let mut body = vec![div().text_color(muted)
-                    .child(if agent.provider == "acp-devin" {
-                        "Devin shows quota and credits in Usage & limits or with /usage in its CLI."
-                    } else {
-                        "Coincide tracks usage this agent reports. Check your provider account for plan limits."
-                    })
-                    .into_any_element()];
+                .child("Coincide tracks usage this agent reports. Check your provider account for plan limits.")
+                .into_any_element()];
             let tracked = &agent_report.period;
             body.push(
                 div()

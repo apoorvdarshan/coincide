@@ -33,6 +33,7 @@ pub mod cli_session_discovery;
 pub mod cli_session_import;
 pub mod cli_usage_logs;
 pub mod credentials;
+mod devin_usage;
 pub mod dictation;
 pub mod git_actions;
 pub mod github_repository;

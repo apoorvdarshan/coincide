@@ -425,19 +425,12 @@ impl Coincide {
                 !text(project, "id")
                     .eq_ignore_ascii_case(coincide_core::bot_runtime::BOTS_PROJECT_ID)
                     && project["isBots"] != true
+                    && project["isChats"] != true
+                    && project["id"] != navigation::NO_PROJECT_ID
             })
-            .map(|project| {
-                let id = text(project, "id");
-                let chats = project["isChats"] == true || id == navigation::NO_PROJECT_ID;
-                let name = if chats {
-                    "Chats".to_owned()
-                } else {
-                    text(project, "name")
-                };
-                (id, name, chats)
-            })
+            .map(|project| (text(project, "id"), text(project, "name"), false))
             .collect::<Vec<_>>();
-        destinations.sort_by_key(|(_, _, chats)| *chats);
+        destinations.push((navigation::NO_PROJECT_ID.into(), "Chats".into(), true));
         MenuContext {
             parent: cx.entity().downgrade(),
             targets: self.open_targets.clone(),

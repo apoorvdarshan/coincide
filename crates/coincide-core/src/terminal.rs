@@ -135,13 +135,6 @@ impl Terminal {
         extra_environment: &[(String, String)],
     ) -> Result<Self> {
         ensure!(cwd.is_dir(), "Terminal working directory does not exist");
-        check_size(rows, cols)?;
-        let pty = native_pty_system().openpty(PtySize {
-            rows,
-            cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        })?;
         let mut command = CommandBuilder::new(shell);
         // A terminal opened by the candidate must never address its parent
         // Swift conversation through inherited agent-control bindings.
@@ -175,7 +168,6 @@ impl Terminal {
         for (name, value) in &shell_launch.environment {
             command.env(name, value);
         }
-        command.cwd(cwd);
         let inherited = command
             .iter_full_env_as_str()
             .map(|(name, _)| name.to_owned())
@@ -195,6 +187,24 @@ impl Terminal {
             );
             command.env(name, value);
         }
+        Self::spawn_command(cwd, command, rows, cols, Some(shell_launch))
+    }
+
+    pub(crate) fn spawn_command(
+        cwd: &Path,
+        mut command: CommandBuilder,
+        rows: u16,
+        cols: u16,
+        shell_launch: Option<shell::ShellLaunch>,
+    ) -> Result<Self> {
+        check_size(rows, cols)?;
+        command.cwd(cwd);
+        let pty = native_pty_system().openpty(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })?;
         let child = pty.slave.spawn_command(command)?;
         drop(pty.slave);
         let mut pty_writer = pty.master.take_writer()?;
@@ -234,7 +244,7 @@ impl Terminal {
             shell: Default::default(),
             shell_anchors: Default::default(),
             history_limit: Config::default().scrolling_history,
-            _shell_launch: Some(shell_launch),
+            _shell_launch: shell_launch,
             revision: 0,
             title: "Terminal".into(),
             number: 0,

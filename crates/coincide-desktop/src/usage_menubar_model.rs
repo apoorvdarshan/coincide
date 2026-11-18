@@ -41,7 +41,7 @@ impl Choice {
         }
         let account = value.get("account")?;
         let provider = account["provider"].as_str()?.to_owned();
-        if !usage_report::PROVIDERS.contains(&provider.as_str()) {
+        if provider != "acp-devin" && !usage_report::PROVIDERS.contains(&provider.as_str()) {
             return None;
         }
         let id = account["accountID"].as_str()?.to_owned();
@@ -438,11 +438,9 @@ pub fn snapshot(
         })
     }).collect::<Vec<_>>();
     if let Some(data) = data {
-        for agent in data
-            .registered
-            .iter()
-            .filter(|agent| enabled.contains(&agent.provider.as_str()))
-        {
+        for agent in data.registered.iter().filter(|agent| {
+            enabled.contains(&agent.provider.as_str()) && !is_enabled(&agent.provider)
+        }) {
             let usage = data.report(
                 settings["usageIncludesOtherSessions"]
                     .as_bool()
@@ -458,7 +456,7 @@ pub fn snapshot(
             accounts.push(json!({
                 "title":agent.name, "provider":agent.provider,
                 "plan":null, "checked":null, "rows":[],
-                "placeholder":if agent.provider == "acp-devin" { "Open Usage & limits for quota and credits" } else { "Account limits not reported" }, "tracked":tracked,
+                "placeholder":"Account limits not reported", "tracked":tracked,
             }));
         }
     }
@@ -777,6 +775,58 @@ mod tests {
         assert_eq!(loaded["periods"][1]["tokens"], "35");
         assert_eq!(loaded["overviewNote"], "Estimates at standard API rates");
     }
+    #[test]
+    fn devin_quota_uses_account_rows_and_menu_metrics() {
+        use crate::usage_dashboard::RegisteredAgent;
+        let now = Utc::now();
+        let limits = Limits::new(
+            vec![Window::new("daily", WindowKind::Session, "Daily", 32.)],
+            now,
+        );
+        let card = Card {
+            account: Account {
+                provider: "acp-devin",
+                id: usage_report::DEFAULT_ACCOUNT.into(),
+                name: "Default".into(),
+                api_key: false,
+                key_variable: None,
+            },
+            shows_name: false,
+            state: LimitState::Ready(limits),
+        };
+        let data = Data {
+            records: vec![],
+            skipped: 0,
+            accounts: vec![],
+            registered: vec![RegisteredAgent {
+                provider: "acp-devin".into(),
+                name: "Devin".into(),
+                website: None,
+            }],
+            registered_unavailable: false,
+            read_at: now,
+            logs: None,
+            report_cache: Default::default(),
+        };
+        let choice = Choice::Account {
+            provider: "acp-devin".into(),
+            account: usage_report::DEFAULT_ACCOUNT.into(),
+            metric: Metric::Window("daily".into()),
+        };
+        assert_eq!(Choice::decode(&choice.encode()), Some(choice.clone()));
+        let view = snapshot(
+            &[card],
+            Some(&data),
+            &json!({"menuBarUsage":choice.encode()}),
+            None,
+            now,
+        );
+        assert_eq!(view["accounts"].as_array().unwrap().len(), 1);
+        assert_eq!(view["accounts"][0]["rows"][0]["title"], "Daily");
+        assert_eq!(view["accounts"][0]["rows"][0]["value"], "32% used");
+        assert_eq!(view["accounts"][0]["placeholder"], "");
+    }
+
     #[test]
     fn registered_agent_usage_appears_without_inventing_account_limits() {
         use crate::usage_dashboard::RegisteredAgent;

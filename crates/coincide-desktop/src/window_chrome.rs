@@ -237,6 +237,26 @@ pub(super) fn restorable_size(
     }
 }
 
+/// A click in GPUI may update logical focus while a native child view still
+/// owns AppKit's keyboard. Restore the responder when focus returns to GPUI.
+pub(super) fn focus_host_view(window: &Window) {
+    #[cfg(target_os = "macos")]
+    {
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        if let Ok(handle) = HasWindowHandle::window_handle(window)
+            && let RawWindowHandle::AppKit(handle) = handle.as_raw()
+        {
+            // The window handle refers to GPUI's live NSView on the UI thread.
+            let view = unsafe { &*handle.ns_view.as_ptr().cast::<objc2_app_kit::NSView>() };
+            if let Some(native) = view.window() {
+                let _ = native.makeFirstResponder(Some(view));
+            }
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = window;
+}
+
 /// Use AppKit's content rect rather than the drawable view: the view can have
 /// border insets and must not make a saved window shrink on every reopen.
 pub(super) fn restorable_window_size(window: &Window) -> gpui_kit::Size<Pixels> {

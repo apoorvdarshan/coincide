@@ -7866,9 +7866,15 @@ impl Render for Coincide {
                                                 .flex_shrink_0()
                                                 // Clicking into the field puts the
                                                 // picker away, as any popup should.
-                                                .on_mouse_down(
-                                                    MouseButton::Left,
-                                                    cx.listener(|this, _, _, cx| {
+                                                .capture_any_mouse_down(
+                                                    cx.listener(|this, event: &gpui_kit::MouseDownEvent, window, cx| {
+                                                        if event.button != MouseButton::Left {
+                                                            return;
+                                                        }
+                                                        if !this.archive_deleting_selected_thread() {
+                                                            window_chrome::focus_host_view(window);
+                                                            this.composer.read(cx).focus_handle(cx).focus(window, cx);
+                                                        }
                                                         if this.selection_ui.expanded
                                                             || this.follow_up_picker
                                                         {
