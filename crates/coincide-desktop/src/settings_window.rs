@@ -7,6 +7,7 @@ fn return_focus_to_main(main: AnyWindowHandle, focus: FocusHandle, cx: &mut App)
     // tree. A closed main target never redirects focus to another window.
     cx.defer(move |cx| {
         main.update(cx, |_, window, cx| {
+            window_chrome::focus_host_view(window);
             window.activate_window();
             focus.focus(window, cx);
         })
