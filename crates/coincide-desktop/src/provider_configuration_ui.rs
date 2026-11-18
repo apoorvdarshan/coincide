@@ -8,7 +8,7 @@ use coincide_core::{
     provider_configuration::{ProbeReport, SetupAction, Snapshot},
 };
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, VecDeque},
     path::PathBuf,
     sync::mpsc,
 };
@@ -76,8 +76,9 @@ enum Request {
         path: String,
         environment: BTreeMap<String, String>,
     },
-    Check,
-    CheckSignIn,
+    Check {
+        refresh_catalog: bool,
+    },
     Setup {
         action: SetupAction,
         baseline: String,
@@ -88,39 +89,85 @@ enum Outcome {
     Loaded(Snapshot),
     Saved(Snapshot),
     Checked(ProbeReport, Option<Value>),
+    ReloadForCheck(Snapshot),
     ManagedChecked(usize),
     SetupHandedOff(SetupAction),
 }
 const DEVIN_PROVIDER: &str = "acp-devin";
-const SIGN_IN_CHECK_INTERVAL: Duration = Duration::from_secs(5);
+const LOGIN_CHECK_INTERVAL: Duration = Duration::from_secs(5);
+const BUSY_CHECK_INTERVAL: Duration = Duration::from_millis(300);
 
-struct SignInRefresh {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CheckKind {
+    Full,
+    SignIn,
+    AfterLogin,
+}
+
+struct ProviderCheck {
+    provider: String,
+    kind: CheckKind,
+    refresh_catalog: bool,
     next: Instant,
     deadline: Instant,
-    waiting_for_login: bool,
 }
-impl SignInRefresh {
-    fn new(now: Instant, waiting_for_login: bool) -> Self {
-        let timeout = if waiting_for_login { 180 } else { 20 };
+
+impl ProviderCheck {
+    fn new(provider: &str, kind: CheckKind, now: Instant) -> Self {
+        let timeout = match kind {
+            CheckKind::SignIn => 75,
+            CheckKind::Full | CheckKind::AfterLogin => 180,
+        };
         Self {
+            provider: provider.into(),
+            kind,
+            refresh_catalog: kind == CheckKind::Full,
             next: now,
             deadline: now + Duration::from_secs(timeout),
-            waiting_for_login,
         }
     }
 
-    fn keep_waiting(&self, authenticated: Option<bool>) -> bool {
-        match authenticated {
-            Some(true) => false,
-            Some(false) => self.waiting_for_login,
-            None => true,
+    fn retry_delay(&self, result: &Result<Outcome>) -> Option<Duration> {
+        match result {
+            Err(error) if engine_busy(error) => Some(BUSY_CHECK_INTERVAL),
+            Ok(Outcome::Checked(report, _))
+                if self.kind == CheckKind::AfterLogin && report.authenticated != Some(true) =>
+            {
+                Some(LOGIN_CHECK_INTERVAL)
+            }
+            _ => None,
         }
     }
+}
+
+fn enqueue_check(queue: &mut VecDeque<ProviderCheck>, check: ProviderCheck) {
+    if let Some(queued) = queue
+        .iter_mut()
+        .find(|queued| queued.provider == check.provider)
+    {
+        // Keep the Terminal watch alive when the user requests a fresh result.
+        if queued.kind == CheckKind::AfterLogin && check.kind != CheckKind::AfterLogin {
+            queued.next = check.next;
+            queued.refresh_catalog |= check.refresh_catalog;
+        } else {
+            let mut check = check;
+            check.refresh_catalog |= queued.refresh_catalog;
+            *queued = check;
+        }
+    } else {
+        queue.push_back(check);
+    }
+}
+
+fn observes_terminal_sign_in(provider: &str) -> bool {
+    matches!(
+        provider,
+        DEVIN_PROVIDER | "claude" | "codex" | "cursor" | "grok"
+    )
 }
 
 struct Reply {
     accounts: bool,
-    sign_in_only: bool,
     provider: String,
     generation: u64,
     result: Result<Outcome>,
@@ -135,9 +182,10 @@ pub(super) struct Panel {
     receiver: mpsc::Receiver<Reply>,
     pending: Option<String>,
     active: String,
-    check_queue: std::collections::VecDeque<String>,
+    check_queue: VecDeque<ProviderCheck>,
+    pending_check: Option<ProviderCheck>,
     queued_acp_sign_in: Option<String>,
-    devin_sign_in_refresh: Option<SignInRefresh>,
+    pending_setup: bool,
     last_clock_refresh: Instant,
     enabled: bool,
     pickers: Vec<Task<()>>,
@@ -187,7 +235,8 @@ impl Panel {
             active: String::new(),
             check_queue: Default::default(),
             queued_acp_sign_in: None,
-            devin_sign_in_refresh: None,
+            pending_setup: false,
+            pending_check: None,
             last_clock_refresh: Instant::now(),
             enabled: true,
             pickers: Vec::new(),
@@ -204,6 +253,13 @@ impl Panel {
         self.enabled = enabled;
         self.active = provider.into();
         self.accounts.select(provider);
+        self.ensure_editor(provider, window, cx);
+        if !self.editors[provider].loaded && self.editors[provider].load_requested {
+            self.start(provider, Request::Load, cx);
+        }
+    }
+
+    fn ensure_editor(&mut self, provider: &str, window: &mut Window, cx: &mut Context<Self>) {
         if !self.editors.contains_key(provider) {
             let key = provider.to_owned();
             let path =
@@ -235,9 +291,6 @@ impl Panel {
                 },
             );
         }
-        if !self.editors[provider].loaded && self.editors[provider].load_requested {
-            self.start(provider, Request::Load, cx);
-        }
     }
     pub fn queue_acp_sign_in(
         &mut self,
@@ -245,25 +298,27 @@ impl Panel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.pending.is_some() || self.queued_acp_sign_in.is_some() || !self.workers.can_start()
-        {
+        if self.acp_setup_pending() {
             return;
         }
+        self.ensure_editor(provider, window, cx);
         self.queued_acp_sign_in = Some(provider.to_owned());
-        self.select(provider, true, window, cx);
         cx.notify();
     }
 
     pub fn acp_setup_pending(&self) -> bool {
-        self.pending.is_some() || self.queued_acp_sign_in.is_some()
+        self.pending_setup || self.queued_acp_sign_in.is_some()
     }
 
     pub fn acp_setup_notice(&self, provider: &str) -> Option<&str> {
         let editor = self.editors.get(provider)?;
-        if editor.failed || editor.notice.starts_with("Handed off") {
+        if editor.failed
+            || editor.notice.starts_with("Handed off")
+            || editor.notice.starts_with("Check sign-in again")
+        {
             Some(&editor.notice)
         } else {
-            None
+            editor.report.as_ref()?.status_note.as_deref()
         }
     }
 
@@ -273,41 +328,77 @@ impl Panel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if provider != DEVIN_PROVIDER {
-            self.check_all(&[provider.to_owned()], window, cx);
-            return;
-        }
-        let active = self.active.clone();
-        let enabled = self.enabled;
-        self.select(provider, true, window, cx);
-        self.active = active;
-        self.enabled = enabled;
-
-        if let Some(watch) = &mut self.devin_sign_in_refresh {
-            watch.next = Instant::now();
-        } else {
-            self.devin_sign_in_refresh = Some(SignInRefresh::new(Instant::now(), false));
-        }
-        cx.notify();
+        self.ensure_editor(provider, window, cx);
+        self.request_check(provider, CheckKind::SignIn, cx);
     }
 
     pub fn check_all(&mut self, providers: &[String], window: &mut Window, cx: &mut Context<Self>) {
-        if self.has_pending_write() || !self.check_queue.is_empty() {
-            return;
-        }
-        let selected = self.active.clone();
-        let enabled = self.enabled;
         for provider in providers {
-            self.select(provider, true, window, cx);
-            self.check_queue.push_back(provider.clone());
+            self.ensure_editor(provider, window, cx);
+            self.request_check(provider, CheckKind::Full, cx);
         }
-        self.active = selected;
-        self.enabled = enabled;
+    }
+
+    fn request_check(&mut self, provider: &str, kind: CheckKind, cx: &mut Context<Self>) {
+        if let Some(editor) = self.editors.get_mut(provider)
+            && !editor.loaded
+        {
+            editor.load_requested = true;
+        }
+        enqueue_check(
+            &mut self.check_queue,
+            ProviderCheck::new(provider, kind, Instant::now()),
+        );
         cx.notify();
     }
-    pub fn checking_all(&self) -> bool {
-        !self.check_queue.is_empty() || self.pending.is_some()
+
+    pub fn refresh_acp_sign_in_on_open(
+        &mut self,
+        provider: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.check_status(provider).is_none()
+            && self.editors.get(provider).is_none_or(|editor| {
+                !editor.failed
+                    && editor
+                        .checked
+                        .is_none_or(|at| at.elapsed() >= Duration::from_secs(60))
+            })
+        {
+            self.check_acp_sign_in(provider, window, cx);
+        }
     }
+
+    pub fn checking_all(&self) -> bool {
+        self.check_queue
+            .iter()
+            .chain(&self.pending_check)
+            .any(|check| check.refresh_catalog)
+    }
+
+    fn check_status(&self, provider: &str) -> Option<&'static str> {
+        if let Some(check) = self
+            .pending_check
+            .as_ref()
+            .filter(|check| check.provider == provider)
+        {
+            return Some(if check.refresh_catalog {
+                "Checking provider…"
+            } else {
+                "Checking sign-in…"
+            });
+        }
+        let check = self
+            .check_queue
+            .iter()
+            .find(|check| check.provider == provider)?;
+        match check.kind {
+            CheckKind::AfterLogin if check.next > Instant::now() => Some("Waiting for sign-in…"),
+            _ => Some("Check queued…"),
+        }
+    }
+
     pub fn summary(&self, provider: &str) -> String {
         let Some(editor) = self.editors.get(provider) else {
             return "Not checked".into();
@@ -315,22 +406,17 @@ impl Panel {
         if editor.needs_approval {
             return "Imported settings need review".into();
         }
-        if provider == DEVIN_PROVIDER
-            && self
-                .devin_sign_in_refresh
-                .as_ref()
-                .is_some_and(|watch| watch.waiting_for_login)
-        {
-            return "Waiting for sign-in…".into();
+        if let Some(status) = self.check_status(provider) {
+            return status.into();
         }
-        if self.pending.as_deref() == Some(provider) {
-            return editor.notice.clone();
+        if editor.failed {
+            return "Check unavailable".into();
         }
         if let Some(report) = &editor.report {
             let status = match report.authenticated {
                 Some(true) => "Signed in",
                 Some(false) => "Sign in required",
-                None => "Sign-in not checked",
+                None => "Sign-in unverified",
             };
             return [
                 Some(status.to_owned()),
@@ -357,11 +443,16 @@ impl Panel {
         let Some(editor) = self.editors.get(provider) else {
             return ("Not checked", TERTIARY);
         };
+        if let Some(status) = self.check_status(provider) {
+            return (status, TERTIARY);
+        }
+        if editor.failed {
+            return ("Unavailable", 0xff3b30);
+        }
         match editor.report.as_ref().map(|report| report.authenticated) {
             Some(Some(true)) => ("Ready", 0x34c759),
             Some(Some(false)) => ("Not signed in", 0xff9500),
-            _ if self.pending.as_deref() == Some(provider) => ("Checking…", TERTIARY),
-            None if editor.failed => ("Unavailable", 0xff3b30),
+            Some(None) => ("Sign-in unverified", TERTIARY),
             _ => ("Not checked", TERTIARY),
         }
     }
@@ -510,11 +601,7 @@ impl Panel {
         let generation = editor.generation;
         let baseline = editor.baseline.clone();
         let loading = matches!(&request, Request::Load);
-        if matches!(&request, Request::Check) {
-            editor.report = None;
-            editor.catalog = None;
-            editor.checked = None;
-        }
+        let setup = matches!(&request, Request::Setup { .. });
         // Account operations own their own notice. In particular, the automatic
         // metadata-only account load must not replace the configuration load
         // acknowledgement (or an imported-values/unsaved-changes warning).
@@ -528,7 +615,6 @@ impl Panel {
         let provider = provider.to_owned();
         let selected = provider.clone();
         let accounts = matches!(&request, Request::Accounts(_));
-        let sign_in_only = matches!(&request, Request::CheckSignIn);
         if self.workers.spawn(move |admission| {
             let _custody = custody;
             let result = (|| -> Result<Outcome> {
@@ -576,27 +662,26 @@ impl Panel {
                         })?;
                         Ok(Outcome::SetupHandedOff(action))
                     }
-                    Request::Check if provider == "antigravity" => {
+                    Request::Check { .. } if provider == "antigravity" => {
                         let count = try_state(&engine)?
                             .native_key_accounts("antigravity")?
                             .len();
                         Ok(Outcome::ManagedChecked(count))
                     }
-                    Request::Check | Request::CheckSignIn => {
+                    Request::Check { refresh_catalog } => {
                         let plan = {
                             let owner = try_state(&engine)?;
-                            anyhow::ensure!(
-                                owner.native_provider_configuration(&provider)?.baseline
-                                    == baseline,
-                                "Provider configuration changed; reload before checking"
-                            );
+                            let snapshot = owner.native_provider_configuration(&provider)?;
+                            if snapshot.baseline != baseline || snapshot.imported {
+                                return Ok(Outcome::ReloadForCheck(snapshot));
+                            }
                             owner.prepare_native_provider_check(&provider)?
                         };
                         let report = plan.run(&|| admission.allowed())?;
-                        let catalog = if sign_in_only {
-                            None
-                        } else {
+                        let catalog = if refresh_catalog {
                             checked_catalog(&engine, &provider, &|| admission.allowed())
+                        } else {
+                            None
                         };
                         Ok(Outcome::Checked(report, catalog))
                     }
@@ -604,7 +689,6 @@ impl Panel {
             })();
             let _ = sender.send(Reply {
                 accounts,
-                sign_in_only,
                 provider,
                 generation,
                 result,
@@ -616,6 +700,7 @@ impl Panel {
                 }
             }
             self.pending = Some(selected);
+            self.pending_setup = setup;
         } else {
             let error = anyhow::anyhow!("Settings worker could not start; nothing was changed.");
             if accounts {
@@ -645,6 +730,7 @@ impl Panel {
             self.start(&provider, Request::Load, cx);
         }
         if self.pending.is_none()
+            && self.workers.can_start()
             && let Some(provider) = self.queued_acp_sign_in.clone()
             && let Some(editor) = self.editors.get(&provider)
         {
@@ -674,29 +760,11 @@ impl Panel {
         {
             self.start(&provider, Request::Accounts(accounts::Request::Load), cx);
         }
-        if self.pending.is_none() {
-            if let Some(provider) = self.check_queue.front().cloned() {
-                if self.editors.get(&provider).is_some_and(|editor| {
-                    editor.dirty(cx)
-                        || editor.needs_approval
-                        || (!editor.loaded && !editor.load_requested)
-                }) {
-                    self.check_queue.pop_front();
-                } else if self
-                    .editors
-                    .get(&provider)
-                    .is_some_and(|editor| editor.loaded)
-                {
-                    self.check_queue.pop_front();
-                    self.start(&provider, Request::Check, cx);
-                } else {
-                    self.start(&provider, Request::Load, cx);
-                }
-            }
-        }
         self.pickers.retain(|task| !task.is_ready());
         while let Ok(reply) = self.receiver.try_recv() {
             self.pending = None;
+            self.pending_setup = false;
+            let check = self.pending_check.take();
             if self.workers.closed() {
                 continue;
             }
@@ -704,74 +772,46 @@ impl Panel {
                 .editors
                 .get(&reply.provider)
                 .is_some_and(|editor| editor.generation == reply.generation);
-            if reply.sign_in_only {
+            if let Some(check) = check {
                 if unchanged {
-                    self.accept_sign_in_check(reply.result, cx);
-                } else {
-                    self.devin_sign_in_refresh = None;
+                    self.accept_check(check, reply.result, window, cx);
                 }
+                cx.notify();
                 continue;
-            }
-            if reply.provider == DEVIN_PROVIDER
-                && matches!(&reply.result, Ok(Outcome::Checked(report, _)) if report.authenticated == Some(true))
-            {
-                self.devin_sign_in_refresh = None;
             }
             match reply.result {
                 Ok(Outcome::Accounts(outcome)) => {
                     self.apply_accounts(&reply.provider, outcome, unchanged, window, cx)
                 }
                 Ok(Outcome::Loaded(snapshot)) => {
-                    if reply.provider == DEVIN_PROVIDER
-                        && !snapshot.imported
-                        && self.devin_sign_in_refresh.is_none()
-                    {
-                        self.devin_sign_in_refresh =
-                            Some(SignInRefresh::new(Instant::now(), false));
-                    }
-                    self.load_snapshot(&reply.provider, snapshot, unchanged, window, cx)
+                    self.load_snapshot(&reply.provider, snapshot, unchanged, window, cx);
                 }
                 Ok(Outcome::Saved(snapshot)) => {
                     self.load_snapshot(&reply.provider, snapshot, unchanged, window, cx)
                 }
                 Ok(Outcome::SetupHandedOff(action)) => {
-                    let watch_devin =
-                        reply.provider == DEVIN_PROVIDER && action == SetupAction::SignIn;
-                    if watch_devin && unchanged {
-                        self.devin_sign_in_refresh = Some(SignInRefresh::new(Instant::now(), true));
+                    let watch_sign_in = action == SetupAction::SignIn
+                        && unchanged
+                        && observes_terminal_sign_in(&reply.provider);
+                    if watch_sign_in {
+                        self.request_check(&reply.provider, CheckKind::AfterLogin, cx);
                     }
-                    if let Some(editor) = self.editors.get_mut(&reply.provider) {
-                        editor.notice = if watch_devin {
-                            "Handed off to Terminal. Coincide will check for Devin sign-in automatically.".into()
-                        } else if coincide_core::acp_registry::registry_id(&reply.provider)
-                            .is_some()
-                        {
-                            "Handed off to the setup terminal. Finish signing in, then choose Check sign-in.".into()
-                        } else {
-                            "Handed off to a separate terminal. Installation and sign-in are not verified; choose Check Again after finishing there.".into()
-                        };
-                        editor.report = None;
-                        editor.catalog = None;
-                        editor.checked = None;
-                    }
-                }
-                Ok(Outcome::ManagedChecked(accounts)) => {
-                    if let Some(editor) = self.editors.get_mut(&reply.provider) {
-                        editor.checked = Some(Instant::now());
-                        editor.notice = format!(
-                            "{accounts} API-key accounts saved. The runtime and keys have not been verified."
-                        );
-                    }
-                }
-                Ok(Outcome::Checked(report, catalog)) => {
                     if let Some(editor) = self.editors.get_mut(&reply.provider) {
                         editor.failed = false;
-                        editor.report = Some(report);
-                        editor.catalog = catalog;
-                        editor.checked = Some(Instant::now());
-                        editor.notice = "Check finished.".into();
+                        editor.notice = if watch_sign_in {
+                            "Handed off to Terminal. Coincide will check for sign-in automatically."
+                                .into()
+                        } else {
+                            "Handed off to the setup terminal. Check again after finishing there."
+                                .into()
+                        };
                     }
                 }
+                Ok(
+                    Outcome::Checked(_, _)
+                    | Outcome::ManagedChecked(_)
+                    | Outcome::ReloadForCheck(_),
+                ) => {}
                 Err(error) => {
                     if reply.accounts {
                         self.account_error(&reply.provider, &error);
@@ -788,76 +828,147 @@ impl Panel {
             }
             cx.notify();
         }
-        self.poll_devin_sign_in(cx);
+        self.poll_checks(cx);
     }
 
-    fn accept_sign_in_check(&mut self, result: Result<Outcome>, cx: &mut Context<Self>) {
-        let Some(watch) = &self.devin_sign_in_refresh else {
+    fn accept_check(
+        &mut self,
+        mut check: ProviderCheck,
+        result: Result<Outcome>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let now = Instant::now();
+        if let Ok(Outcome::ReloadForCheck(snapshot)) = result {
+            self.load_snapshot(&check.provider, snapshot, true, window, cx);
+            check.next = now;
+            enqueue_check(&mut self.check_queue, check);
             return;
-        };
+        }
+        let retry = check.retry_delay(&result);
+        let editor = self
+            .editors
+            .get_mut(&check.provider)
+            .expect("check has an editor");
         match result {
-            Ok(Outcome::Checked(report, _)) => {
-                if !watch.keep_waiting(report.authenticated) {
-                    self.devin_sign_in_refresh = None;
+            Ok(Outcome::Checked(report, catalog)) => {
+                editor.failed = false;
+                if let Some(catalog) = catalog.filter(|value| value["state"] == "ready") {
+                    editor.catalog = Some(catalog);
+                } else if editor.catalog.is_none()
+                    && report.models.is_empty()
+                    && let Some(previous) = &editor.report
+                    && !previous.models.is_empty()
+                {
+                    editor.catalog = Some(
+                        json!({"provider":check.provider,"state":"ready","models":previous.models}),
+                    );
                 }
-                if let Some(editor) = self.editors.get_mut(DEVIN_PROVIDER) {
-                    let confirmed = report.authenticated == Some(true);
-                    editor.report = Some(report);
-                    editor.checked = Some(Instant::now());
-                    editor.failed = false;
-                    if confirmed {
-                        editor.notice.clear();
+                editor.checked = Some(now);
+                if retry.is_none() {
+                    editor.notice = report
+                        .status_note
+                        .clone()
+                        .unwrap_or_else(|| "Check finished.".into());
+                }
+                editor.report = Some(report);
+                check.refresh_catalog = false;
+            }
+            Ok(Outcome::ManagedChecked(accounts)) => {
+                editor.failed = false;
+                editor.checked = Some(now);
+                editor.notice = format!(
+                    "{accounts} API-key accounts saved. The runtime and keys have not been verified."
+                );
+            }
+            Err(error) if !engine_busy(&error) => {
+                editor.failed = true;
+                editor.notice = error.to_string();
+            }
+            Err(_) | Ok(_) => {}
+        }
+        if let Some(delay) = retry {
+            check.next = now + delay;
+            if check.next < check.deadline {
+                // Preserve a request that arrived while this probe was running.
+                if let Some(queued) = self
+                    .check_queue
+                    .iter_mut()
+                    .find(|queued| queued.provider == check.provider)
+                {
+                    if check.kind == CheckKind::AfterLogin {
+                        check.next = queued.next;
+                        check.refresh_catalog |= queued.refresh_catalog;
+                        *queued = check;
                     }
+                } else {
+                    self.check_queue.push_back(check);
                 }
+            } else {
+                self.expire_check(&check);
             }
-            Err(error) if engine_busy(&error) => return,
-            Err(error) => {
-                self.devin_sign_in_refresh = None;
-                if let Some(editor) = self.editors.get_mut(DEVIN_PROVIDER) {
-                    editor.notice = error.to_string();
-                    editor.failed = true;
-                }
-            }
-            Ok(_) => self.devin_sign_in_refresh = None,
         }
         cx.notify();
     }
 
-    fn poll_devin_sign_in(&mut self, cx: &mut Context<Self>) {
-        let Some(watch) = &mut self.devin_sign_in_refresh else {
-            return;
-        };
-        let now = Instant::now();
-        if now >= watch.deadline {
-            self.devin_sign_in_refresh = None;
-            if let Some(editor) = self.editors.get_mut(DEVIN_PROVIDER)
-                && editor.notice.starts_with("Handed off")
-            {
-                editor.notice = "Finish the Terminal sign-in, then choose Check sign-in.".into();
+    fn expire_check(&mut self, check: &ProviderCheck) {
+        if let Some(editor) = self.editors.get_mut(&check.provider) {
+            if check.kind == CheckKind::AfterLogin {
+                editor.notice = "Check sign-in again after finishing in Terminal.".into();
+            } else {
                 editor.failed = true;
+                editor.notice =
+                    "The provider check timed out while waiting to start. Check again.".into();
             }
-            cx.notify();
+        }
+    }
+
+    fn poll_checks(&mut self, cx: &mut Context<Self>) {
+        let now = Instant::now();
+        for index in (0..self.check_queue.len()).rev() {
+            if self.check_queue[index].deadline <= now {
+                let check = self.check_queue.remove(index).expect("valid check index");
+                self.expire_check(&check);
+                cx.notify();
+            }
+        }
+        if self.pending.is_some() || !self.workers.can_start() {
             return;
         }
-        if now < watch.next
-            || self.pending.is_some()
-            || !self.check_queue.is_empty()
-            || !self.workers.can_start()
-        {
+        let Some(index) = self
+            .check_queue
+            .iter()
+            .enumerate()
+            .filter(|(_, check)| check.next <= now)
+            .min_by_key(|(_, check)| check.refresh_catalog)
+            .map(|(index, _)| index)
+        else {
             return;
-        }
-        let request = match self.editors.get(DEVIN_PROVIDER) {
-            Some(editor) if !editor.loaded && editor.load_requested => Request::Load,
-            Some(editor) if editor.loaded && !editor.needs_approval && !editor.dirty(cx) => {
-                Request::CheckSignIn
-            }
-            _ => {
-                self.devin_sign_in_refresh = None;
-                return;
-            }
         };
-        watch.next = now + SIGN_IN_CHECK_INTERVAL;
-        self.start(DEVIN_PROVIDER, request, cx);
+        let provider = self.check_queue[index].provider.clone();
+        let editor = self
+            .editors
+            .get_mut(&provider)
+            .expect("queued check has an editor");
+        if editor.needs_approval || editor.dirty(cx) {
+            self.check_queue.remove(index);
+            editor.failed = true;
+            editor.notice = "Save or review provider settings before checking sign-in.".into();
+            cx.notify();
+        } else if editor.loaded {
+            let refresh_catalog = self.check_queue[index].refresh_catalog;
+            self.start(&provider, Request::Check { refresh_catalog }, cx);
+            if self.pending.is_some() {
+                self.pending_check = self.check_queue.remove(index);
+            }
+        } else if editor.load_requested {
+            // Leave time for other providers while a busy engine blocks this load.
+            self.check_queue[index].next = now + BUSY_CHECK_INTERVAL;
+            self.start(&provider, Request::Load, cx);
+        } else {
+            self.check_queue.remove(index);
+            cx.notify();
+        }
     }
 
     fn save(&mut self, provider: &str, cx: &mut Context<Self>) {
@@ -976,9 +1087,8 @@ impl Panel {
         self.accounts.has_review()
             || self.accounts.has_queued_action()
             || self.accounts.has_pending_names()
-            || !self.check_queue.is_empty()
             || self.queued_acp_sign_in.is_some()
-            || self.pending.is_some()
+            || (self.pending.is_some() && self.pending_check.is_none())
             || self.pickers.iter().any(|task| !task.is_ready())
     }
     pub fn account_revision(&self) -> u64 {
@@ -1024,15 +1134,7 @@ impl Panel {
             Part::Status => {
                 let check_provider = provider.clone();
                 let reload_provider = provider.clone();
-                let status = editor
-                    .report
-                    .as_ref()
-                    .map(|report| match report.authenticated {
-                        Some(true) => "Signed in",
-                        Some(false) => "Sign in required",
-                        None => "Version checked; sign-in not checked",
-                    })
-                    .unwrap_or("Not checked");
+                let status = self.summary(&provider);
                 pane = pane
                     .child(
                         div()
@@ -1045,9 +1147,7 @@ impl Panel {
                                 Button::new("provider-check-again")
                                     .label("Check Again")
                                     .small()
-                                    .disabled(
-                                        !loaded || !self.enabled || busy || dirty || needs_approval,
-                                    )
+                                    .disabled(!self.enabled || dirty || needs_approval)
                                     .tooltip(if dirty || needs_approval {
                                         "Save changes before checking"
                                     } else {
@@ -1057,7 +1157,7 @@ impl Panel {
                                         if this.active != check_provider {
                                             return;
                                         }
-                                        this.start(&check_provider, Request::Check, cx);
+                                        this.request_check(&check_provider, CheckKind::Full, cx);
                                     })),
                             ),
                     )
@@ -1079,9 +1179,6 @@ impl Panel {
                                 .ghost()
                                 .on_click(move |_, _, cx| cx.reveal_path(&location)),
                         )
-                        .when_some(report.status_note.as_ref(), |pane, note| {
-                            pane.child(div().text_sm().child(note.clone()))
-                        })
                         .when_some(report.account.as_ref(), |pane, account| {
                             pane.child(format!("Account: {account}"))
                         })
@@ -1450,25 +1547,166 @@ fn setup_website(provider: &str) -> &'static str {
 // the independently source-bound configuration acknowledgement intact.
 fn configuration_request_notice(request: &Request) -> Option<&'static str> {
     match request {
-        Request::Accounts(_) | Request::CheckSignIn => None,
+        Request::Accounts(_) | Request::Check { .. } => None,
         Request::Load => Some("Loading saved settings…"),
         Request::Save { .. } => Some("Saving settings…"),
-        Request::Check => Some("Checking provider…"),
         Request::Setup { .. } => Some("Opening setup in a separate terminal…"),
     }
 }
 
 #[cfg(test)]
 #[::core::prelude::v1::test]
-fn devin_login_refresh_waits_for_confirmation_but_opening_settings_accepts_signed_out() {
+fn provider_checks_deduplicate_without_losing_terminal_watch_or_other_providers() {
     let now = Instant::now();
-    let initial = SignInRefresh::new(now, false);
-    let after_login = SignInRefresh::new(now, true);
-    assert!(initial.keep_waiting(None));
-    assert!(!initial.keep_waiting(Some(false)));
-    assert!(after_login.keep_waiting(Some(false)));
-    assert!(!after_login.keep_waiting(Some(true)));
-    assert_eq!(after_login.deadline, now + Duration::from_secs(180));
+    let mut queue = VecDeque::new();
+    enqueue_check(
+        &mut queue,
+        ProviderCheck::new("claude", CheckKind::AfterLogin, now),
+    );
+    enqueue_check(
+        &mut queue,
+        ProviderCheck::new("cursor", CheckKind::Full, now),
+    );
+    queue[0].next = now + LOGIN_CHECK_INTERVAL;
+    enqueue_check(
+        &mut queue,
+        ProviderCheck::new("claude", CheckKind::Full, now),
+    );
+    assert_eq!(queue.len(), 2);
+    assert!(queue[0].kind == CheckKind::AfterLogin);
+    assert_eq!(queue[0].deadline, now + Duration::from_secs(180));
+    assert_eq!(queue[0].next, now);
+    assert!(queue[0].refresh_catalog);
+    assert_eq!(queue[1].provider, "cursor");
+}
+
+#[cfg(test)]
+#[::core::prelude::v1::test]
+fn provider_checks_retry_contention_and_watch_for_terminal_confirmation() {
+    let now = Instant::now();
+    let manual = ProviderCheck::new(DEVIN_PROVIDER, CheckKind::SignIn, now);
+    let handoff = ProviderCheck::new("claude", CheckKind::AfterLogin, now);
+    let busy = Err(anyhow::Error::new(EngineBusy));
+    assert_eq!(manual.retry_delay(&busy), Some(BUSY_CHECK_INTERVAL));
+    let status = |authenticated| {
+        Ok(Outcome::Checked(
+            ProbeReport {
+                authenticated,
+                ..Default::default()
+            },
+            None,
+        ))
+    };
+    assert_eq!(manual.retry_delay(&status(Some(false))), None);
+    assert_eq!(
+        handoff.retry_delay(&status(Some(false))),
+        Some(LOGIN_CHECK_INTERVAL)
+    );
+    assert_eq!(
+        handoff.retry_delay(&status(None)),
+        Some(LOGIN_CHECK_INTERVAL)
+    );
+    assert_eq!(handoff.retry_delay(&status(Some(true))), None);
+}
+
+#[cfg(all(test, unix))]
+mod provider_check_headless_tests {
+    use super::Panel;
+    use coincide_core::native_ui_edits::NativeUiEditors;
+    use gpui_kit::{AppContext, Context, Entity, IntoElement, Render, TestAppContext, Window, div};
+    use std::{
+        collections::BTreeMap,
+        time::{Duration, Instant},
+    };
+    #[gpui_kit::test]
+    fn manual_checks_survive_an_engine_busy_reply(cx: &mut TestAppContext) {
+        use std::{
+            fs,
+            os::unix::fs::PermissionsExt,
+            sync::{Arc, Mutex},
+        };
+
+        struct Harness(Entity<Panel>);
+        impl Render for Harness {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+            }
+        }
+
+        let root = tempfile::tempdir().unwrap();
+        fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let executable = root.path().join("claude-fixture");
+        fs::write(
+        &executable,
+        "#!/bin/sh\ncase \"$1\" in\n  --version) echo '2.1.42' ;;\n  auth) echo '{\"loggedIn\":false}'; exit 1 ;;\n  *) exit 2 ;;\nesac\n",
+    ).unwrap();
+        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+
+        let mut engine = coincide_core::api::Engine::new(
+            coincide_core::store::Store::open(&root.path().join("state.sqlite")).unwrap(),
+        );
+        let baseline = engine
+            .native_provider_configuration("claude")
+            .unwrap()
+            .baseline;
+        let config = engine
+            .prepare_native_provider_configuration(
+                "claude",
+                &baseline,
+                Some(&executable),
+                BTreeMap::new(),
+            )
+            .unwrap();
+        engine.apply_native_provider_configuration(config).unwrap();
+        let engine = Arc::new(Mutex::new(engine));
+        cx.update(gpui_kit::init);
+        let (view, cx) = cx.add_window_view(|window, cx| {
+            Harness(cx.new(|cx| Panel::new(engine.clone(), NativeUiEditors::default(), window, cx)))
+        });
+        let panel = cx.update(|_, cx| view.read(cx).0.clone());
+
+        let guard = engine.lock().unwrap();
+        cx.update(|window, cx| {
+            panel.update(cx, |panel, cx| {
+                panel.check_acp_sign_in("claude", window, cx);
+                assert_eq!(panel.summary("claude"), "Check queued…");
+                panel.poll(window, cx);
+                assert!(panel.pending.is_some());
+                panel.check_acp_sign_in("claude", window, cx);
+                assert_eq!(panel.check_queue.len(), 1);
+            });
+        });
+        let until = Instant::now() + Duration::from_secs(5);
+        loop {
+            let retried = cx.update(|window, cx| {
+                panel.update(cx, |panel, cx| {
+                    panel.poll(window, cx);
+                    panel.pending.is_none() && panel.check_queue.len() == 1
+                })
+            });
+            if retried {
+                break;
+            }
+            assert!(Instant::now() < until, "busy provider load did not return");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        drop(guard);
+
+        let until = Instant::now() + Duration::from_secs(5);
+        loop {
+            let status = cx.update(|window, cx| {
+                panel.update(cx, |panel, cx| {
+                    panel.poll(window, cx);
+                    panel.summary("claude")
+                })
+            });
+            if status.starts_with("Sign in required") {
+                break;
+            }
+            assert!(Instant::now() < until, "provider check ended at {status}");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
 }
 
 #[cfg(test)]
