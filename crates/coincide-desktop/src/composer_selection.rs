@@ -109,6 +109,21 @@ impl SelectionDraft {
         )
     }
 }
+fn selected_provider<'a>(
+    thread: &'a Value,
+    drafts: &'a HashMap<String, SelectionDraft>,
+) -> Option<&'a str> {
+    drafts
+        .get(thread["id"].as_str()?)
+        .map(|draft| draft.provider.as_str())
+        .filter(|provider| !provider.is_empty())
+        .or_else(|| {
+            thread["selection"]["provider"]
+                .as_str()
+                .filter(|id| !id.is_empty())
+        })
+}
+
 fn selection_view_matches(thread: &Value, id: &str, draft: &SelectionDraft) -> bool {
     text(thread, "id") == id
         && thread["selection"] == draft.original
@@ -3853,10 +3868,7 @@ impl Coincide {
         );
         let selection = &thread["selection"];
         let proposed = draft.filter(|draft| draft.has_edits());
-        let provider = proposed
-            .map(|draft| draft.provider.as_str())
-            .or_else(|| selection["provider"].as_str())
-            .unwrap_or_default();
+        let provider = self.composer_provider(thread).unwrap_or_default();
         let account = proposed
             .map(|draft| &draft.account)
             .unwrap_or(&selection["accountID"]);
@@ -4076,13 +4088,21 @@ impl Coincide {
             })
             .into_any_element()
     }
+    pub(super) fn composer_provider_for_thread(&self, id: &str) -> Option<&str> {
+        let thread = self
+            .selected
+            .as_ref()
+            .filter(|thread| thread["id"].as_str() == Some(id))?;
+        self.composer_provider(thread)
+    }
+
+    fn composer_provider<'a>(&'a self, thread: &'a Value) -> Option<&'a str> {
+        selected_provider(thread, &self.selection_ui.drafts)
+    }
+
     fn composer_picker_provider(&self) -> Option<String> {
-        let thread = self.selected.as_ref()?;
-        let draft = self.selection_ui.drafts.get(thread["id"].as_str()?);
-        let provider = draft
-            .map(|draft| draft.provider.as_str())
-            .or_else(|| thread["selection"]["provider"].as_str())?;
-        (!provider.is_empty()).then(|| provider.to_owned())
+        self.composer_provider(self.selected.as_ref()?)
+            .map(str::to_owned)
     }
 
     /// Thread › Choose Agent and Model…, Reasoning Effort…, Access… and Plan
@@ -5819,6 +5839,19 @@ impl Coincide {
 
 #[cfg(test)]
 mod tests {
+    #[::core::prelude::v1::test]
+    fn provider_badge_and_picker_get_the_staged_choice_only_for_its_own_thread() {
+        let open = json!({"id":"open","selection":{"provider":"codex","modelID":"default"}});
+        let other = json!({"id":"other","selection":{"provider":"opencode","modelID":"default"}});
+        let mut draft = SelectionDraft::from_thread(&open);
+        draft.provider = "acp-devin".into();
+        let mut drafts = std::collections::HashMap::from([("open".into(), draft)]);
+        assert_eq!(selected_provider(&open, &drafts), Some("acp-devin"));
+        assert_eq!(selected_provider(&other, &drafts), Some("opencode"));
+        drafts.clear();
+        assert_eq!(selected_provider(&open, &drafts), Some("codex"));
+    }
+
     #[::core::prelude::v1::test]
     fn persisted_workspace_catalog_is_display_only_for_the_exact_scope() {
         let workspace = json!({"projectPath":"/example","worktreePath":null});

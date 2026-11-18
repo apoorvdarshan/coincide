@@ -3,8 +3,13 @@ use coincide_core::{bot_runtime::BOTS_PROJECT_ID, store::ThreadSummary};
 use std::collections::{HashMap, HashSet};
 
 pub(super) const NO_PROJECT: &str = "00000000-0000-0000-0000-000000000000";
-pub(super) fn project_key(id: &str) -> &str {
-    if id.is_empty() || id == NO_PROJECT {
+pub(crate) fn project_key<'a>(id: &'a str, chat_projects: &[&str]) -> &'a str {
+    if id.is_empty()
+        || id == NO_PROJECT
+        || chat_projects
+            .iter()
+            .any(|chat| id.eq_ignore_ascii_case(chat))
+    {
         NO_PROJECT
     } else if id.eq_ignore_ascii_case(BOTS_PROJECT_ID) {
         BOTS_PROJECT_ID
@@ -23,11 +28,13 @@ pub(super) struct Section<'a> {
 pub(super) fn display<'a>(
     threads: &'a [ThreadSummary],
     projects: Vec<(String, String)>,
+    chat_projects: &[&str],
     selected_project: Option<&str>,
     show_snoozed: bool,
     now: f64,
     searching: bool,
 ) -> Vec<Section<'a>> {
+    let selected_project = selected_project.map(|id| project_key(id, chat_projects));
     let mut order = HashMap::with_capacity(projects.len());
     for (index, (id, _)) in projects.iter().enumerate() {
         order.entry(id.clone()).or_insert(index);
@@ -35,6 +42,7 @@ pub(super) fn display<'a>(
     let mut sections = project(
         threads,
         projects.clone(),
+        chat_projects,
         selected_project,
         show_snoozed,
         now,
@@ -45,8 +53,7 @@ pub(super) fn display<'a>(
             .filter_map(|section| section.project_id.clone())
             .collect::<HashSet<_>>();
         for (id, name) in projects {
-            if id.is_empty()
-                || id == NO_PROJECT
+            if project_key(&id, chat_projects) == NO_PROJECT
                 || id.eq_ignore_ascii_case(BOTS_PROJECT_ID)
                 || selected_project.is_some_and(|selected| selected != id)
                 || !present.insert(id.clone())
@@ -71,6 +78,7 @@ pub(super) fn display<'a>(
 pub(super) fn project<'a>(
     threads: &'a [ThreadSummary],
     projects: Vec<(String, String)>,
+    chat_projects: &[&str],
     selected_project: Option<&str>,
     show_snoozed: bool,
     now: f64,
@@ -78,8 +86,7 @@ pub(super) fn project<'a>(
     let mut groups = Vec::with_capacity(projects.len() + 2);
     let mut group_index = HashMap::with_capacity(projects.len() + 2);
     for (id, name) in projects {
-        if id.is_empty()
-            || id == NO_PROJECT
+        if project_key(&id, chat_projects) == NO_PROJECT
             || id.eq_ignore_ascii_case(BOTS_PROJECT_ID)
             || group_index.contains_key(&id)
         {
@@ -103,7 +110,7 @@ pub(super) fn project<'a>(
     let mut seen = HashSet::new();
     let mut pinned = Vec::new();
     for thread in threads {
-        let id = project_key(&thread.project_id);
+        let id = project_key(&thread.project_id, chat_projects);
         if selected_project.is_some_and(|selected| id != selected)
             || !(show_snoozed || thread.snoozed_until.is_none_or(|date| date <= now))
             || !seen.insert(thread.id.as_str())
@@ -210,7 +217,14 @@ mod tests {
             row("chat", NO_PROJECT, false),
             row("orphan-pin", "missing", true),
         ];
-        let sections = project(&rows, vec![("p".into(), "Project".into())], None, false, 0.);
+        let sections = project(
+            &rows,
+            vec![("p".into(), "Project".into())],
+            &[],
+            None,
+            false,
+            0.,
+        );
         assert_eq!(sections[0].name, "Pinned");
         assert!(sections[0].project_id.is_none());
         assert_eq!(
@@ -238,18 +252,18 @@ mod tests {
             row("plain", "p", false),
         ];
         assert_eq!(
-            ids(&project(&rows, vec![], Some("p"), false, 10.)),
+            ids(&project(&rows, vec![], &[], Some("p"), false, 10.)),
             ["pin", "plain"]
         );
         assert_eq!(
-            ids(&project(&rows, vec![], Some("p"), true, 10.)),
+            ids(&project(&rows, vec![], &[], Some("p"), true, 10.)),
             ["pin", "hidden-pin", "plain"]
         );
         assert_eq!(
-            ids(&project(&rows, vec![], Some("p"), false, 21.)),
+            ids(&project(&rows, vec![], &[], Some("p"), false, 21.)),
             ["pin", "hidden-pin", "plain"]
         );
-        assert!(project(&rows, vec![], Some(NO_PROJECT), true, 10.).is_empty());
+        assert!(project(&rows, vec![], &[], Some(NO_PROJECT), true, 10.).is_empty());
     }
     #[::core::prelude::v1::test]
     fn upstream_search_archive_subset_is_not_resurrected_and_selected_identity_is_unchanged() {
@@ -257,7 +271,7 @@ mod tests {
         archived.archived = true;
         let rows = vec![archived, row("selected", "missing", false)];
         let before = serde_json::to_value(&rows).unwrap();
-        let sections = project(&rows, vec![], None, false, 0.);
+        let sections = project(&rows, vec![], &[], None, false, 0.);
         assert_eq!(ids(&sections), ["visible-archived-pin", "selected"]);
         assert_eq!(sections[1].name, "Unavailable project");
         assert_eq!(sections[1].threads[0].id, "selected");
@@ -265,7 +279,7 @@ mod tests {
         // Hidden search/archive summaries are absent from the supplied subset.
         let filtered = &rows[1..];
         assert_eq!(
-            ids(&project(filtered, vec![], None, false, 0.)),
+            ids(&project(filtered, vec![], &[], None, false, 0.)),
             ["selected"]
         );
     }
@@ -280,6 +294,7 @@ mod tests {
         let sections = project(
             &rows,
             vec![("unused".into(), "Unused".into())],
+            &[],
             None,
             false,
             0.,
@@ -301,6 +316,7 @@ mod tests {
                 ("first".into(), "First".into()),
                 ("first".into(), "Duplicate".into()),
             ],
+            &[],
             None,
             false,
             0.,
@@ -320,7 +336,7 @@ mod tests {
             ("p".into(), "Project".into()),
             ("empty".into(), "Empty folder".into()),
         ];
-        let sections = display(&rows, projects.clone(), None, false, 0., false);
+        let sections = display(&rows, projects.clone(), &[], None, false, 0., false);
         assert_eq!(
             sections.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
             ["Bots", "Pinned", "Project", "Empty folder", "Chats"]
@@ -328,11 +344,11 @@ mod tests {
         assert_eq!(ids(&sections), ["bot", "pin", "project", "chat"]);
         assert!(sections[3].threads.is_empty());
         assert!(
-            !display(&rows, projects.clone(), None, false, 0., true)
+            !display(&rows, projects.clone(), &[], None, false, 0., true)
                 .iter()
                 .any(|s| s.project_id.as_deref() == Some("empty"))
         );
-        let selected = display(&rows, projects, Some("empty"), false, 0., false);
+        let selected = display(&rows, projects, &[], Some("empty"), false, 0., false);
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].project_id.as_deref(), Some("empty"));
         let reordered = display(
@@ -341,6 +357,7 @@ mod tests {
                 ("empty".into(), "Empty folder".into()),
                 ("p".into(), "Project".into()),
             ],
+            &[],
             None,
             false,
             0.,
@@ -354,5 +371,44 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["Empty folder", "Project"]
         );
+    }
+
+    #[::core::prelude::v1::test]
+    fn legacy_chats_share_one_section_without_hiding_a_user_folder_named_chats() {
+        let rows = vec![
+            row("legacy", "OLD-CHATS", false),
+            row("new", NO_PROJECT, false),
+            row("folder", "real-folder", false),
+        ];
+        let projects = vec![
+            ("old-chats".into(), "Chats".into()),
+            ("real-folder".into(), "Chats".into()),
+        ];
+        let sections = display(
+            &rows,
+            projects.clone(),
+            &["old-chats"],
+            None,
+            false,
+            0.,
+            false,
+        );
+        assert_eq!(sections.len(), 2);
+        assert_eq!(sections[0].project_id.as_deref(), Some("real-folder"));
+        assert_eq!(sections[1].project_id.as_deref(), Some(NO_PROJECT));
+        assert_eq!(ids(&sections), ["folder", "legacy", "new"]);
+        for filter in [NO_PROJECT, "old-chats"] {
+            let filtered = display(
+                &rows,
+                projects.clone(),
+                &["old-chats"],
+                Some(filter),
+                false,
+                0.,
+                false,
+            );
+            assert_eq!(ids(&filtered), ["legacy", "new"]);
+        }
+        assert_eq!(rows[0].project_id, "OLD-CHATS");
     }
 }
