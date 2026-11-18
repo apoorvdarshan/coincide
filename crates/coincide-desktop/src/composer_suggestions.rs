@@ -21,7 +21,7 @@ const MAX_PULL_ROWS: usize = 50;
 const PULL_MAX_AGE: Duration = Duration::from_secs(60);
 /// Refresh an open menu periodically; reopening it always requests a fresh list.
 const COMMAND_MAX_AGE: Duration = Duration::from_secs(30);
-const COMMAND_BUSY_RETRY: Duration = Duration::from_secs(2);
+const COMMAND_BUSY_RETRY: Duration = Duration::from_millis(150);
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Suggestion {
@@ -460,7 +460,7 @@ impl Coincide {
         let id = text(thread, "id");
         // A native WebKit responder is not represented by GPUI focus handles.
         if id.is_empty()
-            || self.browser_panels.contains(&id)
+            || self.browser_owns_reply_focus(window, cx)
             || !self.composer.read(cx).focus_handle(cx).is_focused(window)
         {
             return None;
@@ -594,7 +594,17 @@ impl Coincide {
                         }),
                 );
                 if items.is_empty()
-                    && self.composer_suggestions.command_pending.is_some()
+                    && (self.composer_suggestions.command_pending.is_some()
+                        || self.composer_suggestions.command_receipt.is_some()
+                        || self
+                            .selected
+                            .as_ref()
+                            .and_then(|thread| {
+                                self.composer_suggestions
+                                    .command_attempts
+                                    .get(&command_scope_key(&live, thread))
+                            })
+                            .is_some_and(|attempt| attempt.retry_after == COMMAND_BUSY_RETRY))
                     && matches!(
                         live.provider.as_str(),
                         "codex" | "opencode" | "lithos" | "claude"
@@ -602,7 +612,11 @@ impl Coincide {
                 {
                     self.composer_suggestions.show(
                         items,
-                        Some("Loading skills…"),
+                        Some(if skills {
+                            "Loading skills…"
+                        } else {
+                            "Loading commands…"
+                        }),
                         if skills { "Skills" } else { "Commands" },
                     );
                 } else if items.is_empty() {
