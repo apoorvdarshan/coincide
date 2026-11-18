@@ -40,6 +40,18 @@ impl NativeCommandDiscovery {
         })
     }
 }
+pub fn native_command_scope(thread: &Value) -> Value {
+    json!([
+        &thread["selection"]["provider"],
+        &thread["selection"]["accountID"],
+        &thread["projectID"],
+        &thread["projectPath"],
+        &thread["worktreePath"],
+        &thread["botID"],
+        &thread["rustBotContext"],
+    ])
+}
+
 impl Engine {
     pub(super) fn composer_command_directory(&self, thread: &Value) -> Result<PathBuf> {
         let has_no_project = thread["projectID"].as_str().is_none_or(|id| {
@@ -64,11 +76,23 @@ impl Engine {
         &self,
         id: &str,
     ) -> Result<Option<NativeCommandDiscovery>> {
+        self.prepare_native_command_discovery_for_scope(id, None)
+    }
+
+    pub fn prepare_native_command_discovery_for_scope(
+        &self,
+        id: &str,
+        expected: Option<&Value>,
+    ) -> Result<Option<NativeCommandDiscovery>> {
         ensure!(
             self.active_thread() == Some(id),
             "Conversation is no longer active"
         );
         let thread = self.store.thread_selection_snapshot(id)?;
+        ensure!(
+            expected.is_none_or(|expected| native_command_scope(&thread) == *expected),
+            "Conversation command scope changed"
+        );
         let provider = text(&thread["selection"], "provider");
         if !matches!(
             provider.as_str(),
@@ -134,7 +158,10 @@ impl Engine {
         }))
     }
     /// Never attach a late result to a different account, project or provider.
-    pub fn accept_native_command_discovery(&mut self, receipt: NativeCommandReceipt) -> Result<()> {
+    pub fn accept_native_command_discovery(
+        &mut self,
+        receipt: NativeCommandReceipt,
+    ) -> Result<Vec<crate::composer_suggestions::ProviderCommand>> {
         let request = receipt.request;
         let thread = self.store.thread_selection_snapshot(&request.thread)?;
         ensure!(
@@ -174,10 +201,39 @@ impl Engine {
             &request.provider,
             account,
             Some(&request.cwd),
-            commands,
+            commands.clone(),
         );
         self.revision += 1;
-        Ok(())
+        Ok(commands)
+    }
+
+    pub fn native_reported_composer_commands(
+        &self,
+        id: &str,
+        expected: &Value,
+    ) -> Result<Vec<crate::composer_suggestions::ProviderCommand>> {
+        let thread = self.store.thread_selection_snapshot(id)?;
+        ensure!(
+            native_command_scope(&thread) == *expected,
+            "Conversation command scope changed"
+        );
+        Ok(self.commands_for_thread(id, &thread).0.to_vec())
+    }
+    fn commands_for_thread(
+        &self,
+        id: &str,
+        thread: &Value,
+    ) -> (
+        &[crate::composer_suggestions::ProviderCommand],
+        &'static str,
+    ) {
+        let folder = self.composer_command_directory(thread).ok();
+        self.composer_commands.lookup(
+            id,
+            thread["selection"]["provider"].as_str().unwrap_or_default(),
+            &thread["selection"]["accountID"],
+            folder.as_deref(),
+        )
     }
     pub(super) fn reported_composer_commands(&self, p: &Value) -> Result<Value> {
         let object = p.as_object().context("Command lookup must be an object")?;
@@ -189,13 +245,7 @@ impl Engine {
         Uuid::parse_str(id).context("Invalid thread ID")?;
         let thread = self.store.thread_selection_snapshot(id)?;
         let provider = text(&thread["selection"], "provider");
-        let folder = self.composer_command_directory(&thread).ok();
-        let (commands, source) = self.composer_commands.lookup(
-            id,
-            &provider,
-            &thread["selection"]["accountID"],
-            folder.as_deref(),
-        );
+        let (commands, source) = self.commands_for_thread(id, &thread);
         Ok(json!({"threadId":id,"provider":provider,"commands":commands,"source":source}))
     }
 }
@@ -204,6 +254,38 @@ impl Engine {
 mod tests {
     use super::*;
     use std::sync::mpsc;
+
+    #[test]
+    fn a_discovery_worker_must_match_the_account_and_folder_it_was_started_for() {
+        let (root, mut engine, binary) = provider_configuration::tests::fixture();
+        provider_configuration::tests::save(&mut engine, "codex", &binary, "synthetic");
+        let thread = engine
+            .execute("threads.create", &json!({"cwd":root.path()}))
+            .unwrap();
+        let id = text(&thread, "id");
+        engine.set_active_thread(Some(id.clone())).unwrap();
+        let actual = native_command_scope(&engine.store.thread(&id).unwrap());
+        assert!(
+            engine
+                .prepare_native_command_discovery_for_scope(&id, Some(&actual))
+                .unwrap()
+                .is_some()
+        );
+        for index in [1, 4] {
+            let mut stale = actual.clone();
+            stale[index] = json!("different");
+            assert!(
+                engine
+                    .prepare_native_command_discovery_for_scope(&id, Some(&stale))
+                    .is_err()
+            );
+            assert!(
+                engine
+                    .native_reported_composer_commands(&id, &stale)
+                    .is_err()
+            );
+        }
+    }
 
     #[test]
     fn projectless_codex_resolves_global_commands_without_a_project() {

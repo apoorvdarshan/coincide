@@ -92,6 +92,7 @@ pub(super) struct PendingSend {
     pub original_visible: bool,
     /// Local-only row shown until this buffered message reaches the queue.
     pub buffer_id: Option<String>,
+    pub(super) expects_immediate_delivery: bool,
     /// Keeps this submission's previews hidden while it is being saved.
     pub image_send: Option<u64>,
     admission: Option<Arc<CapturedAdmission>>,
@@ -134,6 +135,7 @@ impl PendingSend {
             last_error: None,
             original_visible: true,
             buffer_id: None,
+            expects_immediate_delivery: false,
             image_send: None,
             admission: None,
         }
@@ -352,6 +354,12 @@ impl Coincide {
             if result.is_some() {
                 pending.admission = None;
             }
+            if matches!(
+                result,
+                Some(Ok(coincide_core::api::CapturedNativeSend::Waiting))
+            ) {
+                pending.expects_immediate_delivery = false;
+            }
             return result;
         }
         let slot = Arc::new(CapturedAdmission::default());
@@ -519,6 +527,21 @@ impl Coincide {
             return;
         }
         next.add_imports(self.attachment_imports.claim(&id));
+        let provider = next.captured["selection"]["provider"].as_str();
+        let dispatch = self.composer_send_dispatch(alternate);
+        let has_images = next.captured["rustDraftImages"]
+            .as_array()
+            .is_some_and(|images| !images.is_empty());
+        let direct = dispatch == Dispatch::Send
+            || (dispatch == Dispatch::Steer && (provider == Some("codex") || !has_images));
+        next.expects_immediate_delivery = direct
+            && previous.is_none()
+            && !next.waiting_for_import
+            && next.selection_wait == SelectionWait::None
+            && !self
+                .queued_messages
+                .iter()
+                .any(|row| matches!(row["state"].as_str(), Some("pending" | "dispatching")));
         if next.draft.trim().is_empty()
             && !coincide_core::composer_context::has_context(&next.captured["draftContext"])
             && next.captured["rustDraftImages"]

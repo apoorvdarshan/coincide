@@ -33,7 +33,7 @@ pub(super) fn opens_turn(item: &Value) -> bool {
 /// Only the matching opener gives permission to lay out an expanded live turn.
 fn running_opener(items: &[Value], opener_id: &str) -> Option<usize> {
     items.iter().rposition(opens_turn).filter(|&index| {
-        items[index]["id"] == opener_id && items[index]["rustAwaitingQueueDelivery"] != true
+        items[index]["id"] == opener_id && !crate::queue::transcript_waits_for_queue(&items[index])
     })
 }
 

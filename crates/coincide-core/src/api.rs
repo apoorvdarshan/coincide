@@ -115,7 +115,9 @@ mod composer_context_api;
 mod composer_file_reference;
 #[path = "composer_suggestions_api.rs"]
 mod composer_suggestions_api;
-pub use composer_suggestions_api::{NativeCommandDiscovery, NativeCommandReceipt};
+pub use composer_suggestions_api::{
+    NativeCommandDiscovery, NativeCommandReceipt, native_command_scope,
+};
 #[path = "terminal_activity_api.rs"]
 mod terminal_activity_api;
 #[path = "terminal_context_api.rs"]
@@ -1944,6 +1946,9 @@ impl Engine {
                 let item = v["items"].as_array_mut().unwrap().last_mut().unwrap();
                 item["rustQueueMessageID"] = json!(claim.id());
                 item["rustAwaitingQueueDelivery"] = json!(true);
+                if claim.presents_immediately() {
+                    item["rustImmediateQueueDelivery"] = json!(true);
+                }
             }
             if crate::composer_context::has_context(&context) {
                 v["items"].as_array_mut().unwrap().last_mut().unwrap()["context"] = context;
@@ -2251,11 +2256,18 @@ impl Engine {
         Ok(self.model_catalog.shutdown_status())
     }
     fn owns_queue_dispatch(&self, thread: &str, id: &str) -> bool {
+        self.active_queue_dispatches(thread)
+            .any(|active| active == id)
+    }
+
+    /// Runtime ownership is separate from the durable claim. A previous
+    /// launch or a missing acknowledgement can leave an unowned receipt.
+    pub fn active_queue_dispatches<'a>(&'a self, thread: &'a str) -> impl Iterator<Item = &'a str> {
         self.runs
             .get(thread)
             .and_then(|run| run.queue_claim.as_deref())
-            == Some(id)
-            || self.native_follow_up.owns_queue_dispatch(thread, id)
+            .into_iter()
+            .chain(self.native_follow_up.active_queue_dispatches(thread))
     }
 
     fn queue_command(&mut self, method: &str, p: &Value) -> Result<Value> {

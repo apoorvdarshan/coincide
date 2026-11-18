@@ -86,6 +86,8 @@ fn captured_send_launches_an_idle_provider_without_a_queue_poll() {
         captured["nativeQueueID"]
     );
     assert_eq!(saved["items"][0]["rustAwaitingQueueDelivery"], true);
+    assert_eq!(saved["items"][0]["rustImmediateQueueDelivery"], true);
+    assert_eq!(saved["rustMessageQueue"][0]["nativeImmediate"], true);
     engine.freeze_admissions();
     let _ = engine.request_provider_stop(&id);
 }
