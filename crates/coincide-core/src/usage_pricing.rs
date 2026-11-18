@@ -1,5 +1,5 @@
-//! API list prices, ported from Swift's `UsagePricing`, for estimating what tokens
-//! would cost at pay-as-you-go rates. Subscription usage is not billed per token,
+//! Standard API list prices, originally ported from Swift's `UsagePricing`, for
+//! estimating what tokens would cost at pay-as-you-go rates. Subscription usage is not billed per token,
 //! so Settings › Usage calls the result an API-equivalent estimate. Prices are US
 //! dollars per million tokens; newest models come first so a longer id matches
 //! before its prefix.
@@ -152,7 +152,14 @@ const fn open_ai(
 }
 
 /// OpenAI models Codex runs, by exact id (Codex names models without dates).
-const OPEN_AI: [(&str, ModelPrice); 22] = [
+// Rates for GPT-6.2 and GPT-6.1 Terra:
+// https://developers.openai.com/api/docs/models/gpt-6.2-astra
+// https://developers.openai.com/api/docs/models/gpt-6.2-sol
+// https://developers.openai.com/api/docs/models/gpt-6.1-terra
+const OPEN_AI: [(&str, ModelPrice); 25] = [
+    open_ai("gpt-6.2-astra", 8., 40., 0.4, Some(10.), Some(60.)),
+    open_ai("gpt-6.2-sol", 2., 10., 0.1, Some(2.5), Some(15.)),
+    open_ai("gpt-6.1-terra", 1., 5., 0.05, Some(1.25), Some(7.5)),
     open_ai("gpt-6-astra", 10., 50., 1., Some(12.5), Some(75.)),
     open_ai("gpt-6.1-sol", 2., 10., 0.1, Some(2.5), Some(15.)),
     open_ai("gpt-6-sol", 2., 10., 0.2, Some(2.5), Some(15.)),
@@ -264,6 +271,20 @@ mod tests {
             false,
         );
         assert!((cost - (3. + 0.3 + 3.75 + 6. + 15.)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn recent_codex_models_price_cached_input_and_long_context() {
+        let usage = tokens(1_000_000, 1_000_000, 1_000_000, 0, 1_000_000);
+        for (model, standard, long) in [
+            ("gpt-6.2-astra", 58.4, 96.8),
+            ("gpt-6.2-sol", 14.6, 24.2),
+            ("gpt-6.1-terra", 7.3, 12.1),
+        ] {
+            assert!((cost(&usage, Some(model), 272_000).unwrap() - standard).abs() < 1e-9);
+            assert!((cost(&usage, Some(model), 272_001).unwrap() - long).abs() < 1e-9);
+        }
+        assert_eq!(price("openai/gpt-6.2-sol"), price("gpt-6.2-sol"));
     }
 
     #[test]

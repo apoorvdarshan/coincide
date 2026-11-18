@@ -114,13 +114,26 @@ pub fn cost(dollars: f64) -> String {
     currency(dollars, "USD", if dollars >= 1000. { 0 } else { 2 })
 }
 
-/// The cost of `totals`, or "—" when none of its tokens has a known price.
-pub fn cost_of(totals: &Totals) -> String {
-    if totals.has_priced_tokens() {
-        cost(totals.cost)
-    } else {
-        "—".into()
-    }
+/// A standard API estimate for the priced tokens, with visible coverage.
+pub fn api_estimate(totals: &Totals, incomplete_history: bool) -> Option<String> {
+    totals.has_priced_tokens().then(|| {
+        let suffix = if incomplete_history || !totals.is_fully_priced() {
+            " (partial)"
+        } else {
+            ""
+        };
+        format!("≈ {}{suffix}", cost(totals.cost))
+    })
+}
+
+pub fn cost_of(totals: &Totals, incomplete_history: bool) -> String {
+    api_estimate(totals, incomplete_history).unwrap_or_else(|| {
+        if totals.tokens.is_empty() {
+            "—".into()
+        } else {
+            "No estimate".into()
+        }
+    })
 }
 
 /// The cost to the cent's hundredth, for tooltips, or why there is none.
@@ -130,10 +143,10 @@ pub fn exact_cost(totals: &Totals) -> String {
     }
     let cost = currency(totals.cost, "USD", 4);
     if totals.is_fully_priced() {
-        format!("≈ {cost} at API list prices")
+        format!("≈ {cost} at standard API rates")
     } else {
         format!(
-            "≈ {cost} at API list prices, without {} unpriced tokens",
+            "≈ {cost} at standard API rates, excluding {} unpriced tokens",
             tokens(totals.unpriced_tokens)
         )
     }
@@ -508,8 +521,9 @@ where
 pub fn tracked_row(title: &str, totals: &Totals) -> Row {
     let tokens_used = &totals.tokens;
     let mut value = amount(tokens_used.total() as f64, &Unit::Tokens);
-    if totals.has_priced_tokens() {
-        value.push_str(&format!(" · ≈ {}", cost(totals.cost)));
+    if let Some(estimate) = api_estimate(totals, false) {
+        value.push_str(" · ");
+        value.push_str(&estimate);
     }
     let mut row = Row::new(title, value);
     row.details.push(format!(
@@ -581,16 +595,21 @@ mod tests {
     #[test]
     fn costs_say_when_tokens_have_no_list_price() {
         let mut totals = Totals::default();
-        assert_eq!(cost_of(&totals), "—");
+        assert_eq!(cost_of(&totals, false), "—");
         assert_eq!(exact_cost(&totals), "No list price for these models");
         totals.tokens = TokenTotals::new(2_000_000, 0, 0, 0, 0, 0);
         totals.cost = 1.5;
         totals.unpriced_tokens = 1_000_000;
-        assert_eq!(cost_of(&totals), "$1.50");
+        assert_eq!(cost_of(&totals, false), "≈ $1.50 (partial)");
         assert_eq!(
             exact_cost(&totals),
-            "≈ $1.5000 at API list prices, without 1M unpriced tokens"
+            "≈ $1.5000 at standard API rates, excluding 1M unpriced tokens"
         );
+        totals.unpriced_tokens = 0;
+        assert_eq!(cost_of(&totals, false), "≈ $1.50");
+        assert_eq!(cost_of(&totals, true), "≈ $1.50 (partial)");
+        totals.unpriced_tokens = totals.tokens.total();
+        assert_eq!(cost_of(&totals, false), "No estimate");
     }
 
     #[test]
