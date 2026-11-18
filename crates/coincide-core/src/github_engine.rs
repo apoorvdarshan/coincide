@@ -51,12 +51,12 @@ impl GithubState {
     }
 }
 
-fn executable(path: &Path) -> Result<PathBuf> {
+fn executable(launcher: &Path) -> Result<PathBuf> {
     ensure!(
-        path.is_absolute(),
+        launcher.is_absolute(),
         "COINCIDE_RUST_GH must be an absolute executable path"
     );
-    let path = path
+    let path = launcher
         .canonicalize()
         .context("Configured GitHub CLI is unavailable")?;
     let metadata = path
@@ -82,7 +82,9 @@ fn executable(path: &Path) -> Result<PathBuf> {
             "Configured GitHub CLI must be a native Windows executable"
         );
     }
-    Ok(path)
+    // Keep the original absolute launcher for read-only recovery after a
+    // package upgrade. GhRunner still pins the canonical write target.
+    Ok(launcher.to_owned())
 }
 
 fn resolve(explicit: Option<&OsStr>, search: Option<&OsStr>) -> Result<PathBuf> {

@@ -28,6 +28,8 @@ mod shutdown_tests;
 #[derive(Clone)]
 pub struct GhRunner {
     executable: PathBuf,
+    #[cfg(unix)]
+    read_launcher: Option<PathBuf>,
     pub(crate) timeout: Duration,
 }
 impl GhRunner {
@@ -37,12 +39,14 @@ impl GhRunner {
             executable.is_absolute(),
             "Configure an absolute gh executable"
         );
-        let executable = executable
+        let resolved = executable
             .canonicalize()
             .context("gh executable unavailable")?;
-        ensure!(executable.is_file(), "gh executable is not a file");
+        ensure!(resolved.is_file(), "gh executable is not a file");
         Ok(Self {
-            executable,
+            #[cfg(unix)]
+            read_launcher: (executable != resolved).then_some(executable),
+            executable: resolved,
             timeout: Duration::from_secs(15),
         })
     }
@@ -81,7 +85,16 @@ impl GhRunner {
             os::{fd::AsRawFd, unix::process::CommandExt},
             process::{Command, Stdio},
         };
-        let child = Command::new(&self.executable)
+        // Homebrew retains its launcher across upgrades but removes the old
+        // Cellar target. Recover reads through that same configured path.
+        let executable = match &self.read_launcher {
+            Some(launcher) if !self.executable.try_exists()? => launcher
+                .canonicalize()
+                .context("gh executable unavailable")?,
+            _ => self.executable.clone(),
+        };
+        ensure!(executable.is_file(), "gh executable is not a file");
+        let child = Command::new(executable)
             .args(args)
             .current_dir(root)
             .env("GH_HOST", "github.com")
@@ -1188,6 +1201,25 @@ mod tests {
         assert_eq!(value["ready"], json!(true));
         value["result"].clone()
     }
+    #[cfg(unix)]
+    #[test]
+    fn reads_recover_through_the_original_launcher_after_a_cli_upgrade() {
+        use std::os::unix::fs::symlink;
+        let (old, old_runner) = fake("printf old");
+        let (_new, new_runner) = fake("printf new");
+        let launcher = old.path().join("gh");
+        symlink(&old_runner.executable, &launcher).unwrap();
+        let runner = GhRunner::new(launcher.clone()).unwrap();
+        let cancel = AtomicBool::new(false);
+        assert_eq!(runner.capture(old.path(), &[], &cancel).unwrap(), b"old");
+
+        std::fs::remove_file(&launcher).unwrap();
+        symlink(&new_runner.executable, &launcher).unwrap();
+        std::fs::remove_file(&old_runner.executable).unwrap();
+        assert_eq!(runner.capture(old.path(), &[], &cancel).unwrap(), b"new");
+        assert_eq!(runner.executable, old_runner.executable);
+    }
+
     #[cfg(unix)]
     #[test]
     fn fake_cli_fixed_argv_service_ownership_and_one_shot_results() {

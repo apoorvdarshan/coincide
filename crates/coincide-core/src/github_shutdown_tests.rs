@@ -15,6 +15,8 @@ fn cancellation_and_join_ownership_survive_result_retirement_and_tls_exit() {
     for panic in [false, true] {
         let mut service = GithubService::new(GhRunner {
             executable: PathBuf::from("/synthetic-never-launched"),
+            #[cfg(unix)]
+            read_launcher: None,
             timeout: Duration::from_secs(1),
         });
         let cancel = Arc::new(AtomicBool::new(false));
