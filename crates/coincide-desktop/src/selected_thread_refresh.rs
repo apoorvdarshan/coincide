@@ -135,7 +135,7 @@ impl Reader {
                                     for row in
                                         rows.iter_mut().filter(|row| row["state"] == "dispatching")
                                     {
-                                        row["deliveryOwned"] = json!(
+                                        row["deliveryOwned"] = serde_json::json!(
                                             active_delivery
                                                 .iter()
                                                 .any(|id| row["id"] == id.as_str())
