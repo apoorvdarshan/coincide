@@ -7,7 +7,7 @@ use coincide_core::bot_runtime::BOTS_PROJECT_ID;
 mod sections;
 use crate::native_menu::AccessibleMenuExt as _;
 use gpui_kit::assets::IconName;
-use gpui_kit::base::ElementExt as _;
+use gpui_kit::base::{ElementExt as _, Placement};
 use gpui_kit::component::menu::{ContextMenuExt, PopupMenuItem};
 use sections::NO_PROJECT;
 pub(super) const NO_PROJECT_ID: &str = NO_PROJECT;
@@ -53,7 +53,16 @@ where
         .flex()
         .items_center()
         .group("sidebar-project-row")
+        .capture_any_mouse_down(keep_sidebar_focus_on_context_click)
         .when(enabled, |row| row.on_click(on_click))
+}
+
+// Let the menu take focus without first focusing the row's button. Keyboard
+// navigation retains the button's normal focus indicator.
+fn keep_sidebar_focus_on_context_click(event: &MouseDownEvent, window: &mut Window, _: &mut App) {
+    if event.button == MouseButton::Right {
+        window.prevent_default();
+    }
 }
 
 fn without_parent_click<F>(on_click: F) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static
@@ -1193,7 +1202,9 @@ impl Coincide {
                                 })
                                 .when_some(
                                     folder_tooltip.filter(|_| folder && !searching),
-                                    |button, tooltip| button.tooltip(tooltip),
+                                    |button, tooltip| {
+                                        button.tooltip(tooltip).tooltip_placement(Placement::Right)
+                                    },
                                 )
                                 .on_click(without_parent_click(cx.listener(
                                     move |this, _, _, cx| {
@@ -1389,6 +1400,7 @@ impl Coincide {
                             .flex()
                             .items_center()
                             .group("sidebar-thread-row")
+                            .capture_any_mouse_down(keep_sidebar_focus_on_context_click)
                             .when(!self.renaming_thread(&id), |row| {
                                 row.on_drag(drag, |drag, _, _, cx| cx.new(|_| drag.clone()))
                             })
@@ -1498,7 +1510,8 @@ impl Coincide {
                                         &thread.id,
                                         searching,
                                     ))
-                                    .w_full()
+                                    .tooltip_placement(Placement::Right)
+                                    .flex_1()
                                     .selected(if self.thread_bulk.mode {
                                         self.thread_bulk.picked.contains(&id)
                                     } else {
@@ -1535,23 +1548,7 @@ impl Coincide {
                                                     .focus(window, cx);
                                             }
                                         },
-                                    ))
-                                    .context_menu(move |menu, window, cx| match &bulk_menu {
-                                        Some((ids, archived, running)) => sidebar_menus::bulk_menu(
-                                            menu,
-                                            ids,
-                                            *archived,
-                                            *running,
-                                            &menu_context.parent,
-                                        ),
-                                        None => sidebar_menus::thread_menu(
-                                            menu,
-                                            &thread_menu,
-                                            &menu_context,
-                                            window,
-                                            cx,
-                                        ),
-                                    }),
+                                    )),
                             )
                             .child(
                                 Button::new(SharedString::from(format!(
@@ -1560,27 +1557,24 @@ impl Coincide {
                                 .icon(IconName::Archive)
                                 .ghost()
                                 .compact()
-                                .w(px(24.))
-                                .h(px(28.))
-                                .opacity(0.)
+                                .w(px(28.))
+                                .h(px(30.))
+                                .flex_shrink_0()
+                                .opacity(0.65)
                                 .group_hover("sidebar-thread-row", |button| button.opacity(1.))
-                                .disabled(
-                                    self.thread_bulk.mode || self.running.contains(&archive_id),
-                                )
+                                .disabled(selecting || (!is_archived && thread_menu.running))
                                 .accessibility_label(if is_archived {
                                     "Restore conversation"
                                 } else {
                                     "Archive conversation"
                                 })
                                 .tooltip(if is_archived { "Restore" } else { "Archive" })
+                                .tooltip_placement(Placement::Right)
                                 .on_click(cx.listener(
                                     move |this, event, window, cx| {
-                                        if this.thread_bulk.mode
-                                            || this.running.contains(&archive_id)
-                                        {
+                                        if this.thread_bulk.mode {
                                             return;
                                         }
-                                        // Acts on this row; only a confirmation opens it.
                                         this.sidebar_thread_action(
                                             &archive_id,
                                             sidebar_menus::ThreadAction::Archive(!is_archived),
@@ -1592,7 +1586,23 @@ impl Coincide {
                                         }
                                     },
                                 )),
-                            ),
+                            )
+                            .context_menu(move |menu, window, cx| match &bulk_menu {
+                                Some((ids, archived, running)) => sidebar_menus::bulk_menu(
+                                    menu,
+                                    ids,
+                                    *archived,
+                                    *running,
+                                    &menu_context.parent,
+                                ),
+                                None => sidebar_menus::thread_menu(
+                                    menu,
+                                    &thread_menu,
+                                    &menu_context,
+                                    window,
+                                    cx,
+                                ),
+                            }),
                         );
                     }
                 }
@@ -2057,15 +2067,18 @@ impl Coincide {
         self.sync_workspace_context(cx);
         cx.notify();
     }
-    /// Archives the open conversation and opens the next one, as Swift does.
+    /// Archives a conversation and opens its sibling if it was selected.
     pub(super) fn archive_open_thread(
         &mut self,
         id: &str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        let rows = self.bulk_sidebar_binding(cx).rows;
-        let sibling = sidebar_sibling(&rows, id);
+        let sibling = self
+            .selected
+            .as_ref()
+            .filter(|thread| thread["id"] == id)
+            .and_then(|_| sidebar_sibling(&self.bulk_sidebar_binding(cx).rows, id));
         let done = self.set_archived(id, true, cx);
         if done {
             self.hand_off_removed_selection(id, sibling, window, cx);

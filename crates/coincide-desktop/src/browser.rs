@@ -46,7 +46,9 @@ pub use dialogs::{Kind as DialogKind, Snapshot as DialogSnapshot};
 pub use shutdown::BrowserShutdownStatus;
 use shutdown::TrackedEvaluation;
 
-use crate::browser_settings::{ProfileCatalog, ProfileChoice, ProfileRequest, ProfileSnapshot};
+use crate::browser_settings::{
+    ProfileCatalog, ProfileChoice, ProfileOperation, ProfileRequest, ProfileSnapshot,
+};
 use crate::credentials::{FillJob, deliver_fill};
 use anyhow::{Context, Result, ensure};
 #[cfg(not(target_os = "linux"))]
@@ -1852,18 +1854,29 @@ impl BrowserController {
     pub fn apply_profile_request(
         &mut self,
         current_thread: &str,
-        request: ProfileRequest,
+        mut request: ProfileRequest,
     ) -> Result<()> {
         ensure!(
             !self.shutdown.callbacks.closed(),
             "Browser is shutting down"
         );
+        if matches!(request.operation, ProfileOperation::OpenSharedBrowser) {
+            ensure!(
+                current_thread == request.thread && request.revision == self.profiles.revision,
+                "Conversation or profile changed. Open the shared browser again."
+            );
+            let shared = ProfileChoice::Persistent(self.profiles.shared_profile());
+            if self.profiles.selected(current_thread) == shared {
+                return Ok(());
+            }
+            request.operation = ProfileOperation::Select(shared);
+        }
         #[cfg(target_os = "macos")]
         if let Some(actor) = self.cookie_actor.as_mut() {
             actor.stop();
         }
-        if let crate::browser_settings::ProfileOperation::Select(ProfileChoice::Persistent(id)) =
-            &request.operation
+        if let ProfileOperation::Select(ProfileChoice::Persistent(id))
+        | ProfileOperation::SetSharedProfile(id) = &request.operation
         {
             ensure!(
                 persistent_profiles_available()
@@ -1880,11 +1893,17 @@ impl BrowserController {
             &request.operation,
             crate::browser_settings::ProfileOperation::Select(_)
         );
-        self.profiles.apply(
-            current_thread,
-            request,
-            self.tabs.get(current_thread).map_or(0, Vec::len),
-        )?;
+        let open_tabs = if matches!(&request.operation, ProfileOperation::SetSharedProfile(_)) {
+            let shared = ProfileChoice::Persistent(self.profiles.shared_profile());
+            self.tabs
+                .iter()
+                .filter(|(thread, _)| self.profiles.selected(thread) == shared)
+                .map(|(_, tabs)| tabs.len())
+                .sum()
+        } else {
+            self.tabs.get(current_thread).map_or(0, Vec::len)
+        };
+        self.profiles.apply(current_thread, request, open_tabs)?;
         if switching
             && old == ProfileChoice::Private
             && self.profiles.selected(current_thread) != old

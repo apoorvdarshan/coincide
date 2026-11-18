@@ -113,17 +113,37 @@ impl Reader {
                 return;
             }
             let result = (|| {
-                let (revision, snapshot, queue_enabled) = {
+                let ((revision, snapshot, queue_enabled), active_delivery) = {
                     let engine = engine.try_lock().map_err(|_| ())?;
                     if engine.shutdown || engine.admissions_frozen() {
                         return Err(());
                     }
-                    engine.capture_thread_read(&scope.id).map_err(|_| ())?
+                    (
+                        engine.capture_thread_read(&scope.id).map_err(|_| ())?,
+                        engine
+                            .active_queue_dispatches(&scope.id)
+                            .map(str::to_owned)
+                            .collect::<Vec<_>>(),
+                    )
                 };
                 let thread = snapshot.decode().map_err(|_| ())?;
                 let queue = match queue_enabled {
                     Some(enabled) => {
                         coincide_core::message_queue::native_snapshot(&thread, enabled)
+                            .map(|mut snapshot| {
+                                if let Some(rows) = snapshot["messages"].as_array_mut() {
+                                    for row in
+                                        rows.iter_mut().filter(|row| row["state"] == "dispatching")
+                                    {
+                                        row["deliveryOwned"] = serde_json::json!(
+                                            active_delivery
+                                                .iter()
+                                                .any(|id| row["id"] == id.as_str())
+                                        );
+                                    }
+                                }
+                                snapshot
+                            })
                             .map_err(|error| error.to_string())
                     }
                     None => {
@@ -343,6 +363,7 @@ mod tests {
         thread["rustQueueError"] = json!("old model error");
         for (state, expected) in [
             ("pending", json!("old model error")),
+            ("dispatching", json!("old model error")),
             ("completed", Value::Null),
         ] {
             thread["rustMessageQueue"][0]["state"] = json!(state);
@@ -361,7 +382,12 @@ mod tests {
                 std::thread::yield_now();
             };
             let (_, _, queue, _) = completed.apply_if_current(&thread, 1).unwrap();
-            assert_eq!(queue.unwrap()["error"], expected);
+            let queue = queue.unwrap();
+            assert_eq!(queue["error"], expected);
+            if state == "dispatching" {
+                assert_eq!(queue["messages"][0]["deliveryOwned"], false);
+                assert!(queue["rawQueue"][0].get("deliveryOwned").is_none());
+            }
             reader.close();
             while !reader.closed_and_drained() {
                 assert!(Instant::now() < deadline, "background reader did not drain");

@@ -175,7 +175,7 @@ impl RunStatus {
     }
 }
 
-fn run_status(running: bool, clock: Option<RunClock>, approvals: usize, now: f64) -> RunStatus {
+fn run_status(running: bool, clock: Option<&RunClock>, approvals: usize, now: f64) -> RunStatus {
     if approvals > 0 {
         RunStatus::Approval(approvals)
     } else if !running {
@@ -204,10 +204,11 @@ pub(super) fn elapsed(seconds: f64) -> String {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct RunClock {
     started_at: f64,
     run_id: Option<uuid::Uuid>,
+    opener_id: Option<String>,
     connecting: bool,
 }
 
@@ -284,6 +285,7 @@ impl State {
                         run_id: clock["runId"]
                             .as_str()
                             .and_then(|id| uuid::Uuid::parse_str(id).ok()),
+                        opener_id: clock["openerId"].as_str().map(str::to_owned),
                         connecting: clock["connecting"] == true,
                     },
                 ))
@@ -292,6 +294,9 @@ impl State {
     }
     pub(super) fn run_id(&self, thread: &str) -> Option<uuid::Uuid> {
         self.run_clocks.get(thread)?.run_id
+    }
+    pub(super) fn run_opener(&self, thread: &str) -> Option<&str> {
+        self.run_clocks.get(thread)?.opener_id.as_deref()
     }
     pub(super) fn run_started_at(&self, thread: &str) -> Option<f64> {
         self.run_clocks.get(thread).map(|clock| clock.started_at)
@@ -412,7 +417,7 @@ impl Coincide {
         };
         run_status(
             self.running.contains(&id),
-            self.window_chrome.run_clocks.get(&id).copied(),
+            self.window_chrome.run_clocks.get(&id),
             approvals,
             coincide_core::store::swift_timestamp(),
         )
@@ -476,17 +481,21 @@ mod tests {
             Some(RunClock {
                 started_at: 100.,
                 run_id: None,
+                opener_id: None,
                 connecting,
             })
         };
         assert_eq!(run_status(false, None, 0, 200.), RunStatus::Idle);
         assert_eq!(
-            run_status(true, clock(true), 2, 200.),
+            run_status(true, clock(true).as_ref(), 2, 200.),
             RunStatus::Approval(2)
         );
-        assert_eq!(run_status(true, clock(true), 0, 200.), RunStatus::Starting);
         assert_eq!(
-            run_status(true, clock(false), 0, 200.),
+            run_status(true, clock(true).as_ref(), 0, 200.),
+            RunStatus::Starting
+        );
+        assert_eq!(
+            run_status(true, clock(false).as_ref(), 0, 200.),
             RunStatus::Running { since: 100. }
         );
         // A run the engine has not reported a clock for counts from now.
@@ -518,15 +527,17 @@ mod tests {
     #[::core::prelude::v1::test]
     fn status_clocks_are_read_from_app_status() {
         let mut state = State::default();
-        state.observe_status(&json!({"runClocks":{"T":{"startedAt":5.5,"connecting":false},"bad":{"connecting":true}}}));
+        state.observe_status(&json!({"runClocks":{"T":{"startedAt":5.5,"connecting":false,"openerId":"new-message"},"bad":{"connecting":true}}}));
         assert_eq!(
             state.run_clocks.get("T"),
             Some(&RunClock {
                 started_at: 5.5,
                 run_id: None,
+                opener_id: Some("new-message".into()),
                 connecting: false
             })
         );
+        assert_eq!(state.run_opener("T"), Some("new-message"));
         assert!(!state.run_clocks.contains_key("bad"));
     }
 }

@@ -540,7 +540,7 @@ impl Coincide {
             );
         }
         for agent in agents {
-            list = list.child(self.registry_agent_link(&agent, false, cx));
+            list = list.child(self.registry_agent_link(&agent, cx));
         }
         list.into_any_element()
     }
