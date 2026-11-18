@@ -238,7 +238,7 @@ pub(super) fn restorable_size(
 }
 
 /// A click in GPUI may update logical focus while a native child view still
-/// owns AppKit's keyboard. Transfer the responder only for a composer click.
+/// owns AppKit's keyboard. Restore the responder when focus returns to GPUI.
 pub(super) fn focus_host_view(window: &Window) {
     #[cfg(target_os = "macos")]
     {
@@ -248,9 +248,7 @@ pub(super) fn focus_host_view(window: &Window) {
         {
             // The window handle refers to GPUI's live NSView on the UI thread.
             let view = unsafe { &*handle.ns_view.as_ptr().cast::<objc2_app_kit::NSView>() };
-            if let Some(native) = view.window()
-                && native.isKeyWindow()
-            {
+            if let Some(native) = view.window() {
                 let _ = native.makeFirstResponder(Some(view));
             }
         }
