@@ -476,6 +476,8 @@ struct Coincide {
     native_quit: Option<std::rc::Rc<native_quit::NativeQuit>>,
     native_quit_observed: bool,
     quit_issued: bool,
+    #[cfg(target_os = "macos")]
+    quit_windows_hidden_since: Option<Instant>,
     command_palette: Entity<command_palette::CommandPalette>,
     transcript_find: Entity<transcript_find::TranscriptFind>,
     find_thread: Option<String>,
@@ -1805,6 +1807,8 @@ impl Coincide {
             native_quit,
             native_quit_observed: false,
             quit_issued: false,
+            #[cfg(target_os = "macos")]
+            quit_windows_hidden_since: None,
             command_palette,
             transcript_find,
             find_thread: None,
@@ -4417,7 +4421,7 @@ impl Coincide {
         }
         self.poll_composer_suggestions(window, cx);
         if self.engine.try_lock().is_ok_and(|engine| engine.shutdown) {
-            self.media.shutdown_requested = true;
+            self.begin_normal_shutdown(window, cx);
         }
         if self.media.shutdown_requested {
             self.cancel_pending_new_thread();
@@ -4428,6 +4432,9 @@ impl Coincide {
             self.remote_panel.update(cx, |panel, _| panel.shut_down());
             if self.poll_global_quit(window, cx) && self.updater_quit_ready(cx) {
                 self.finish_normal_quit(cx);
+            } else {
+                #[cfg(target_os = "macos")]
+                self.reveal_quit_progress_if_needed(window, cx);
             }
             cx.notify();
             return;
@@ -4559,9 +4566,11 @@ impl Coincide {
             self.created_bot_thread_to_focus = None;
             self.composer.read(cx).focus_handle(cx).focus(window, cx);
         }
-        if let Ok(mut engine) = self.engine.try_lock() {
+        let engine = self.engine.clone();
+        if let Ok(mut engine) = engine.try_lock() {
             if engine.shutdown {
-                self.media.shutdown_requested = true;
+                drop(engine);
+                self.begin_normal_shutdown(window, cx);
                 return;
             }
             if let Some(selected) = &self.pending_native_selection {
@@ -7141,44 +7150,7 @@ impl Render for Coincide {
                 && self.media_shutdown_ready(cx)
                 && self.computer_use_shutdown_ready())
         {
-            return div()
-                .flex()
-                .flex_col()
-                .size_full()
-                .p_6()
-                .gap_3()
-                .bg(self.color(0x10141c))
-                .text_color(self.color(0xe4e9f2))
-                .child(if self.media.shutdown_requested {
-                    "Finishing background work and saving before quitting…"
-                } else {
-                    "Finishing background work and saving before closing…"
-                })
-                .child(self.status.clone())
-                .when_some(cookie_recovery, |view, recovery| view.child(recovery))
-                .when(self.appshots.private_cleanup_pending(), |view| {
-                    view.child(div().text_sm().child(self.appshots.outcome.clone()))
-                        .child(
-                            Button::new("quit-retry-appshot-cleanup")
-                                .label("Retry capture cleanup")
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.appshots.retry_private_cleanup();
-                                    cx.notify();
-                                })),
-                        )
-                })
-                .when(!self.pending_drafts.is_empty(), |view| {
-                    view.child(Button::new("quit-retry-save").label("Retry save").on_click(
-                        cx.listener(|this, _, _, cx| {
-                            draft_close::retry_failed(&mut this.pending_drafts);
-                            this.flush_pending_drafts();
-                            cx.notify();
-                        }),
-                    ))
-                })
-                .when(!self.media_shutdown_ready(cx), |view| {
-                    view.child(self.media_settings_pane(cx))
-                });
+            return self.quit_progress_view(cookie_recovery, cx);
         }
         self.sync_media_context(cx);
         self.sync_historical_image_view(window, cx);

@@ -90,7 +90,7 @@ impl Coincide {
         if self.instructions_panel.read(cx).has_unsaved_edits(cx) {
             self.prompt_instruction_close(true, window, cx);
         } else {
-            self.media.shutdown_requested = true;
+            self.begin_normal_shutdown(window, cx);
         }
     }
 }
