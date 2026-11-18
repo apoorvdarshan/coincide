@@ -637,6 +637,7 @@ struct Coincide {
     threads: Vec<ThreadSummary>,
     sidebar_all_threads: Vec<ThreadSummary>,
     sidebar_preferences: sidebar_preferences::Preferences,
+    sidebar_expansion_saving: bool,
     sidebar_bots: Vec<Value>,
     sidebar_schedules: Vec<Value>,
     sidebar_bot_baseline: String,
@@ -1966,6 +1967,7 @@ impl Coincide {
             show_archived: sidebar_preferences.flag("showsArchivedThreads"),
             show_snoozed: sidebar_preferences.flag("showsSnoozedThreads"),
             sidebar_preferences,
+            sidebar_expansion_saving: false,
             sidebar_bots,
             sidebar_schedules,
             sidebar_bot_baseline,
@@ -2870,6 +2872,14 @@ impl Coincide {
     fn refresh(&mut self, cx: &mut Context<Self>) -> bool {
         self.refresh_inner(cx, true)
     }
+    fn sync_collapsed_projects(&mut self) {
+        self.collapsed_projects = self
+            .projects
+            .iter()
+            .filter(|project| !self.sidebar_preferences.project_expanded(project))
+            .map(|project| text(project, "id"))
+            .collect();
+    }
     fn refresh_inner(&mut self, cx: &mut Context<Self>, read_queue: bool) -> bool {
         if let Ok(engine) = self.engine.try_lock() {
             self.browser_control = engine.browser_agent_control_settings();
@@ -2893,12 +2903,7 @@ impl Coincide {
             {
                 self.project_scripts.remember(document.as_ref());
             }
-            self.collapsed_projects = self
-                .projects
-                .iter()
-                .filter(|project| project["isExpanded"] == false)
-                .map(|project| text(project, "id"))
-                .collect();
+            self.sync_collapsed_projects();
         } else {
             complete = false;
         }
@@ -4315,7 +4320,10 @@ impl Coincide {
 
     /// The remaining app-owned services must stop claiming a visible thread
     /// and browser before the last window is released.
-    fn prepare_background_window_close(&self, cx: &App) -> bool {
+    fn prepare_background_window_close(&mut self, cx: &mut Context<Self>) -> bool {
+        if !self.flush_sidebar_expansion(cx) {
+            return false;
+        }
         let Ok(mut engine) = self.engine.try_lock() else {
             return false;
         };
@@ -4342,6 +4350,7 @@ impl Coincide {
             }
         }
         self.poll_sidebar_resize(cx);
+        let sidebar_expansion_saved = self.flush_sidebar_expansion(cx);
         self.poll_terminal_resize(cx);
         self.poll_project_defaults(window, cx);
         self.tick_schedule_times(cx);
@@ -4453,7 +4462,10 @@ impl Coincide {
             quit_shortcut::cancel(cx);
             // Phones are disconnected before the engine is saved and stopped.
             self.remote_panel.update(cx, |panel, _| panel.shut_down());
-            if self.poll_global_quit(window, cx) && self.updater_quit_ready(cx) {
+            if sidebar_expansion_saved
+                && self.poll_global_quit(window, cx)
+                && self.updater_quit_ready(cx)
+            {
                 self.finish_normal_quit(cx);
             } else {
                 #[cfg(target_os = "macos")]
