@@ -74,6 +74,27 @@ pub struct Store {
     deferred_search_active: std::collections::HashSet<String>,
 }
 
+/// Read a durable conversation from SQLite's WAL without waiting for the
+/// process-wide engine mutex. The main engine remains the only writer.
+#[derive(Clone)]
+pub struct ThreadNavigationReader(std::path::PathBuf);
+
+impl ThreadNavigationReader {
+    pub fn read(&self, id: &str) -> Result<Value> {
+        let db = Connection::open_with_flags(&self.0, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        db.busy_timeout(std::time::Duration::from_millis(250))?;
+        read_thread(&db, id)
+    }
+}
+
+fn read_thread(db: &Connection, id: &str) -> Result<Value> {
+    let mut statement = db.prepare_cached("SELECT document FROM threads WHERE id=?1")?;
+    let mut rows = statement.query([id])?;
+    let row = rows.next()?.ok_or(rusqlite::Error::QueryReturnedNoRows)?;
+    // Decode SQLite's borrowed text without copying the full document.
+    Ok(serde_json::from_str(row.get_ref(0)?.as_str()?)?)
+}
+
 fn mark_draft_write(tx: &rusqlite::Transaction<'_>, id: &str) -> Result<()> {
     tx.execute(
         "INSERT INTO native_draft_revisions(id,revision) VALUES (?1,randomblob(16)) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision",
@@ -659,6 +680,11 @@ impl Store {
         Ok(verified)
     }
 
+    pub fn thread_navigation_reader(&self) -> Option<ThreadNavigationReader> {
+        let path = self.connection().ok()?.path()?;
+        (!path.is_empty()).then(|| ThreadNavigationReader(path.into()))
+    }
+
     /// Capture the saved bytes under the store lock so callers can decode a
     /// long transcript away from the UI and the shared engine lock.
     pub(crate) fn thread_document(&self, id: &str) -> Result<String> {
@@ -722,8 +748,7 @@ impl Store {
     }
 
     pub fn thread(&self, id: &str) -> Result<Value> {
-        let document = self.thread_document(id)?;
-        Ok(serde_json::from_str(&document)?)
+        read_thread(self.connection()?, id)
     }
 
     /// Remote's sidebar needs a few fields, not a copy of the transcript.
@@ -870,12 +895,8 @@ impl Store {
         ensure_not_deleted(&tx, id)?;
         if let Some(expected) = expected {
             ensure!(expected["id"] == id, "Native turn source identity mismatch");
-            let raw: String =
-                tx.query_row("SELECT document FROM threads WHERE id=?1", [id], |row| {
-                    row.get(0)
-                })?;
             ensure!(
-                &serde_json::from_str::<Value>(&raw)? == expected,
+                &read_thread(&tx, id)? == expected,
                 "Conversation changed before replacement admission; draft retained"
             );
             ensure!(

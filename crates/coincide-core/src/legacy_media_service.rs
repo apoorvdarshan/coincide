@@ -968,10 +968,6 @@ impl Worker {
                 })
             }
             Command::Render(items) => {
-                let thread = self
-                    .store
-                    .thread(&thread_id)
-                    .map_err(|_| ServiceError::ThreadMissing)?;
                 let overlay = self
                     .store
                     .local_document(
@@ -979,6 +975,16 @@ impl Worker {
                     )
                     .map_err(|_| ServiceError::InvalidOverlay)?;
                 let Some(overlay) = overlay else {
+                    if !self
+                        .store
+                        .contains_thread(&thread_id)
+                        .map_err(|_| ServiceError::ThreadMissing)?
+                    {
+                        return Err(ServiceError::ThreadMissing);
+                    }
+                    // No image can be restored without an overlay. Avoid
+                    // loading the transcript on this common path.
+                    control.check()?;
                     return Ok(ServiceEvent::Rendered {
                         operation_id: id,
                         thread_id,
@@ -987,6 +993,10 @@ impl Worker {
                         failures: Vec::new(),
                     });
                 };
+                let thread = self
+                    .store
+                    .thread(&thread_id)
+                    .map_err(|_| ServiceError::ThreadMissing)?;
                 let current_hash = thread_hash(&thread).map_err(|_| ServiceError::ThreadChanged)?;
                 if overlay["sourceThreadSha256"].as_str() != Some(current_hash.as_str()) {
                     return Err(ServiceError::ThreadChanged);
@@ -1531,6 +1541,41 @@ mod tests {
         assert_eq!(references[0].status, Status::Ready);
         (preview_id, ids)
     }
+    #[test]
+    fn render_without_overlay_never_materializes_the_transcript() {
+        let f = fixture();
+        let (service, selection, _) = setup(&f);
+        let mut worker = Worker::open(f.config.clone()).unwrap();
+        let mut thread = f.thread.clone();
+        thread["items"][0]["text"] = json!("x".repeat(1024 * 1024));
+        worker.store.save(&thread).unwrap();
+        worker.store.limit_value_size_for_test(4096).unwrap();
+        let id = thread["id"].as_str().unwrap();
+        assert!(
+            worker.store.thread(id).is_err(),
+            "full transcript read must fail"
+        );
+
+        let control = Control {
+            state: Arc::new(AtomicU8::new(RUNNING)),
+            selection,
+        };
+        let event = worker
+            .execute(
+                OperationId(Uuid::new_v4()),
+                &control,
+                Command::Render(vec![ITEM.into()]),
+                &Default::default(),
+                &mut false,
+            )
+            .unwrap();
+        assert!(
+            matches!(event, ServiceEvent::Rendered { entries, failures, .. }
+            if entries.is_empty() && failures.is_empty())
+        );
+        drop(service);
+    }
+
     #[test]
     fn restores_local_overlay_and_worker_verifies_render_without_mutating_threads() {
         let f = fixture();
