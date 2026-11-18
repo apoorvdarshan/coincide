@@ -25,7 +25,7 @@ impl PreparedThreadDeletion {
             .collect()
     }
     pub fn byte_len(&self) -> usize {
-        self.rows.iter().map(|row| row.raw.len()).sum()
+        self.rows.iter().map(|row| row.bytes).sum()
     }
 }
 /// Retained by the native panel only until Quit. No serialization/Clone or
@@ -33,7 +33,7 @@ impl PreparedThreadDeletion {
 pub struct ThreadDeletionUndo {
     owner: Uuid,
     source: (PathBuf, crate::private_fs::Identity),
-    token: String,
+    token: Arc<String>,
     rows: Vec<DeleteRow>,
 }
 impl ThreadDeletionUndo {
@@ -41,7 +41,7 @@ impl ThreadDeletionUndo {
         self.rows.len()
     }
     pub fn byte_len(&self) -> usize {
-        self.rows.iter().map(|row| row.raw.len()).sum()
+        self.rows.iter().map(|row| row.bytes).sum()
     }
     pub fn thread_ids(&self) -> Vec<String> {
         self.rows.iter().map(|row| row.id.clone()).collect()
@@ -66,6 +66,13 @@ impl std::fmt::Display for ConversationCleanup {
 }
 impl std::error::Error for ConversationCleanup {}
 impl Engine {
+    /// An Undo receipt is owned by the current UI. The connection's private
+    /// temporary table also disappears when the app closes.
+    pub(super) fn reap_thread_deletion_backups(&mut self) {
+        self.thread_delete_backups.retain(|token, receipt| {
+            receipt.strong_count() != 0 || self.store.discard_thread_deletion_backup(token).is_err()
+        });
+    }
     pub(super) fn unrevoked_provider_session(
         &self,
         thread: &Value,
@@ -221,14 +228,7 @@ impl Engine {
     ) -> Result<PreparedThreadDeletion> {
         self.archive_delete_admitted(ids, true)?;
         let source = self.store.delete_source_identity()?;
-        let (version, rows) = self.store.prepare_any_delete_rows(ids)?;
-        for row in &rows {
-            let value: Value = serde_json::from_str(&row.raw)?;
-            ensure!(
-                value["botID"].is_null() && value["rustBotContext"].is_null(),
-                "Delete bot conversations through their bot's reviewed lifecycle"
-            );
-        }
+        let (version, rows) = self.store.prepare_conversation_delete_rows(ids)?;
         ensure!(
             self.store.delete_source_identity()? == source,
             "Store changed while preparing confirmation"
@@ -308,9 +308,11 @@ impl Engine {
             self.computer_use_thread_removed(Uuid::parse_str(id)?);
         }
         self.notification_events.discard_deleted_threads(&ids);
-        let token = Uuid::new_v4().to_string();
+        let token = Arc::new(Uuid::new_v4().to_string());
         self.store
             .delete_archived_rows(prepared.version, &prepared.rows, &token)?;
+        self.thread_delete_backups
+            .insert(token.as_ref().clone(), Arc::downgrade(&token));
         let selected = ids
             .iter()
             .map(|id| id.to_ascii_lowercase())
@@ -342,6 +344,7 @@ impl Engine {
         );
         self.archive_delete_admitted(&undo.thread_ids(), false)?;
         self.store.restore_deleted_rows(&undo.rows, &undo.token)?;
+        self.thread_delete_backups.remove(undo.token.as_str());
         self.revision += 1;
         Ok(())
     }
@@ -433,6 +436,24 @@ mod tests {
                 .unwrap()
         );
         assert!(engine.undo_native_thread_deletion(&undo).is_err());
+    }
+    #[test]
+    fn dropping_an_undo_receipt_discards_its_private_backup() {
+        let (_dir, mut engine, id) = fixture();
+        let plan = engine
+            .prepare_native_thread_deletion(std::slice::from_ref(&id))
+            .unwrap();
+        let undo = engine.apply_native_thread_deletion(plan).unwrap();
+        engine.reap_thread_deletion_backups();
+        assert!(
+            engine
+                .thread_delete_backups
+                .contains_key(undo.token.as_str())
+        );
+        drop(undo);
+        engine.reap_thread_deletion_backups();
+        assert!(engine.thread_delete_backups.is_empty());
+        assert!(engine.store.thread(&id).is_err());
     }
     #[test]
     fn frozen_closing_persistence_and_draft_import_states_refuse_without_deletion() {

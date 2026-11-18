@@ -43,6 +43,7 @@ enum Picked {
 }
 struct Reply {
     generation: u64,
+    search: bool,
     result: std::result::Result<Effect, String>,
 }
 pub(super) struct Picker {
@@ -184,6 +185,7 @@ impl Picker {
         let generation = epoch.load(Ordering::Acquire);
         let sender = self.sender.clone();
         let started = self.workers.spawn(move |admission| {
+            let search = matches!(job, Job::Search(..));
             let result = (|| -> Result<Effect> {
                 allowed(&admission, &epoch, generation)?;
                 match job {
@@ -225,7 +227,11 @@ impl Picker {
                 }
             })()
             .map_err(|error| error.to_string().chars().take(1024).collect());
-            let _ = sender.send(Reply { generation, result });
+            let _ = sender.send(Reply {
+                generation,
+                search,
+                result,
+            });
         });
         if started {
             self.pending = true;
@@ -247,6 +253,9 @@ impl Picker {
         }
         let reply = self.receiver.try_recv().ok()?;
         self.pending = false;
+        if reply.search && reply.generation != self.epoch.load(Ordering::Acquire) {
+            return None;
+        }
         match reply.result {
             Ok(Effect::Listed(result)) => {
                 if self.opened && reply.generation == self.epoch.load(Ordering::Acquire) {
@@ -351,9 +360,6 @@ impl Coincide {
         }
         let thread = self.selected.as_ref()?;
         let id = text(thread, "id");
-        if self.pending_drafts.contains_key(&id) {
-            return None;
-        }
         Some(Binding {
             thread: id,
             draft: self.committed_composer_draft(cx),
@@ -361,6 +367,14 @@ impl Coincide {
             project: thread["projectID"].clone(),
             worktree: thread["worktreePath"].clone(),
         })
+    }
+    pub(super) fn awaiting_file_mention_draft(&self, id: &str) -> bool {
+        self.composer_files.automatic
+            && self
+                .composer_files
+                .trigger
+                .as_ref()
+                .is_some_and(|ticket| ticket.binding.thread == id)
     }
     pub(super) fn sync_composer_file_picker(
         &mut self,
@@ -542,6 +556,11 @@ impl Coincide {
         else {
             return;
         };
+        if self.pending_drafts.contains_key(&binding.thread) {
+            self.composer_files.status = "Waiting for the current draft…".into();
+            cx.notify();
+            return;
+        }
         let query = self.composer_files.query.read(cx).value().to_string();
         self.composer_files.invalidate();
         self.composer_files
@@ -562,6 +581,11 @@ impl Coincide {
         self.sync_composer_file_picker(window, cx);
         if !self.composer_files.opened
             || self.composer_files.binding.is_none()
+            || self
+                .composer_files
+                .binding
+                .as_ref()
+                .is_some_and(|binding| self.pending_drafts.contains_key(&binding.thread))
             || self.composer_files.epoch.load(Ordering::Acquire) != generation
         {
             self.composer_files.status =
@@ -712,7 +736,7 @@ impl Coincide {
             .then(|| self.live_file_mention(window, cx, !self.composer_files.opened))
             .flatten();
         let Some(ticket) = ticket else {
-            if self.composer_files.automatic && !self.composer_files.pending {
+            if self.composer_files.automatic {
                 if self.composer_files.focus.contains_focused(window, cx) {
                     self.composer.read(cx).focus_handle(cx).focus(window, cx);
                 }
@@ -728,7 +752,21 @@ impl Coincide {
         }
         self.composer_files.opened = true;
         self.composer_files.automatic = true;
+        let changed = self.composer_files.trigger.as_ref() != Some(&ticket);
         self.composer_files.trigger = Some(ticket.clone());
+        if let Some(draft) = self.pending_drafts.get(&ticket.binding.thread) {
+            self.composer_files.status = if draft.failed {
+                "Save the current draft to search project files."
+            } else {
+                "Searching files…"
+            }
+            .into();
+            if changed && draft.retry && !self.pending_successor_waiting(&ticket.binding.thread) {
+                self.draft_saver
+                    .record_now(&ticket.binding.thread, &draft.text);
+            }
+            return;
+        }
         if self.composer_files.scheduled.as_ref() == Some(&ticket) || self.composer_files.busy() {
             return;
         }

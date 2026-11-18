@@ -26,6 +26,22 @@ pub(super) enum PendingQueueAction {
 }
 
 impl PendingQueueAction {
+    fn status_for(&self, id: &str) -> Option<&'static str> {
+        match self {
+            Self::Send { message, .. } | Self::Interrupt { message, .. } if message["id"] == id => {
+                Some("Send now requested")
+            }
+            Self::Edit { message, .. } if message["id"] == id => Some("Opening draft…"),
+            Self::StopDelivery { message, .. } if message == id => Some("Stopping delivery…"),
+            Self::Change {
+                method: "agent.queue.remove",
+                message: Some(message),
+                ..
+            } if message == id => Some("Canceling…"),
+            _ => None,
+        }
+    }
+
     fn thread(&self) -> &str {
         match self {
             Self::Send { expected, .. } | Self::Interrupt { expected, .. } => {
@@ -106,14 +122,6 @@ fn queue_execution_scope(thread: &Value) -> Value {
     Value::Object(scope)
 }
 
-fn queue_expected_scope(thread: &Value) -> Value {
-    let mut scope = queue_execution_scope(thread);
-    if let Some(queue) = thread.get("rustMessageQueue") {
-        scope["rustMessageQueue"] = queue.clone();
-    }
-    scope
-}
-
 fn queue_preview_text(text: &str) -> String {
     let display = coincide_core::async_questions::display_reply(text);
     let line = display
@@ -143,9 +151,28 @@ fn retain_queue_rows(previous: &[Arc<Value>], incoming: Vec<Value>) -> Vec<Arc<V
         .collect()
 }
 
+pub(super) fn queue_receipt_finished(thread: &Value, id: &str) -> bool {
+    thread["rustMessageQueue"].as_array().is_some_and(|rows| {
+        rows.iter()
+            .any(|row| row["id"] == id && (row["state"] == "completed" || row["dismissed"] == true))
+    })
+}
+
+pub(super) fn transcript_waits_for_queue(item: &Value) -> bool {
+    item["rustAwaitingQueueDelivery"] == true && item["rustImmediateQueueDelivery"] != true
+}
+
+fn show_queued_message(row: &Value) -> bool {
+    row["state"] != "completed"
+        && !(row["state"] == "dispatching"
+            && row["nativeImmediate"] == true
+            && row["deliveryOwned"] != false)
+}
+
 fn pending_row(pending: &composer_follow_up_mount::PendingSend, id: &str, state: &str) -> Value {
     json!({"id":id, "state":state, "text":queue_preview_text(&pending.draft), "error":pending.last_error,
-        "rustImages":pending.captured["rustDraftImages"], "context":pending.captured["draftContext"]})
+        "rustImages":pending.captured["rustDraftImages"], "context":pending.captured["draftContext"],
+        "sendNow":pending.send_now})
 }
 
 impl Coincide {
@@ -225,7 +252,10 @@ impl Coincide {
                 if engine_busy(&error)
                     || error
                         .to_string()
-                        .contains("another native delivery is pending") =>
+                        .contains("another native delivery is pending")
+                    || error
+                        .to_string()
+                        .contains("Another queued message is still being delivered") =>
             {
                 let expected = expected.clone();
                 let message = message.clone();
@@ -254,22 +284,68 @@ impl Coincide {
         cx.notify();
     }
     pub(super) fn send_next_queued_now(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(thread) = self.selected.as_ref().map(queue_expected_scope) else {
+        let Some(thread) = self.selected.as_ref() else {
             return false;
         };
-        if !self.running.contains(&text(&thread, "id")) {
-            return false;
-        }
-        let Some(message) = self
+        let id = text(thread, "id");
+        if let Some(message) = self
             .queued_messages
             .iter()
-            .find(|message| message["state"] == "pending")
+            .find(|message| {
+                message["state"] == "pending"
+                    && message["id"]
+                        .as_str()
+                        .is_some_and(|id| !queue_receipt_finished(thread, id))
+            })
             .cloned()
-        else {
+        {
+            let source = queue_execution_scope(thread);
+            let interrupt = message["codexQuestionSession"].is_null();
+            self.send_queued(&source, &message, interrupt, cx);
+            return true;
+        }
+        let buffered = self
+            .pending_follow_up
+            .iter()
+            .chain(&self.pending_follow_up_backlog)
+            .find(|pending| pending.thread == id && pending.can_recall())
+            .and_then(|pending| pending.buffer_id.clone());
+        buffered.is_some_and(|message| self.send_buffered_now(&id, &message, cx))
+    }
+
+    fn send_buffered_now(&mut self, thread: &str, id: &str, cx: &mut Context<Self>) -> bool {
+        if self.media.close_requested
+            || self.media.shutdown_requested
+            || !self
+                .selected
+                .as_ref()
+                .is_some_and(|selected| selected["id"] == thread)
+        {
             return false;
+        }
+        let matches = |pending: &composer_follow_up_mount::PendingSend| {
+            pending.thread == thread && pending.buffer_id.as_deref() == Some(id)
         };
-        self.send_queued_now(&thread, &message, cx);
-        true
+        let prioritized = if let Some(pending) = self
+            .pending_follow_up
+            .as_mut()
+            .filter(|pending| matches(pending))
+        {
+            pending.prioritize()
+        } else if let Some(index) = self.pending_follow_up_backlog.iter().position(matches) {
+            let pending = &mut self.pending_follow_up_backlog[index];
+            let prioritized = pending.prioritize();
+            if prioritized && let Some(pending) = self.pending_follow_up_backlog.remove(index) {
+                self.pending_follow_up_backlog.push_front(pending);
+            }
+            prioritized
+        } else {
+            false
+        };
+        if prioritized {
+            cx.notify();
+        }
+        prioritized
     }
 
     fn edit_queued_message(
@@ -291,6 +367,7 @@ impl Coincide {
                     thread,
                     message: message.clone(),
                 });
+                cx.notify();
             }
             return;
         }
@@ -337,6 +414,8 @@ impl Coincide {
         })();
         match result {
             Ok(thread) => {
+                self.queued_messages
+                    .retain(|row| row["id"] != message["id"]);
                 let draft = text(&thread, "draft");
                 self.replace_selected_thread(Some(thread));
                 self.composer_files.invalidate();
@@ -471,7 +550,14 @@ impl Coincide {
             method,
             json!({"threadId":id,"messageId":message}),
         ) {
-            Ok(_) => self.refresh_queue(cx),
+            Ok(_) => {
+                if method == "agent.queue.remove"
+                    && let Some(message) = message.as_deref()
+                {
+                    self.queued_messages.retain(|row| row["id"] != message);
+                }
+                self.refresh_queue(cx);
+            }
             Err(error) if engine_busy(&error) => {
                 self.defer_queue_action(PendingQueueAction::Change {
                     thread: id,
@@ -543,17 +629,15 @@ impl Coincide {
         interrupt: bool,
         cx: &mut Context<Self>,
     ) {
-        let Some(thread) = self.selected.as_ref().filter(|thread| {
+        if self.selected.as_ref().is_some_and(|thread| {
             queue_execution_scope(thread) == *expected
                 && self
                     .queued_messages
                     .iter()
                     .any(|current| Arc::ptr_eq(current, row))
-        }) else {
-            return;
-        };
-        let source = queue_expected_scope(thread);
-        self.send_queued(&source, row, interrupt, cx);
+        }) {
+            self.send_queued(expected, row, interrupt, cx);
+        }
     }
 
     pub(super) fn queue_pane(
@@ -562,14 +646,21 @@ impl Coincide {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         use gpui_kit::assets::IconName;
+        // Other actions can install a fresh transcript before the queue reader
+        // completes. Apply its completed receipts before drawing cached rows.
+        self.reconcile_buffered_sends();
         let current = self.selected.as_ref()?;
         let thread = text(current, "id");
         let source = Arc::new(queue_execution_scope(current));
-        let running = self.running.contains(&thread);
         let mut messages = self
             .queued_messages
             .iter()
-            .filter(|row| row["state"] != "completed")
+            .filter(|row| {
+                show_queued_message(row)
+                    && row["id"]
+                        .as_str()
+                        .is_none_or(|id| !queue_receipt_finished(current, id))
+            })
             .cloned()
             .map(|row| (row, false, Vec::new()))
             .collect::<Vec<_>>();
@@ -590,12 +681,11 @@ impl Coincide {
         } else {
             None
         };
+        let has_running_turn = self.running.contains(&thread);
         let show_queue_toggle = !messages.is_empty();
-        for preview in self
-            .admitted_previews
-            .iter()
-            .filter(|preview| preview.pending.thread == thread)
-        {
+        for preview in self.admitted_previews.iter().filter(|preview| {
+            preview.pending.thread == thread && !preview.pending.expects_immediate_delivery
+        }) {
             if !messages
                 .iter()
                 .any(|(row, _, _)| row["id"] == preview.queue_id)
@@ -617,7 +707,10 @@ impl Coincide {
             .chain(&self.pending_follow_up_backlog)
         {
             if let Some(id) = pending.buffer_id.as_deref().filter(|id| {
-                pending.thread == thread && !messages.iter().any(|(row, _, _)| row["id"] == *id)
+                pending.thread == thread
+                    && !pending.expects_immediate_delivery
+                    && !queue_receipt_finished(current, id)
+                    && !messages.iter().any(|(row, _, _)| row["id"] == *id)
             }) {
                 let state = if pending.can_recall() {
                     "pending"
@@ -661,11 +754,30 @@ impl Coincide {
             let id = text(&message, "id");
             let state = text(&message, "state");
             let in_flight = state == "dispatching";
-            let can_stop =
-                !local && message["deliveryCommitted"] != true && stoppable.as_deref() == Some(&id);
+            let unconfirmed = in_flight && message["deliveryOwned"] == false;
+            let can_stop_delivery =
+                !local && in_flight && !unconfirmed && stoppable.as_deref() == Some(&id);
+            let can_stop_turn = in_flight && !unconfirmed && has_running_turn && !can_stop_delivery;
             let editable = matches!(state.as_str(), "pending" | "failed" | "interrupted")
                 && message["codexQuestionSession"].is_null();
-            let sendable = !local && state == "pending" && running;
+            let sendable = state == "pending";
+            let question = message["codexQuestionSession"].is_string();
+            let action_status = self
+                .pending_queue_actions
+                .iter()
+                .filter(|action| action.thread() == thread)
+                .find_map(|action| action.status_for(&id))
+                .or_else(|| {
+                    if message["sendNow"] == true {
+                        Some("Send now requested")
+                    } else if unconfirmed {
+                        Some("Delivery unconfirmed")
+                    } else if in_flight {
+                        Some("Waiting for the agent…")
+                    } else {
+                        None
+                    }
+                });
             let body = queue_preview_text(message["text"].as_str().unwrap_or(""));
             let images = message["rustImages"]
                 .as_array()
@@ -731,13 +843,14 @@ impl Coincide {
                 format!("{count} attachments")
             };
             let action_source = source.clone();
-            let steer_message = message.clone();
-            let interrupt_source = source.clone();
-            let interrupt_message = message.clone();
+            let send_message = message.clone();
+            let send_id = id.clone();
+            let send_thread = thread.clone();
             let edit_message = message.clone();
             let edit_id = id.clone();
             let remove_id = id.clone();
             let stop_thread = thread.clone();
+            let active_thread = thread.clone();
             pane = pane.child(
                 div()
                     .id(SharedString::from(format!("queued-message-{id}")))
@@ -751,9 +864,13 @@ impl Coincide {
                         row.border_t_1().border_color(cx.theme().border)
                     })
                     .child(
-                        Icon::new(IconName::Clock)
-                            .size(px(13.))
-                            .text_color(cx.theme().muted_foreground),
+                        Icon::new(if in_flight {
+                            IconName::CornerUpRight
+                        } else {
+                            IconName::Clock
+                        })
+                        .size(px(13.))
+                        .text_color(cx.theme().muted_foreground),
                     )
                     .child(
                         div()
@@ -785,6 +902,14 @@ impl Coincide {
                                                     format!("{caption} · {}", files.join(", "))
                                                 }),
                                         ),
+                                )
+                            })
+                            .when_some(action_status, |label, status| {
+                                label.child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(status),
                                 )
                             })
                             .when_some(row_error, |label, error| {
@@ -832,101 +957,117 @@ impl Coincide {
                                 })),
                         )
                     })
-                    .when(sendable, |row| {
+                    .when(can_stop_turn, |row| {
                         row.child(
-                            Button::new(SharedString::from(format!("send-queued-now-{id}")))
-                                .icon(IconName::CornerUpRight)
-                                .tooltip("Send now")
-                                .accessibility_label("Send queued message now")
+                            Button::new(SharedString::from(format!("stop-queued-turn-{id}")))
+                                .label("Stop turn")
                                 .ghost()
                                 .xsmall()
                                 .compact()
                                 .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.send_visible_queue_row(
-                                        &action_source,
-                                        &steer_message,
-                                        false,
-                                        cx,
-                                    )
+                                    if this
+                                        .selected
+                                        .as_ref()
+                                        .is_some_and(|thread| thread["id"] == active_thread)
+                                    {
+                                        this.stop_current_turn(cx);
+                                    }
                                 })),
                         )
-                        .when(
-                            message["codexQuestionSession"].is_null(),
-                            |row| {
-                                row.child(
-                                    Button::new(SharedString::from(format!(
-                                        "interrupt-for-queued-{id}"
-                                    )))
-                                    .icon(IconName::SkipForward)
-                                    .tooltip("Stop current turn and send")
-                                    .accessibility_label("Stop current turn and send this message")
-                                    .ghost()
-                                    .xsmall()
-                                    .compact()
-                                    .on_click(cx.listener(move |this, _, _, cx| {
+                    })
+                    .when(!in_flight, |row| {
+                        row.child(
+                            Button::new(SharedString::from(format!("send-queued-now-{id}")))
+                                .label("Send now")
+                                .icon(IconName::CornerUpRight)
+                                .tooltip(if !sendable {
+                                    "Edit this message before sending again".into()
+                                } else if question {
+                                    "Send the answer in its current turn".into()
+                                } else {
+                                    format!(
+                                        "Interrupt and send · First waiting message: {}",
+                                        crate::composer_follow_up_mount::SEND_NOW_SHORTCUT_LABEL
+                                    )
+                                })
+                                .accessibility_label("Send queued message now")
+                                .ghost()
+                                .xsmall()
+                                .compact()
+                                .disabled(!sendable)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    if local {
+                                        this.send_buffered_now(&send_thread, &send_id, cx);
+                                    } else {
                                         this.send_visible_queue_row(
-                                            &interrupt_source,
-                                            &interrupt_message,
-                                            true,
+                                            &action_source,
+                                            &send_message,
+                                            !question,
                                             cx,
-                                        )
-                                    })),
-                                )
-                            },
+                                        );
+                                    }
+                                })),
                         )
                     })
-                    .child(
-                        Button::new(SharedString::from(format!("edit-queued-{id}")))
-                            .icon(IconName::Pencil)
-                            .tooltip("Edit queued message")
-                            .accessibility_label("Edit queued message")
-                            .ghost()
-                            .xsmall()
-                            .compact()
-                            .disabled(!editable)
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                if local {
-                                    this.recall_buffered_queue(&edit_id, true, window, cx);
+                    .when(editable, |row| {
+                        row.child(
+                            Button::new(SharedString::from(format!("edit-queued-{id}")))
+                                .icon(IconName::Pencil)
+                                .tooltip("Edit queued message")
+                                .accessibility_label("Edit queued message")
+                                .ghost()
+                                .xsmall()
+                                .compact()
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    if local {
+                                        this.recall_buffered_queue(&edit_id, true, window, cx);
+                                    } else {
+                                        this.edit_queued_message(&edit_message, window, cx);
+                                    }
+                                })),
+                        )
+                    })
+                    .when(can_stop_delivery || unconfirmed || !in_flight, |row| {
+                        row.child(
+                            Button::new(SharedString::from(format!("remove-queued-{id}")))
+                                .icon(IconName::Close)
+                                .when(can_stop_delivery, |button| button.label("Stop delivery"))
+                                .tooltip(if can_stop_delivery {
+                                    "Stop delivery"
+                                } else if unconfirmed {
+                                    "Dismiss unconfirmed message"
                                 } else {
-                                    this.edit_queued_message(&edit_message, window, cx);
-                                }
-                            })),
-                    )
-                    .child(
-                        Button::new(SharedString::from(format!("remove-queued-{id}")))
-                            .icon(IconName::Close)
-                            .tooltip(if in_flight {
-                                "Stop delivery"
-                            } else {
-                                "Cancel queued message"
-                            })
-                            .accessibility_label(if in_flight {
-                                "Stop delivery"
-                            } else {
-                                "Cancel queued message"
-                            })
-                            .ghost()
-                            .xsmall()
-                            .compact()
-                            .disabled(in_flight && !can_stop)
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                if local {
-                                    this.recall_buffered_queue(&remove_id, false, window, cx);
-                                } else if in_flight {
-                                    this.stop_queue_delivery(
-                                        stop_thread.clone(),
-                                        remove_id.clone(),
-                                        cx,
-                                    );
+                                    "Cancel queued message"
+                                })
+                                .accessibility_label(if can_stop_delivery {
+                                    "Stop delivery"
+                                } else if unconfirmed {
+                                    "Dismiss unconfirmed message"
                                 } else {
-                                    this.queue_action(
-                                        "agent.queue.remove",
-                                        Some(remove_id.clone()),
-                                        cx,
-                                    );
-                                }
-                            })),
-                    ),
+                                    "Cancel queued message"
+                                })
+                                .ghost()
+                                .xsmall()
+                                .compact()
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    if local {
+                                        this.recall_buffered_queue(&remove_id, false, window, cx);
+                                    } else if can_stop_delivery {
+                                        this.stop_queue_delivery(
+                                            stop_thread.clone(),
+                                            remove_id.clone(),
+                                            cx,
+                                        );
+                                    } else {
+                                        this.queue_action(
+                                            "agent.queue.remove",
+                                            Some(remove_id.clone()),
+                                            cx,
+                                        );
+                                    }
+                                })),
+                        )
+                    }),
             );
         }
         Some(pane.into_any_element())
@@ -936,6 +1077,30 @@ impl Coincide {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[::core::prelude::v1::test]
+    fn immediate_delivery_uses_the_transcript_and_real_waits_keep_queue_controls() {
+        assert!(!show_queued_message(
+            &json!({"state":"dispatching","nativeImmediate":true})
+        ));
+        assert!(show_queued_message(&json!({"state":"dispatching"})));
+        assert!(show_queued_message(
+            &json!({"state":"dispatching","nativeImmediate":true,"deliveryOwned":false})
+        ));
+        assert!(show_queued_message(
+            &json!({"state":"pending","nativeImmediate":true})
+        ));
+        assert!(show_queued_message(
+            &json!({"state":"failed","nativeImmediate":true})
+        ));
+        assert!(!show_queued_message(&json!({"state":"completed"})));
+        assert!(!transcript_waits_for_queue(
+            &json!({"rustAwaitingQueueDelivery":true,"rustImmediateQueueDelivery":true})
+        ));
+        assert!(transcript_waits_for_queue(
+            &json!({"rustAwaitingQueueDelivery":true})
+        ));
+    }
 
     #[::core::prelude::v1::test]
     fn long_message_draws_a_short_preview_and_retains_the_original_payload() {
@@ -1030,8 +1195,8 @@ mod tests {
         let paint_scope = queue_execution_scope(&thread);
         assert!(paint_scope.get("rustMessageQueue").is_none());
         assert!(paint_scope.get("items").is_none());
-        let scope = queue_expected_scope(&thread);
-        assert_eq!(scope["rustMessageQueue"], thread["rustMessageQueue"]);
+        let scope = queue_execution_scope(&thread);
+        assert!(scope.get("rustMessageQueue").is_none());
         assert_eq!(scope["selection"], thread["selection"]);
         assert_eq!(scope.get("accessMode"), Some(&Value::Null));
         assert!(scope.get("interactionMode").is_none());

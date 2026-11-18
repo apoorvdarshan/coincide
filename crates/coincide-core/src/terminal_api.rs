@@ -64,7 +64,13 @@ impl Engine {
         if project.is_none()
             && let Some(bot) = thread["botID"].as_str().filter(|bot| !bot.is_empty())
         {
-            project = self.store.bot_working_directory(bot)?;
+            project = match thread["rustBotContext"]["cwd"]
+                .as_str()
+                .filter(|path| !path.is_empty())
+            {
+                Some(path) => Some(PathBuf::from(path)),
+                None => self.store.bot_working_directory(bot)?,
+            };
         }
         let preferred = thread["worktreePath"]
             .as_str()
@@ -74,8 +80,7 @@ impl Engine {
         Ok(StartDirectory::resolve(preferred, project, launch::home()))
     }
     /// The lowest number no other terminal of the thread uses.
-    #[cfg(test)]
-    fn next_terminal_number(&self, thread: &str) -> u32 {
+    pub(super) fn next_terminal_number(&self, thread: &str) -> u32 {
         let used: HashSet<u32> = self
             .terminals
             .values()
@@ -83,19 +88,6 @@ impl Engine {
             .map(|(_, terminal)| terminal.number)
             .collect();
         (1..).find(|number| !used.contains(number)).unwrap_or(1)
-    }
-    /// A new numbered shell for `thread_id`, in its start folder.
-    #[cfg(test)]
-    pub(super) fn spawn_thread_terminal(
-        &self,
-        thread_id: &str,
-        thread: &Value,
-        shell: &str,
-    ) -> Result<Terminal> {
-        let start = self.terminal_start_directory(thread)?;
-        let mut terminal = Terminal::spawn_in(&start, shell, 24, 100)?;
-        terminal.number = self.next_terminal_number(thread_id);
-        Ok(terminal)
     }
     /// `terminal.status`: each terminal with what its tab shows, by number.
     /// Reads pending output first, so a shell that just exited shows it.
@@ -143,7 +135,7 @@ impl Engine {
         let cwd = if last.is_dir() {
             last
         } else {
-            self.terminal_start_directory(&self.store.thread(&thread)?)?
+            self.terminal_start_directory(&self.store.thread_terminal_context(&thread)?)?
                 .path
         };
         let retired = self
@@ -229,12 +221,11 @@ mod tests {
         assert_eq!((start.path, start.missing), (launch::home(), None));
 
         let create = |engine: &mut Engine| {
-            let terminal = engine.spawn_thread_terminal(&id, &v, "/bin/sh").unwrap();
-            let terminal_id = Uuid::new_v4().to_string();
-            let number = terminal.number;
-            engine
-                .terminals
-                .insert(terminal_id.clone(), (id.clone(), terminal));
+            let result = engine
+                .create_terminal(&json!({"threadId":id}), "/bin/sh")
+                .unwrap();
+            let terminal_id = text(&result, "terminalId");
+            let number = engine.terminals[&terminal_id].1.number;
             (terminal_id, number)
         };
         let (first, one) = create(&mut engine);

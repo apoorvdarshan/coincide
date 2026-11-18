@@ -55,9 +55,9 @@ impl Engine {
             );
         }
         let mut claim = Some(self.claim_native_queue_now(expected, visible)?);
-        let current = self.store.thread(&id)?;
+        let source = claim.as_ref().unwrap().captured_scope();
         if self.runs.contains_key(&id) {
-            let result = self.begin_native_follow_up(&current, false, &mut claim, behavior);
+            let result = self.begin_native_follow_up(&source, false, &mut claim, behavior);
             if result.is_err() {
                 if let Some(claim) = claim.as_ref() {
                     self.fail_queue_claim(claim, "Send now admission was refused")?;
@@ -89,7 +89,7 @@ impl Engine {
             ticket.id,
             Operation {
                 thread: id,
-                source: scope(&current),
+                source,
                 draft_revision: None,
                 prefix: None,
                 text,
