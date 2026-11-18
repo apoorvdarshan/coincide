@@ -79,7 +79,7 @@ impl Engine {
         anyhow::ensure!(
             matches!(
                 provider,
-                "grok" | "opencode" | "cursor" | "antigravity" | "lithos"
+                "grok" | "opencode" | "cursor" | "antigravity" | "lithos" | "acp-devin"
             ),
             "Unsupported usage reader"
         );
@@ -170,6 +170,18 @@ impl Prepared {
         chrome_default: bool,
     ) -> Completed {
         let _scope = provider_configuration::enter(self.config.clone());
+        if self.provider == "acp-devin" {
+            let result = self
+                .config
+                .as_ref()
+                .and_then(|config| config.approved_executable())
+                .ok_or("Add Devin in Providers to check account usage.")
+                .and_then(|executable| crate::devin_usage::read(&executable));
+            return Completed {
+                prepared: self,
+                result,
+            };
+        }
         if self.provider == "lithos" {
             let result = if self.browser_fallback {
                 crate::lithos_usage::read(browser_cookie)
