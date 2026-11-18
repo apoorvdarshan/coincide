@@ -26,10 +26,10 @@ impl SelectedThread {
         self.thread.as_mut()
     }
 
-    pub(super) fn replace(&mut self, thread: Option<Value>) {
+    pub(super) fn replace(&mut self, thread: Option<Value>) -> Option<Value> {
         self.advance();
         self.advance_transcript();
-        self.thread = thread;
+        std::mem::replace(&mut self.thread, thread)
     }
 
     fn advance(&mut self) {
@@ -72,7 +72,7 @@ mod tests {
     fn mutable_access_and_replacement_invalidate_old_revisions() {
         let mut selected = SelectedThread::default();
         let before = selected.revision();
-        selected.replace(Some(json!({"id":"t", "items":[]})));
+        let _ = selected.replace(Some(json!({"id":"t", "items":[]})));
         assert_ne!(before, selected.revision());
         let before = selected.revision();
         selected.as_mut().unwrap()["items"] = json!([{"id":"new"}]);
@@ -85,7 +85,7 @@ mod tests {
     #[test]
     fn composer_edits_revoke_media_without_replanning_the_transcript() {
         let mut selected = SelectedThread::default();
-        selected.replace(Some(json!({"id":"t", "items":[], "draft":""})));
+        let _ = selected.replace(Some(json!({"id":"t", "items":[], "draft":""})));
         let before = selected.revision();
         let transcript_before = selected.transcript_revision();
         selected.composer_metadata_mut().unwrap()["draft"] = json!("typing");

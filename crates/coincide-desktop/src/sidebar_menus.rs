@@ -537,23 +537,16 @@ impl Coincide {
                     .as_bool()
                     .unwrap_or(true)
                 {
-                    // The confirmation belongs to the open conversation's header.
-                    self.select(id, window, cx);
-                    if self
-                        .selected
-                        .as_ref()
-                        .is_some_and(|thread| thread["id"] == id)
-                    {
-                        self.request_archive(window, cx);
+                    if let Some(thread) = self.threads.iter().find(|thread| thread.id == id) {
+                        self.sidebar_archive_review(
+                            id.to_owned(),
+                            thread.title.clone(),
+                            window,
+                            cx,
+                        );
                     }
-                } else if self
-                    .selected
-                    .as_ref()
-                    .is_some_and(|thread| thread["id"] == id)
-                {
-                    self.archive_open_thread(id, window, cx);
                 } else {
-                    self.set_archived(id, true, cx);
+                    self.archive_open_thread(id, window, cx);
                 }
             }
             ThreadAction::Delete => self.sidebar_delete_review(id.to_owned(), window, cx),

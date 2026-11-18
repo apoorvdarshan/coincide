@@ -54,53 +54,21 @@ fn preview_handed_off(
     if text(thread, "id") != preview.pending.thread {
         return false;
     }
-    let visible = visible_queue
-        .iter()
-        .find(|row| row["id"] == preview.queue_id);
-    if visible.is_some_and(|row| row["state"] != "completed") {
+    let id = &preview.queue_id;
+    if crate::queue::queue_receipt_finished(thread, id) {
         return true;
     }
-    let completed = thread["rustMessageQueue"].as_array().is_some_and(|rows| {
-        rows.iter()
-            .any(|row| row["id"] == preview.queue_id && row["state"] == "completed")
-    });
-    if !completed {
-        return false;
+    if visible_queue.iter().any(|row| row["id"] == *id) {
+        return true;
     }
+    // Completed receipts can be pruned. The exact transcript ID still
+    // proves delivery, including when other entries were removed or reloaded.
     thread["items"].as_array().is_some_and(|items| {
-        items
-            .iter()
-            .filter(|item| {
-                item["kind"] == "user"
-                    && item["bufferedSend"] != true
-                    && item["pendingSend"] != true
-            })
-            .skip(preview.pending.baseline_user_messages)
-            .any(|item| {
-                if item["rustAwaitingQueueDelivery"] == true {
-                    return false;
-                }
-                if let Some(id) = item["rustQueueMessageID"].as_str() {
-                    return id == preview.queue_id;
-                }
-                let captured = &preview.pending.captured;
-                let same_context = item["context"] == captured["draftContext"]
-                    || (!coincide_core::composer_context::has_context(&item["context"])
-                        && !coincide_core::composer_context::has_context(
-                            &captured["draftContext"],
-                        ));
-                let images = item["rustImages"]
-                    .as_array()
-                    .map(Vec::as_slice)
-                    .unwrap_or(&[]);
-                let captured_images = captured["rustDraftImages"]
-                    .as_array()
-                    .map(Vec::as_slice)
-                    .unwrap_or(&[]);
-                item["text"].as_str() == Some(preview.pending.draft.as_str())
-                    && same_context
-                    && images == captured_images
-            })
+        items.iter().rev().any(|item| {
+            item["kind"] == "user"
+                && item["rustQueueMessageID"] == *id
+                && item["rustAwaitingQueueDelivery"] != true
+        })
     })
 }
 /// A send waiting for a local prerequisite, bound to the original settings.
@@ -109,6 +77,7 @@ pub(super) struct PendingSend {
     pub thread: String,
     pub draft: String,
     pub alternate: bool,
+    pub send_now: bool,
     pub behavior: Behavior,
     pub selection: Value,
     pub waiting_for_import: bool,
@@ -123,8 +92,7 @@ pub(super) struct PendingSend {
     pub original_visible: bool,
     /// Local-only row shown until this buffered message reaches the queue.
     pub buffer_id: Option<String>,
-    /// Number of actual user messages visible when this send was captured.
-    pub baseline_user_messages: usize,
+    pub(super) expects_immediate_delivery: bool,
     /// Keeps this submission's previews hidden while it is being saved.
     pub image_send: Option<u64>,
     admission: Option<Arc<CapturedAdmission>>,
@@ -154,6 +122,7 @@ impl PendingSend {
             thread: text(thread, "id"),
             draft,
             alternate,
+            send_now: false,
             behavior: choice::selected(thread, &Value::Null),
             selection: pending_scope(thread, false),
             waiting_for_import: false,
@@ -166,16 +135,7 @@ impl PendingSend {
             last_error: None,
             original_visible: true,
             buffer_id: None,
-            baseline_user_messages: thread["items"].as_array().map_or(0, |items| {
-                items
-                    .iter()
-                    .filter(|item| {
-                        item["kind"] == "user"
-                            && item["bufferedSend"] != true
-                            && item["pendingSend"] != true
-                    })
-                    .count()
-            }),
+            expects_immediate_delivery: false,
             image_send: None,
             admission: None,
         }
@@ -188,6 +148,17 @@ impl PendingSend {
     pub(super) fn recall(&self) -> bool {
         self.admission.as_ref().is_none_or(|slot| slot.claim(2))
     }
+    pub(super) fn prioritize(&mut self) -> bool {
+        // The background worker may already be waiting for the engine with
+        // the ordinary behavior captured. Revoke it before reprioritizing.
+        if self.admission.as_ref().is_some_and(|slot| !slot.claim(2)) {
+            return false;
+        }
+        self.admission = None;
+        self.send_now = true;
+        true
+    }
+
     pub fn with_behavior(mut self, behavior: Behavior) -> Self {
         self.behavior = behavior;
         self
@@ -348,6 +319,12 @@ struct ModifiedSend;
 #[derive(Clone, Default, PartialEq, gpui_kit::Action)]
 #[action(namespace = coincide_follow_up, no_json, no_register)]
 struct ShiftModifiedSend;
+pub(super) const SEND_NOW_SHORTCUT_LABEL: &str = if cfg!(target_os = "macos") {
+    "⌘⇧↩"
+} else {
+    "Ctrl+Shift+Enter"
+};
+
 pub(super) fn init(cx: &mut App) {
     let (send, alternate) = if cfg!(target_os = "macos") {
         ("cmd-enter", "cmd-shift-enter")
@@ -377,6 +354,12 @@ impl Coincide {
             if result.is_some() {
                 pending.admission = None;
             }
+            if matches!(
+                result,
+                Some(Ok(coincide_core::api::CapturedNativeSend::Waiting))
+            ) {
+                pending.expects_immediate_delivery = false;
+            }
             return result;
         }
         let slot = Arc::new(CapturedAdmission::default());
@@ -386,6 +369,7 @@ impl Coincide {
         let captured = pending.captured.clone();
         let behavior = pending.behavior;
         let alternate = pending.alternate;
+        let send_now = pending.send_now;
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
@@ -396,14 +380,23 @@ impl Coincide {
                     if !worker_slot.claim(1) {
                         return Ok(coincide_core::api::CapturedNativeSend::Waiting);
                     }
-                    engine.admit_captured_native_send(
-                        &captured,
-                        clear_original,
-                        behavior,
-                        alternate,
-                    )
+                    if send_now {
+                        engine.admit_captured_native_send_now(&captured)
+                    } else {
+                        engine.admit_captured_native_send(
+                            &captured,
+                            clear_original,
+                            behavior,
+                            alternate,
+                        )
+                    }
                 })
                 .await;
+            if matches!(&result, Ok(coincide_core::api::CapturedNativeSend::Waiting)) {
+                cx.background_executor()
+                    .timer(Duration::from_millis(150))
+                    .await;
+            }
             if let Ok(mut value) = slot.result.lock() {
                 *value = Some(result);
             }
@@ -534,6 +527,21 @@ impl Coincide {
             return;
         }
         next.add_imports(self.attachment_imports.claim(&id));
+        let provider = next.captured["selection"]["provider"].as_str();
+        let dispatch = self.composer_send_dispatch(alternate);
+        let has_images = next.captured["rustDraftImages"]
+            .as_array()
+            .is_some_and(|images| !images.is_empty());
+        let direct = dispatch == Dispatch::Send
+            || (dispatch == Dispatch::Steer && (provider == Some("codex") || !has_images));
+        next.expects_immediate_delivery = direct
+            && previous.is_none()
+            && !next.waiting_for_import
+            && next.selection_wait == SelectionWait::None
+            && !self
+                .queued_messages
+                .iter()
+                .any(|row| matches!(row["state"].as_str(), Some("pending" | "dispatching")));
         if next.draft.trim().is_empty()
             && !coincide_core::composer_context::has_context(&next.captured["draftContext"])
             && next.captured["rustDraftImages"]
@@ -585,21 +593,9 @@ impl Coincide {
     }
 
     pub(super) fn reconcile_buffered_sends(&mut self) {
-        let finished = self
-            .selected
-            .as_ref()
-            .map(|thread| {
-                self.admitted_previews
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(index, preview)| {
-                        preview_handed_off(preview, thread, &self.queued_messages).then_some(index)
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        for index in finished.into_iter().rev() {
-            self.admitted_previews.remove(index);
+        if let Some(thread) = self.selected.as_ref() {
+            self.admitted_previews
+                .retain(|preview| !preview_handed_off(preview, thread, &self.queued_messages));
         }
     }
 
@@ -625,10 +621,11 @@ impl Coincide {
                 if !this.composer_send_visible() {
                     return;
                 }
-                if !this.settings["sendOnReturn"].as_bool().unwrap_or(true) {
+                if !this.send_next_queued_now(cx) {
+                    if this.settings["sendOnReturn"].as_bool().unwrap_or(true) {
+                        return;
+                    }
                     this.send_selected(true, window, cx);
-                } else if !this.send_next_queued_now(cx) {
-                    return;
                 }
                 window.prevent_default();
                 cx.stop_propagation();
@@ -970,36 +967,37 @@ mod send_route_tests {
     use serde_json::json;
 
     #[test]
-    fn admitted_preview_stays_until_its_queue_or_accepted_transcript_is_visible() {
+    fn admitted_preview_uses_exact_delivery_identity_even_when_history_changes() {
         let thread = json!({"id":"t","selection":{"provider":"codex"},
-            "items":[{"kind":"user","text":"same"}], "draftContext":[]});
+            "items":[{"kind":"user","text":"same"},{"kind":"user","text":"same"}]});
         let preview = AdmittedPreview {
             pending: PendingSend::new(&thread, "same".into(), false),
             queue_id: "queue-1".into(),
         };
+        assert!(!preview_handed_off(&preview, &thread, &[]));
         let mut snapshot = thread.clone();
-        snapshot["rustMessageQueue"] = json!([{"id":"queue-1","state":"dispatching"}]);
-        let queue = vec![std::sync::Arc::new(
+        snapshot["items"] = json!([{
+            "kind":"user","text":"same","rustQueueMessageID":"queue-1",
+            "rustAwaitingQueueDelivery":true
+        }]);
+        assert!(!preview_handed_off(&preview, &snapshot, &[]));
+
+        let visible_queue = vec![std::sync::Arc::new(
             json!({"id":"queue-1","state":"dispatching"}),
         )];
-        assert!(preview_handed_off(&preview, &snapshot, &queue));
-        snapshot["rustMessageQueue"][0]["state"] = json!("completed");
-        assert!(
-            !preview_handed_off(&preview, &snapshot, &[]),
-            "an earlier identical message is not the new one"
-        );
-        snapshot["items"]
-            .as_array_mut()
-            .unwrap()
-            .push(json!({"kind":"user","text":"same","rustQueueMessageID":"queue-1","rustAwaitingQueueDelivery":true}));
-        assert!(!preview_handed_off(&preview, &snapshot, &[]));
-        snapshot["items"][1]
-            .as_object_mut()
-            .unwrap()
-            .remove("rustAwaitingQueueDelivery");
+        assert!(preview_handed_off(&preview, &snapshot, &visible_queue));
+
+        snapshot["items"][0]["rustAwaitingQueueDelivery"] = json!(false);
         assert!(preview_handed_off(&preview, &snapshot, &[]));
-        let queued = AdmittedPreview { ..preview };
-        assert!(preview_handed_off(&queued, &thread, &queue));
+
+        // A read can finish before the worker returns its admission result.
+        // A late preview must also hand off from a completed receipt even if
+        // the transcript is absent from that particular view.
+        snapshot["items"] = json!([]);
+        snapshot["rustMessageQueue"] = json!([{"id":"queue-1","state":"completed"}]);
+        assert!(preview_handed_off(&preview, &snapshot, &[]));
+        snapshot["id"] = json!("other");
+        assert!(!preview_handed_off(&preview, &snapshot, &[]));
     }
 
     #[test]
@@ -1023,6 +1021,23 @@ mod send_route_tests {
         assert!(slot.claim(1));
         assert!(!slot.claim(2));
     }
+    #[test]
+    fn send_now_replaces_only_an_admission_that_has_not_been_claimed() {
+        let mut pending = PendingSend::new(&json!({"id":"t"}), "prompt".into(), false);
+        let slot = std::sync::Arc::new(super::CapturedAdmission::default());
+        pending.admission = Some(slot.clone());
+        assert!(pending.prioritize());
+        assert!(pending.send_now && pending.admission.is_none());
+        assert!(!slot.claim(1));
+
+        let active = std::sync::Arc::new(super::CapturedAdmission::default());
+        assert!(active.claim(1));
+        pending.admission = Some(active);
+        pending.send_now = false;
+        assert!(!pending.prioritize());
+        assert!(!pending.send_now);
+    }
+
     #[test]
     fn waiting_send_uses_the_acknowledged_selection_without_changing_its_payload() {
         for provider in [

@@ -49,6 +49,85 @@ fn captured_compaction_and_unavailable_steer_wait_in_the_queue() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn captured_send_launches_an_idle_provider_without_a_queue_poll() {
+    use crate::provider_configuration::tests;
+    let (root, mut engine, binary) = tests::fixture();
+    tests::save(&mut engine, "codex", &binary, "synthetic");
+
+    let mut captured = engine
+        .execute("threads.create", &json!({"cwd":root.path()}))
+        .unwrap();
+    let id = text(&captured, "id");
+    captured["selection"] = json!({"provider":"codex","modelID":"default"});
+    engine.store.save(&captured).unwrap();
+    engine.set_active_thread(Some(id.clone())).unwrap();
+    captured["draft"] = json!("Synthetic first message");
+    captured["nativeQueueID"] = json!(Uuid::new_v4());
+
+    let result = engine
+        .admit_captured_native_send(&captured, false, Behavior::Queue, false)
+        .unwrap();
+    assert!(matches!(
+        result,
+        CapturedNativeSend::Saved {
+            started: true,
+            ticket: None,
+            error: None,
+            ..
+        }
+    ));
+    assert!(engine.runs.contains_key(&id));
+    let saved = engine.store.thread(&id).unwrap();
+    assert_eq!(saved["rustMessageQueue"][0]["state"], "dispatching");
+    assert_eq!(
+        saved["items"][0]["rustQueueMessageID"],
+        captured["nativeQueueID"]
+    );
+    assert_eq!(saved["items"][0]["rustAwaitingQueueDelivery"], true);
+    assert_eq!(saved["items"][0]["rustImmediateQueueDelivery"], true);
+    assert_eq!(saved["rustMessageQueue"][0]["nativeImmediate"], true);
+    engine.freeze_admissions();
+    let _ = engine.request_provider_stop(&id);
+}
+
+#[test]
+fn explicit_send_now_interrupts_the_current_turn_for_the_chosen_message() {
+    let Fixture {
+        _dir,
+        mut engine,
+        id,
+        release,
+        control,
+        ..
+    } = fixture();
+    let mut source = engine.store.thread(&id).unwrap();
+    crate::message_queue::add(&mut source, "older waiting message").unwrap();
+    engine.store.save(&source).unwrap();
+    source["draft"] = json!("chosen message");
+    source["nativeQueueID"] = json!(Uuid::new_v4());
+
+    assert!(matches!(
+        engine.admit_captured_native_send_now(&source).unwrap(),
+        CapturedNativeSend::Saved {
+            ticket: Some(_),
+            error: None,
+            ..
+        }
+    ));
+    assert!(matches!(
+        control.recv_timeout(Duration::from_secs(5)).unwrap(),
+        agent::Control::Stop
+    ));
+    let saved = engine.store.thread(&id).unwrap();
+    assert_eq!(saved["rustMessageQueue"][0]["state"], "pending");
+    assert_eq!(saved["rustMessageQueue"][1]["id"], source["nativeQueueID"]);
+    assert_eq!(saved["rustMessageQueue"][1]["state"], "dispatching");
+    engine.freeze_admissions();
+    finish_fake(&mut engine, &id, release);
+}
+
 #[test]
 fn failed_image_import_keeps_the_captured_message_for_editing_without_auto_delivery() {
     let Fixture {
@@ -1220,6 +1299,15 @@ fn queued_send_now_requires_real_steering_ack_and_keeps_separate_composer() {
         engine.store.thread(&id).unwrap()["rustMessageQueue"][0]["state"],
         "dispatching"
     );
+    engine
+        .execute(
+            "agent.queue.remove",
+            &json!({"threadId":id,"messageId":visible["id"]}),
+        )
+        .unwrap();
+    let waiting = engine.store.thread(&id).unwrap();
+    assert_eq!(waiting["rustMessageQueue"][0]["dismissed"], true);
+    assert_eq!(waiting["rustMessageQueue"][0]["state"], "dispatching");
     let request = server.next_request().unwrap();
     assert_eq!(
         request["params"]["input"][0]["text"],
@@ -1246,6 +1334,10 @@ fn queued_send_now_requires_real_steering_ack_and_keeps_separate_composer() {
     }
     assert_eq!(saved["rustMessageQueue"][0]["state"], "completed");
     assert_eq!(saved["rustMessageQueue"][0]["future"], json!({"keep":true}));
+    assert_eq!(
+        saved["items"].as_array().unwrap().last().unwrap()["rustQueueMessageID"],
+        visible["id"]
+    );
     assert!(!engine.enabled_queues.contains(&id));
     engine.collect_native_follow_up(ticket).unwrap();
     finish_fake(&mut engine, &id, release);

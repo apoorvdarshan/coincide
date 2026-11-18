@@ -379,7 +379,7 @@ struct FindReveal {
     serial: u64,
 }
 fn transcript_search_text(item: &Value) -> &str {
-    if item["rustAwaitingQueueDelivery"] == true {
+    if queue::transcript_waits_for_queue(item) {
         ""
     } else {
         item["text"].as_str().unwrap_or("")
@@ -1171,7 +1171,10 @@ impl Coincide {
                 .then(|| (id.clone(), draft.text.clone()))
         });
         if let Some((id, text)) = next {
-            if self.pending_new_thread.is_some() || self.thread_navigation.target().is_some() {
+            if self.pending_new_thread.is_some()
+                || self.thread_navigation.target().is_some()
+                || self.awaiting_file_mention_draft(&id)
+            {
                 self.draft_saver.record_now(&id, &text);
             } else {
                 self.draft_saver.record(&id, &text);
@@ -1226,7 +1229,8 @@ impl Coincide {
             .as_ref()
             .and_then(|value| value["id"].as_str());
         let new_id = thread.as_ref().and_then(|value| value["id"].as_str());
-        if old_id != new_id {
+        let switched = old_id != new_id;
+        if switched {
             self.prepare_inspector_thread_change();
         }
         if let (Some(current), Some(next)) = (self.selected.as_ref(), &mut thread) {
@@ -1237,7 +1241,10 @@ impl Coincide {
             );
         }
         self.selected_generation = self.selected_generation.wrapping_add(1);
-        self.selected.replace(thread);
+        let previous = self.selected.replace(thread);
+        if switched && let Some(previous) = previous {
+            self.thread_navigation.remember(previous);
+        }
     }
     fn new(
         engine: SharedEngine,
@@ -1746,6 +1753,8 @@ impl Coincide {
             .try_lock()
             .ok()
             .and_then(|engine| engine.store.data_directory().ok());
+        let mut thread_navigation = thread_navigation::State::default();
+        thread_navigation.reader(&engine);
         let poll_window = window.window_handle();
         let poll = cx.spawn_in(window, async move |this, cx| {
             loop {
@@ -2021,7 +2030,7 @@ impl Coincide {
             reply_media_cache: Default::default(),
             search,
             pending_select: None,
-            thread_navigation: Default::default(),
+            thread_navigation,
             opening_thread_details: None,
             pending_new_thread: None,
             new_thread_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
@@ -2888,8 +2897,10 @@ impl Coincide {
             complete = false;
         }
         self.missing_project_folders = navigation::missing_project_folders(&self.projects);
+        let reader = self.thread_navigation.reader(&self.engine);
         match sidebar_search::read(
             &self.engine,
+            reader.as_ref(),
             &self.search.read(cx).value(),
             self.show_archived,
             &self.projects,
@@ -2962,12 +2973,27 @@ impl Coincide {
         {
             self.draft_saver.record_now(&previous, &draft.text);
         }
+        if let Some(thread) = self
+            .thread_navigation
+            .take_recent(id, &self.sidebar_all_threads)
+            && self.thread_navigation.finish(generation, id, thread)
+        {
+            self.select(id, window, cx);
+            return;
+        }
+        let reader = self.thread_navigation.reader(&self.engine);
         let engine = self.engine.clone();
         let requested = id.to_owned();
         let worker_id = requested.clone();
         let cancellation = self.thread_navigation.cancellation();
         let work = cx.background_executor().spawn(async move {
-            thread_navigation::read(&engine, &worker_id, &cancellation, generation)
+            thread_navigation::read(
+                &engine,
+                reader.as_ref(),
+                &worker_id,
+                &cancellation,
+                generation,
+            )
         });
         let owner = self.main_window;
         let task = cx.spawn_in(window, async move |this, cx| {
@@ -3086,21 +3112,6 @@ impl Coincide {
                     .selected
                     .as_ref()
                     .is_none_or(|thread| thread["id"] != id);
-                if changing_thread {
-                    match self.inspector_follow.prepare_destination(&self.engine, id) {
-                        Ok(true) => {}
-                        Ok(false) => {
-                            self.thread_navigation.put_back(id, v);
-                            self.pending_select = Some(id.to_owned());
-                            cx.notify();
-                            return;
-                        }
-                        Err(error) => {
-                            eprintln!("Unable to restore the conversation panel: {error}");
-                            self.inspector_follow.fallback_destination(id);
-                        }
-                    }
-                }
                 self.session_import_open = false;
                 if self
                     .selected
@@ -3218,13 +3229,6 @@ impl Coincide {
                         let _ = engine.set_active_thread(None);
                         self.status =
                             format!("Selected conversation authority unavailable: {error}");
-                    }
-                    match engine.store.remember_native_selected_thread(Some(id)) {
-                        Ok(_) => self.pending_native_selection = None,
-                        Err(error) => {
-                            self.status =
-                                format!("Unable to remember conversation selection: {error}")
-                        }
                     }
                     consume_open_activation(&mut engine.requested_open, id)
                 } else {
@@ -3998,12 +4002,20 @@ impl Coincide {
         let visible =
             (settings_visible || pane_visible) && !self.command_palette.read(cx).is_open();
         let selected_thread = self.selected.as_ref().map(|thread| text(thread, "id"));
+        let mut reveal_shared_browser = false;
         for request in self.browser_profile_requests.try_iter().take(8) {
+            let open_shared = matches!(
+                &request.operation,
+                browser_settings::ProfileOperation::OpenSharedBrowser
+            );
             let clearing = matches!(
                 &request.operation,
                 browser_settings::ProfileOperation::ClearData { .. }
             );
-            let result = if settings_visible {
+            let result = if settings_visible
+                && !self.media.shutdown_requested
+                && !self.media.close_requested
+            {
                 selected_thread
                     .as_deref()
                     .ok_or_else(|| "No selected thread".to_owned())
@@ -4023,15 +4035,28 @@ impl Coincide {
             } else {
                 Err("Browser settings closed; profile request cancelled".into())
             };
+            reveal_shared_browser |= open_shared && result.is_ok();
             if clearing {
                 if let Err(error) = result {
                     self.browser_settings_panel
                         .update(cx, |panel, cx| panel.set_clear_result("", Err(error), cx));
                 }
             } else {
-                self.browser_settings_panel
-                    .update(cx, |panel, cx| panel.set_result(result, cx));
+                self.browser_settings_panel.update(cx, |panel, cx| {
+                    if open_shared {
+                        panel.set_shared_open_result(result, cx);
+                    } else {
+                        panel.set_result(result, cx);
+                    }
+                });
             }
+        }
+        if reveal_shared_browser {
+            self.settings_open = false;
+            self.browser_settings_open = false;
+            self.sync_browser_settings_route(cx);
+            self.browser_action(BrowserAction::Show, None, cx);
+            return;
         }
         if let Some((thread, result)) = self
             .browser
@@ -4668,6 +4693,7 @@ impl Coincide {
         // an answered question can stay visible while a turn keeps running.
         self.refresh_pending(window, cx);
         if let Ok(status) = call(&self.engine, "app.status", json!({})) {
+            let previous_opener = self.selected_running_opener();
             self.window_chrome.observe_status(&status);
             let selected_thread = self.selected.as_ref().map(|thread| text(thread, "id"));
             let was_running = selected_thread
@@ -4693,9 +4719,20 @@ impl Coincide {
                 })
                 .unwrap_or_default();
             self.set_starting_runs(starting, cx);
-            if was_running != is_running {
-                self.splice_transcript(0..self.transcript_count, self.transcript_count);
-                cx.notify();
+            let active_opener = self.selected_running_opener();
+            if previous_opener != active_opener {
+                let start = previous_opener
+                    .into_iter()
+                    .chain(active_opener)
+                    .min()
+                    .unwrap();
+                if start < self.transcript_count {
+                    self.transcript_list
+                        .remeasure_items(start..self.transcript_count);
+                    cx.notify();
+                }
+            } else if was_running != is_running {
+                self.redraw_live_row(cx);
             }
             let staged_goal_selection = selected_thread.as_ref().is_some_and(|id| {
                 status["stagedGoalSelections"]
@@ -5416,6 +5453,13 @@ impl Coincide {
         let id = text(&thread, "id");
         let count = thread["items"].as_array().map_or(0, Vec::len);
         let mut start = self.transcript_count.saturating_sub(1).min(count);
+        let previous_opener = self.selected_running_opener();
+        let active_opener = self.running_opener_for(&thread);
+        if previous_opener != active_opener
+            && let Some(opener) = previous_opener.into_iter().chain(active_opener).min()
+        {
+            start = start.min(opener);
+        }
         // A provider ACK can release a previously hidden opener above the
         // most recent streaming row. Invalidate its measured height too.
         if let Ok(queue) = &queue {
@@ -6282,8 +6326,8 @@ impl Coincide {
         else {
             return div().into_any_element();
         };
-        if item["rustAwaitingQueueDelivery"] == true {
-            return div().into_any_element();
+        if queue::transcript_waits_for_queue(item) {
+            return self.turn_decorated(index, div().into_any_element(), None, cx);
         }
         let kind = text(item, "kind");
         let item_id = text(item, "id");
@@ -7332,6 +7376,7 @@ impl Render for Coincide {
                         Some(Ok(coincide_core::api::CapturedNativeSend::Saved {
                             enabled,
                             cleared,
+                            started,
                             queue_id,
                             ticket,
                             error,
@@ -7369,7 +7414,7 @@ impl Render for Coincide {
                                     .update(cx, |input, cx| input.set_value("", window, cx));
                             }
                             self.finish_pending_images(pending.image_send, true);
-                            let delivering = ticket.is_some();
+                            let delivering = started || ticket.is_some();
                             if let Some(ticket) = ticket {
                                 self.track_queued_delivery(ticket, pending.thread.clone());
                             }
@@ -7377,6 +7422,7 @@ impl Render for Coincide {
                                 self.admitted_previews.push(
                                     composer_follow_up_mount::AdmittedPreview { pending, queue_id },
                                 );
+                                self.reconcile_buffered_sends();
                             }
                             self.status = if delivering {
                                 "Delivering your message."
@@ -7438,6 +7484,7 @@ impl Render for Coincide {
                     Some(Ok(coincide_core::api::CapturedNativeSend::Saved {
                         enabled,
                         cleared,
+                        started,
                         queue_id,
                         ticket,
                         error,
@@ -7458,13 +7505,16 @@ impl Render for Coincide {
                             self.admitted_previews.push(
                                 composer_follow_up_mount::AdmittedPreview { pending, queue_id },
                             );
+                            self.reconcile_buffered_sends();
                         }
                         if let Some(error) = error {
                             self.show_local_error(&format!(
                                 "Message saved, but delivery could not start: {error}"
                             ));
                         }
-                        self.status = if enabled {
+                        self.status = if started {
+                            "Delivering the earlier conversation's message."
+                        } else if enabled {
                             "The earlier conversation's message is queued."
                         } else {
                             "The earlier conversation's message is saved in its paused queue."
@@ -7516,15 +7566,7 @@ impl Render for Coincide {
         let entity = cx.entity();
         // A long active turn may contain thousands of tool events. Resolve its
         // opener once instead of rescanning the tail for every visible row.
-        let running_start = self.selected.as_ref().and_then(|thread| {
-            let id = thread["id"].as_str()?;
-            let items = thread["items"].as_array()?;
-            self.chat_turns.running_opener(
-                self.selected.transcript_revision(),
-                items,
-                self.running.iter().any(|running| running == id),
-            )
-        });
+        let running_start = self.selected_running_opener();
         // Ask where the list is, not whether it is following: the follow flag
         // only re-engages in a fully measured layout, so rows that are still
         // measuring left the pill up even at the bottom of the transcript.
@@ -7538,14 +7580,9 @@ impl Render for Coincide {
                     .as_array()
                     .is_some_and(|items| !items.is_empty())
             });
-        let selected_running = self.selected.as_ref().is_some_and(|thread| {
-            self.running
-                .iter()
-                .any(|id| thread["id"].as_str() == Some(id.as_str()))
-        });
         self.chat_turns.begin_render(
             self.selected.transcript_revision(),
-            selected_running,
+            running_start,
             self.settings["showReasoning"].as_bool().unwrap_or(true),
             self.selected
                 .as_ref()

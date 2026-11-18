@@ -74,6 +74,37 @@ pub struct Store {
     deferred_search_active: std::collections::HashSet<String>,
 }
 
+/// Read a durable conversation from SQLite's WAL without waiting for the
+/// process-wide engine mutex. The main engine remains the only writer.
+#[derive(Clone)]
+pub struct ThreadNavigationReader(std::path::PathBuf);
+
+impl ThreadNavigationReader {
+    fn open(&self, timeout: std::time::Duration) -> Result<Connection> {
+        let db = Connection::open_with_flags(&self.0, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        db.busy_timeout(timeout)?;
+        Ok(db)
+    }
+
+    pub fn read(&self, id: &str) -> Result<Value> {
+        read_thread(&self.open(std::time::Duration::from_millis(250))?, id)
+    }
+
+    /// The sidebar can read the last committed metadata during a transcript
+    /// write. Return promptly if SQLite itself is busy.
+    pub fn summaries(&self) -> Result<Vec<ThreadSummary>> {
+        Store::summaries_from(&self.open(std::time::Duration::ZERO)?, "", true)
+    }
+}
+
+fn read_thread(db: &Connection, id: &str) -> Result<Value> {
+    let mut statement = db.prepare_cached("SELECT document FROM threads WHERE id=?1")?;
+    let mut rows = statement.query([id])?;
+    let row = rows.next()?.ok_or(rusqlite::Error::QueryReturnedNoRows)?;
+    // Decode SQLite's borrowed text without copying the full document.
+    Ok(serde_json::from_str(row.get_ref(0)?.as_str()?)?)
+}
+
 fn mark_draft_write(tx: &rusqlite::Transaction<'_>, id: &str) -> Result<()> {
     tx.execute(
         "INSERT INTO native_draft_revisions(id,revision) VALUES (?1,randomblob(16)) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision",
@@ -594,7 +625,14 @@ impl Store {
     /// index for queries of three or more Unicode characters, with a literal
     /// substring recheck; short queries scan cached text, never JSON transcripts.
     pub fn summaries(&self, query: &str, include_archived: bool) -> Result<Vec<ThreadSummary>> {
-        self.connection()?;
+        Self::summaries_from(self.connection()?, query, include_archived)
+    }
+
+    fn summaries_from(
+        db: &Connection,
+        query: &str,
+        include_archived: bool,
+    ) -> Result<Vec<ThreadSummary>> {
         let query = query.trim().to_lowercase();
         let indexed = query.chars().count() >= 3;
         let filter = if query.is_empty() {
@@ -609,7 +647,7 @@ impl Store {
              (SELECT metadata FROM thread_navigation WHERE thread_navigation.id=thread_summaries.id COLLATE NOCASE)
              FROM thread_summaries WHERE (?1 OR archived=0){filter} ORDER BY pinned DESC,updated_at DESC,id"
         );
-        let mut stmt = self.connection()?.prepare(&sql)?;
+        let mut stmt = db.prepare(&sql)?;
         let mapper = |r: &rusqlite::Row<'_>| {
             Ok(ThreadSummary {
                 id: r.get(0)?,
@@ -640,16 +678,14 @@ impl Store {
         // Pending indexes retain a durable marker through crashes. Verify
         // their current transcript only when someone actually searches, so
         // streaming text is searchable without reindexing the whole chat.
-        let mut pending = self
-            .connection()?
-            .prepare("SELECT id FROM thread_search_pending")?;
+        let mut pending = db.prepare("SELECT id FROM thread_search_pending")?;
         let pending: std::collections::HashSet<String> = pending
             .query_map([], |row| row.get(0))?
             .collect::<rusqlite::Result<_>>()?;
         let mut verified = Vec::with_capacity(result.len());
         for summary in result {
             if !pending.contains(&summary.id)
-                || search_text(&self.thread(&summary.id)?)
+                || search_text(&read_thread(db, &summary.id)?)
                     .to_lowercase()
                     .contains(&query)
             {
@@ -657,6 +693,11 @@ impl Store {
             }
         }
         Ok(verified)
+    }
+
+    pub fn thread_navigation_reader(&self) -> Option<ThreadNavigationReader> {
+        let path = self.connection().ok()?.path()?;
+        (!path.is_empty()).then(|| ThreadNavigationReader(path.into()))
     }
 
     /// Capture the saved bytes under the store lock so callers can decode a
@@ -693,7 +734,21 @@ impl Store {
     /// holding the engine lock. Preserve the complete queue and JSON types.
     pub(crate) fn thread_selection_snapshot(&self, id: &str) -> Result<Value> {
         let document: String = self.connection()?.query_row(
-            "SELECT json_object('id', document -> '$.id', 'selection', document -> '$.selection', 'accessMode', document -> '$.accessMode', 'interactionMode', document -> '$.interactionMode', 'botID', document -> '$.botID', 'rustBotContext', document -> '$.rustBotContext', 'projectID', document -> '$.projectID', 'worktreePath', document -> '$.worktreePath', 'rustMessageQueue', document -> '$.rustMessageQueue') FROM threads WHERE id=?1",
+            "SELECT json_object('id', document -> '$.id', 'selection', document -> '$.selection', 'accessMode', document -> '$.accessMode', 'interactionMode', document -> '$.interactionMode', 'botID', document -> '$.botID', 'rustBotContext', document -> '$.rustBotContext', 'projectID', document -> '$.projectID', 'projectPath', document -> '$.projectPath', 'worktreePath', document -> '$.worktreePath', 'rustMessageQueue', document -> '$.rustMessageQueue') FROM threads WHERE id=?1",
+            [id],
+            |row| row.get(0),
+        )?;
+        Ok(serde_json::from_str(&document)?)
+    }
+
+    pub(crate) fn thread_terminal_context(&self, id: &str) -> Result<Value> {
+        let document: String = self.connection()?.query_row(
+            "SELECT json_object(
+                'projectID', document -> '$.projectID',
+                'worktreePath', document -> '$.worktreePath',
+                'botID', document -> '$.botID',
+                'rustBotContext', json_object('cwd', document -> '$.rustBotContext.cwd')
+            ) FROM threads WHERE id=?1",
             [id],
             |row| row.get(0),
         )?;
@@ -722,8 +777,7 @@ impl Store {
     }
 
     pub fn thread(&self, id: &str) -> Result<Value> {
-        let document = self.thread_document(id)?;
-        Ok(serde_json::from_str(&document)?)
+        read_thread(self.connection()?, id)
     }
 
     /// Remote's sidebar needs a few fields, not a copy of the transcript.
@@ -870,12 +924,8 @@ impl Store {
         ensure_not_deleted(&tx, id)?;
         if let Some(expected) = expected {
             ensure!(expected["id"] == id, "Native turn source identity mismatch");
-            let raw: String =
-                tx.query_row("SELECT document FROM threads WHERE id=?1", [id], |row| {
-                    row.get(0)
-                })?;
             ensure!(
-                &serde_json::from_str::<Value>(&raw)? == expected,
+                &read_thread(&tx, id)? == expected,
                 "Conversation changed before replacement admission; draft retained"
             );
             ensure!(

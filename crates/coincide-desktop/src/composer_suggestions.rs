@@ -21,7 +21,8 @@ const MAX_PULL_ROWS: usize = 50;
 const PULL_MAX_AGE: Duration = Duration::from_secs(60);
 /// Refresh an open menu periodically; reopening it always requests a fresh list.
 const COMMAND_MAX_AGE: Duration = Duration::from_secs(30);
-const COMMAND_BUSY_RETRY: Duration = Duration::from_secs(2);
+const COMMAND_LOCK_TIMEOUT: Duration = Duration::from_secs(4);
+const COMMAND_BUSY_RETRY: Duration = Duration::from_millis(500);
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Suggestion {
@@ -112,6 +113,7 @@ fn opens_suggestion_word(previous: Option<&Live>, current: Option<&Live>) -> boo
 struct CommandAttempt {
     started: Instant,
     retry_after: Duration,
+    failed: bool,
 }
 fn command_refresh_due(attempt: Option<&CommandAttempt>, now: Instant) -> bool {
     attempt.is_some_and(|attempt| {
@@ -120,13 +122,9 @@ fn command_refresh_due(attempt: Option<&CommandAttempt>, now: Instant) -> bool {
 }
 fn command_scope_key(live: &Live, thread: &Value) -> String {
     format!(
-        "{}\0{}\0{}\0{}\0{}\0{}",
+        "{}\0{}",
         live.thread,
-        live.provider,
-        live.account,
-        thread["projectID"],
-        thread["projectPath"],
-        thread["worktreePath"]
+        coincide_core::api::native_command_scope(thread)
     )
 }
 
@@ -218,10 +216,7 @@ type PullReply = (
     String,
     std::result::Result<Option<Vec<PullRequest>>, String>,
 );
-type CommandReply = (
-    String,
-    std::result::Result<Option<coincide_core::api::NativeCommandReceipt>, String>,
-);
+type CommandReply = (String, Result<Vec<ProviderCommand>>);
 
 pub(super) struct Suggestions {
     live: Option<Live>,
@@ -236,7 +231,7 @@ pub(super) struct Suggestions {
     anchor: Rc<Cell<Option<Bounds<Pixels>>>>,
     scroll: ScrollHandle,
     commands: Option<(String, Vec<ProviderCommand>)>,
-    commands_revision: u64,
+    commands_changed: bool,
     /// The built-ins last listed, so the list follows agents and limits as they load.
     builtins: Vec<BuiltIn>,
     pulls: Option<PullList>,
@@ -250,7 +245,6 @@ pub(super) struct Suggestions {
     command_sender: mpsc::SyncSender<CommandReply>,
     command_receiver: mpsc::Receiver<CommandReply>,
     command_pending: Option<String>,
-    command_receipt: Option<(String, coincide_core::api::NativeCommandReceipt)>,
     command_attempts: std::collections::HashMap<String, CommandAttempt>,
     /// A command chosen from the list, run once its edited draft is saved.
     queued: Option<Queued>,
@@ -271,7 +265,7 @@ impl Default for Suggestions {
             anchor: Rc::default(),
             scroll: ScrollHandle::new(),
             commands: None,
-            commands_revision: 0,
+            commands_changed: false,
             builtins: Vec::new(),
             pulls: None,
             pulls_revision: 0,
@@ -284,7 +278,6 @@ impl Default for Suggestions {
             command_sender,
             command_receiver,
             command_pending: None,
-            command_receipt: None,
             command_attempts: Default::default(),
             queued: None,
         }
@@ -419,7 +412,64 @@ fn read_pulls(
     }
 }
 
+/// Wait for short-lived engine contention on the worker. Provider I/O runs
+/// outside the lock and final admission rechecks the original account and scope.
+fn command_engine<'a>(
+    engine: &'a SharedEngine,
+    admission: &Admission,
+) -> Result<std::sync::MutexGuard<'a, coincide_core::api::Engine>> {
+    let deadline = Instant::now() + COMMAND_LOCK_TIMEOUT;
+    loop {
+        anyhow::ensure!(admission.allowed(), "Command discovery closed");
+        match try_state(engine) {
+            Err(error) if engine_busy(&error) && Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(15));
+            }
+            result => return result,
+        }
+    }
+}
+
+fn discover_commands(
+    engine: &SharedEngine,
+    thread: &str,
+    expected: &Value,
+    admission: &Admission,
+) -> Result<Vec<ProviderCommand>> {
+    let request = command_engine(engine, admission)?
+        .prepare_native_command_discovery_for_scope(thread, Some(expected));
+    match request {
+        Ok(Some(request)) => {
+            let receipt = request.read(|| admission.allowed());
+            match receipt {
+                Ok(receipt) => {
+                    command_engine(engine, admission)?.accept_native_command_discovery(receipt)
+                }
+                Err(error) => {
+                    let reported = command_engine(engine, admission)?
+                        .native_reported_composer_commands(thread, expected)?;
+                    if reported.is_empty() {
+                        Err(error)
+                    } else {
+                        Ok(reported)
+                    }
+                }
+            }
+        }
+        Ok(None) => {
+            command_engine(engine, admission)?.native_reported_composer_commands(thread, expected)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 impl Coincide {
+    fn command_key(&self, live: &Live) -> Option<String> {
+        self.selected
+            .as_ref()
+            .filter(|thread| thread["id"] == live.thread)
+            .map(|thread| command_scope_key(live, thread))
+    }
     fn command_list_due(&self, live: &Live, now: Instant) -> bool {
         self.composer_suggestions.command_pending.is_none()
             && matches!(live.trigger.kind, TriggerKind::Command | TriggerKind::Skill)
@@ -460,7 +510,7 @@ impl Coincide {
         let id = text(thread, "id");
         // A native WebKit responder is not represented by GPUI focus handles.
         if id.is_empty()
-            || self.browser_panels.contains(&id)
+            || self.browser_owns_reply_focus(window, cx)
             || !self.composer.read(cx).focus_handle(cx).is_focused(window)
         {
             return None;
@@ -543,7 +593,7 @@ impl Coincide {
         });
         let reports_changed = live.as_ref().is_some_and(|live| {
             matches!(live.trigger.kind, TriggerKind::Command | TriggerKind::Skill)
-                && state.commands_revision != self.revision
+                && state.commands_changed
         });
         let commands_due = live
             .as_ref()
@@ -551,7 +601,7 @@ impl Coincide {
         if !changed && !pulls_changed && !builtins_changed && !reports_changed && !commands_due {
             return;
         }
-        self.composer_suggestions.commands_revision = self.revision;
+        self.composer_suggestions.commands_changed = false;
         self.composer_suggestions.live = live;
         self.load_composer_suggestions(opened, cx);
     }
@@ -572,7 +622,14 @@ impl Coincide {
                     self.composer_suggestions.builtins = builtins;
                     matching.into_iter().map(Suggestion::Command).collect()
                 };
-                let commands = self.reported_agent_commands(&live);
+                let key = self.command_key(&live);
+                let state = &self.composer_suggestions;
+                let commands = state
+                    .commands
+                    .as_ref()
+                    .filter(|(cached, _)| Some(cached) == key.as_ref())
+                    .map(|(_, commands)| commands.clone())
+                    .unwrap_or_default();
                 let offered = commands
                     .into_iter()
                     .filter(|command| {
@@ -593,24 +650,35 @@ impl Coincide {
                             token: if skills { '$' } else { '/' },
                         }),
                 );
-                if items.is_empty()
-                    && self.composer_suggestions.command_pending.is_some()
-                    && matches!(
-                        live.provider.as_str(),
-                        "codex" | "opencode" | "lithos" | "claude"
-                    )
+                let empty = if !items.is_empty() {
+                    None
+                } else if key
+                    .as_ref()
+                    .and_then(|key| state.command_attempts.get(key))
+                    .is_some_and(|attempt| attempt.failed)
                 {
-                    self.composer_suggestions.show(
-                        items,
-                        Some("Loading skills…"),
-                        if skills { "Skills" } else { "Commands" },
-                    );
-                } else if items.is_empty() {
+                    Some(if skills {
+                        "Skills unavailable. Reopen to retry."
+                    } else {
+                        "Commands unavailable. Reopen to retry."
+                    })
+                } else if key.is_some() && state.command_pending.is_some() {
+                    Some(if skills {
+                        "Loading skills…"
+                    } else {
+                        "Loading commands…"
+                    })
+                } else if skills {
+                    Some("No matching skills")
+                } else {
+                    None
+                };
+                if items.is_empty() && empty.is_none() {
                     self.composer_suggestions.hide();
                 } else {
                     self.composer_suggestions.show(
                         items,
-                        None,
+                        empty,
                         if skills { "Skills" } else { "Commands" },
                     );
                 }
@@ -620,11 +688,8 @@ impl Coincide {
         cx.notify();
     }
     fn start_native_command_discovery(&mut self, live: &Live, opened: bool) {
-        if !matches!(
-            live.provider.as_str(),
-            "codex" | "opencode" | "lithos" | "claude"
-        ) || self.composer_suggestions.command_pending.is_some()
-        {
+        let state = &mut self.composer_suggestions;
+        if state.command_pending.is_some() {
             return;
         }
         let Some(thread) = self
@@ -636,8 +701,7 @@ impl Coincide {
         };
         let key = command_scope_key(live, thread);
         if !opened
-            && self
-                .composer_suggestions
+            && state
                 .command_attempts
                 .get(&key)
                 .is_some_and(|attempt| !command_refresh_due(Some(attempt), Instant::now()))
@@ -645,78 +709,49 @@ impl Coincide {
             return;
         }
         let engine = self.engine.clone();
-        let sender = self.composer_suggestions.command_sender.clone();
+        let sender = state.command_sender.clone();
         let id = live.thread.clone();
+        let expected = coincide_core::api::native_command_scope(thread);
         let worker_key = key.clone();
-        if self
-            .composer_suggestions
-            .command_workers
-            .spawn(move |admission| {
-                let result = (|| -> Result<Option<coincide_core::api::NativeCommandReceipt>> {
-                    let request = {
-                        let engine = engine
-                            .try_lock()
-                            .map_err(|_| anyhow::anyhow!("App is busy"))?;
-                        engine.prepare_native_command_discovery(&id)?
-                    };
-                    request
-                        .map(|request| request.read(|| admission.allowed()))
-                        .transpose()
-                })()
-                .map_err(|error| error.to_string());
-                let _ = sender.send((worker_key, result));
-            })
-        {
-            self.composer_suggestions.command_attempts.insert(
-                key.clone(),
-                CommandAttempt {
-                    started: Instant::now(),
-                    retry_after: COMMAND_MAX_AGE,
-                },
-            );
-            self.composer_suggestions.command_pending = Some(key);
+        if state.command_workers.spawn(move |admission| {
+            let result = discover_commands(&engine, &id, &expected, &admission);
+            let _ = sender.send((worker_key, result));
+        }) {
+            state.command_pending = Some(key);
         }
     }
+
     fn poll_native_command_discovery(&mut self, cx: &mut Context<Self>) {
-        if let Ok((key, result)) = self.composer_suggestions.command_receiver.try_recv() {
-            self.composer_suggestions.command_pending = None;
-            let retry_after = match &result {
-                Err(error) if error.contains("busy") => COMMAND_BUSY_RETRY,
-                _ => COMMAND_MAX_AGE,
-            };
-            self.composer_suggestions.command_attempts.insert(
-                key.clone(),
-                CommandAttempt {
-                    started: Instant::now(),
-                    retry_after,
+        let state = &mut self.composer_suggestions;
+        let reply = state.command_receiver.try_recv().ok().or_else(|| {
+            if state.command_workers.status().unjoined == 0 {
+                state
+                    .command_pending
+                    .clone()
+                    .map(|key| (key, Err(anyhow::anyhow!("Skill discovery stopped"))))
+            } else {
+                None
+            }
+        });
+        let Some((key, result)) = reply else { return };
+        state.command_pending = None;
+        state.command_attempts.insert(
+            key.clone(),
+            CommandAttempt {
+                started: Instant::now(),
+                retry_after: if result.as_ref().is_err_and(engine_busy) {
+                    COMMAND_BUSY_RETRY
+                } else {
+                    COMMAND_MAX_AGE
                 },
-            );
-            match result {
-                Ok(Some(receipt)) => {
-                    self.composer_suggestions.command_receipt = Some((key, receipt))
-                }
-                _ => {}
-            }
-            self.composer_suggestions.commands_revision = self.revision.wrapping_sub(1);
-            cx.notify();
+                failed: result.is_err(),
+            },
+        );
+        if let Ok(commands) = result {
+            state.commands = Some((key, commands));
         }
-        if self.composer_suggestions.command_receipt.is_some()
-            && let Ok(mut engine) = self.engine.try_lock()
-        {
-            let (key, receipt) = self.composer_suggestions.command_receipt.take().unwrap();
-            if engine.accept_native_command_discovery(receipt).is_err() {
-                self.composer_suggestions.command_attempts.remove(&key);
-            }
-            self.composer_suggestions.commands_revision = self.revision.wrapping_sub(1);
-            cx.notify();
-        }
-        if self.composer_suggestions.command_pending.is_some()
-            && self.composer_suggestions.command_workers.status().unjoined == 0
-        {
-            self.composer_suggestions.command_pending = None;
-            self.composer_suggestions.commands_revision = self.revision.wrapping_sub(1);
-            cx.notify();
-        }
+        state.commands_changed = true;
+        cx.notify();
     }
     /// `/model`, `/plan`, `/build`, `/usage-limits` when reported, then one per other agent
     /// this conversation can switch to.
@@ -751,31 +786,6 @@ impl Coincide {
                 .reported_observation()
                 .is_some_and(|observed| crate::codex_limits_mount::has_reported_windows(&observed));
         BuiltIn::available(&agents, limits)
-    }
-    /// What the thread's agent reported: its session's commands and skills, else what it
-    /// reported last in this folder. A busy engine keeps the previous answer for the agent.
-    fn reported_agent_commands(&mut self, live: &Live) -> Vec<ProviderCommand> {
-        let Some(thread) = self
-            .selected
-            .as_ref()
-            .filter(|thread| thread["id"] == live.thread)
-        else {
-            return Vec::new();
-        };
-        let key = command_scope_key(live, thread);
-        if let Ok(reply) = call(
-            &self.engine,
-            "composer.commands",
-            json!({"threadId":live.thread}),
-        ) && reply["provider"] == live.provider.as_str()
-            && let Ok(commands) = serde_json::from_value(reply["commands"].clone())
-        {
-            self.composer_suggestions.commands = Some((key.clone(), commands));
-        }
-        match &self.composer_suggestions.commands {
-            Some((cached, commands)) if *cached == key => commands.clone(),
-            _ => Vec::new(),
-        }
     }
     /// The last list at once, then a fresh one when it is older than a minute. Like `/` and
     /// `$`, the list closes when nothing matches, since `#` also starts headings and hashtags.
@@ -1210,6 +1220,7 @@ mod tests {
         let attempt = CommandAttempt {
             started: now,
             retry_after: COMMAND_MAX_AGE,
+            failed: false,
         };
         assert!(!command_refresh_due(Some(&attempt), now));
         assert!(command_refresh_due(Some(&attempt), now + COMMAND_MAX_AGE));
