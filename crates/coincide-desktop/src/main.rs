@@ -4002,12 +4002,20 @@ impl Coincide {
         let visible =
             (settings_visible || pane_visible) && !self.command_palette.read(cx).is_open();
         let selected_thread = self.selected.as_ref().map(|thread| text(thread, "id"));
+        let mut reveal_shared_browser = false;
         for request in self.browser_profile_requests.try_iter().take(8) {
+            let open_shared = matches!(
+                &request.operation,
+                browser_settings::ProfileOperation::OpenSharedBrowser
+            );
             let clearing = matches!(
                 &request.operation,
                 browser_settings::ProfileOperation::ClearData { .. }
             );
-            let result = if settings_visible {
+            let result = if settings_visible
+                && !self.media.shutdown_requested
+                && !self.media.close_requested
+            {
                 selected_thread
                     .as_deref()
                     .ok_or_else(|| "No selected thread".to_owned())
@@ -4027,15 +4035,28 @@ impl Coincide {
             } else {
                 Err("Browser settings closed; profile request cancelled".into())
             };
+            reveal_shared_browser |= open_shared && result.is_ok();
             if clearing {
                 if let Err(error) = result {
                     self.browser_settings_panel
                         .update(cx, |panel, cx| panel.set_clear_result("", Err(error), cx));
                 }
             } else {
-                self.browser_settings_panel
-                    .update(cx, |panel, cx| panel.set_result(result, cx));
+                self.browser_settings_panel.update(cx, |panel, cx| {
+                    if open_shared {
+                        panel.set_shared_open_result(result, cx);
+                    } else {
+                        panel.set_result(result, cx);
+                    }
+                });
             }
+        }
+        if reveal_shared_browser {
+            self.settings_open = false;
+            self.browser_settings_open = false;
+            self.sync_browser_settings_route(cx);
+            self.browser_action(BrowserAction::Show, None, cx);
+            return;
         }
         if let Some((thread, result)) = self
             .browser

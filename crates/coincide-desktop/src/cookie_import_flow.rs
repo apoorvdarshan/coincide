@@ -548,20 +548,49 @@ impl BrowserSettings {
             || flow.busy
             || flow.status.pending
             || flow.cleanup_count() != 0;
+        let busy = flow.busy || flow.status.pending || self.profile_pending;
         let mut view = div()
             .flex()
             .flex_col()
             .gap_3()
-            .child("Choose a Cookie-Editor JSON export or a Firefox cookies.sqlite snapshot. Keep exports private because they can contain sign-ins.")
-            .child(super::import_view::browser_import_sources(cx))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child("Sign in once in Coincide")
+                            .child(div().text_xs().child(
+                                "Conversations using the shared profile reuse your sign-ins.",
+                            )),
+                    )
+                    .child(
+                        Button::new("open-shared-browser-for-sign-in")
+                            .label("Open Shared Browser")
+                            .small()
+                            .primary()
+                            .disabled(busy || self.snapshot.is_none() || flow.workers.closed())
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.request(ProfileOperation::OpenSharedBrowser, cx)
+                            })),
+                    ),
+            )
             .child(
                 div().flex().items_center().child(
                     Button::new("cookie-choose")
-                        .label(if flow.plan.is_some() { "Choose another file…" } else { "Choose file…" })
+                        .label(if flow.plan.is_some() {
+                            "Choose another file…"
+                        } else {
+                            "Import Existing File…"
+                        })
+                        .tooltip("Cookie-Editor JSON or a Firefox cookie snapshot")
                         .small()
-                        .disabled(disabled)
+                        .disabled(disabled || busy)
                         .on_click(cx.listener(|this, _, _, cx| this.choose_cookie_source(cx))),
-                )
+                ),
             );
         if !supported {
             view = view.child("Cookie import requires macOS 14 or later and an open conversation.");
@@ -696,6 +725,7 @@ mod tests {
             revision: 0,
             profiles: Vec::new(),
             selected: ProfileChoice::Private,
+            shared_profile: Uuid::nil(),
             open_tabs: 0,
             persistent_profiles_available: true,
             private_by_default: false,

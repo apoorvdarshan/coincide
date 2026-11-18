@@ -43,6 +43,7 @@ mod tests {
                     cookie_import: None,
                 }],
                 selected: ProfileChoice::Persistent(id),
+                shared_profile: id,
                 open_tabs: 1,
                 persistent_profiles_available: true,
                 private_by_default: false,
