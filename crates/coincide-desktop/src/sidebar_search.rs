@@ -368,10 +368,11 @@ impl Coincide {
 mod tests {
     use super::*;
 
-    #[test]
+    #[::core::prelude::v1::test]
     fn saved_sidebar_rows_are_available_while_the_engine_is_busy() {
         let directory = tempfile::tempdir().unwrap();
-        let store = coincide_core::store::Store::open(&directory.path().join("sidebar.sqlite")).unwrap();
+        let store =
+            coincide_core::store::Store::open(&directory.path().join("sidebar.sqlite")).unwrap();
         let reader = store.thread_navigation_reader().unwrap();
         let engine = Arc::new(Mutex::new(Engine::new(store)));
         let mut busy = engine.lock().unwrap();
