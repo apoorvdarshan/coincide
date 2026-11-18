@@ -318,7 +318,7 @@ fn period(name: &str, totals: &Totals, has_history: bool, partial: bool) -> Valu
     json!({
         "label": name,
         "tokens": if has_history && (totals.tokens.total() > 0 || !partial) { format::tokens(totals.tokens.total()) } else { "—".into() },
-        "cost": if totals.has_priced_tokens() { format!("≈ {}",format::cost_of(totals)) } else { "—".into() },
+        "cost": format::cost_of(totals, partial),
     })
 }
 
@@ -400,6 +400,16 @@ pub fn snapshot(
             )
         })
         .unwrap_or_default();
+    let partial =
+        |days| data.is_none_or(|data| data.history_partial(&enabled, None, None, days, now));
+    let month_incomplete = partial(30);
+    let tracked_label = |totals: &Totals| {
+        let tokens = format!("{} tokens", format::tokens(totals.tokens.total()));
+        match format::api_estimate(totals, month_incomplete) {
+            Some(estimate) => format!("{tokens} · {estimate}"),
+            None => tokens,
+        }
+    };
     let mut accounts = cards.iter().map(|card| {
         let limits = current_limits(card, now);
         let rows = limits.as_ref().map(|limits| format::rows(limits, mode, now, &Local))
@@ -419,13 +429,7 @@ pub fn snapshot(
             _ => "",
         };
         let key = usage_report::account_key(card.account.provider, &card.account.id);
-        let tracked = report.accounts.get(&key).map(|v| {
-            if v.has_priced_tokens() {
-                format!("{} tokens · ≈ {}", format::tokens(v.tokens.total()), format::cost_of(v))
-            } else {
-                format!("{} tokens", format::tokens(v.tokens.total()))
-            }
-        });
+        let tracked = report.accounts.get(&key).map(tracked_label);
         json!({
             "title":card.title(), "provider":card.account.provider,
             "plan":limits.as_ref().and_then(|l|l.plan.clone()),
@@ -450,17 +454,7 @@ pub fn snapshot(
                 now,
             );
             let totals = &usage.period;
-            let tracked = (!totals.tokens.is_empty()).then(|| {
-                if totals.has_priced_tokens() {
-                    format!(
-                        "{} tokens · ≈ {}",
-                        format::tokens(totals.tokens.total()),
-                        format::cost_of(totals)
-                    )
-                } else {
-                    format!("{} tokens", format::tokens(totals.tokens.total()))
-                }
-            });
+            let tracked = (!totals.tokens.is_empty()).then(|| tracked_label(totals));
             accounts.push(json!({
                 "title":agent.name, "provider":agent.provider,
                 "plan":null, "checked":null, "rows":[],
@@ -486,13 +480,11 @@ pub fn snapshot(
                 .join(". ")
         )
     };
-    let partial =
-        |days| data.is_none_or(|data| data.history_partial(&enabled, None, None, days, now));
     json!({
         "readings":readings.iter().map(|r|json!({"provider":r.provider,"text":r.text})).collect::<Vec<_>>(),
         "tooltip":tooltip, "accounts":accounts,
-        "periods":[period("Today",&report.today,data.is_some(),partial(1)),period("7 days",&report.last_week,data.is_some(),partial(7)),period("30 days",&report.last_month,data.is_some(),partial(30))],
-        "overviewNote": if partial(30) { "Local history may be incomplete" } else { "Local tokens · estimated cost" },
+        "periods":[period("Today",&report.today,data.is_some(),partial(1)),period("7 days",&report.last_week,data.is_some(),partial(7)),period("30 days",&report.last_month,data.is_some(),month_incomplete)],
+        "overviewNote": if month_incomplete { "Standard API rates · Local history may be incomplete" } else { "Estimates at standard API rates" },
         "updated":data.map(|d|format::relative(d.read_at,now)), "mode":modes,
         "primary":primary.encode(), "secondary":secondary.as_ref().map(Choice::encode),
         "primaryOptions":options_with_current(cards,false,Some(&primary)),
@@ -561,6 +553,25 @@ mod tests {
             )),
         }
     }
+    #[test]
+    fn menu_marks_cost_coverage_separately_from_the_token_total() {
+        let mut totals = Totals {
+            tokens: TokenTotals::new(0, 7_300_000_000, 0, 0, 0, 0),
+            cost: 1.77,
+            unpriced_tokens: 7_299_000_000,
+            ..Totals::default()
+        };
+        let mixed = period("7 days", &totals, true, false);
+        assert_eq!(mixed["tokens"], "7.3B");
+        assert_eq!(mixed["cost"], "≈ $1.77 (partial)");
+        totals.unpriced_tokens = 0;
+        assert_eq!(
+            period("7 days", &totals, true, true)["cost"],
+            "≈ $1.77 (partial)"
+        );
+        assert_eq!(period("7 days", &totals, true, false)["cost"], "≈ $1.77");
+    }
+
     #[test]
     fn every_provider_uses_its_own_reported_limit_and_account() {
         let now = Utc.with_ymd_and_hms(2026, 11, 13, 12, 0, 0).unwrap();
@@ -764,7 +775,7 @@ mod tests {
         let loaded = snapshot(&cards, Some(&data), &json!({}), None, now);
         assert_eq!(loaded["periods"][0]["tokens"], "35");
         assert_eq!(loaded["periods"][1]["tokens"], "35");
-        assert_eq!(loaded["overviewNote"], "Local tokens · estimated cost");
+        assert_eq!(loaded["overviewNote"], "Estimates at standard API rates");
     }
     #[test]
     fn registered_agent_usage_appears_without_inventing_account_limits() {
