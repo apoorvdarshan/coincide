@@ -447,11 +447,6 @@ impl Panel {
         let generation = editor.generation;
         let baseline = editor.baseline.clone();
         let loading = matches!(&request, Request::Load);
-        if matches!(&request, Request::Check) {
-            editor.report = None;
-            editor.catalog = None;
-            editor.checked = None;
-        }
         // Account operations own their own notice. In particular, the automatic
         // metadata-only account load must not replace the configuration load
         // acknowledgement (or an imported-values/unsaved-changes warning).
@@ -667,8 +662,18 @@ impl Panel {
                 Ok(Outcome::Checked(report, catalog)) => {
                     if let Some(editor) = self.editors.get_mut(&reply.provider) {
                         editor.failed = false;
+                        if let Some(catalog) = catalog.filter(|value| value["state"] == "ready") {
+                            editor.catalog = Some(catalog);
+                        } else if editor.catalog.is_none()
+                            && report.models.is_empty()
+                            && let Some(previous) = &editor.report
+                            && !previous.models.is_empty()
+                        {
+                            editor.catalog = Some(
+                                json!({"provider":reply.provider,"state":"ready","models":previous.models}),
+                            );
+                        }
                         editor.report = Some(report);
-                        editor.catalog = catalog;
                         editor.checked = Some(Instant::now());
                         editor.notice = "Check finished.".into();
                     }

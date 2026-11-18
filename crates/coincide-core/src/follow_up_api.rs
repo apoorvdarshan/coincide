@@ -127,15 +127,14 @@ impl State {
         })
     }
 
-    pub(super) fn owns_queue_dispatch(&self, thread: &str, id: &str) -> bool {
-        self.operations.values().any(|operation| {
-            operation.thread == thread
-                && operation.status == NativeFollowUpStatus::Pending
-                && operation
-                    .queue
-                    .as_ref()
-                    .is_some_and(|claim| claim.id() == id)
-        })
+    pub(super) fn active_queue_dispatches<'a>(
+        &'a self,
+        thread: &'a str,
+    ) -> impl Iterator<Item = &'a str> {
+        self.operations
+            .values()
+            .filter(move |op| op.thread == thread && op.status == NativeFollowUpStatus::Pending)
+            .filter_map(|op| op.queue.as_ref().map(|claim| claim.id()))
     }
 }
 use choice::scope;
@@ -149,7 +148,7 @@ impl Engine {
         clear_original: bool,
     ) -> Result<(bool, bool)> {
         let (enabled, cleared, _) =
-            self.queue_captured_native_send_inner(captured, clear_original, true, None)?;
+            self.queue_captured_native_send_inner(captured, clear_original, true, false, None)?;
         Ok((enabled, cleared))
     }
     fn queue_captured_native_send_inner(
@@ -157,6 +156,7 @@ impl Engine {
         captured: &Value,
         clear_original: bool,
         notify_goal: bool,
+        native_immediate: bool,
         failure: Option<&str>,
     ) -> Result<(bool, bool, crate::message_queue::Message)> {
         self.require_admissions()?;
@@ -220,7 +220,7 @@ impl Engine {
         let mut target = current.clone();
         target["selection"] = captured["selection"].clone();
         let draft = captured["draft"].as_str().unwrap_or("");
-        let message = if let Some(id) = captured["nativeQueueID"].as_str() {
+        let mut message = if let Some(id) = captured["nativeQueueID"].as_str() {
             crate::message_queue::add_payload_with_id(
                 &mut target,
                 Uuid::parse_str(id)?,
@@ -232,13 +232,19 @@ impl Engine {
             crate::message_queue::add_payload(&mut target, draft, context, images)?
         };
         target["selection"] = current["selection"].clone();
-        if let Some(reason) = failure {
+        if native_immediate || failure.is_some() {
             let row = target["rustMessageQueue"]
                 .as_array_mut()
                 .and_then(|rows| rows.iter_mut().find(|row| row["id"] == message.id))
                 .context("Captured message disappeared before it was saved")?;
-            row["state"] = json!("failed");
-            row["error"] = json!(reason);
+            if native_immediate {
+                message.native_immediate = true;
+                row["nativeImmediate"] = json!(true);
+            }
+            if let Some(reason) = failure {
+                row["state"] = json!("failed");
+                row["error"] = json!(reason);
+            }
         }
         let cleared = clear_original && current["draft"] == captured["draft"];
         if cleared {
@@ -373,8 +379,14 @@ impl Engine {
         let auto = (eligible && (next_in_line || send_now))
             || (send_now && idle_ready && self.active_thread.as_deref() == Some(id));
         let ready_for_turn = idle_ready && next_in_line;
-        let (enabled, cleared, message) =
-            self.queue_captured_native_send_inner(captured, clear_original, !auto, None)?;
+        let native_immediate = ready_for_turn || (auto && chosen == Behavior::Steer);
+        let (enabled, cleared, message) = self.queue_captured_native_send_inner(
+            captured,
+            clear_original,
+            !auto,
+            native_immediate,
+            None,
+        )?;
         let queue_id = message.id.clone();
         if !auto {
             // Admit the head immediately when possible. The durable receipt
@@ -432,6 +444,7 @@ impl Engine {
             captured,
             false,
             true,
+            false,
             Some("Attachment or reference failed; edit this message and try again."),
         )?;
         Ok(())
@@ -443,6 +456,7 @@ impl Engine {
             captured,
             false,
             true,
+            false,
             Some("Account or provider change failed; review this message before sending."),
         )?;
         Ok(())
