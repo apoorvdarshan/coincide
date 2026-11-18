@@ -162,7 +162,7 @@ pub(super) fn transcript_waits_for_queue(item: &Value) -> bool {
     item["rustAwaitingQueueDelivery"] == true && item["rustImmediateQueueDelivery"] != true
 }
 
-fn show_queued_message(row: &Value) -> bool {
+pub(super) fn show_queued_message(row: &Value) -> bool {
     row["state"] != "completed"
         && !(row["state"] == "dispatching"
             && row["nativeImmediate"] == true

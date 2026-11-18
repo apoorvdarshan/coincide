@@ -41,24 +41,27 @@ pub(super) struct PendingDelivery {
     ticket: Option<NativeFollowUpTicket>,
     thread: String,
 }
-/// Retain a local queue row until its saved row or accepted transcript is visible.
+/// Retain the local message until the saved queue or transcript can draw it.
 pub(super) struct AdmittedPreview {
     pub pending: PendingSend,
     pub queue_id: String,
 }
 fn preview_handed_off(
-    preview: &AdmittedPreview,
+    pending: &PendingSend,
+    id: &str,
     thread: &Value,
     visible_queue: &[Arc<Value>],
 ) -> bool {
-    if text(thread, "id") != preview.pending.thread {
+    if thread["id"] != pending.thread {
         return false;
     }
-    let id = &preview.queue_id;
     if crate::queue::queue_receipt_finished(thread, id) {
         return true;
     }
-    if visible_queue.iter().any(|row| row["id"] == *id) {
+    if visible_queue.iter().any(|row| {
+        row["id"] == id
+            && (!pending.expects_immediate_delivery || crate::queue::show_queued_message(row))
+    }) {
         return true;
     }
     // Completed receipts can be pruned. The exact transcript ID still
@@ -66,8 +69,8 @@ fn preview_handed_off(
     thread["items"].as_array().is_some_and(|items| {
         items.iter().rev().any(|item| {
             item["kind"] == "user"
-                && item["rustQueueMessageID"] == *id
-                && item["rustAwaitingQueueDelivery"] != true
+                && item["rustQueueMessageID"] == id
+                && !crate::queue::transcript_waits_for_queue(item)
         })
     })
 }
@@ -144,6 +147,20 @@ impl PendingSend {
         self.admission
             .as_ref()
             .is_none_or(|slot| slot.state.load(std::sync::atomic::Ordering::Acquire) == 0)
+    }
+    fn immediate_message(&self, id: &str, thread: &Value, queue: &[Arc<Value>]) -> Option<Value> {
+        (self.expects_immediate_delivery
+            && thread["id"] == self.thread
+            && !preview_handed_off(self, id, thread, queue))
+        .then(|| {
+            json!({
+                "id": id,
+                "kind": "user",
+                "text": self.draft,
+                "rustImages": self.captured["rustDraftImages"],
+                "context": self.captured["draftContext"]
+            })
+        })
     }
     pub(super) fn recall(&self) -> bool {
         self.admission.as_ref().is_none_or(|slot| slot.claim(2))
@@ -536,6 +553,9 @@ impl Coincide {
             || (dispatch == Dispatch::Steer && (provider == Some("codex") || !has_images));
         next.expects_immediate_delivery = direct
             && previous.is_none()
+            && !self.admitted_previews.iter().any(|preview| {
+                preview.pending.thread == id && preview.pending.expects_immediate_delivery
+            })
             && !next.waiting_for_import
             && next.selection_wait == SelectionWait::None
             && !self
@@ -575,7 +595,7 @@ impl Coincide {
         self.pending_follow_up_backlog.push_back(next);
         self.buffered_send_lease.set_dirty(true);
         self.draft_saver.invalidate();
-        if let Some(thread) = self.selected.as_mut() {
+        if let Some(thread) = self.selected.composer_metadata_mut() {
             thread["draft"] = json!("");
         }
         self.pending_drafts.insert(
@@ -594,9 +614,29 @@ impl Coincide {
 
     pub(super) fn reconcile_buffered_sends(&mut self) {
         if let Some(thread) = self.selected.as_ref() {
-            self.admitted_previews
-                .retain(|preview| !preview_handed_off(preview, thread, &self.queued_messages));
+            self.admitted_previews.retain(|preview| {
+                !preview_handed_off(
+                    &preview.pending,
+                    &preview.queue_id,
+                    thread,
+                    &self.queued_messages,
+                )
+            });
         }
+    }
+
+    pub(super) fn immediate_send_message(&self) -> Option<Value> {
+        let thread = self.selected.as_ref()?;
+        self.pending_follow_up
+            .iter()
+            .chain(&self.pending_follow_up_backlog)
+            .filter_map(|pending| Some((pending, pending.buffer_id.as_deref()?)))
+            .chain(
+                self.admitted_previews
+                    .iter()
+                    .map(|preview| (&preview.pending, preview.queue_id.as_str())),
+            )
+            .find_map(|(pending, id)| pending.immediate_message(id, thread, &self.queued_messages))
     }
 
     pub(super) fn track_queued_delivery(&mut self, ticket: NativeFollowUpTicket, thread: String) {
@@ -961,43 +1001,86 @@ fn behavior_help(behavior: Behavior) -> &'static str {
 #[cfg(test)]
 mod send_route_tests {
     use super::{
-        AdmittedPreview, PendingSend, SelectionWait, buffered_text, follow_up_source,
-        preview_handed_off, separate_buffered_payload,
+        PendingSend, SelectionWait, buffered_text, follow_up_source, preview_handed_off,
+        separate_buffered_payload,
     };
-    use serde_json::json;
+    use serde_json::{Value, json};
+    use std::sync::Arc;
 
     #[test]
     fn admitted_preview_uses_exact_delivery_identity_even_when_history_changes() {
         let thread = json!({"id":"t","selection":{"provider":"codex"},
             "items":[{"kind":"user","text":"same"},{"kind":"user","text":"same"}]});
-        let preview = AdmittedPreview {
-            pending: PendingSend::new(&thread, "same".into(), false),
-            queue_id: "queue-1".into(),
+        let pending = PendingSend::new(&thread, "same".into(), false);
+        let handed_off = |thread: &Value, queue: &[Arc<Value>]| {
+            preview_handed_off(&pending, "queue-1", thread, queue)
         };
-        assert!(!preview_handed_off(&preview, &thread, &[]));
+        assert!(!handed_off(&thread, &[]));
         let mut snapshot = thread.clone();
         snapshot["items"] = json!([{
             "kind":"user","text":"same","rustQueueMessageID":"queue-1",
             "rustAwaitingQueueDelivery":true
         }]);
-        assert!(!preview_handed_off(&preview, &snapshot, &[]));
+        assert!(!handed_off(&snapshot, &[]));
 
-        let visible_queue = vec![std::sync::Arc::new(
-            json!({"id":"queue-1","state":"dispatching"}),
-        )];
-        assert!(preview_handed_off(&preview, &snapshot, &visible_queue));
+        let visible_queue = vec![Arc::new(json!({"id":"queue-1","state":"dispatching"}))];
+        assert!(handed_off(&snapshot, &visible_queue));
 
         snapshot["items"][0]["rustAwaitingQueueDelivery"] = json!(false);
-        assert!(preview_handed_off(&preview, &snapshot, &[]));
+        assert!(handed_off(&snapshot, &[]));
 
         // A read can finish before the worker returns its admission result.
         // A late preview must also hand off from a completed receipt even if
         // the transcript is absent from that particular view.
         snapshot["items"] = json!([]);
         snapshot["rustMessageQueue"] = json!([{"id":"queue-1","state":"completed"}]);
-        assert!(preview_handed_off(&preview, &snapshot, &[]));
+        assert!(handed_off(&snapshot, &[]));
         snapshot["id"] = json!("other");
-        assert!(!preview_handed_off(&preview, &snapshot, &[]));
+        assert!(!handed_off(&snapshot, &[]));
+    }
+
+    #[test]
+    fn immediate_send_keeps_its_payload_visible_until_a_row_can_replace_it() {
+        let mut thread = json!({"id":"t","items":[],
+            "rustDraftImages":[{"id":"image"}],"draftContext":[{"kind":"file"}]});
+        let mut pending = PendingSend::new(&thread, "hello".into(), false);
+        let id = "first-send";
+        assert!(pending.immediate_message(id, &thread, &[]).is_none());
+        pending.expects_immediate_delivery = true;
+        let preview = pending.immediate_message(id, &thread, &[]).unwrap();
+        assert_eq!(preview["id"], id);
+        assert_eq!(preview["text"], "hello");
+        assert_eq!(preview["rustImages"], thread["rustDraftImages"]);
+        assert_eq!(preview["context"], thread["draftContext"]);
+        assert!(
+            pending
+                .immediate_message(id, &json!({"id":"other"}), &[])
+                .is_none()
+        );
+
+        let dispatching = Arc::new(json!({
+            "id": id, "state": "dispatching", "nativeImmediate": true, "deliveryOwned": true
+        }));
+        // A direct steer can be in flight without a saved user item yet.
+        assert_eq!(
+            pending.immediate_message(id, &thread, &[dispatching.clone()]),
+            Some(preview)
+        );
+        let waiting = Arc::new(json!({"id":id,"state":"pending"}));
+        assert!(pending.immediate_message(id, &thread, &[waiting]).is_none());
+
+        thread["items"] = json!([{"kind":"user","rustQueueMessageID":"another","text":"hello"}]);
+        assert!(pending.immediate_message(id, &thread, &[]).is_some());
+        thread["items"][0]["rustQueueMessageID"] = json!(id);
+        thread["items"][0]["rustAwaitingQueueDelivery"] = json!(true);
+        thread["items"][0]["rustImmediateQueueDelivery"] = json!(true);
+        assert!(
+            pending
+                .immediate_message(id, &thread, &[dispatching])
+                .is_none()
+        );
+        thread["items"][0]["rustAwaitingQueueDelivery"] = json!(false);
+        assert!(pending.immediate_message(id, &thread, &[]).is_none());
     }
 
     #[test]

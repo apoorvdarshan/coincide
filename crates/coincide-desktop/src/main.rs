@@ -629,6 +629,7 @@ struct Coincide {
     terminal_visible_thread: Option<String>,
     transcript_list: ListState,
     transcript_count: usize,
+    immediate_send_row_id: Option<String>,
     local_error_notice: Option<String>,
     expanded: std::collections::HashSet<usize>,
     chat_turns: chat_turns::State,
@@ -1956,6 +1957,7 @@ impl Coincide {
             terminal_visible_thread: None,
             transcript_list: ListState::new(0, ListAlignment::Bottom, px(500.)),
             transcript_count: 0,
+            immediate_send_row_id: None,
             local_error_notice: None,
             expanded: Default::default(),
             chat_turns: Default::default(),
@@ -5441,7 +5443,30 @@ impl Coincide {
     /// back down. Someone still at the bottom keeps following the tail.
     pub(crate) fn splice_transcript(&mut self, range: std::ops::Range<usize>, count: usize) {
         self.selected_generation = self.selected_generation.wrapping_add(1);
-        update_transcript_rows(&self.transcript_list, self.transcript_count, range, count);
+        update_transcript_rows(
+            &self.transcript_list,
+            self.transcript_list.item_count(),
+            range,
+            count,
+        );
+    }
+
+    fn sync_immediate_send_row(&mut self, message: Option<&Value>) {
+        let id = message.and_then(|message| message["id"].as_str());
+        let old_count = self.transcript_list.item_count();
+        let rows = usize::from(id.is_some());
+        if old_count != self.transcript_count + rows || self.immediate_send_row_id.as_deref() != id
+        {
+            // The preview is a virtual tail row. Keep it out of saved items,
+            // turn grouping, and the indices used by transcript actions.
+            update_transcript_rows(
+                &self.transcript_list,
+                old_count,
+                self.transcript_count..old_count,
+                rows,
+            );
+            self.immediate_send_row_id = id.map(str::to_owned);
+        }
     }
 
     /// Apply a background read only if the same local view is still current.
@@ -6140,7 +6165,7 @@ impl Coincide {
         }
         if transcript_scrolled_away(
             self.transcript_list.logical_scroll_top(),
-            self.transcript_count,
+            self.transcript_list.item_count(),
         ) && self.transcript_list.is_scrolled_to_end() != Some(true)
         {
             // Keep a send or attachment failure visible without moving the
@@ -6323,16 +6348,21 @@ impl Coincide {
     fn message(
         &mut self,
         index: usize,
+        immediate_send: Option<&Value>,
         running_start: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let Some(item) = self
-            .selected
-            .as_ref()
-            .and_then(|v| v["items"].as_array())
-            .and_then(|items| items.get(index))
-        else {
+        let local = index == self.transcript_count && immediate_send.is_some();
+        let item = if local {
+            immediate_send
+        } else {
+            self.selected
+                .as_ref()
+                .and_then(|v| v["items"].as_array())
+                .and_then(|items| items.get(index))
+        };
+        let Some(item) = item else {
             return div().into_any_element();
         };
         if queue::transcript_waits_for_queue(item) {
@@ -6340,6 +6370,13 @@ impl Coincide {
         }
         let kind = text(item, "kind");
         let item_id = text(item, "id");
+        let sending = local
+            || (item["rustAwaitingQueueDelivery"] == true
+                && item["rustImmediateQueueDelivery"] == true);
+        let row_id = item["rustQueueMessageID"]
+            .as_str()
+            .unwrap_or(&item_id)
+            .to_owned();
         let source_id = self
             .selected
             .as_ref()
@@ -6355,7 +6392,11 @@ impl Coincide {
         // Swift's turn layout: work folded under "Worked for…", rows that
         // never draw, and headers below the messages that open or split turns.
         // A find target stays drawn even inside a folded turn.
-        let plan = self.turn_plan(index);
+        let plan = if local {
+            chat_turns::RowPlan::default()
+        } else {
+            self.turn_plan(index)
+        };
         if plan.hidden && !find_revealed {
             return self.turn_decorated(index, div().into_any_element(), None, cx);
         }
@@ -6534,7 +6575,14 @@ impl Coincide {
         let context_item =
             coincide_core::composer_context::has_context(&item["context"]).then(|| item.clone());
         let context_pane = context_item.as_ref().and_then(|snapshot| {
-            self.transcript_context_pane(&source_id, &item_id, snapshot, index, window, cx)
+            self.transcript_context_pane(
+                &source_id,
+                &item_id,
+                snapshot,
+                (!local).then_some(index),
+                window,
+                cx,
+            )
         });
         // Swift draws a user's attachments as a grid of small thumbnails and an
         // assistant's generated image as a card. One list, two densities.
@@ -6550,7 +6598,7 @@ impl Coincide {
                 let name: String = text(image, "originalName").chars().take(200).collect();
                 let card = div().flex().flex_col().gap_1().child(self.image_preview(
                     image,
-                    Some(index),
+                    (!local).then_some(index),
                     media_width,
                     media_height,
                     window,
@@ -6741,7 +6789,7 @@ impl Coincide {
         };
         let card = div()
             .id(SharedString::from(format!(
-                "message-row-{source_id}-{item_id}"
+                "message-row-{source_id}-{row_id}"
             )))
             .min_w_0()
             .w_full()
@@ -6819,9 +6867,20 @@ impl Coincide {
                         .children(media_cards),
                 )
             })
-            .children(self.historical_images(&item_id, cx))
+            .when(!local, |view| {
+                view.children(self.historical_images(&item_id, cx))
+            })
+            .when(sending, |view| {
+                view.child(
+                    div()
+                        .mt_2()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("Sending…"),
+                )
+            })
             .when_some(footer, |view, footer| view.child(footer));
-        let card = if coincide_core::composer_context::quotable_kind(&kind) {
+        let card = if !sending && coincide_core::composer_context::quotable_kind(&kind) {
             self.message_reply_context_menu(card, &source_id, &item_id, cx)
         } else {
             card.into_any_element()
@@ -6907,20 +6966,22 @@ impl Coincide {
                     * 0.75))
                 .my_3()
                 .child(card)
-                .child(
-                    div()
-                        .mt_1()
-                        .flex()
-                        .flex_wrap()
-                        .items_center()
-                        .gap_1()
-                        .text_color(self.color(0xe4e9f2).opacity(0.7))
-                        .when(right, |actions| actions.justify_end())
-                        .child(edit_action)
-                        .child(reply_action)
-                        .child(fork_action)
-                        .when_some(user_copy, |actions, copy| actions.child(copy)),
-                )
+                .when(!sending, |view| {
+                    view.child(
+                        div()
+                            .mt_1()
+                            .flex()
+                            .flex_wrap()
+                            .items_center()
+                            .gap_1()
+                            .text_color(self.color(0xe4e9f2).opacity(0.7))
+                            .when(right, |actions| actions.justify_end())
+                            .child(edit_action)
+                            .child(reply_action)
+                            .child(fork_action)
+                            .when_some(user_copy, |actions, copy| actions.child(copy)),
+                    )
+                })
                 .into_any_element()
         } else {
             card
@@ -6946,6 +7007,9 @@ impl Coincide {
                     .child(card),
             )
             .into_any_element();
+        if local {
+            return row;
+        }
         let row = self.with_turn_changes(index, row, cx);
         self.turn_decorated(index, row, plan.header, cx)
     }
@@ -7353,7 +7417,7 @@ impl Render for Coincide {
                             ticket,
                             error,
                         })) => {
-                            if let Some(selected) = self.selected.as_mut() {
+                            if let Some(selected) = self.selected.composer_metadata_mut() {
                                 if cleared {
                                     selected["draft"] = json!("");
                                 }
@@ -7391,6 +7455,7 @@ impl Render for Coincide {
                                 self.track_queued_delivery(ticket, pending.thread.clone());
                             }
                             if pending.buffer_id.is_some() {
+                                pending.expects_immediate_delivery &= delivering;
                                 self.admitted_previews.push(
                                     composer_follow_up_mount::AdmittedPreview { pending, queue_id },
                                 );
@@ -7424,6 +7489,7 @@ impl Render for Coincide {
                             if !engine_busy(&error)
                                 && pending.last_error.as_deref() != Some(reason.as_str())
                             {
+                                pending.expects_immediate_delivery = false;
                                 let message = format!(
                                     "Previous message is waiting and has not been sent: {reason}"
                                 );
@@ -7470,6 +7536,7 @@ impl Render for Coincide {
                             self.pending_drafts.remove(&pending.thread);
                         }
                         self.finish_pending_images(pending.image_send, true);
+                        pending.expects_immediate_delivery &= started || ticket.is_some();
                         if let Some(ticket) = ticket {
                             self.track_queued_delivery(ticket, pending.thread.clone());
                         }
@@ -7495,6 +7562,7 @@ impl Render for Coincide {
                     }
                     Some(Err(error)) => {
                         if !engine_busy(&error) {
+                            pending.expects_immediate_delivery = false;
                             self.status = format!("Earlier message is still waiting: {error}");
                         }
                         self.pending_follow_up = Some(pending);
@@ -7539,19 +7607,17 @@ impl Render for Coincide {
         // A long active turn may contain thousands of tool events. Resolve its
         // opener once instead of rescanning the tail for every visible row.
         let running_start = self.selected_running_opener();
+        let immediate_send = self.immediate_send_message();
+        let has_immediate_send = immediate_send.is_some();
+        self.sync_immediate_send_row(immediate_send.as_ref());
         // Ask where the list is, not whether it is following: the follow flag
         // only re-engages in a fully measured layout, so rows that are still
         // measuring left the pill up even at the bottom of the transcript.
         let scrolled_away = transcript_scrolled_away(
             self.transcript_list.logical_scroll_top(),
-            self.transcript_count,
+            self.transcript_list.item_count(),
         ) && self.transcript_list.is_scrolled_to_end() != Some(true);
-        let jump_to_latest = scrolled_away
-            && self.selected.as_ref().is_some_and(|thread| {
-                thread["items"]
-                    .as_array()
-                    .is_some_and(|items| !items.is_empty())
-            });
+        let jump_to_latest = scrolled_away && self.transcript_list.item_count() > 0;
         self.chat_turns.begin_render(
             self.selected.transcript_revision(),
             running_start,
@@ -7569,7 +7635,7 @@ impl Render for Coincide {
             .child(
                 list(self.transcript_list.clone(), move |index, window, cx| {
                     entity.update(cx, |this, cx| {
-                        this.message(index, running_start, window, cx)
+                        this.message(index, immediate_send.as_ref(), running_start, window, cx)
                     })
                 })
                 .size_full(),
@@ -7643,6 +7709,7 @@ impl Render for Coincide {
         let historical_image = self.historical_image_overlay(cx);
         let terminal_bottom = self.terminal_surface(false, window, cx);
         let empty_conversation = show_composer
+            && !has_immediate_send
             && self.selected.as_ref().is_some_and(|thread| {
                 thread["items"]
                     .as_array()
@@ -8633,5 +8700,20 @@ mod transcript_scroll_tests {
         list.scroll_to_end();
         update_transcript_rows(&list, 13, 13..13, 1);
         assert_eq!(list.logical_scroll_top().item_ix, 14);
+    }
+
+    #[::core::prelude::v1::test]
+    fn first_send_hands_the_virtual_tail_to_the_saved_message() {
+        let list = ListState::new(0, ListAlignment::Bottom, px(0.));
+        update_transcript_rows(&list, 0, 0..0, 1);
+        assert_eq!(list.item_count(), 1);
+        assert_eq!(list.logical_scroll_top().item_ix, 1);
+
+        // Install the saved message before removing the local tail in the
+        // same frame. The list remains at the bottom throughout the handoff.
+        update_transcript_rows(&list, 1, 0..0, 1);
+        update_transcript_rows(&list, 2, 1..2, 0);
+        assert_eq!(list.item_count(), 1);
+        assert_eq!(list.logical_scroll_top().item_ix, 1);
     }
 }

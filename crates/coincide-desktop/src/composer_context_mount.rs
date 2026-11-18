@@ -286,7 +286,7 @@ impl Coincide {
         thread_id: &str,
         item_id: &str,
         item: &Value,
-        row_index: usize,
+        row_index: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
@@ -303,12 +303,12 @@ impl Coincide {
             let thumbnail = if card.is_file {
                 raw.as_array()
                     .and_then(|rows| rows.get(index))
-                    .map(|value| self.file_reference_preview(value, Some(row_index), window, cx))
+                    .map(|value| self.file_reference_preview(value, row_index, window, cx))
             } else {
                 None
             };
             let mut pill = div().child(title.clone()).into_any_element();
-            if let Some(id) = card.id {
+            if let Some(id) = card.id.filter(|_| row_index.is_some()) {
                 let thread = thread_id.to_owned();
                 let source = context_details::Source::Message(item_id.to_owned());
                 let expected = item.clone();
