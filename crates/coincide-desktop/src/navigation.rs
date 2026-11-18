@@ -520,10 +520,10 @@ impl Coincide {
                     .xsmall()
                     .text_color(ink.opacity(0.45)),
             ),
-            _ => match thread
-                .navigation
-                .as_ref()
-                .and_then(|meta| chat_layout::provider_mark(meta.provider.as_deref()?, 14.))
+            _ => match self
+                .composer_provider_for_thread(&thread.id)
+                .or_else(|| thread.navigation.as_ref()?.provider.as_deref())
+                .and_then(|provider| chat_layout::provider_mark(provider, 14.))
             {
                 Some(logo) => leading.child(logo),
                 None => leading.child(Icon::new(IconName::Cpu).xsmall()),
