@@ -43,12 +43,12 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
 socket2 = { version = "0.6", features = ["all"] }
 qrcodegen = "1.8"
+tempfile.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 apple-native-keyring-store = { version = "=1.0.2", default-features = false, features = ["keychain"] }
 aes = { version = "=0.9.4", features = ["zeroize"] }
 cbc = { version = "=0.2.1", features = ["block-padding"] }
-tempfile.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus-secret-service-keyring-store = { version = "=1.0.1", default-features = false, features = ["crypto-rust"] }
@@ -58,9 +58,6 @@ zbus = "=6.3.0"
 [target.'cfg(windows)'.dependencies]
 windows-native-keyring-store = { version = "=1.1.0", default-features = false }
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Pipes", "Win32_System_Threading", "Win32_System_IO", "Win32_System_Memory", "Win32_System_JobObjects", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Power", "Win32_System_SystemServices", "Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_System_WindowsProgramming", "Win32_System_Ioctl"] }
-
-[dev-dependencies]
-tempfile.workspace = true
 
 [[test]]
 name = "provider_codex_profile_resume_portable"

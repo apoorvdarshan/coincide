@@ -313,7 +313,14 @@ impl Mount {
     /// never blocks another or the desktop's engine lock.
     pub fn refresh_external(&mut self, settings: &serde_json::Value) {
         self.external_settings = Some(settings.clone());
-        for provider in ["grok", "opencode", "cursor", "antigravity", "lithos"] {
+        for provider in [
+            "grok",
+            "opencode",
+            "cursor",
+            "antigravity",
+            "lithos",
+            "acp-devin",
+        ] {
             self.start_external(provider, settings);
         }
     }
@@ -323,9 +330,13 @@ impl Mount {
         self.start_external("lithos", settings);
     }
     fn start_external(&mut self, provider: &'static str, settings: &serde_json::Value) {
-        if !crate::usage_dashboard_ui::provider_id(provider)
-            .is_some_and(|id| crate::settings_navigation::provider_enabled(settings, id))
-        {
+        let enabled = if provider == "acp-devin" {
+            coincide_core::provider_preferences::enabled(settings, provider).unwrap_or(false)
+        } else {
+            crate::usage_dashboard_ui::provider_id(provider)
+                .is_some_and(|id| crate::settings_navigation::provider_enabled(settings, id))
+        };
+        if !enabled {
             self.dashboard.external.remove(provider);
             self.external_pending.remove(provider);
             self.external_retry.remove(provider);
